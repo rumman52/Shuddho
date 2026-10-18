@@ -1,14 +1,16 @@
-## CW-02 object-storage recovery regression slice — 18 October 2026
+## Current mainline checkpoint — 18 October 2026 (Asia/Dhaka)
 
-Candidate branch: `codex/cw02-s3-artifact-recovery-20261018`, based on audited main `ab3ae23b5b84cea8613a93d340a3e0f2c05753f0`.
+Current main: `587d7d49b3e5c09191309443cb2e38f38f126ba5` (PR [#458](https://github.com/rumman52/Shuddho/pull/458) merged). PR #458 exact-head CI [run #39106294716](https://github.com/rumman52/Shuddho/actions/runs/39106294716) passed. Merged-main CI [run #39108700880](https://github.com/rumman52/Shuddho/actions/runs/39108700880) was still running at this checkpoint; its `test-and-build` job passed and the `coworker` job had not yet completed. Do not infer final-main verification from an in-progress run.
 
-The candidate adds real Temporal-worker regressions with injected object-store faults:
-- An output write is accepted but its response is lost; retry must use the same object key and content digest.
-- A required artifact read disconnects during completion; the task must remain incomplete and publish no artifacts until the worker can read and verify the saved bytes.
-- An approved attachment read disconnects before the action claim; no provider send may occur before storage recovers, and replay after a confirmed send must not send again.
+### CW-02 object-storage recovery regression slice — merged
 
-Evidence boundary: these are deterministic failure-injection tests through the existing worker and object-store interface. They do not prove live S3 availability, staging deployment behavior, the full 16-fault CW-02 matrix, production qualification, or activation. Required exact-head CI and independent review remain gates.
+PR #458 adds Temporal-worker regressions for a lost object-store write response, required-artifact read-back before completion, and approved-attachment reads before the external-action claim. It asserts stable object identity/checksum and no repeated confirmed provider mutation. These are deterministic injected-failure tests through the existing object-store interface; they do not prove live S3 availability, staging deployment behavior, all sixteen CW-02 faults, production qualification, or activation.
 
+### Next CW-02 slice — PostgreSQL disconnect after provider acceptance
+
+This branch adds a Temporal integration regression that terminates only the targeted backend in the disposable PostgreSQL CI database while the worker persists a receipt after the loopback provider has accepted a send. Temporal retries must not submit the action again. Because the send-only email connector cannot authoritatively reconcile the outcome, the correct safe state is `outcome_unknown` with no fabricated receipt and exactly one provider mutation. The existing pre-commit backend-termination test covers claim rollback; this is a distinct post-provider persistence boundary.
+
+Initial Codex review found that a terminal outcome alone did not prove the Temporal activity retried, because the workflow interruption fallback could also produce outcome_unknown. The regression now records execution-service attempts and requires a post-fault retry before accepting the final state. The finding is addressed in source but remains pending fresh exact-head CI and follow-up review. This remains a narrow fault-injection slice, not completion of the sixteen-case matrix, live provider-side reconciliation, staging, production qualification, or activation.
 ---
 
 ## CW-02 planner retry regression follow-up — 18 October 2026

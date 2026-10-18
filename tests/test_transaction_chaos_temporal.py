@@ -360,3 +360,174 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
         assert value.actions.repo.get(owner, action["id"])["state"] == "succeeded"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.skipif(os.getenv("SHUDDHO_TEMPORAL_TESTS") != "true", reason="Real Temporal test server required")
+def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
+    transaction_container, provider, record_property,
+):
+    """A real PostgreSQL backend loss at receipt persistence cannot resend a provider mutation."""
+    import threading
+
+    from sqlalchemy import event, text
+    from temporalio.testing import WorkflowEnvironment
+    from test_coworker import FakeModel
+    from test_coworker_temporal import make_worker
+    from services.coworker.runner import DocumentRunner
+
+    async def scenario():
+        value = transaction_container
+        engine = value.repository.sessions.kw["bind"]
+        if engine.dialect.name != "postgresql":
+            pytest.skip("Post-mutation database disconnect qualification requires PostgreSQL")
+
+        owner, _transaction_id, action = reviewed_action(value, "database-disconnect-after-provider")
+        service = service_for(value.settings, value.repository.sessions, provider.origin)
+        value.actions = service
+        adapter = service.providers["google"]
+        original_execute = adapter.execute
+        original_service_execute = service.execute
+        fault = {"armed": False, "injected": False}
+        fault_lock = threading.Lock()
+        execution_attempts = []
+
+        async def tracked_service_execute(identity):
+            with fault_lock:
+                execution_attempts.append((identity, fault["injected"]))
+            return await original_service_execute(identity)
+
+        def assert_disposable_loopback_backend(sa_connection):
+            # Guard the destructive backend-termination call using both SQLAlchemy's
+            # configured URL and libpq's effective connection details. In libpq,
+            # query-string/environment connection parameters can override the URL host.
+            from ipaddress import ip_address
+
+            url = engine.url
+            target_overrides = {
+                "host", "hostaddr", "port", "service", "servicefile",
+                "dbname", "user", "replication", "target_session_attrs",
+                "load_balance_hosts",
+            }
+            assert not (target_overrides & {str(key).lower() for key in url.query}), (
+                "Refusing backend termination when PostgreSQL URL query overrides "
+                "connection-target parameters"
+            )
+            assert (
+                engine.dialect.name == "postgresql"
+                and url.host in {"localhost", "127.0.0.1"}
+                and url.database == "shuddho_coworker_test"
+                and url.username == "shuddho_test"
+            ), "Fault injection requires the configured disposable loopback CI PostgreSQL URL"
+
+            info = sa_connection.connection.driver_connection.info
+            assert info.host in {"localhost", "127.0.0.1"}, (
+                "Refusing backend termination: effective PostgreSQL host is not loopback"
+            )
+            if info.hostaddr:
+                assert ip_address(info.hostaddr).is_loopback, (
+                    "Refusing backend termination: effective PostgreSQL hostaddr is not loopback"
+                )
+            expected_port = url.port if url.port is not None else 5432
+            assert int(info.port) == expected_port, (
+                "Refusing backend termination: effective PostgreSQL port differs from the URL"
+            )
+            assert (info.dbname, info.user) == (
+                "shuddho_coworker_test", "shuddho_test"
+            ), "Fault injection requires the disposable CI PostgreSQL database and role"
+
+        def terminate_receipt_write(connection, cursor, statement, parameters, context, executemany):
+            normalized = statement.lstrip().upper()
+            if not normalized.startswith("UPDATE") or "CW_EXTERNAL_ACTIONS" not in normalized:
+                return
+            if action["id"] not in str(parameters):
+                return
+            with fault_lock:
+                if not fault["armed"] or fault["injected"]:
+                    return
+                fault["armed"] = False
+
+            # Validate the active write connection and the separate control connection
+            # immediately before pg_terminate_backend. Reject host/hostaddr/service
+            # overrides and verify libpq's effective endpoint, not only url.host.
+            assert_disposable_loopback_backend(connection)
+            pid = connection.connection.driver_connection.info.backend_pid
+            with engine.connect() as killer:
+                assert_disposable_loopback_backend(killer)
+                database_name, database_role = killer.execute(
+                    text("SELECT current_database(), current_user")
+                ).one()
+                assert (database_name, database_role) == (
+                    "shuddho_coworker_test", "shuddho_test"
+                ), "Fault injection requires the disposable CI PostgreSQL database and role"
+                assert killer.scalar(
+                    text("SELECT pg_terminate_backend(:pid)"), {"pid": pid}
+                ) is True
+                deadline = time.monotonic() + 5
+                while killer.scalar(
+                    text("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = :pid)"),
+                    {"pid": pid},
+                ):
+                    if time.monotonic() >= deadline:
+                        raise AssertionError("Target PostgreSQL backend did not terminate")
+                    time.sleep(0.01)
+            with fault_lock:
+                fault["injected"] = True
+
+        async def execute_then_arm(*args, **kwargs):
+            receipt = await original_execute(*args, **kwargs)
+            # The provider has accepted the send; inject the disconnect only
+            # when the worker tries to persist the resulting action receipt.
+            with fault_lock:
+                fault["armed"] = True
+            return receipt
+
+        service.execute = tracked_service_execute
+        adapter.execute = execute_then_arm
+        event.listen(engine, "before_cursor_execute", terminate_receipt_write)
+        try:
+            async with await WorkflowEnvironment.start_time_skipping() as env:
+                async with make_worker(env, DocumentRunner(value, FakeModel())):
+                    await dispatch_tick(value, env.client)
+                    handle = env.client.get_workflow_handle("shuddho-action-" + action["id"])
+                    async with env.time_skipping_unlocked():
+                        await asyncio.wait_for(handle.result(), 35)
+        finally:
+            event.remove(engine, "before_cursor_execute", terminate_receipt_write)
+            adapter.execute = original_execute
+            service.execute = original_service_execute
+
+        saved = service.repo.get(owner, action["id"])
+        assert fault["injected"] is True, "The targeted PostgreSQL receipt write was not interrupted"
+        assert len(execution_attempts) >= 2, (
+            "The Temporal execution activity did not retry after the receipt-write disconnect"
+        )
+        assert execution_attempts[0] == (action["id"], False)
+        assert any(identity == action["id"] and injected for identity, injected in execution_attempts[1:]), (
+            "No execution activity attempt was observed after the injected PostgreSQL disconnect"
+        )
+        # This send-only email connector cannot prove whether the provider applied
+        # the effect after receipt persistence failed, so uncertainty must be retained.
+        assert saved["state"] == "outcome_unknown"
+        assert saved["receipt"] is None
+        assert provider.counts() == (1, 1, [action["id"]])
+        record_property("transaction_case", json.dumps({
+            "schema_version": 1,
+            "evidence_level": "postgres_temporal_loopback_provider",
+            "case_id": "database_disconnect_after_provider_acceptance",
+            "action_id": action["id"],
+            "approved_identity": action["preview_hash"],
+            "source_revision": os.getenv("SHUDDHO_TRANSACTION_CHAOS_SOURCE_REVISION", "local-working-tree"),
+            "database": engine.dialect.name,
+            "postgres_backend_terminated": fault["injected"],
+            "execution_activity_attempts": len(execution_attempts),
+            "retry_after_disconnect_observed": any(
+                identity == action["id"] and injected
+                for identity, injected in execution_attempts[1:]
+            ),
+            "provider_dispatch_count": provider.counts()[0],
+            "provider_mutation_count": provider.counts()[1],
+            "state": saved["state"],
+            "receipt_sha256": None,
+        }, sort_keys=True))
+
+    asyncio.run(scenario())
