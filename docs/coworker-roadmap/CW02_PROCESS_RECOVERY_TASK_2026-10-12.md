@@ -62,6 +62,10 @@ This is the next CW-02 integration slice, not completion of the complete sixteen
 
 ## Follow-up: required-artifact read failure boundary
 
-A regression test in `tests/test_coworker.py` injects a one-time object-store GET disconnect during the real `complete` phase. Acceptance is: the task remains non-terminal, no user-visible artifacts are committed, the already committed export checkpoint remains intact, recovery verifies the same stored bytes, and retry does not issue additional object PUTs.
+Regression tests in `tests/test_coworker.py` exercise two ambiguous boundaries:
+- A one-time object-store GET disconnect during the real `complete` phase must leave the task non-terminal and publish no Artifact records. Retry verifies the existing export checkpoint without issuing additional object PUTs.
+- A database response loss after `save_step(..., "export", ...)` has committed must not delete the objects referenced by that checkpoint. Replay observes the checkpoint and completes from the same object set.
+
+The runner cleans partial objects only when failure occurs before checkpoint submission. Once checkpoint submission starts, its commit outcome may be unknown; preserving objects is safer than destructive cleanup. Unreferenced objects left by an ambiguous/failed checkpoint are a cleanup concern and must not be represented as successfully published artifacts.
 
 This is repository-level fault-injection evidence using the test storage implementation. It does **not** qualify a live S3 outage, persistent read failures, orphan cleanup after process death, or the complete sixteen-case operated matrix. Those remain separate gates.
