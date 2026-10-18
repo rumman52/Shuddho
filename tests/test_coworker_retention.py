@@ -187,6 +187,35 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         ),
         "orphan-after-worker-loss-task",
     )
+
+    # A second, already-checkpointed object under the same owner prefix must
+    # survive the sweep even when it is old enough to be an orphan candidate.
+    checkpoint_task, _ = container.repository.create_task(
+        account_id,
+        TaskCreate(
+            instruction="Preserve the durable export checkpoint.",
+            notes="This object is referenced by a saved export step.",
+            output_language="en",
+        ),
+        "checkpointed-output-preservation-task",
+    )
+    checkpoint_body = b"durable checkpoint output"
+    checkpoint_digest = hashlib.sha256(checkpoint_body).hexdigest()
+    checkpoint_key = (
+        f"{account_id}/outputs/{checkpoint_task['id']}/"
+        f"{checkpoint_digest}/checkpoint.txt"
+    )
+    container.storage.put(checkpoint_key, checkpoint_body, "text/plain")
+    container.repository.save_step(checkpoint_task["id"], "export", {
+        "artifacts": [{
+            "filename": "checkpoint.txt",
+            "content_type": "text/plain",
+            "object_key": checkpoint_key,
+            "byte_size": len(checkpoint_body),
+            "sha256": checkpoint_digest,
+        }],
+    })
+
     runner = DocumentRunner(container, FakeModel())
     asyncio.run(runner.phase(task["id"], "extract"))
     asyncio.run(runner.phase(task["id"], "draft"))
@@ -217,10 +246,12 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         # Simulate the object becoming eligible for the existing age-bounded sweep.
         old_time = time.time() - 7200
         os.utime(container.storage.path(orphan_key), (old_time, old_time))
+        os.utime(container.storage.path(checkpoint_key), (old_time, old_time))
         preview = container.retention.cleanup_orphans(
             prefix=account_id, min_age_seconds=3600, dry_run=True,
         )
         assert {item["key"] for item in preview["candidates"]} == {orphan_key}
+        assert checkpoint_key not in {item["key"] for item in preview["candidates"]}
         assert preview["deleted"] == 0
 
         result = container.retention.cleanup_orphans(
@@ -230,6 +261,7 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         assert result["failed"] == []
         with pytest.raises(FileNotFoundError):
             container.storage.get(orphan_key, 1024)
+        assert container.storage.get(checkpoint_key, 1024) == checkpoint_body
     finally:
         if process.is_alive():
             os.kill(process.pid, signal.SIGKILL)
