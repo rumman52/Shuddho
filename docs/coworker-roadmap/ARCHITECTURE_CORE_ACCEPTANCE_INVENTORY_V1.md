@@ -1,29 +1,38 @@
-## Current mainline checkpoint — 18 October 2026 (Asia/Dhaka)
+## Current continuation checkpoint — 18 October 2026 (Asia/Dhaka)
 
-Current main: `8bc5596ce7b3cce42d1d6f6f19b779156233009e` (PR [#459](https://github.com/rumman52/Shuddho/pull/459) merged after PR #458). PR #459 merged before its mandatory coworker CI completed and before the final security follow-up was applied; merged-main CI [run #39110892175](https://github.com/rumman52/Shuddho/actions/runs/39110892175) was still running at the last status check. PR #458 exact-head CI [run #39106294716](https://github.com/rumman52/Shuddho/actions/runs/39106294716) passed. Do not infer final-main verification from an in-progress run.
+- Current `main` is `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460 is merged; its exact-head CI [#39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed all three required jobs. Merged-main CI [#39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) completed successfully; `test-and-build`, mandatory `coworker`, and `ci-merge-gate` all passed.
+- C-01 code/test commit `b3d3cad4c93abaff3523b7f998529f4a6375c46e` passed exact-head CI [#39141823326](https://github.com/rumman52/Shuddho/actions/runs/39141823326): `test-and-build`, mandatory zero-skip `coworker`, and `ci-merge-gate`. The dedicated `c01-v3-handoff-evidence` JUnit artifact records 1 test, 0 failures, and 0 skips.
+- PR #461 remains open for formal independent review. The integration test uses synthetic model/provider responses; live provider quality, operated staging, production qualification, and activation are not established. Do not mark the overall Architecture/Core Agent complete from this one slice.
+
+---
+
+## Current mainline checkpoint — refreshed 18 October 2026 (Asia/Dhaka)
+
+Current `main`: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #459 and security-hardening follow-up PR #460 are merged. PR #460 exact-head CI [#39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`; merged-main CI [#39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) completed successfully; all three required jobs passed. The GitHub API showed no formal independent review submission for #460; independent security sign-off is not recorded.
+
+### C-01 Runtime v3 successful planner-adapter path — in progress
+
+PR [#461](https://github.com/rumman52/Shuddho/pull/461), branch `codex/c01-runtime-v3-adapter-e2e-20261018`, exercises the actual `DeepSeekAgentPlanner` adapter through deterministic HTTPX mock transport and a real Temporal test worker. The scenario checks `document.create` → verified observation → `email.draft` using the existing bounded owner-scoped handoff → `complete`. Handoff flags are enabled only in synthetic test settings. A dedicated no-skip CI step with JUnit evidence is present. The first exact-head run failed on a faulty source-count assertion; the subsequent correction also fixes source-manifest lookup and the `EmailPackage.source_ids` assertion. Exact-head CI [#39141823326](https://github.com/rumman52/Shuddho/actions/runs/39141823326) passed all three required jobs on commit `b3d3cad4c93abaff3523b7f998529f4a6375c46e`; the dedicated JUnit artifact recorded 1 test, 0 failures, and 0 skips. See [task contract](C01_RUNTIME_V3_MULTI_STEP_ADAPTER_2026-10-18.md).
+
+### Current evidence limits
+
+Cancellation/terminal-state protection and bounded planner-failure retries have repository CI evidence. CW-02 has repository-level regressions for model/provider failures, process/API interruption, Temporal outage, PostgreSQL/object-storage disconnects, duplicate admission, lost provider response, and approval expiry. This is not equivalent to operating all 16 scenarios against a frozen staging rollout. PR #460's target-isolation fix is merged, but independent provider-side evidence, staging, production qualification, and activation remain unestablished.
 
 ### CW-02 object-storage recovery regression slice — merged
 
-PR #458 adds Temporal-worker regressions for a lost object-store write response, required-artifact read-back before completion, and approved-attachment reads before the external-action claim. It asserts stable object identity/checksum and no repeated confirmed provider mutation. These are deterministic injected-failure tests through the existing object-store interface; they do not prove live S3 availability, staging deployment behavior, all sixteen CW-02 faults, production qualification, or activation.
+PR #458 adds Temporal-worker regressions for a lost object-store write response, required-artifact read-back before completion, and approved-attachment reads before the external-action claim. These are deterministic injected-failure tests through the existing object-store interface; they do not prove live S3 availability, the full 16-fault matrix, staging, production qualification, or activation.
 
-### Next CW-02 slice — PostgreSQL disconnect after provider acceptance
+### CW-02 PostgreSQL disconnect after provider acceptance — merged with follow-up
 
-This branch adds a Temporal integration regression that terminates only the targeted backend in the disposable PostgreSQL CI database while the worker persists a receipt after the loopback provider has accepted a send. Temporal retries must not submit the action again. Because the send-only email connector cannot authoritatively reconcile the outcome, the correct safe state is `outcome_unknown` with no fabricated receipt and exactly one provider mutation. The existing pre-commit backend-termination test covers claim rollback; this is a distinct post-provider persistence boundary.
+PR #459 adds a Temporal integration regression that terminates only the targeted backend in the disposable PostgreSQL CI database while a worker persists a receipt after a loopback provider accepts a send. The regression requires a post-fault activity retry and expects `outcome_unknown`, no fabricated receipt, and exactly one provider mutation when the send-only connector cannot authoritatively reconcile the outcome. PR #460 moved the destructive target guard before shared migrations, rejected target overrides, and retained a per-operation check. Its exact-head CI passed all three required jobs. This is repository-level fault-boundary evidence, not completion of the 16-fault matrix or live provider-side reconciliation.
 
-Initial Codex review found that a terminal outcome alone did not prove the Temporal activity retried, because the workflow interruption fallback could also produce outcome_unknown. The regression now records execution-service attempts and requires a post-fault retry before accepting the final state. The finding is addressed in source but remains pending fresh exact-head CI and follow-up review. This remains a narrow fault-injection slice, not completion of the sixteen-case matrix, live provider-side reconciliation, staging, production qualification, or activation.
-
-### Security hardening follow-up — pending
-
-PR #459 added the post-provider PostgreSQL receipt-write disconnect regression and execution-attempt assertions. Independent review then identified that URL connection-target overrides could redirect the destructive backend-termination fault, and that a callback-only guard ran after the shared repository fixture might already have applied migrations. Follow-up PR [#460](https://github.com/rumman52/Shuddho/pull/460), head `9c7eaf76caa4e3f27dbc1ee432a779cce8e8e44c`, moves target-override rejection and effective libpq endpoint validation into `require_disposable_database()` before the shared repository fixture is requested, adds no-connect regression coverage, and retains a per-operation guard before termination. Exact-head CI and independent security review are pending. Do not treat the security findings as closed until PR #460's exact-head gates pass and the fix is merged.
 ---
 
-## CW-02 planner retry regression follow-up — 18 October 2026
+## CW-02 planner retry regression follow-up — repository CI verified (18 October 2026)
 
-PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged the typed retryability propagation in the Temporal worker, but exact-head CI [#39098101062](https://github.com/rumman52/Shuddho/actions/runs/39098101062) failed mandatory coworker tests with four failures. The regression tests incorrectly asserted that the DTO's full steps array would be empty. A run intentionally retains an ordinal-zero sentinel created at run admission; the executable plan excludes ordinal zero.
+PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged the typed retryability propagation. The first regression assertion then failed because the run DTO retains an ordinal-zero run-created sentinel in `steps` while the executable `plan` excludes it. Follow-up PR [#457](https://github.com/rumman52/Shuddho/pull/457) corrected the assertion to require an empty executable plan, the non-executable sentinel, and zero tool invocations; its exact-head CI [#39099648984](https://github.com/rumman52/Shuddho/actions/runs/39099648984) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`.
 
-Follow-up branch: codex/cw02-planner-retryability-test-fix-20261018. The tests now require an empty executable plan, only the initial ordinal-zero sentinel, and no tool invocations. The workflow adds a dedicated no-skip regression gate with JUnit evidence. Exact-head test-and-build, coworker, and ci-merge-gate are pending. Do not call this slice repository-verified until all required jobs pass.
-
-Full CW-02 16-fault qualification, provider-side reconciliation evidence, authorized staging qualification, production qualification, and activation remain unestablished.
+This closes that repository-level regression slice only. It does not complete the CW-02 16-fault matrix, independent provider-side reconciliation, authorized staging qualification, production qualification, or activation.
 
 ---
 

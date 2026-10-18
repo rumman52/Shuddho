@@ -9,10 +9,8 @@ qualified capabilities around them.
 Shuddho is beyond a simple writing MVP. It is not yet a demonstrated production Muse
 equivalent. No defensible percentage-complete estimate follows from merged PR counts.
 
-Inspected baseline: `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
-[Main CI #1332](https://github.com/rumman52/Shuddho/actions/runs/38163844235) passed
-`test-and-build`, `coworker`, and `ci-merge-gate`.
-This is repository CI evidence, not a live reliability or transaction-safety certification.
+Historical planning baseline: `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
+Current main checkpoint: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460's exact-head [CI run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`; merged-main [CI run #39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) completed successfully with all three required jobs passing. Repository CI is not a live reliability or transaction-safety certification.
 
 Muse's first-party design describes continuous chat, goals, persistent memory, background
 work, a browser/terminal/filesystem and rich artifacts. Its security description says the
@@ -42,39 +40,20 @@ Evidence anchors:
 - [TX-28 provider boundaries](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/TX28_TRANSACTIONS_REPOSITORY_COMPLETION.md)
 - [Runtime v3](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/services/coworker/agent_runtime.py)
 
-## Immediate qualification defects
+## Immediate qualification status — refreshed 18 October 2026
 
-The newest chaos test file must be repaired before citing it as safety evidence.
+The following CW-01 findings in the earlier planning audit are **historical and superseded by the current source/CI state**. Do not restart CW-01 solely because that old paragraph remains in a checkpoint:
 
-1. `tests/test_transaction_chaos_qualification.py` is absent from the explicit heavy
-   coworker pytest command. The lightweight job installs no coworker extra; the file
-   uses `pytest.importorskip("sqlalchemy")` and `pytest.importorskip("temporalio")`.
-   Therefore green CI does not establish that this file ran. Inspect logs to establish
-   the actual collection/skip result; require zero skips for the mandatory new suite.
-2. The duplicate-binding test expects a second bind to the *same* action ID to fail.
-   `TransactionRepository.bind_external_action` intentionally returns the existing
-   link for that replay; a different action ID is the conflict. Preserve that
-   idempotent contract and test both cases.
-3. The timeout test passes `evidence_type` and `evidence` to
-   `TransactionReconciliationEvidence`; the inspected ORM model declares neither.
-   Its real fields bind the external action, provider, state, receipt and evidence hash.
-   Exercise the dispatcher and repository reconciliation path instead of inserting
-   invented evidence.
-4. The expiration test calls `container.transactions.advance_execution`; no such
-   method exists in the inspected transaction repository. Use the real action
-   approval/claim boundary and verify zero provider mutations.
-5. The new Phase 11 document lists only five outcomes, not the requested 16 injections.
+1. `tests/test_transaction_chaos_qualification.py` exists and is explicitly run by `.github/workflows/ci.yml` with `scripts.mandatory_test_gate` and a required-module assertion.
+2. The duplicate-binding regression verifies that binding the same action is idempotent and binding a different action ID raises `transaction_execution_already_bound`.
+3. The accepted-then-lost-response regression exercises the action service and reconciliation path; it expects `outcome_unknown`, no fabricated receipt, and one provider submission.
+4. The expiry regression uses the real `ExternalAction.expires_at`, approval and claim boundaries, and asserts that no provider request or mutation occurs.
+5. `scripts/transaction_chaos_matrix.py` defines all 16 scenario IDs, and `docs/phase11-transaction-chaos-qualification.md` documents the requested outcomes.
 
-These are source/CI-configuration findings. The current chaos suite was not executed
-locally during this planning review. CW-01 requires a real reproduction before repair.
-The findings do not establish that the production action service duplicates actions.
+PR #460 is merged. Its exact-head [CI run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed all three required jobs, including the transaction-safety, PostgreSQL/Temporal fault-boundary, process-recovery, and planner-retry checks. Merged-main [CI run #39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) was still in progress at the last status check. The repository API did not show a formal independent security review submission for #460.
 
-Open [chaos PR #361](https://github.com/rumman52/Shuddho/pull/361), inspected at
-`f543573220c2254c6f16c8777d0ff9783efcd92c`, changes this file but is not merged.
-It still constructs undeclared ORM fields, references an absent
-`review_binding["external_action_id"]`, and its expiry test only checks a nonempty ID.
-Inspect/reconcile that work before starting another repair PR; do not consider it
-qualified merely because it replaces the missing-method call.
+These tests provide repository-level fault-injection evidence only. They do **not** prove that all 16 scenarios have been operated against a frozen live staging rollout. Remaining gates include authorized staging execution, independent provider-side mutation counts, exact deployed API/worker/configuration identity, reconciliation evidence, and separate production qualification. No 99.9% SLO or activation is established.
+
 
 ## The target experience
 
