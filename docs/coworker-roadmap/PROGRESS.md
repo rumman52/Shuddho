@@ -1,10 +1,11 @@
-## Current continuation — CW-02 multi-artifact read recovery (19 October 2026, Asia/Dhaka)
+## Current continuation — CW-02 recovery and CW-09 proxy hardening (19 October 2026, Asia/Dhaka)
 
-- Main is `0f1b90843fe7a5360f69b42b6495d0b3c97c06c0`; PR #466 is merged. Main CI run [#39154827269](https://github.com/rumman52/Shuddho/actions/runs/39154827269) was still in progress at last inspection; no all-green claim.
-- PR #466's merged tests cover a transient required-artifact GET failure and database response loss after an export checkpoint commit. The runner preserves blobs when checkpoint commit outcome is uncertain.
-- New branch `codex/cw02-multi-artifact-read-recovery-20261019` adds a multi-artifact test for repeated read failures: first artifact GET fails, then a later artifact GET fails after the first was verified. Both failures must leave the task non-terminal with zero published artifacts, preserve the export checkpoint/object keys, and allow a later clean retry to verify and publish the complete artifact set.
-- The test, CW-02 contract note, and refreshed acceptance-inventory checkpoint are committed on the branch. The exact branch-head CI and review remain pending.
-- No local execution, staging run, deployment, provider activation, independent security review, or production qualification is claimed. The full sixteen-row CW-02 staging evidence, CW11-STAGING mixed-version drain, browser/sandbox isolation and personal-coworker qualification remain open.
+- **Main:** `521ada6b32e0c96dee646c7931bf607e4ff5e94f`. PR #467 and merged-main CI run [#39156608367](https://github.com/actions/runs/39156608367) are green.
+- **CW-02 PR #468:** [hard worker-loss export orphan recovery](https://github.com/rumman52/Shuddho/pull/468) is open. `test-and-build` passed on head `f9f4c515b3fce29adbfb589161578756c95109e3`; the mandatory `coworker` suite remained in progress at last refresh. Do not merge until all three required checks pass on the final head.
+- **CW-09 branch:** `codex/cw09-proxy-dns-response-shape-20261019` adds fail-closed validation of the broker DNS response in the actual CONNECT handler and local socket regressions for missing/mismatched host, empty/malformed lists, non-IP strings, and excessive addresses. It is not yet submitted for PR CI.
+- **Evidence boundaries:** no local checkout was available to run tests directly in this authoring session. GitHub CI is the executable test evidence. CW-02's crash test is local process + SQLite + local storage; neither branch proves live S3, real Chromium/DNS rebinding, private-network isolation, or staging operation.
+- **Remaining gates:** finish PR #468 mandatory CI and fix any genuine failures without weakening assertions; run exact-head CI for CW-09; reconcile the full sixteen-case CW-02 matrix with evidence; obtain protected CW11-STAGING mixed-version drain, independent review, personal-coworker quality and production qualification. No deployment, provider activation or production action is claimed.
+
 
 ---
 
