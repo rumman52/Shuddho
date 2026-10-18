@@ -1071,11 +1071,15 @@ def test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow(containe
         assert hashlib.sha256(model_source["text"].encode("utf-8")).hexdigest() == model_source["sha256"]
 
         email_draft = container.repository.step(downstream["receipt"]["resource_id"], "draft")
-        assert email_draft["sources"][0]["sha256"] == model_source["sha256"]
+        assert {source["id"] for source in email_draft["sources"]} == {"brief", handoff_source_id}
+        persisted_handoff_source = next(
+            source for source in email_draft["sources"] if source["id"] == handoff_source_id
+        )
+        assert persisted_handoff_source["sha256"] == model_source["sha256"]
         assert email_draft["handoff_provenance"][0]["tool"] == "document.create"
         assert email_draft["handoff_provenance"][0]["invocation_id"] == upstream["id"]
         assert email_draft["draft"]["email"]["body"] == "The team completed 12 reviews."
-        assert email_draft["draft"]["email"]["source_ids"] == [handoff_source_id]
+        assert set(email_draft["draft"]["source_ids"]) == {"brief", handoff_source_id}
         assert any(
             source["id"] == handoff_source_id and len(source["sha256"]) == 64
             for source in email_draft["sources"]

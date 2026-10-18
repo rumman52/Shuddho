@@ -1,16 +1,58 @@
+# Shuddho: from bounded coworker foundations to a continuous AI coworker
+
+## Decision and evidence
+
+Evolve the existing architecture. Preserve FastAPI, PostgreSQL, Temporal, private object
+storage, typed tools, external-action approvals, and Bangla writing. Add continuity and
+qualified capabilities around them.
+
+Shuddho is beyond a simple writing MVP. It is not yet a demonstrated production Muse
+equivalent. No defensible percentage-complete estimate follows from merged PR counts.
+
+Historical planning baseline: `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
+Current main checkpoint: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460's exact-head [CI run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`; merged-main [CI run #39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) was still in progress at the last status check. Repository CI is not a live reliability or transaction-safety certification.
+
+Muse's first-party design describes continuous chat, goals, persistent memory, background
+work, a browser/terminal/filesystem and rich artifacts. Its security description says the
+agent executes in an isolated cell; independent credential and Sentinel services govern
+external access. These are publicly described capabilities, not independently measured
+performance or a complete disclosure of its internals.
+
+Our recommendation is a persistent logical workspace with ephemeral isolated compute.
+A dedicated VM per user is a later option if security/latency/utilization measurements
+justify its operating cost. This is a Shuddho design choice, not a claim of equivalence to
+Muse's dedicated-VM threat model.
+
+## Where Shuddho stands
+
+| Area | Verified repository evidence | Assessment | Next work |
+| --- | --- | --- | --- |
+| Architecture design | Personal-agent architecture; Temporal workflow, PostgreSQL models, private artifacts; permission gateway and credential broker | Strong foundations already designed and partially implemented | Declare ownership of each state, close orchestration/tool integration gaps, validate deployed boundaries |
+| Core agent | Runtime v3 reads verified observations and scoped context; typed next-step decisions, budget reservations, verified completion, older workflow compatibility | Bounded coordinator exists; general computer coworker remains incomplete | Continuous conversation/task dispatch; browser tool; qualified generated-code workflow; measured route/model quality |
+| Automation/proactivity | Goals, schedules, occurrence dedupe, notifications/digests, event reads, Daily/Weekly/Meeting/Email/Deadline/goal-driven modules | Repository foundations exist; canonical staging checkpoint still records unresolved operational prerequisites | Refresh infrastructure state; freeze release; execute real scheduled/event, recovery, consent, usefulness and cost scenarios |
+| Transactions | Generic ledger, immutable terms, one action binding, uncertainty/reconciliation; negotiation email and bounded no-payment restaurant path; shopping/travel contracts and hosted-handoff foundations | Safety-oriented foundations exist; broad provider execution and full chaos qualification are not demonstrated | Repair chaos-test defects/coverage; prove dispatch invariant; qualify exact providers individually |
+| Production qualification | CI, evaluations, release contract, activation bundle/ledger, rollback/restore tooling | Tooling exists; fresh live evidence and measured 99.9% SLO are not established by the inspected material | Operated staging, isolated execution/security tests, provider proof, cost/load/restore measurements, small reviewed canary |
+
+Evidence anchors:
+- [Architecture](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/PERSONAL_AGENT_ARCHITECTURE.md)
+- [Implementation history](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/PERSONAL_AGENT_IMPLEMENTATION.md)
+- [Canonical staging checkpoint](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/PA10_CONTROLLED_STAGING_CHECKPOINT.md)
+- [TX-28 provider boundaries](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/TX28_TRANSACTIONS_REPOSITORY_COMPLETION.md)
+- [Runtime v3](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/services/coworker/agent_runtime.py)
+
 ## Immediate qualification status — refreshed 18 October 2026
 
 The following CW-01 findings in the earlier planning audit are **historical and superseded by the current source/CI state**. Do not restart CW-01 solely because that old paragraph remains in a checkpoint:
 
-1. `tests/test_transaction_chaos_qualification.py` exists and is explicitly run by `.github/workflows/ci.yml` with `scripts.mandatory_test_gate` and the required-module assertion.
-2. The current duplicate-binding test asserts that the same action binding returns the existing link and a different action ID raises `transaction_execution_already_bound`.
-3. The accepted-then-lost-response test exercises the action service and reconciliation path; it expects `outcome_unknown`, no fabricated receipt, and one provider submission.
-4. The expiry test uses the real `ExternalAction.expires_at`, approval and claim boundaries, and asserts that no provider request or mutation occurs.
+1. `tests/test_transaction_chaos_qualification.py` exists and is explicitly run by `.github/workflows/ci.yml` with `scripts.mandatory_test_gate` and a required-module assertion.
+2. The duplicate-binding regression verifies that binding the same action is idempotent and binding a different action ID raises `transaction_execution_already_bound`.
+3. The accepted-then-lost-response regression exercises the action service and reconciliation path; it expects `outcome_unknown`, no fabricated receipt, and one provider submission.
+4. The expiry regression uses the real `ExternalAction.expires_at`, approval and claim boundaries, and asserts that no provider request or mutation occurs.
 5. `scripts/transaction_chaos_matrix.py` defines all 16 scenario IDs, and `docs/phase11-transaction-chaos-qualification.md` documents the requested outcomes.
 
-Current source reference: `main` `8bc5596ce7b3cce42d1d6f6f19b779156233009e`. The exact-head [PR #460 CI run](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`, including the required transaction-safety, PostgreSQL/Temporal fault-boundary, process-recovery, and bounded planner-retry checks. PR #460 remains open and unmerged. The PR discussion has automated no-major-findings responses, but the GitHub API has no formal submitted review record; independent security sign-off is not recorded.
+PR #460 is merged. Its exact-head [CI run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed all three required jobs, including the transaction-safety, PostgreSQL/Temporal fault-boundary, process-recovery, and planner-retry checks. Merged-main [CI run #39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) was still in progress at the last status check. The repository API did not show a formal independent security review submission for #460.
 
-This repository CI evidence does **not** prove the 16 scenarios have been operated against a frozen live staging rollout. The manifest validator checks structure and hashes, not truthfulness of provider-side observations. Remaining gates include authorized staging execution, independent provider-side mutation counts, exact deployed API/worker/configuration identity, reconciliation evidence, and separate production qualification. No 99.9% SLO or activation is established.
+These tests provide repository-level fault-injection evidence only. They do **not** prove that all 16 scenarios have been operated against a frozen live staging rollout. Remaining gates include authorized staging execution, independent provider-side mutation counts, exact deployed API/worker/configuration identity, reconciliation evidence, and separate production qualification. No 99.9% SLO or activation is established.
 
 
 ## The target experience

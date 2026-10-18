@@ -39,13 +39,35 @@ def require_disposable_database(sessions, *, postgres_required=False):
             raise RuntimeError("Mandatory process qualification requires PostgreSQL")
         return
     url = make_url(engine.url)
+    target_overrides = {
+        "host", "hostaddr", "port", "service", "servicefile",
+        "dbname", "user", "replication", "target_session_attrs",
+        "load_balance_hosts",
+    }
+    if target_overrides & {str(key).lower() for key in url.query}:
+        # This check intentionally runs before opening a connection or requesting
+        # the shared repository fixture, whose setup may apply database migrations.
+        raise RuntimeError("Refusing PostgreSQL target override for disposable process tests")
     if (engine.dialect.name != "postgresql" or url.host not in {"localhost", "127.0.0.1"}
             or url.database != "shuddho_coworker_test" or url.username != "shuddho_test"):
         raise RuntimeError("Process faults require the disposable loopback CI PostgreSQL database")
+    from ipaddress import ip_address
+
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT current_database(), current_user")).one() == (
+        info = connection.connection.driver_connection.info
+        if info.host not in {"localhost", "127.0.0.1"}:
+            raise RuntimeError("Refusing PostgreSQL test operation: effective host is not loopback")
+        if info.hostaddr and not ip_address(info.hostaddr).is_loopback:
+            raise RuntimeError("Refusing PostgreSQL test operation: effective hostaddr is not loopback")
+        expected_port = url.port if url.port is not None else 5432
+        if int(info.port) != expected_port:
+            raise RuntimeError("Refusing PostgreSQL test operation: effective port differs from URL")
+        if (info.dbname, info.user) != ("shuddho_coworker_test", "shuddho_test"):
+            raise RuntimeError("Refusing PostgreSQL test operation: effective database or role differs")
+        if connection.execute(text("SELECT current_database(), current_user")).one() != (
             "shuddho_coworker_test", "shuddho_test",
-        )
+        ):
+            raise RuntimeError("Refusing PostgreSQL test operation: connected database or role differs")
 
 
 class LoopbackGoogleTransport(httpx.AsyncBaseTransport):

@@ -1,45 +1,29 @@
 ## Current continuation checkpoint — 18 October 2026 (Asia/Dhaka)
 
-- Live `main` is `ea7ad398f69e898b152f4227cb6e0c1a193999c1`; PR #460 has merged, but the main branch still reports protection disabled and required checks unenforced. Do not treat CI as an effective merge barrier until repository settings are corrected.
-- PR #461 C-01 integration test's first exact-head CI run [#39126595594](https://github.com/rumman52/Shuddho/actions/runs/39126595594) passed `test-and-build` but failed the dedicated handoff test: the draft correctly contained both the original brief and the upstream handoff, while the test incorrectly expected only one source.
-- Fixed the test to assert both sources and select the handoff by stable source ID rather than list order. This is a test expectation correction, not a production behavior change. New head: `6be6d92ee0d245ffac2c8536db3fff2acc834471`. Exact-head CI, formal independent review, staging, and production qualification remain pending.
-- Next: inspect CI for this exact head; repair genuine defects without weakening safety assertions. Keep the sixteen-case operated CW-02 matrix, real CW-11 mixed-version drain, browser/sandbox isolation, and personal-coworker scenarios open until matching evidence exists.
+- Current `main`: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460 is merged; its exact-head CI [#39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. Merged-main CI [#39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) was still in progress at the last status check; no success is inferred.
+- PR #461's earlier exact-head run [#39126595594](https://github.com/rumman52/Shuddho/actions/runs/39126595594) failed on a test expectation: the downstream draft correctly retained both the original `brief` and the verified upstream handoff. The corrected test now checks the persisted handoff manifest by stable source ID and the `EmailPackage`'s top-level `source_ids` field, rather than relying on list order or a nonexistent nested field.
+- The C-01 branch is reconciled with the current mainline in this continuation commit. Fresh exact-head `test-and-build`, mandatory zero-skip `coworker`, and `ci-merge-gate` results are required before repository verification. Formal independent review, operated staging, production qualification, and activation remain unestablished.
+- This checkpoint is not a declaration that Shuddho Architecture/Core Agent is complete. Keep the full CW-02 fault matrix, CW-11 mixed-version worker/drain, browser and sandbox isolation, and personal-coworker operational acceptance open until their matching evidence exists.
 
 ---
 
-## C-01 Runtime v3 grounded multi-step handoff — 18 October 2026
+## C-01 Runtime v3 grounded multi-step handoff — in progress (18 October 2026)
 
-**Base:** `main` `8bc5596ce7b3cce42d1d6f6f19b779156233009e`. **Branch:** `codex/c01-runtime-v3-adapter-e2e-20261018`. **Draft PR:** [#461](https://github.com/rumman52/Shuddho/pull/461). **Source/workflow commit:** `4b049ef83e2db666036ccdb0bb053823eb194206`; documentation checkpoint commits follow it.
+**Base:** `main` `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. **Branch / PR:** `codex/c01-runtime-v3-adapter-e2e-20261018`, [#461](https://github.com/rumman52/Shuddho/pull/461).
 
-**Current-truth correction:** the older CW-01 defects recorded in `ROADMAP.md` are stale: the qualification test exists, the heavy CI job explicitly executes it with a mandatory no-skip gate, and the current tests use the real binding/approval/claim/reconciliation APIs. The roadmap now records this correction rather than sending future work back to an already-repaired task.
+**Implementation:** `test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow` uses the actual `DeepSeekAgentPlanner` adapter with deterministic `httpx.MockTransport`, the real Temporal test worker, and the existing server-owned `document.create` and `email.draft` tools. It verifies the completed document observation, exact upstream task artifact handoff, source digest/provenance, two completed receipts, completion ordering, planner/token accounting, and absence of task text or synthetic credentials from Temporal history. Handoff flags are enabled only in synthetic test settings. No production runtime, API, schema, migration, authority, or default-flag behavior changes.
 
-**Implementation:** added `test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow` in `tests/test_coworker_temporal.py`. It uses the actual `DeepSeekAgentPlanner` adapter through deterministic `httpx.MockTransport`, the real Temporal test worker and the existing server-owned `document.create` and `email.draft` tools. It verifies that planning observes the completed document, that the email draft consumes the exact upstream task artifact through existing owner-scoped handoff source/provenance, and that completion follows both completed receipts. Handoff flags are enabled only in this synthetic test configuration; no deployment flag or production capability was changed. Added a dedicated no-skip CI step with JUnit evidence.
+**Failure correction:** run [#39126595594](https://github.com/rumman52/Shuddho/actions/runs/39126595594) exposed an assertion that incorrectly expected the original brief to be absent. A second source/schema audit found that the persisted draft stores the source digest in the manifest keyed by source ID and stores source references at `draft.source_ids`, not `draft.email.source_ids`. The assertions are corrected without weakening the acceptance criteria.
 
-**Acceptance status:** implementation and CI gate are committed; final-head CI is pending. Runs [#39125901905](https://github.com/rumman52/Shuddho/actions/runs/39125901905) and [#39126237152](https://github.com/rumman52/Shuddho/actions/runs/39126237152) targeted earlier branch heads and are stale after the workflow/checkpoint updates. The current head must pass `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. The GitHub connector did not execute local tests. The successful planner responses are synthetic; this is adapter/workflow integration evidence, not live DeepSeek quality or staging proof.
-
-**Dependency status:** PR #455 cancellation fence is merged with matching exact-head and merged-main CI evidence. The planner retry correction is on main and its dedicated gate passed in [run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510). PR #460 remains open/unmerged despite all three required CI jobs passing on its head; its discussion has automated no-major-findings responses, but no formal review submission is recorded by the GitHub API.
-
-**Next exact action:** verify the new dedicated handoff gate and all required jobs on the final PR #461 head; fix genuine failures without weakening assertions; then continue with live model-quality and operated cancellation/recovery evidence. Do not infer staging, production qualification or activation.
+**Evidence status:** prior runs target superseded heads. The branch is reconciled with current `main`; exact-head CI for the reconciled head is pending. The model transport and draft model are synthetic, so this is adapter/workflow integration evidence only—not live provider quality, staging, production qualification, or activation. Independent review is not recorded.
 
 ---
 
-## CW-02 planner retry regression follow-up — 18 October 2026 (Asia/Dhaka)
+## CW-02 planner retry regression follow-up — repository CI verified (18 October 2026)
 
-**Finding:** PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged as `1b665c03b8dbaf7d39104a7ae5f599d27220c5ec`, but exact-head CI [#39098101062](https://github.com/rumman52/Shuddho/actions/runs/39098101062) failed the mandatory coworker job: **4 failed, 1413 passed**. The four failures were in the new regression assertion, not the retry-attempt assertions: the run DTO intentionally retains a single ordinal-zero run-created sentinel in `steps`; the executable `plan` excludes that sentinel. It is incorrect to expect the entire `steps` collection to be empty.
+PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged the typed retryability propagation. The first regression assertion then failed because the run DTO retains an ordinal-zero run-created sentinel in `steps` while the executable `plan` excludes it. Follow-up PR [#457](https://github.com/rumman52/Shuddho/pull/457) corrected the assertion to require an empty executable plan, the non-executable sentinel, and zero tool invocations; its exact-head CI [#39099648984](https://github.com/rumman52/Shuddho/actions/runs/39099648984) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`.
 
-**Follow-up implementation:** branch `codex/cw02-planner-retryability-test-fix-20261018`. The regression now asserts an empty executable plan, the expected non-executable ordinal-zero sentinel, and zero tool invocations. CI adds a dedicated no-skip planner-retry gate with JUnit evidence. This is a test-contract correction; it does not weaken the no-decision/no-memory-proposal/no-tool-work assertions. Exact-head CI for this follow-up is pending.
-
-| Evidence level | Status |
-| --- | --- |
-| Retryability source change | Merged in PR #456; existing worker wrapper now honors typed PlannerFailure.retryable |
-| Regression tests | Follow-up assertion corrected; dedicated CI gate added; exact-head run pending |
-| Repository-verified | No — merged PR #456 failed mandatory coworker CI; follow-up must pass test-and-build, coworker, and ci-merge-gate |
-| Staging-verified | Not established; full CW-02 fault matrix and operated provider-side evidence remain separate |
-| Production-qualified / activated | Not established / not activated |
-
-No live model provider, protected staging secret, external transaction, deployment, or activation was used. Independent review does not replace passing CI.
-
-**Next exact action:** verify the follow-up PR’s final-head test-and-build, mandatory coworker, and ci-merge-gate; inspect the dedicated JUnit artifact; repair any genuine failures without weakening safety assertions; then continue the remaining CW-02 fault matrix and authorized operated qualification.
+This closes that repository-level regression slice only. It does not complete the CW-02 16-fault matrix, independent provider-side reconciliation, authorized staging qualification, production qualification, or activation.
 
 ---
 
