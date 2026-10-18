@@ -266,3 +266,35 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         if process.is_alive():
             os.kill(process.pid, signal.SIGKILL)
             process.join(10)
+
+
+def test_orphan_cleanup_reports_delete_failure_without_claiming_deletion(container):
+    """A failed object deletion is surfaced and never counted as successful cleanup."""
+    account_id = owner(container, "orphan-delete-failure")
+    key = f"{account_id}/outputs/orphan/delete-fails.bin"
+    body = b"preserve when deletion fails"
+    container.storage.put(key, body, "application/octet-stream")
+    old_time = time.time() - 7200
+    os.utime(container.storage.path(key), (old_time, old_time))
+
+    class DeleteFailingStore:
+        def __init__(self, delegate):
+            self.delegate = delegate
+
+        def delete(self, object_key):
+            raise OSError("injected object-store deletion failure")
+
+        def __getattr__(self, name):
+            return getattr(self.delegate, name)
+
+    container.retention.storage = DeleteFailingStore(container.storage)
+    result = container.retention.cleanup_orphans(
+        prefix=account_id,
+        min_age_seconds=3600,
+        dry_run=False,
+    )
+
+    assert {item["key"] for item in result["candidates"]} == {key}
+    assert result["deleted"] == 0
+    assert result["failed"] == [key]
+    assert container.storage.get(key, 1024) == body
