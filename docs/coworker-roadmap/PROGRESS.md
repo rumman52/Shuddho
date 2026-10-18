@@ -1,3 +1,13 @@
+## Current continuation — CW-02 multi-artifact read recovery (19 October 2026, Asia/Dhaka)
+
+- Main is `0f1b90843fe7a5360f69f1d309a09bc5b3e35dec`? **Correction: exact main SHA is `0f1b90843fe7a5360f69b42b6495d0b3c97c06c0`.** PR #466 is merged. Main CI run [#39154827269](https://github.com/rumman52/Shuddho/actions/runs/39154827269) was still in progress at last inspection; no all-green claim.
+- PR #466's merged tests cover a transient required-artifact GET failure and database response loss after an export checkpoint commit. The runner preserves blobs when checkpoint commit outcome is uncertain.
+- New branch `codex/cw02-multi-artifact-read-recovery-20261019` adds a multi-artifact test for repeated read failures: first artifact GET fails, then a later artifact GET fails after the first was verified. Both failures must leave the task non-terminal with zero published artifacts, preserve the export checkpoint/object keys, and allow a later clean retry to verify and publish the complete artifact set.
+- The test, CW-02 contract note, and refreshed acceptance-inventory checkpoint are committed on the branch. The exact branch-head CI and review remain pending.
+- No local execution, staging run, deployment, provider activation, independent security review, or production qualification is claimed. The full sixteen-row CW-02 staging evidence, CW11-STAGING mixed-version drain, browser/sandbox isolation and personal-coworker qualification remain open.
+
+---
+
 ## Current source-revalidation checkpoint — 18 October 2026 (Asia/Dhaka)
 
 - Refreshed main: `9e52756e4de52d95cc69879ce7cdbb3a390c0ac7`; #461 is merged, not open. No open PRs existed at task selection. Main CI [#39147097140](https://github.com/rumman52/Shuddho/actions/runs/39147097140) was still running when this checkpoint was written; its `test-and-build` job passed. The earlier #461 code/test head passed all three required jobs in #39141823326. No formal independent review submission was recorded for #461.
