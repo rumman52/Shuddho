@@ -10,7 +10,7 @@ PR #458 adds Temporal-worker regressions for a lost object-store write response,
 
 This branch adds a Temporal integration regression that terminates only the targeted backend in the disposable PostgreSQL CI database while the worker persists a receipt after the loopback provider has accepted a send. Temporal retries must not submit the action again. Because the send-only email connector cannot authoritatively reconcile the outcome, the correct safe state is `outcome_unknown` with no fabricated receipt and exactly one provider mutation. The existing pre-commit backend-termination test covers claim rollback; this is a distinct post-provider persistence boundary.
 
-Acceptance is pending exact-head CI and review. This remains a narrow fault-injection slice, not completion of the sixteen-case matrix, live provider-side reconciliation, staging, production qualification, or activation.
+Initial Codex review found that a terminal outcome alone did not prove the Temporal activity retried, because the workflow interruption fallback could also produce outcome_unknown. The regression now records execution-service attempts and requires a post-fault retry before accepting the final state. The finding is addressed in source but remains pending fresh exact-head CI and follow-up review. This remains a narrow fault-injection slice, not completion of the sixteen-case matrix, live provider-side reconciliation, staging, production qualification, or activation.
 ---
 
 ## CW-02 planner retry regression follow-up — 18 October 2026
