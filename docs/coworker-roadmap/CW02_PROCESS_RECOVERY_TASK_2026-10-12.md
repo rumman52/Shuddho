@@ -69,3 +69,10 @@ Regression tests in `tests/test_coworker.py` exercise two ambiguous boundaries:
 The runner cleans partial objects only when failure occurs before checkpoint submission. Once checkpoint submission starts, its commit outcome may be unknown; preserving objects is safer than destructive cleanup. Unreferenced objects left by an ambiguous/failed checkpoint are a cleanup concern and must not be represented as successfully published artifacts.
 
 This is repository-level fault-injection evidence using the test storage implementation. It does **not** qualify a live S3 outage, persistent read failures, orphan cleanup after process death, or the complete sixteen-case operated matrix. Those remain separate gates.
+
+
+## Follow-up: repeated and partial multi-artifact read failures — 19 October 2026
+
+`tests/test_coworker.py::test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_export` injects two separate object-store GET failures across retries: first on the first artifact, then on the second artifact after the first has verified. The acceptance contract is that neither failure publishes any Artifact record or completes the task; the durable export checkpoint and existing object keys remain unchanged; a later clean retry verifies both objects before publishing the complete set.
+
+This closes a repository-level gap in exercising a failure after partial verification of a multi-artifact result. It uses the repository storage interface and is not live S3, process-death cleanup, or staging evidence. Exact-head mandatory CI must pass before this test is treated as verified.
