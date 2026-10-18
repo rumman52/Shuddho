@@ -396,6 +396,45 @@ def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
                 execution_attempts.append((identity, fault["injected"]))
             return await original_service_execute(identity)
 
+        def assert_disposable_loopback_backend(sa_connection):
+            # Guard the destructive backend-termination call using both SQLAlchemy's
+            # configured URL and libpq's effective connection details. In libpq,
+            # query-string/environment connection parameters can override the URL host.
+            from ipaddress import ip_address
+
+            url = engine.url
+            target_overrides = {
+                "host", "hostaddr", "port", "service", "servicefile",
+                "dbname", "user", "replication", "target_session_attrs",
+                "load_balance_hosts",
+            }
+            assert not (target_overrides & {str(key).lower() for key in url.query}), (
+                "Refusing backend termination when PostgreSQL URL query overrides "
+                "connection-target parameters"
+            )
+            assert (
+                engine.dialect.name == "postgresql"
+                and url.host in {"localhost", "127.0.0.1"}
+                and url.database == "shuddho_coworker_test"
+                and url.username == "shuddho_test"
+            ), "Fault injection requires the configured disposable loopback CI PostgreSQL URL"
+
+            info = sa_connection.connection.driver_connection.info
+            assert info.host in {"localhost", "127.0.0.1"}, (
+                "Refusing backend termination: effective PostgreSQL host is not loopback"
+            )
+            if info.hostaddr:
+                assert ip_address(info.hostaddr).is_loopback, (
+                    "Refusing backend termination: effective PostgreSQL hostaddr is not loopback"
+                )
+            expected_port = url.port if url.port is not None else 5432
+            assert int(info.port) == expected_port, (
+                "Refusing backend termination: effective PostgreSQL port differs from the URL"
+            )
+            assert (info.dbname, info.user) == (
+                "shuddho_coworker_test", "shuddho_test"
+            ), "Fault injection requires the disposable CI PostgreSQL database and role"
+
         def terminate_receipt_write(connection, cursor, statement, parameters, context, executemany):
             normalized = statement.lstrip().upper()
             if not normalized.startswith("UPDATE") or "CW_EXTERNAL_ACTIONS" not in normalized:
@@ -406,12 +445,14 @@ def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
                 if not fault["armed"] or fault["injected"]:
                     return
                 fault["armed"] = False
-                fault["injected"] = True
 
-            # Terminate only the active backend for this targeted receipt write.
-            # The fixture preflight restricts this test to the disposable loopback CI DB.
+            # Validate the active write connection and the separate control connection
+            # immediately before pg_terminate_backend. Reject host/hostaddr/service
+            # overrides and verify libpq's effective endpoint, not only url.host.
+            assert_disposable_loopback_backend(connection)
             pid = connection.connection.driver_connection.info.backend_pid
             with engine.connect() as killer:
+                assert_disposable_loopback_backend(killer)
                 database_name, database_role = killer.execute(
                     text("SELECT current_database(), current_user")
                 ).one()
@@ -429,6 +470,8 @@ def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
                     if time.monotonic() >= deadline:
                         raise AssertionError("Target PostgreSQL backend did not terminate")
                     time.sleep(0.01)
+            with fault_lock:
+                fault["injected"] = True
 
         async def execute_then_arm(*args, **kwargs):
             receipt = await original_execute(*args, **kwargs)
