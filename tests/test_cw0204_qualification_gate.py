@@ -49,12 +49,22 @@ def _bundle(folder):
     directory = folder / "evidence"
     directory.mkdir()
     no_dispatch = {"model_429", "model_500", "model_timeout", "approval_after_expiration"}
-    no_applied = no_dispatch | {"provider_401", "provider_403"}
+    no_applied = no_dispatch | {"provider_401", "provider_403", "provider_429"}
     entries = []
     for i, name in enumerate(SCENARIOS):
         attempted = 0 if name in no_dispatch else 1
         applied = 0 if name in no_applied else 1
-        outcome = "blocked" if name in no_applied else "recovered"
+        outcome = (
+            "failed" if name in {
+                "model_429", "model_500", "model_timeout",
+                "provider_401", "provider_403", "provider_429",
+            } else
+            "uncertain" if name in {
+                "provider_500", "malformed_response", "lost_provider_response",
+            } else
+            "rejected" if name == "approval_after_expiration" else
+            "recovered"
+        )
         body = {
             "scenario_id": name, "source_revision": REV, "rollout_id": ROLLOUT,
             "test_run_id": f"synthetic-{i}", "observed_at": OBSERVED,
