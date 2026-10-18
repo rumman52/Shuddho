@@ -1005,7 +1005,12 @@ def test_agent_v3_model_failures_retry_within_bound_without_creating_work(
         assert saved["state"] == "failed"
         assert saved["planner_calls"] == expected_attempts
         assert saved["decisions"] == []
-        assert saved["steps"] == []
+        assert saved["plan"] == []
+        # Ordinal zero is the persistent run-created sentinel, not executable work.
+        assert len(saved["steps"]) == 1
+        assert saved["steps"][0]["ordinal"] == 0
+        assert saved["steps"][0]["tool"] is None
+        assert saved["tool_invocations"] == []
         assert "PRIVATE" not in history
         with container.repository.sessions() as db:
             assert db.scalars(select(AgentDecision).where(
