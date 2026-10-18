@@ -1,3 +1,11 @@
+## Current continuation checkpoint — 19 October 2026 (Asia/Dhaka)
+
+- **Default branch:** `main` at `0f1b90843fe7a5360f69b42b6495d0b3c97c06c0`, merge commit for [PR #466](https://github.com/rumman52/Shuddho/pull/466).
+- **PR #466:** merged; it adds artifact-read failure recovery and protects object blobs when the export-checkpoint commit response is lost. This is source integration, not final CI or staging qualification.
+- **Exact main CI:** [run #39154827269](https://github.com/rumman52/Shuddho/actions/runs/39154827269) was still in progress at the last refresh. The `coworker` job was executing the no-skip CW-10 code-proposal persistence check; do not call this SHA fully CI-verified until every mandatory job finishes successfully.
+- **Next implementation slice:** branch `codex/cw02-multi-artifact-read-recovery-20261019`, based on this main SHA, adds `test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_export`. It injects one GET failure on artifact one, then another on artifact two after artifact one verifies. Acceptance: neither attempt publishes partial Artifact records; retry reuses the existing export checkpoint and object keys; a clean attempt verifies both artifacts before completing. Exact-head CI is pending.
+- **Evidence boundary:** all sixteen CW-02 scenarios have repository-level coverage mapped below at different levels, but the full matrix remains unqualified until sixteen unique checksummed artifacts match a frozen real staging rollout and independent provider-side observations. CW-11 mixed-version drain, real browser/sandbox isolation, complete personal-coworker workflows, release review and production qualification remain open.
+
 ## Current architecture/core continuation checkpoint — 18 October 2026 (Asia/Dhaka)
 
 - **Default branch:** `main` at `2fcabef354992bf983570986c3aec7c59167a218` (merge commit for PR #462).
