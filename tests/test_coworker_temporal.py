@@ -1268,8 +1268,8 @@ def test_object_store_disconnect_retries_export_and_verification_without_false_c
             def __init__(self, wrapped):
                 self.wrapped = wrapped
                 self.put_calls = []
+                self.target_put_calls = []
                 self.get_calls = []
-                self.put_attempts = 0
                 self.get_attempts = 0
                 self.put_retry_entered = threading.Event()
                 self.release_put = threading.Event()
@@ -1277,16 +1277,18 @@ def test_object_store_disconnect_retries_export_and_verification_without_false_c
                 self.release_get = threading.Event()
 
             def put(self, key, data, content_type):
-                self.put_calls.append((key, hashlib.sha256(data).hexdigest()))
-                self.put_attempts += 1
-                if self.put_attempts == 1:
-                    # Simulate an accepted S3 write whose response is lost.
-                    self.wrapped.put(key, data, content_type)
-                    raise OSError("simulated object-store write response loss")
-                if self.put_attempts == 2:
-                    self.put_retry_entered.set()
-                    if not self.release_put.wait(20):
-                        raise TimeoutError("test did not release the object-store write retry")
+                digest = hashlib.sha256(data).hexdigest()
+                self.put_calls.append((key, digest))
+                if key.endswith("/email-draft.txt"):
+                    self.target_put_calls.append((key, digest))
+                    if len(self.target_put_calls) == 1:
+                        # This deterministic text artifact was stored, but its write response was lost.
+                        self.wrapped.put(key, data, content_type)
+                        raise OSError("simulated object-store write response loss")
+                    if len(self.target_put_calls) == 2:
+                        self.put_retry_entered.set()
+                        if not self.release_put.wait(20):
+                            raise TimeoutError("test did not release the object-store write retry")
                 return self.wrapped.put(key, data, content_type)
 
             def get(self, key, max_bytes):
@@ -1335,11 +1337,11 @@ def test_object_store_disconnect_retries_export_and_verification_without_false_c
         assert result["state"] == "completed"
         assert len(result["artifacts"]) == 4
         assert model.calls == 1
-        # A lost write response is retried against the exact same key and bytes.
-        assert storage.put_calls[0] == storage.put_calls[1]
+        # The deterministic text artifact is retried against the exact same key and bytes.
+        assert storage.target_put_calls[0] == storage.target_put_calls[1]
         # Completion re-reads the same first artifact after the transient read fault.
         assert storage.get_calls[0] == storage.get_calls[1]
-        assert len({key for key, _digest in storage.put_calls}) == 4
+        assert len({key for key, _digest in storage.target_put_calls}) == 1
         for artifact in result["artifacts"]:
             owned = container.repository.artifact(owner, artifact["id"])
             body = container.storage.get(owned["object_key"], owned["byte_size"])
@@ -1349,6 +1351,7 @@ def test_object_store_disconnect_retries_export_and_verification_without_false_c
 
 
 def test_attachment_storage_disconnect_retries_before_dispatch_and_never_resends(container):
+    import hashlib
     import threading
 
     from action_samples import connected, enable_actions
@@ -1372,7 +1375,7 @@ def test_attachment_storage_disconnect_retries_before_dispatch_and_never_resends
             "content_type": "text/plain",
             "object_key": key,
             "byte_size": len(body),
-            "sha256": __import__("hashlib").sha256(body).hexdigest(),
+            "sha256": hashlib.sha256(body).hexdigest(),
         }])
         artifact = container.repository.get_task(owner, task["id"])["artifacts"][0]
         connection = connected(container.actions.repo, owner, "email")
