@@ -1,16 +1,16 @@
-## C-01 Runtime v3 successful planner-adapter integration — 18 October 2026
+## C-01 Runtime v3 grounded multi-step handoff — 18 October 2026
 
-**Base:** `main` `8bc5596ce7b3cce42d1d6f6f19b779156233009e`. **Branch:** `codex/c01-runtime-v3-adapter-e2e-20261018`. **PR:** pending.
+**Base:** `main` `8bc5596ce7b3cce42d1d6f6f19b779156233009e`. **Branch:** `codex/c01-runtime-v3-adapter-e2e-20261018`. **Draft PR:** [#461](https://github.com/rumman52/Shuddho/pull/461). **Current head:** `302fa5383c26b10809fa3bf741cc3e31d1daaa29`.
 
 **Current-truth correction:** the older CW-01 defects recorded in `ROADMAP.md` are stale: the qualification test exists, the heavy CI job explicitly executes it with a mandatory no-skip gate, and the current tests use the real binding/approval/claim/reconciliation APIs. The roadmap now records this correction rather than sending future work back to an already-repaired task.
 
-**Implementation:** added `test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow` in `tests/test_coworker_temporal.py`. It calls the actual `DeepSeekAgentPlanner` adapter through deterministic `httpx.MockTransport`, while a real Temporal test worker runs `document.create`, passes its verified observation to the next planner call, runs `email.draft`, then accepts `complete` only with both completed observations. It checks request policy, exact call count, token accounting, persisted decisions/receipts and that the synthetic API key and task/document text are absent from Temporal history.
+**Implementation:** added `test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow` in `tests/test_coworker_temporal.py`. It uses the actual `DeepSeekAgentPlanner` adapter through deterministic `httpx.MockTransport`, the real Temporal test worker and the existing server-owned `document.create` and `email.draft` tools. It verifies that planning observes the completed document, that the email draft consumes the exact upstream task artifact through existing owner-scoped handoff source/provenance, and that completion follows both completed receipts. Handoff flags are enabled only in this synthetic test configuration; no deployment flag or production capability was changed.
 
-**Acceptance status:** implementation is committed to this branch; exact final-head CI is pending. The GitHub connector did not execute local tests. The successful response bodies are synthetic; this is adapter/workflow integration evidence, not live DeepSeek quality or staging proof.
+**Acceptance status:** implementation is committed; final-head CI is pending. CI run [#39125901905](https://github.com/rumman52/Shuddho/actions/runs/39125901905) ran on the previous head `bc608889730f919af35211a234ab15a4cd3f9102` and is stale after the handoff assertion commit `302fa5383c26b10809fa3bf741cc3e31d1daaa29`. The GitHub connector did not execute local tests. The successful planner responses are synthetic; this is adapter/workflow integration evidence, not live DeepSeek quality or staging proof.
 
 **Dependency status:** PR #455 cancellation fence is merged with matching exact-head and merged-main CI evidence. The planner retry correction is on main and its dedicated gate passed in [run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510). PR #460 remains open/unmerged despite all three required CI jobs passing on its head; its discussion has automated no-major-findings responses, but no formal review submission is recorded by the GitHub API.
 
-**Next exact action:** open the C-01 PR; require `test-and-build`, mandatory zero-skip `coworker`, and `ci-merge-gate` on its final SHA; repair genuine failures without weakening assertions; then continue with live model-quality and operated cancellation/recovery evidence. Do not infer staging, production qualification or activation.
+**Next exact action:** verify `test-and-build`, mandatory zero-skip `coworker`, and `ci-merge-gate` on the latest PR #461 head; fix genuine failures without weakening assertions; then continue with live model-quality and operated cancellation/recovery evidence. Do not infer staging, production qualification or activation.
 
 ---
 
