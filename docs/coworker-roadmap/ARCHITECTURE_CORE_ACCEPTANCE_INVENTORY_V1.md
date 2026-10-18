@@ -1,3 +1,16 @@
+## CW-02 object-storage recovery regression slice — 18 October 2026
+
+Candidate branch: `codex/cw02-s3-artifact-recovery-20261018`, based on audited main `ab3ae23b5b84cea8613a93d340a3e0f2c05753f0`.
+
+The candidate adds real Temporal-worker regressions with injected object-store faults:
+- An output write is accepted but its response is lost; retry must use the same object key and content digest.
+- A required artifact read disconnects during completion; the task must remain incomplete and publish no artifacts until the worker can read and verify the saved bytes.
+- An approved attachment read disconnects before the action claim; no provider send may occur before storage recovers, and replay after a confirmed send must not send again.
+
+Evidence boundary: these are deterministic failure-injection tests through the existing worker and object-store interface. They do not prove live S3 availability, staging deployment behavior, the full 16-fault CW-02 matrix, production qualification, or activation. Required exact-head CI and independent review remain gates.
+
+---
+
 ## CW-02 planner retry regression follow-up — 18 October 2026
 
 PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged the typed retryability propagation in the Temporal worker, but exact-head CI [#39098101062](https://github.com/rumman52/Shuddho/actions/runs/39098101062) failed mandatory coworker tests with four failures. The regression tests incorrectly asserted that the DTO's full steps array would be empty. A run intentionally retains an ordinal-zero sentinel created at run admission; the executable plan excludes ordinal zero.

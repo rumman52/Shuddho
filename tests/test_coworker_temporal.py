@@ -1254,3 +1254,191 @@ def test_agent_runtime_version_is_frozen_per_new_run(container):
 
     asyncio.run(scenario())
 
+
+def test_object_store_disconnect_retries_export_and_verification_without_false_completion(container):
+    import hashlib
+    import threading
+
+    async def scenario():
+        owner = account(container)
+        task = new_task(container, owner)
+        delegate = container.storage
+
+        class FaultingStore:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.put_calls = []
+                self.target_put_calls = []
+                self.get_calls = []
+                self.get_attempts = 0
+                self.put_retry_entered = threading.Event()
+                self.release_put = threading.Event()
+                self.get_retry_entered = threading.Event()
+                self.release_get = threading.Event()
+
+            def put(self, key, data, content_type):
+                digest = hashlib.sha256(data).hexdigest()
+                self.put_calls.append((key, digest))
+                if key.endswith("/email-draft.txt"):
+                    self.target_put_calls.append((key, digest))
+                    if len(self.target_put_calls) == 1:
+                        # This deterministic text artifact was stored, but its write response was lost.
+                        self.wrapped.put(key, data, content_type)
+                        raise OSError("simulated object-store write response loss")
+                    if len(self.target_put_calls) == 2:
+                        self.put_retry_entered.set()
+                        if not self.release_put.wait(20):
+                            raise TimeoutError("test did not release the object-store write retry")
+                return self.wrapped.put(key, data, content_type)
+
+            def get(self, key, max_bytes):
+                self.get_calls.append(key)
+                self.get_attempts += 1
+                if self.get_attempts == 1:
+                    raise OSError("simulated object-store read disconnect")
+                if self.get_attempts == 2:
+                    self.get_retry_entered.set()
+                    if not self.release_get.wait(20):
+                        raise TimeoutError("test did not release the object-store read retry")
+                return self.wrapped.get(key, max_bytes)
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        storage = FaultingStore(delegate)
+        container.storage = storage
+        model = FakeModel()
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, DocumentRunner(container, model)):
+                await dispatch_tick(container, env.client)
+                handle = await run_handle(env, task["id"])
+                async with env.time_skipping_unlocked():
+                    assert await asyncio.wait_for(
+                        asyncio.to_thread(storage.put_retry_entered.wait, 20), 30
+                    )
+                    current = container.repository.get_task(owner, task["id"])
+                    assert current["state"] != "completed"
+                    assert container.repository.step(task["id"], "export") is None
+
+                    storage.release_put.set()
+                    assert await asyncio.wait_for(
+                        asyncio.to_thread(storage.get_retry_entered.wait, 20), 30
+                    )
+                    current = container.repository.get_task(owner, task["id"])
+                    assert current["state"] != "completed"
+                    assert current["artifacts"] == []
+                    assert container.repository.step(task["id"], "export") is not None
+
+                    storage.release_get.set()
+                    await asyncio.wait_for(handle.result(), 30)
+
+        result = container.repository.get_task(owner, task["id"])
+        assert result["state"] == "completed"
+        assert len(result["artifacts"]) == 4
+        assert model.calls == 1
+        # The deterministic text artifact is retried against the exact same key and bytes.
+        assert storage.target_put_calls[0] == storage.target_put_calls[1]
+        # Completion re-reads the same first artifact after the transient read fault.
+        assert storage.get_calls[0] == storage.get_calls[1]
+        assert len({key for key, _digest in storage.target_put_calls}) == 1
+        for artifact in result["artifacts"]:
+            owned = container.repository.artifact(owner, artifact["id"])
+            body = container.storage.get(owned["object_key"], owned["byte_size"])
+            assert hashlib.sha256(body).hexdigest() == owned["sha256"]
+
+    asyncio.run(scenario())
+
+
+def test_attachment_storage_disconnect_retries_before_dispatch_and_never_resends(container):
+    import hashlib
+    import threading
+
+    from action_samples import connected, enable_actions
+    from services.coworker.action_schemas import ActionPrepare
+
+    async def scenario():
+        provider = enable_actions(container)
+        settings = replace(container.settings, action_attachments_enabled=True)
+        settings.validate()
+        container.settings = settings
+        container.repository.settings = settings
+        container.actions.repo.settings = settings
+
+        owner = account(container)
+        task = new_task(container, owner)
+        body = b"approved attachment bytes"
+        key = f"{owner}/outputs/{task['id']}/approved.txt"
+        container.storage.put(key, body, "text/plain")
+        container.repository.complete(task["id"], [{
+            "filename": "approved.txt",
+            "content_type": "text/plain",
+            "object_key": key,
+            "byte_size": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+        }])
+        artifact = container.repository.get_task(owner, task["id"])["artifacts"][0]
+        connection = connected(container.actions.repo, owner, "email")
+        request = ActionPrepare.model_validate({
+            "connection_id": connection["id"],
+            "attachment_ids": [artifact["id"]],
+            "payload": {
+                "kind": "email_send_with_attachments",
+                "to": ["recipient@example.org"],
+                "cc": [],
+                "bcc": [],
+                "subject": "Approved attachment",
+                "body": "Please review the attached Shuddho artifact.",
+            },
+        })
+        prepared = container.actions.repo.prepare(owner, request, "s3-attachment-recovery")
+        approved = container.actions.repo.approve(owner, prepared["id"], prepared["preview_hash"])
+        delegate = container.storage
+
+        class FaultingReadStore:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.calls = 0
+                self.retry_entered = threading.Event()
+                self.release = threading.Event()
+
+            def get(self, object_key, max_bytes):
+                self.calls += 1
+                if self.calls == 1:
+                    raise OSError("simulated object-store attachment read disconnect")
+                if self.calls == 2:
+                    self.retry_entered.set()
+                    if not self.release.wait(20):
+                        raise TimeoutError("test did not release the attachment read retry")
+                return self.wrapped.get(object_key, max_bytes)
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        storage = FaultingReadStore(delegate)
+        container.storage = storage
+        container.actions.storage = storage
+
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, DocumentRunner(container, FakeModel())):
+                await dispatch_tick(container, env.client)
+                handle = env.client.get_workflow_handle("shuddho-action-" + approved["id"])
+                async with env.time_skipping_unlocked():
+                    assert await asyncio.wait_for(
+                        asyncio.to_thread(storage.retry_entered.wait, 20), 30
+                    )
+                    # Storage is read before the durable external-action claim.
+                    assert container.actions.repo.get(owner, approved["id"])["state"] == "queued"
+                    assert provider.sent == []
+                    storage.release.set()
+                    await asyncio.wait_for(handle.result(), 30)
+
+        result = container.actions.repo.get(owner, approved["id"])
+        assert result["state"] == "succeeded"
+        assert storage.calls >= 2
+        assert len(provider.sent) == 1
+        # Replaying an already-confirmed action cannot send the email again.
+        await container.actions.execute(approved["id"])
+        assert len(provider.sent) == 1
+
+    asyncio.run(scenario())
