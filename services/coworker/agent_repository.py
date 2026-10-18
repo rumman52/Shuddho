@@ -2263,6 +2263,10 @@ class AgentRepository:
                     "The Agent run is no longer active.",
                     409,
                 )
+            # Inference may outlive the selected document or original message
+            # binding. Recheck the admission pins before retaining fresh model
+            # output; already-committed decisions above remain replayable.
+            require_admitted_conversation_run_sources(db, run)
             sequence = db.scalar(select(func.count()).select_from(AgentDecision).where(
                 AgentDecision.run_id == run.id,
             )) + 1

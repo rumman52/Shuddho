@@ -1,5 +1,8 @@
 """CW-06 admission tests: one atomic ledger identity, no external mutation."""
 from dataclasses import replace
+import asyncio
+import hashlib
+from datetime import timedelta
 import pytest
 
 pytest.importorskip("sqlalchemy")
@@ -249,4 +252,133 @@ def test_activity_cursors_reject_wrong_conversation_and_malformed_input(containe
         with pytest.raises(CoworkerError) as bad:
             dispatch.activity(owner, conv["id"], after=invalid)
         assert bad.value.code == "invalid_cursor"
+
+
+def _v3_selected_source_run(container):
+    from services.coworker.schemas import UploadRequest
+
+    settings = replace(
+        container.settings, conversations_enabled=True, agent_runtime_enabled=True,
+        agent_runtime_v3_enabled=True, intelligent_planner_enabled=True,
+        work_services_enabled=True, context_retrieval_enabled=True,
+        max_agent_v3_planner_calls=2, agent_v3_planner_token_budget=16000,
+    )
+    container.settings = settings
+    for service in (container.repository, container.agent, container.context, container.memory,
+                    container.conversations, container.conversation_dispatch):
+        service.settings = settings
+    owner = account(container)
+    body = b"Quarterly project update: twelve reviews completed."
+    upload = container.repository.create_upload(owner, UploadRequest(
+        filename="project.txt", byte_size=len(body), sha256=hashlib.sha256(body).hexdigest(),
+    ))
+    source = container.repository.get_upload(owner, upload["id"])
+    container.storage.put(source["object_key"], body, "text/plain")
+    container.repository.finish_upload(owner, upload["id"])
+    conversation, _ = container.conversations.create(
+        owner, ConversationCreate(title="Project update"), "late-v3-source-conversation",
+    )
+    msg, _ = container.conversations.append_message(owner, conversation["id"], MessageCreate(
+        text="Draft an email with a detailed project update using the selected document.",
+        client_request_key="late-v3-source-message", selected_resource_ids=[upload["version_id"]],
+    ))
+    admitted, _ = container.conversation_dispatch.dispatch(
+        owner, conversation["id"], msg["id"], expected_sequence=1,
+    )
+    return owner, admitted["run_id"], upload, msg
+
+
+@pytest.mark.parametrize("change", ["deleted", "expired", "sha256", "version", "unlinked", "unchanged"])
+def test_late_v3_planner_response_rechecks_selected_conversation_sources(container, change):
+    """A source invalidated during inference cannot create a decision or tool step."""
+    from services.coworker.agent_runtime import AgentRuntime
+    from services.coworker.agent_schemas import AgentV3Decision
+    from services.coworker.models import (
+        AgentCheckpoint, AgentDecision, DocumentVersion, MemoryProposal, ToolInvocation, utcnow,
+    )
+    from services.coworker.runner import DocumentRunner
+    from test_coworker import FakeModel
+
+    owner, run_id, upload, msg = _v3_selected_source_run(container)
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class DelayedPlanner:
+            async def decide(self, _goal, _tools, _observations, **kwargs):
+                assert kwargs["dependencies"]["context"]["items"][0]["sha256"] == upload["sha256"]
+                entered.set()
+                await release.wait()
+                return AgentV3Decision(
+                    decision="next_step", tool="email.draft",
+                    objective="Draft an update about twelve completed reviews.",
+                ), 24, 1, {
+                    "model": "synthetic-planner", "prompt_sha256": "a" * 64,
+                    "tool_schema_sha256": "b" * 64,
+                }
+
+        runtime = AgentRuntime(container, DocumentRunner(container, FakeModel()), planner=DelayedPlanner())
+        pending = asyncio.create_task(runtime.decide_v3(run_id))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            if change == "deleted":
+                container.repository.delete_document(owner, upload["id"])
+            elif change != "unchanged":
+                with container.repository.sessions.begin() as db:
+                    version = db.get(DocumentVersion, upload["version_id"])
+                    if change == "expired":
+                        version.expires_at = utcnow() - timedelta(seconds=1)
+                    elif change == "sha256":
+                        version.sha256 = "f" * 64
+                    elif change == "version":
+                        version.version += 1
+                    else:
+                        db.get(ConversationMessage, msg["id"]).resource_links = []
+            release.set()
+            if change == "unchanged":
+                assert await pending == {"decision": "next_step", "ordinal": 1}
+            else:
+                with pytest.raises(CoworkerError) as rejected:
+                    await pending
+                assert rejected.value.code == "context_sources_changed"
+        finally:
+            release.set()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    asyncio.run(scenario())
+    with container.repository.sessions() as db:
+        expected = 1 if change == "unchanged" else 0
+        assert len(db.scalars(select(AgentDecision).where(AgentDecision.run_id == run_id)).all()) == expected
+        assert len(db.scalars(select(ToolInvocation).where(ToolInvocation.run_id == run_id)).all()) == expected
+        assert len(db.scalars(select(AgentCheckpoint).where(
+            AgentCheckpoint.run_id == run_id, AgentCheckpoint.kind == "analysis_decision",
+        )).all()) == expected
+        assert db.scalars(select(MemoryProposal).where(MemoryProposal.run_id == run_id)).all() == []
+        # The completed model call still consumes its actual budget on rejection.
+        saved = db.get(AgentRun, run_id)
+        assert saved.planner_calls == 1 and saved.planner_actual_tokens == 24
+        assert saved.planner_tokens == 8000  # Conservative reservation is retained.
+
+
+def test_committed_v3_decision_replays_after_source_deletion_without_new_decision(container):
+    from services.coworker.agent_schemas import AgentV3Decision
+    from services.coworker.models import AgentDecision
+
+    owner, run_id, upload, _ = _v3_selected_source_run(container)
+    decision = AgentV3Decision(decision="wait", wait_seconds=1)
+    evidence = dict(
+        planner_call=1, model="synthetic-planner", prompt_sha256="a" * 64,
+        tool_schema_sha256="b" * 64, observation_count=0, total_tokens=24, cost_microusd=None,
+    )
+    container.agent.record_v3_decision(run_id, decision, **evidence)
+    container.repository.delete_document(owner, upload["id"])
+    container.agent.record_v3_decision(run_id, decision, **evidence)
+    with pytest.raises(CoworkerError) as rejected:
+        container.agent.record_v3_decision(run_id, decision, **(evidence | {"planner_call": 2}))
+    assert rejected.value.code == "context_sources_changed"
+    with container.repository.sessions() as db:
+        rows = db.scalars(select(AgentDecision).where(AgentDecision.run_id == run_id)).all()
+        assert len(rows) == 1 and rows[0].planner_call == 1
 
