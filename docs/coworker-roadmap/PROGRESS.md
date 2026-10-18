@@ -1,3 +1,23 @@
+## CW-02 planner retry regression follow-up — 18 October 2026 (Asia/Dhaka)
+
+**Finding:** PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged as `1b665c03b8dbaf7d39104a7ae5f599d27220c5ec`, but exact-head CI [#39098101062](https://github.com/rumman52/Shuddho/actions/runs/39098101062) failed the mandatory coworker job: **4 failed, 1413 passed**. The four failures were in the new regression assertion, not the retry-attempt assertions: the run DTO intentionally retains a single ordinal-zero run-created sentinel in `steps`; the executable `plan` excludes that sentinel. It is incorrect to expect the entire `steps` collection to be empty.
+
+**Follow-up implementation:** branch `codex/cw02-planner-retryability-test-fix-20261018`. The regression now asserts an empty executable plan, the expected non-executable ordinal-zero sentinel, and zero tool invocations. CI adds a dedicated no-skip planner-retry gate with JUnit evidence. This is a test-contract correction; it does not weaken the no-decision/no-memory-proposal/no-tool-work assertions. Exact-head CI for this follow-up is pending.
+
+| Evidence level | Status |
+| --- | --- |
+| Retryability source change | Merged in PR #456; existing worker wrapper now honors typed PlannerFailure.retryable |
+| Regression tests | Follow-up assertion corrected; dedicated CI gate added; exact-head run pending |
+| Repository-verified | No — merged PR #456 failed mandatory coworker CI; follow-up must pass test-and-build, coworker, and ci-merge-gate |
+| Staging-verified | Not established; full CW-02 fault matrix and operated provider-side evidence remain separate |
+| Production-qualified / activated | Not established / not activated |
+
+No live model provider, protected staging secret, external transaction, deployment, or activation was used. Independent review does not replace passing CI.
+
+**Next exact action:** verify the follow-up PR’s final-head test-and-build, mandatory coworker, and ci-merge-gate; inspect the dedicated JUnit artifact; repair any genuine failures without weakening safety assertions; then continue the remaining CW-02 fault matrix and authorized operated qualification.
+
+---
+
 ## Runtime v3 late planner cancellation fence — 18 October 2026 (Asia/Dhaka)
 
 **Roadmap mapping:** this is a cross-cutting correctness slice supporting the CW-06 acceptance criterion “cancellation beats delayed result.” It does **not** complete all of CW-06 and is not the roadmap's CW-02 transaction-chaos task. The branch name retains its historical `cw02` segment from the original failing-first test commit.
@@ -9,12 +29,12 @@
 | Evidence level | Status |
 | --- | --- |
 | Implemented | Yes — source and regressions are on PR #455 |
-| Repository-verified | Pending exact-final-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` |
+| Repository-verified | Yes — PR #455 exact-head CI #39062674571 and merged-main CI #39063079528 passed all three required jobs |
 | Staging-verified | Not established; operated CW-02 transaction-chaos and full CW-06 acceptance remain separate |
 | Production-qualified | Not established |
 | Activated | No |
 
-No provider was called, no secret or protected staging environment was accessed, no deployment or capability activation occurred, and no independent review is claimed. **Next exact action:** inspect all required CI jobs on the final PR head, repair real failures without weakening safety assertions, then obtain independent review and complete the authorized operated cancellation/recovery qualification.
+No provider was called, no secret or protected staging environment was accessed, and no deployment or capability activation occurred. Independent review is not claimed. **Next exact action:** fix the separate CW-02 planner-retry regression assertion and obtain exact-head CI evidence, then complete the remaining CW-02 fault matrix and authorized operated cancellation/recovery qualification.
 
 ---
 
