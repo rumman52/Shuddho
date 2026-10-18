@@ -21,9 +21,24 @@ SCENARIOS = (
 
 NO_APPLIED_MUTATION = frozenset({
     "model_429", "model_500", "model_timeout", "provider_401",
-    "provider_403", "approval_after_expiration",
+    "provider_403", "provider_429", "approval_after_expiration",
 })
 NO_DISPATCH = frozenset({"model_429", "model_500", "model_timeout", "approval_after_expiration"})
+
+# These cases have deterministic counter/state contracts in the controlled fault
+# harness. A manifest must not be accepted merely because its fields are well formed.
+EXACT_COUNTER_CONTRACTS = {
+    "model_429": (0, 0, frozenset({"failed", "rejected"})),
+    "model_500": (0, 0, frozenset({"failed", "rejected"})),
+    "model_timeout": (0, 0, frozenset({"failed", "rejected"})),
+    "provider_401": (1, 0, frozenset({"failed", "rejected"})),
+    "provider_403": (1, 0, frozenset({"failed", "rejected"})),
+    "provider_429": (1, 0, frozenset({"failed", "rejected"})),
+    "provider_500": (1, 1, frozenset({"uncertain"})),
+    "malformed_response": (1, 1, frozenset({"uncertain"})),
+    "lost_provider_response": (1, 1, frozenset({"uncertain"})),
+    "approval_after_expiration": (0, 0, frozenset({"rejected", "blocked"})),
+}
 MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 
 
@@ -146,8 +161,19 @@ def qualify(document: dict, *, expected_revision: str, expected_rollout: str) ->
             problems.append(f"{name}: expected zero applied provider mutations")
         if name in NO_DISPATCH and attempts != 0:
             problems.append(f"{name}: expected zero provider dispatch attempts")
-        if name == "lost_provider_response" and (attempts != 1 or applied != 1):
-            problems.append(f"{name}: must demonstrate one submission and one provider mutation")
+        contract = EXACT_COUNTER_CONTRACTS.get(name)
+        if contract is not None and type(attempts) is int and type(applied) is int:
+            expected_attempts, expected_applied, expected_outcomes = contract
+            if (attempts, applied) != (expected_attempts, expected_applied):
+                problems.append(
+                    f"{name}: expected attempted_mutations={expected_attempts} "
+                    f"and applied_mutations={expected_applied}"
+                )
+            if entry.get("outcome") not in expected_outcomes:
+                problems.append(
+                    f"{name}: outcome must be one of {sorted(expected_outcomes)} "
+                    f"for its fault contract"
+                )
         if entry.get("outcome") not in ("rejected", "failed", "uncertain", "confirmed", "recovered", "blocked"):
             problems.append(f"{name}: missing explicit outcome")
     for name in SCENARIOS:
