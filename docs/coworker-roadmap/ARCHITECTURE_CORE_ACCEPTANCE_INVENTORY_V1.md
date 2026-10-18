@@ -1,3 +1,12 @@
+## Current continuation checkpoint — 18 October 2026 (Asia/Dhaka)
+
+- Live `main` is `ea7ad398f69e898b152f4227cb6e0c1a193999c1`; PR #460 has merged, but the main branch still reports protection disabled and required checks unenforced. Do not treat CI as an effective merge barrier until repository settings are corrected.
+- PR #461 C-01 integration test's first exact-head CI run [#39126595594](https://github.com/rumman52/Shuddho/actions/runs/39126595594) passed `test-and-build` but failed the dedicated handoff test: the draft correctly contained both the original brief and the upstream handoff, while the test incorrectly expected only one source.
+- Fixed the test to assert both sources and select the handoff by stable source ID rather than list order. This is a test expectation correction, not a production behavior change. New head: `6be6d92ee0d245ffac2c8536db3fff2acc834471`. Exact-head CI, formal independent review, staging, and production qualification remain pending.
+- Next: inspect CI for this exact head; repair genuine defects without weakening safety assertions. Keep the sixteen-case operated CW-02 matrix, real CW-11 mixed-version drain, browser/sandbox isolation, and personal-coworker scenarios open until matching evidence exists.
+
+---
+
 ## Current mainline checkpoint — 18 October 2026 (Asia/Dhaka)
 
 Current main: `8bc5596ce7b3cce42d1d6f6f19b779156233009e` (PR #459 merged). [PR #460](https://github.com/rumman52/Shuddho/pull/460) remains open and unmerged. Its exact-head [CI run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. The PR discussion includes automated responses reporting no major findings, but there is no formal review submission in the GitHub API; independent security sign-off is not recorded.
