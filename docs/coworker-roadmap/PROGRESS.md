@@ -1,20 +1,41 @@
+## CW-02 per-scenario mutation/outcome contract — 18 October 2026 (Asia/Dhaka)
+
+**Refreshed baseline:** `main` is `ab3ae23b5b84cea8613a93d340a3e0f2c05753f0`, merged PR #457. Exact-head CI [#39099648984](https://github.com/rumman52/Shuddho/actions/runs/39099648984) and post-merge main CI [#39101295869](https://github.com/rumman52/Shuddho/actions/runs/39101295869) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. The PR artifact list includes `cw02-planner-retry-evidence`; these are repository/synthetic-provider checks, not staging proof.
+
+**Next dependency-ready CW-02 defect:** `scripts/transaction_chaos_matrix.py` validated the manifest's generic counter ranges but allowed internally impossible scenario claims (for example, a model failure with provider dispatch, API-crash replay with a provider mutation, or a lost response reported as confirmed without recovery evidence).
+
+**Implementation on review branch** `codex/cw02-scenario-outcome-contract-20261018`: the validator now defines explicit allowed dispatch/applied-mutation pairs and allowed outcomes for every one of the 16 canonical scenarios. Added a contract-table completeness check and regressions for invalid counts/outcome combinations. This is a fail-closed manifest-validation improvement; it does not execute the faults, create provider evidence, or establish live staging.
+
+| Evidence level | Status |
+| --- | --- |
+| Implemented | Yes — validator and regression tests committed on the review branch |
+| Repository-verified | Pending exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` |
+| Staging-verified | Not established; full CW-02 PostgreSQL/Temporal/process/storage fault matrix and operated provider-side evidence remain incomplete |
+| Production-qualified / activated | Not established / not activated |
+
+No live provider, protected staging secret, external transaction, deployment, or activation was used. The scenario manifest remains evidence validation, not an executable fault-injection runner. The full 16-fault operational matrix still needs exact boundaries, PostgreSQL/Temporal recovery, S3/database interruption evidence and independent provider-side mutation counts.
+
+**Next exact action:** pass and inspect exact-head CI for this contract hardening, then continue the remaining CW-02 executable fault coverage without weakening safety assertions. Obtain authorized staging and provider evidence separately; do not claim production qualification.
+
+---
+
 ## CW-02 planner retry regression follow-up — 18 October 2026 (Asia/Dhaka)
 
 **Finding:** PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged as `1b665c03b8dbaf7d39104a7ae5f599d27220c5ec`, but exact-head CI [#39098101062](https://github.com/rumman52/Shuddho/actions/runs/39098101062) failed the mandatory coworker job: **4 failed, 1413 passed**. The four failures were in the new regression assertion, not the retry-attempt assertions: the run DTO intentionally retains a single ordinal-zero run-created sentinel in `steps`; the executable `plan` excludes that sentinel. It is incorrect to expect the entire `steps` collection to be empty.
 
-**Follow-up implementation:** branch `codex/cw02-planner-retryability-test-fix-20261018`. The regression now asserts an empty executable plan, the expected non-executable ordinal-zero sentinel, and zero tool invocations. CI adds a dedicated no-skip planner-retry gate with JUnit evidence. This is a test-contract correction; it does not weaken the no-decision/no-memory-proposal/no-tool-work assertions. Exact-head CI for this follow-up is pending.
+**Follow-up implementation:** branch `codex/cw02-planner-retryability-test-fix-20261018`. The regression now asserts an empty executable plan, the expected non-executable ordinal-zero sentinel, and zero tool invocations. CI adds a dedicated no-skip planner-retry gate with JUnit evidence. This is a test-contract correction; it does not weaken the no-decision/no-memory-proposal/no-tool-work assertions. Follow-up PR #457 is now merged; exact-head CI #39099648984 and merged-main CI #39101295869 passed all three required jobs.
 
 | Evidence level | Status |
 | --- | --- |
 | Retryability source change | Merged in PR #456; existing worker wrapper now honors typed PlannerFailure.retryable |
-| Regression tests | Follow-up assertion corrected; dedicated CI gate added; exact-head run pending |
-| Repository-verified | No — merged PR #456 failed mandatory coworker CI; follow-up must pass test-and-build, coworker, and ci-merge-gate |
+| Regression tests | Corrected assertion and dedicated no-skip gate merged in PR #457; exact-head and merged-main CI both passed |
+| Repository-verified | Yes for the retryability slice — PR #457 exact-head CI #39099648984 and merged-main CI #39101295869 passed test-and-build, coworker, and ci-merge-gate |
 | Staging-verified | Not established; full CW-02 fault matrix and operated provider-side evidence remain separate |
 | Production-qualified / activated | Not established / not activated |
 
 No live model provider, protected staging secret, external transaction, deployment, or activation was used. Independent review does not replace passing CI.
 
-**Next exact action:** verify the follow-up PR’s final-head test-and-build, mandatory coworker, and ci-merge-gate; inspect the dedicated JUnit artifact; repair any genuine failures without weakening safety assertions; then continue the remaining CW-02 fault matrix and authorized operated qualification.
+**Next exact action:** continue the remaining CW-02 executable fault matrix, beginning with scenario-specific counter/outcome enforcement and missing storage/database interruption cases; then obtain authorized operated qualification. PR #457's correction is repository-verified but does not complete CW-02.
 
 ---
 
