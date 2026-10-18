@@ -76,3 +76,12 @@ This is repository-level fault-injection evidence using the test storage impleme
 `tests/test_coworker.py::test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_export` injects two separate object-store GET failures across retries: first on the first artifact, then on the second artifact after the first has verified. The acceptance contract is that neither failure publishes any Artifact record or completes the task; the durable export checkpoint and existing object keys remain unchanged; a later clean retry verifies both objects before publishing the complete set.
 
 This closes a repository-level gap in exercising a failure after partial verification of a multi-artifact result. It uses the repository storage interface and is not live S3, process-death cleanup, or staging evidence. Exact-head mandatory CI must pass before this test is treated as verified.
+
+
+## Follow-up: hard worker loss after object PUT — 19 October 2026
+
+`tests/test_coworker_retention.py::test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkpointed_outputs` uses a child process running the real `DocumentRunner.phase(..., "export")` path. The child writes an object and blocks before the export manifest/checkpoint is saved; the parent sends SIGKILL, so the runner's exception cleanup cannot execute.
+
+The test then ages the stranded object beyond the existing retention safety window. Dry-run must identify only that unreferenced object; explicit cleanup must delete it; an equally old object referenced by another task's durable export Step must remain readable and must not appear as a candidate.
+
+This proves the repository's age-bounded orphan reconciliation for a hard local worker loss and the protection of durable Step references. It uses SQLite and the local object store in test infrastructure. It is not live S3 evidence, a production cleanup authorization, or one of the sixteen operated staging artifacts. Exact-head mandatory CI remains required.
