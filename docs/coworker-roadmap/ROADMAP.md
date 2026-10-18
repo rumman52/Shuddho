@@ -10,7 +10,7 @@ Shuddho is beyond a simple writing MVP. It is not yet a demonstrated production 
 equivalent. No defensible percentage-complete estimate follows from merged PR counts.
 
 Historical planning baseline: `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
-Current main checkpoint: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460's exact-head [CI run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`; merged-main [CI run #39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) was still in progress at the last status check. Repository CI is not a live reliability or transaction-safety certification.
+Current main checkpoint: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460's exact-head [CI run #39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`; merged-main [CI run #39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) completed successfully with all three required jobs passing. Repository CI is not a live reliability or transaction-safety certification.
 
 Muse's first-party design describes continuous chat, goals, persistent memory, background
 work, a browser/terminal/filesystem and rich artifacts. Its security description says the

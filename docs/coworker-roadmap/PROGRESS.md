@@ -1,9 +1,8 @@
 ## Current continuation checkpoint — 18 October 2026 (Asia/Dhaka)
 
-- Current `main`: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460 is merged; its exact-head CI [#39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. Merged-main CI [#39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) was still in progress at the last status check; no success is inferred.
-- PR #461's earlier exact-head run [#39126595594](https://github.com/rumman52/Shuddho/actions/runs/39126595594) failed on a test expectation: the downstream draft correctly retained both the original `brief` and the verified upstream handoff. The corrected test now checks the persisted handoff manifest by stable source ID and the `EmailPackage`'s top-level `source_ids` field, rather than relying on list order or a nonexistent nested field.
-- The C-01 branch is reconciled with the current mainline in this continuation commit. Fresh exact-head `test-and-build`, mandatory zero-skip `coworker`, and `ci-merge-gate` results are required before repository verification. Formal independent review, operated staging, production qualification, and activation remain unestablished.
-- This checkpoint is not a declaration that Shuddho Architecture/Core Agent is complete. Keep the full CW-02 fault matrix, CW-11 mixed-version worker/drain, browser and sandbox isolation, and personal-coworker operational acceptance open until their matching evidence exists.
+- Current `main`: `ea7ad398f69e898b152f4227cb6e0c1a193999c1`. PR #460 is merged; its exact-head CI [#39111138510](https://github.com/rumman52/Shuddho/actions/runs/39111138510) passed all three required jobs. Merged-main CI [#39138804133](https://github.com/rumman52/Shuddho/actions/runs/39138804133) also passed all three required jobs.
+- C-01 code/test commit `b3d3cad4c93abaff3523b7f998529f4a6375c46e` passed exact-head CI [#39141823326](https://github.com/rumman52/Shuddho/actions/runs/39141823326): `test-and-build`, mandatory zero-skip `coworker`, and `ci-merge-gate`. The dedicated `c01-v3-handoff-evidence` JUnit artifact records 1 test, 0 failures, and 0 skips.
+- PR #461 remains open; formal independent review, live provider quality, operated staging, production qualification, and activation remain unestablished. The repository CI result does not complete the overall Architecture/Core Agent scope.
 
 ---
 
@@ -15,7 +14,7 @@
 
 **Failure correction:** run [#39126595594](https://github.com/rumman52/Shuddho/actions/runs/39126595594) exposed an assertion that incorrectly expected the original brief to be absent. A second source/schema audit found that the persisted draft stores the source digest in the manifest keyed by source ID and stores source references at `draft.source_ids`, not `draft.email.source_ids`. The assertions are corrected without weakening the acceptance criteria.
 
-**Evidence status:** prior runs target superseded heads. The branch is reconciled with current `main`; exact-head CI for the reconciled head is pending. The model transport and draft model are synthetic, so this is adapter/workflow integration evidence only—not live provider quality, staging, production qualification, or activation. Independent review is not recorded.
+**Evidence status:** exact-head CI [#39141823326](https://github.com/rumman52/Shuddho/actions/runs/39141823326) passed all three required jobs on code/test commit `b3d3cad4c93abaff3523b7f998529f4a6375c46e`. The dedicated JUnit artifact records 1 test, 0 failures, and 0 skips. The model transport and draft model are synthetic, so this is adapter/workflow integration evidence only—not live provider quality, staging, production qualification, or activation. Independent review is not recorded.
 
 ---
 
