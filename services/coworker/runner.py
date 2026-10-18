@@ -184,6 +184,7 @@ class DocumentRunner:
         outputs = await asyncio.to_thread(self.renderer, parse_draft(skill.id, saved["draft"]), saved["sources"], **options)
         manifest = []
         attempted_keys = []
+        checkpoint_write_started = False
         try:
             for filename, content_type, body in outputs:
                 await asyncio.to_thread(self.repo.worker_task, task["id"])
@@ -197,17 +198,23 @@ class DocumentRunner:
                 await asyncio.to_thread(self.container.storage.put, key, body, content_type)
                 manifest.append({"filename": filename, "content_type": content_type, "object_key": key,
                                  "byte_size": len(body), "sha256": digest})
+            # Once the checkpoint write starts, a lost DB response can mean the
+            # manifest committed. Preserve its objects rather than risk deleting
+            # data now referenced by durable state.
+            checkpoint_write_started = True
             await asyncio.to_thread(self.repo.save_step, task["id"], "export", {"artifacts": manifest})
         except BaseException:
-            # Until the export checkpoint commits, none of these objects is a
-            # published artifact. Best-effort cleanup includes the current key,
-            # whose PUT may have succeeded despite a lost response. Preserve the
-            # original failure; cleanup failures must never turn it into success.
-            for key in reversed(attempted_keys):
-                try:
-                    await asyncio.shield(asyncio.to_thread(self.container.storage.delete, key))
-                except BaseException:
-                    pass
+            if not checkpoint_write_started:
+                # Before checkpoint submission these objects are unpublished.
+                # Best-effort cleanup includes ambiguous PUTs; cleanup failure
+                # must never turn the original export failure into success.
+                for key in reversed(attempted_keys):
+                    try:
+                        await asyncio.shield(asyncio.to_thread(self.container.storage.delete, key))
+                    except BaseException:
+                        pass
+            # If checkpoint submission started, its commit outcome is unknown.
+            # Leave objects for safe retry/reconciliation or later orphan cleanup.
             raise
 
     async def complete(self, task):
