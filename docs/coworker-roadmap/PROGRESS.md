@@ -1,10 +1,10 @@
-## Current continuation — CW-02 hard process-loss orphan recovery (19 October 2026, Asia/Dhaka)
+## Current continuation — CW-02 and CW-09 gates (19 October 2026, Asia/Dhaka)
 
-- **Main:** `521ada6b32e0c96dee646c7931bf607e4ff5e94f`, merge commit for PR #467. Its exact PR-head CI passed `test-and-build`, `coworker`, and `ci-merge-gate`.
-- **Merged-main CI:** [run #39156608367](https://github.com/actions/runs/39156608367) has `test-and-build` passed; mandatory `coworker` was still running at the last refresh. Do not mark the merged main SHA fully CI-verified until this run finishes green.
-- **Next implementation branch:** `codex/cw02-export-orphan-crash-recovery-20261019` adds `test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkpointed_outputs`. A child process executes the actual export phase, writes an object, blocks before checkpoint save, and is SIGKILLed. The test then ages the unreferenced blob and proves dry-run/explicit cleanup finds and deletes only that orphan while preserving an equally old object referenced by a durable export Step.
-- **Evidence level:** local process + SQLite + local-object-store regression. It does not prove live S3 behavior or staging qualification. Exact-head CI for this branch is pending.
-- **Still open:** sixteen distinct CW-02 staging artifacts tied to a frozen real rollout and independent provider observations; protected CW11-STAGING mixed-version drain; real browser/DNS/sandbox isolation; independent security review; personal-coworker quality and production qualification. No deployment, provider activation, or production action is claimed.
+- **Main:** `1a852034576a9a5124187d9901203864b3664ed6`. PR #468 hard-worker-loss orphan-recovery test is merged and its exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` passed.
+- **Merged-main CI:** run [#39159745525](https://github.com/actions/runs/39159745525) on this SHA was still running at the last refresh. Do not call mainline fully verified until all required jobs pass.
+- **CW-09 follow-up branch:** `codex/cw09-proxy-dns-response-shape-20261019-v2` validates broker response hostname and resolved-IP structure before dialing from the real CONNECT handler. Local socket regressions cover missing/mismatched hostname, empty/non-array lists, invalid IP literals and excessive entries. Exact-head CI has not run yet.
+- **Evidence boundaries:** no local checkout was available to execute these tests directly during authoring; GitHub CI remains the executable verification gate. Local proxy sockets do not prove live Chromium, DNS rebinding, private-network isolation or staging.
+- **Still open:** the complete sixteen-row CW-02 operated evidence matrix; protected CW11-STAGING mixed-version drain; browser/sandbox isolation; independent review; personal-coworker quality and production qualification. No deployment, provider activation or production action is claimed.
 
 
 ---
