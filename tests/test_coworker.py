@@ -3710,3 +3710,50 @@ def test_artifact_read_failure_blocks_completion_and_reuses_export_on_retry(cont
         assert len(storage.get_keys) >= 1 + len(exported["artifacts"])
 
     asyncio.run(scenario())
+
+
+def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(container, monkeypatch):
+    """An ambiguous DB checkpoint commit must never trigger deletion of referenced blobs."""
+    import asyncio
+
+    async def scenario():
+        owner = account(container)
+        task = new_task(container, owner)
+
+        def render(_draft, _sources, **_options):
+            return [("report.txt", "text/plain", b"durable report bytes")]
+
+        runner = DocumentRunner(container, FakeModel(), renderer=render)
+        await runner.phase(task["id"], "extract")
+        await runner.phase(task["id"], "draft")
+
+        original_save_step = container.repository.save_step
+        fail_after_commit = True
+
+        def commit_then_lose_response(task_id, phase, output):
+            nonlocal fail_after_commit
+            result = original_save_step(task_id, phase, output)
+            if phase == "export" and fail_after_commit:
+                fail_after_commit = False
+                raise OSError("simulated database response loss after commit")
+            return result
+
+        monkeypatch.setattr(container.repository, "save_step", commit_then_lose_response)
+        with pytest.raises(OSError, match="database response loss after commit"):
+            await runner.phase(task["id"], "export")
+
+        saved = container.repository.step(task["id"], "export")
+        assert saved is not None and len(saved["artifacts"]) == 1
+        prefix = f"{owner}/outputs/{task['id']}/"
+        objects_after_ambiguous_commit = container.storage.inventory(prefix=prefix)
+        assert len(objects_after_ambiguous_commit) == 1
+
+        # Phase replay sees the durable checkpoint and does not re-export or delete its object.
+        await runner.phase(task["id"], "export")
+        assert container.storage.inventory(prefix=prefix) == objects_after_ambiguous_commit
+        await runner.phase(task["id"], "complete")
+        completed = container.repository.get_task(owner, task["id"])
+        assert completed["state"] == "completed"
+        assert len(completed["artifacts"]) == 1
+
+    asyncio.run(scenario())
