@@ -1,19 +1,49 @@
-## Current source-revalidation checkpoint — 18 October 2026 (Asia/Dhaka)
+## Current architecture/core continuation checkpoint — 18 October 2026 (Asia/Dhaka)
 
-- Refreshed main: `9e52756e4de52d95cc69879ce7cdbb3a390c0ac7`; #461 is merged, not open. No open PRs existed at task selection. Main CI [#39147097140](https://github.com/rumman52/Shuddho/actions/runs/39147097140) was still running when this checkpoint was written; its `test-and-build` job passed. The earlier #461 code/test head passed all three required jobs in #39141823326. No formal independent review submission was recorded for #461.
-- Work branch: `codex/c01-late-planner-source-revalidation-20261018`. [Task contract](C01_LATE_PLANNER_SOURCE_REVALIDATION_2026-10-18.md). Fresh Runtime v3 decisions now revalidate the original conversation's selected source pins after inference, before saving model output/checkpoints. Already-committed decisions retain idempotent replay; direct/legacy run semantics remain unchanged.
-- Reproduction: six source-invalidated cases failed before the guard; unchanged-source control passed. Focused conversation/context/cancellation regressions: **41 passed, 92 deselected**, zero skips. The mandatory JUnit gate passed. Full local pytest and exact-head required CI remain pending at publication; consult this branch's PR checks for the final revision. These numbers are a focused selection, not a repository-wide total.
+- **Default branch:** `main` at `2fcabef354992bf983570986c3aec7c59167a218` (merge commit for PR #462).
+- **Current merged slice:** [PR #462](https://github.com/rumman52/Shuddho/pull/462) adds post-inference validation of the original conversation/source pins before fresh Runtime v3 decisions and checkpoints are persisted. Previously committed decision replay remains idempotent. PR #461 grounded multi-step Runtime v3 handoff, #460 disposable PostgreSQL fault-target hardening, #459 post-provider-acceptance PostgreSQL disconnect recovery, and #458 object-store recovery regressions are also merged.
+- **Exact main CI:** [run #39148415493](https://github.com/rumman52/Shuddho/actions/runs/39148415493) on the SHA above. At checkpoint refresh, `test-and-build` passed; mandatory `coworker` was still running. The three required checks are therefore **not yet all confirmed green on this merge SHA**. Recheck the final run before treating repository CI as passed.
+- **PR #462 CI:** [run #39147807233](https://github.com/rumman52/Shuddho/actions/runs/39147807233) showed `test-and-build` passed while `coworker` remained in progress at the last detailed job inspection. Do not describe that run as fully green based only on the focused 41-test result.
+- **Focused C-01 evidence:** six source-invalidated cases failed before the guard; the unchanged-source positive control passed; focused conversation/context/cancellation tests reported 41 passed, 92 deselected, zero skips. This is scoped regression evidence, not full suite, PostgreSQL invalidation-race, staging, live-model, or production evidence.
 
-| Part | Evidence-supported status | Remaining gates |
+| Part | Current evidence-supported position | Unclosed acceptance |
 | --- | --- | --- |
-| Architecture A-01..04 | Existing state/trust foundations and repository recovery contracts; this slice adds no store, orchestrator or schema | Mixed-version operated recovery/rollback, staging boundary review |
-| Core C-01..06 | #461 grounded adapter handoff is merged; late selected-source response guard locally verified in this branch | Final-head CI/review; real browser/sandbox isolation; CW-11 staged drain; live provider/model qualification |
-| Context/experience P-01..03 | Existing owned conversations and explicit selected context; delayed invalidation regression added | Four operated study/work/separation/recovery scenarios and UI reconnect evidence |
-| Verification V-01..04 | Focused regression evidence only for this branch | Full mandatory final-head CI, protected staging, human security/quality review and separately authorized production rollout |
+| Architecture A-01..04 | Existing state/trust boundaries and recovery contracts; CW-11 registry/claim/drain controls are in source and mandatory CI | Exact selected/pinned release authority in operation; real mixed-version worker drain, old-history recovery, rollback and protected staging |
+| Core C-01..06 | #461 handoff and #462 late source revalidation merged; #458–#460 add object-store and PostgreSQL fault regressions | Confirm mandatory CI on latest main; finish sixteen-row CW-02 evidence reconciliation; real browser/network and sandbox isolation; live provider/model qualification |
+| Context/experience P-01..03 | Owned conversation/context foundations and source invalidation guard | Operated study/work/context-separation/recovery scenarios, durable correction/deletion, useful artifacts and UI reconnect evidence |
+| Verification V-01..04 | Focused and integration tests exist; main CI run #39148415493 was pending at refresh | All required checks on final SHA, exact operated staging artifacts, independent security/operational review, frozen quality/cost evaluation, backup/restore and separately authorized rollout |
 
-Separate read-only agent review found no Critical/Important issues; this is not human security certification. Minor observation: the no-memory-proposal assertion is only incidental because the synthetic response proposes no memory. End-to-end Temporal failure-state persistence and PostgreSQL invalidation races remain outside this regression.
+## Next task — CW-02 evidence reconciliation and remaining fault boundary
 
-The full Architecture/Core Agent workstream remains **INCOMPLETE**. No staging, production qualification or activation is established. The guard observes invalidation committed before its source check; it does not claim serializable source-deletion locking or recall of data already submitted to inference. Historical checkpoints below are retained and superseded by this entry.
+**Start from** `main` SHA `2fcabef354992bf983570986c3aec7c59167a218`; first recheck its exact-revision CI and reconcile the 16 named scenarios against actual executable tests and produced evidence. Reuse merged PRs #458–#460 and the existing chaos harness rather than duplicating them.
+
+1. Produce a row-by-row mapping for model 429/500/timeout; provider 401/403/429/500; malformed response; database disconnect; S3 disconnect; Temporal outage; worker crash; API crash; duplicate message; lost provider response; and approval expiry.
+2. For each row, distinguish deterministic unit/integration coverage, PostgreSQL/Temporal process evidence, provider-side observer evidence, and protected staging evidence. Mark absent levels blocked—not passed.
+3. Identify and implement one demonstrated missing code/test boundary. Keep object-store write/read recovery and PostgreSQL receipt-persistence disconnect work already merged.
+4. Re-run the mandatory test gate on the exact final revision. Do not fabricate staging identities, provider observations, rollout IDs or artifacts. Staging remains blocked until the real environment and credentials are available.
+
+### CW-02 sixteen-fault evidence reconciliation — repository-level map
+
+This table maps existing repository evidence to the fault inventory. “Repository regression” means a controlled test path, not a live provider/staging pass. The matrix collector still requires separate matching per-scenario evidence artifacts and provider-side observation.
+
+| Scenario ID(s) | Existing repository evidence to reuse | Evidence level currently supported | Still not established |
+| --- | --- | --- | --- |
+| `model_429`, `model_500`, `model_timeout` | PRs [#456](https://github.com/rumman52/Shuddho/pull/456) and [#457](https://github.com/rumman52/Shuddho/pull/457): typed planner retryability and no executable plan/tool calls after exhausted failures | Synthetic planner failure regressions; exact historical PR CI for #457 passed its three required jobs | Live model/provider behavior, staging identity, live latency/cost and a per-row CW-02 evidence artifact |
+| `provider_401`, `provider_403`, `provider_429` | `tests/test_transaction_chaos_temporal.py::test_http_provider_failure_and_repeated_recovery_never_resend` | Counted loopback provider; repeated service recovery and mutation counters | Independent provider-side observation and staging artifacts |
+| `provider_500`, `malformed_response`, `lost_provider_response` | Same counted-provider test plus lost-response handling; accepted mutation remains uncertain without a fabricated receipt | Deterministic loopback simulation, no blind resend | Real provider receipt/reconciliation contract and independent provider-side observation |
+| `database_disconnect` | PRs [#459](https://github.com/rumman52/Shuddho/pull/459) and [#460](https://github.com/rumman52/Shuddho/pull/460): terminate the guarded disposable PostgreSQL backend at receipt persistence after provider acceptance | PostgreSQL + Temporal integration regression, exact #460 CI was green | Frozen staging rollout, independently observed provider state and complete matrix artifact |
+| `s3_disconnect` | PR [#458](https://github.com/rumman52/Shuddho/pull/458): lost object-store write response, required-artifact read-back, approved-attachment read before action claim | Deterministic object-store interface injection through Temporal workers | Live S3 fault, storage-side logs, durable erasure/recovery and staging artifact |
+| `temporal_outage` | `test_temporal_server_outage_preserves_approved_outbox_until_recovery` in `tests/test_transaction_chaos_temporal.py` | Real Temporal test server stops and recovers in the test | Operated Temporal deployment, matching rollout and staging artifact |
+| `worker_crash` | `test_transaction_hard_worker_loss_and_new_pool_recovery` and `test_transaction_temporal_activity_recovery_after_worker_sigkill` | Subprocess SIGKILL/restart and Temporal activity recovery in test infrastructure | Actual deployed worker fleet/drain evidence and staging artifact |
+| `api_crash` | `test_hard_api_loss_after_commit_replays_same_public_transaction` | Real local HTTP API process dies after commit; same idempotency key replays the same record | Deployed API rollout evidence and staging artifact |
+| `duplicate_message` | `tests/test_transaction_chaos_temporal.py::test_public_duplicate_transaction_creation_race_is_one_owned_identity`; conversation dispatch/idempotency tests also cover owned message keys | PostgreSQL concurrency regression plus deterministic message replay coverage where required modules run | Exact per-row artifact tied to one frozen rollout; prove no untested duplicate path is implied |
+| `approval_after_expiration` | Existing `tests/test_transaction_chaos_qualification.py` expiry regression and approval/claim guards in the action service | Repository-level expiry boundary checks with zero provider mutation | Matching staging operator/provider evidence and artifact |
+ 
+**Current assessment:** the repository contains meaningful regression coverage for the named boundaries, but the matrix is **not qualified** merely because those tests exist or pass. Before calling CW-02 complete, inspect the exact test names and required-module gate on the final SHA, reconcile each scenario's expected dispatch/mutation/outcome counters against the actual test, and produce all sixteen distinct checksummed staging artifacts with a unique test-run ID, source revision, rollout identity, timezone-aware observation time, operator, and provider-side observation reference. Missing credentials or environment leave the row blocked; they must not be replaced by synthetic evidence.
+ 
+**Overall verdict: INCOMPLETE.** No staging qualification, production qualification, worldwide readiness, or activation is established. Percent completion is intentionally omitted because there is no verified weighted acceptance denominator. Continue independent repository work while external operated evidence is unavailable.
+
+Historical checkpoints below are retained for traceability and are superseded by this current checkpoint.
 
 ---
 
