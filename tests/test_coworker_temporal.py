@@ -1058,9 +1058,14 @@ def test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow(containe
         upstream = saved["tool_invocations"][0]
         downstream = saved["tool_invocations"][1]
         handoff_source_id = "agent-step-" + upstream["id"]
-        assert len(model.email_sources) == 1
-        model_source = model.email_sources[0]
-        assert model_source["id"] == handoff_source_id
+        # The email draft intentionally retains its original user brief as well as
+        # the verified upstream handoff. Assert the handoff by identity, not list order.
+        assert len(model.email_sources) == 2
+        brief_source = next(source for source in model.email_sources if source["id"] == "brief")
+        assert brief_source["text"]
+        model_source = next(
+            source for source in model.email_sources if source["id"] == handoff_source_id
+        )
         assert "The team completed 12 reviews." in model_source["text"]
         import hashlib
         assert hashlib.sha256(model_source["text"].encode("utf-8")).hexdigest() == model_source["sha256"]
