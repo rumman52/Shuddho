@@ -1,3 +1,13 @@
+## CW-02 planner retry regression follow-up — 18 October 2026
+
+PR [#456](https://github.com/rumman52/Shuddho/pull/456) merged the typed retryability propagation in the Temporal worker, but exact-head CI [#39098101062](https://github.com/rumman52/Shuddho/actions/runs/39098101062) failed mandatory coworker tests with four failures. The regression tests incorrectly asserted that the DTO's full steps array would be empty. A run intentionally retains an ordinal-zero sentinel created at run admission; the executable plan excludes ordinal zero.
+
+Follow-up branch: codex/cw02-planner-retryability-test-fix-20261018. The tests now require an empty executable plan, only the initial ordinal-zero sentinel, and no tool invocations. The workflow adds a dedicated no-skip regression gate with JUnit evidence. Exact-head test-and-build, coworker, and ci-merge-gate are pending. Do not call this slice repository-verified until all required jobs pass.
+
+Full CW-02 16-fault qualification, provider-side reconciliation evidence, authorized staging qualification, production qualification, and activation remain unestablished.
+
+---
+
 ## Runtime v3 late planner cancellation fence — 18 October 2026
 
 This cross-cutting correctness slice supports the CW-06 acceptance criterion “cancellation beats delayed result”; it does **not** complete all of CW-06 and is not the roadmap's CW-02 transaction-chaos qualification task. PR [#455](https://github.com/rumman52/Shuddho/pull/455), branch `codex/cw02-v3-cancellation-race-20261018`. The branch name retains its historical `cw02` segment from the original test-only commit.
@@ -8,10 +18,10 @@ The implementation rechecks `cancel_requested` and terminal state under the exis
 
 | Requirement | Evidence / status |
 | --- | --- |
-| Reject late planner decision after cancellation | Implemented on PR #455; exact-head CI pending |
-| Reject late memory proposal after cancellation | Implemented on PR #455; exact-head CI pending |
-| Reject writes after other terminal states | Regression added; exact-head CI pending |
-| Preserve idempotent replay of an existing decision | Regression added; exact-head CI pending |
+| Reject late planner decision after cancellation | Implemented on merged PR #455; exact-head CI #39062674571 and merged-main CI #39063079528 passed all three required jobs |
+| Reject late memory proposal after cancellation | Implemented on merged PR #455; exact-head CI #39062674571 and merged-main CI #39063079528 passed all three required jobs |
+| Reject writes after other terminal states | Regression added on merged PR #455; exact-head CI #39062674571 and merged-main CI #39063079528 passed all three required jobs |
+| Preserve idempotent replay of an existing decision | Regression added on merged PR #455; exact-head CI #39062674571 and merged-main CI #39063079528 passed all three required jobs |
 | Full CW-06 conversation dispatch/steering acceptance | Not established by this safety slice |
 | CW-02 transaction-chaos qualification | Separate task; not established by this change |
 | Production qualification / activation | Not established / not activated |
@@ -56,12 +66,12 @@ Next: verify `test-and-build`, mandatory `coworker`, and `ci-merge-gate` on the 
 | A-02 orchestration and recovery | Temporal/outbox retry, cancellation, uncertain state and single external effect, `workflow.py`, repositories | PostgreSQL/Temporal/process restart + staged recovery | Source partial | Operated worker death, duplicate delivery and replay proof |
 | A-03 compatibility | Schema/API mixed-version migration and rollback contracts, `migrations/` and API | Migration/old-reader test + staged rollback | Unverified | Inventory compatibility and recovery by migration |
 | A-04 tool authority | Current grants/version/revocation/expiry at worker claim, no model-granted authority | Security integration tests + staging | Source partial | Trace enforcement for generated code/skills and release gating |
-| C-01 Runtime v3 core | Typed admission→plan→dispatch→observe→verify→result, `agent_runtime.py` | Owned full workflow E2E + model evaluation | Source partial | Prove real multi-step grounded outcome and cancellation |
+| C-01 Runtime v3 core | Typed admission→plan→dispatch→observe→verify→result, `agent_runtime.py` | Owned full workflow E2E + model evaluation | Source partial; PR #455 cancellation fence verified; PR #456 retryability code merged but mandatory CI failed; follow-up regression fix pending | Prove real multi-step grounded outcome, bounded planner-failure retry, and operated cancellation |
 | C-02 / CW-09 | Agent `browser.read` real page text/bytes, private provenance, truthful content digest, network policy, cleanup | Real worker/browser+storage E2E, DNS/SSRF/adversarial and staging | Browser source capture, expiry guard, owned source artifact and erasure merged #404–406/#408; PR #409 proxy epoch gating merged; PR #412 pending CONNECT cancellation cleanup merged; final PR-head required CI passed; operated Chromium/DNS/SSRF staging remains | Operated live Chromium proxy, DNS rebinding, redirects and private-network isolation remain unverified |
 | C-03 / CW-09 | No credentials re-injected or persisted during autonomous read, without regressing supervised continuity | Exact-head browser Python + JS suite, full mandatory CI | Cookie/non-mutating Agent policy repository-verified at #403 final head; live staged isolation pending | Check production proxy path with fault-injected CONNECT sockets, along with owned no-cookie browser isolation; operated network and forged receipt remain |
 | C-04 / CW-10 | Bind model-authored code, exact owner inspection, input versions, reviewed limits, expiry/revocation, atomic worker authority and destruction | Trusted model producer + owner UI + atomic SQL-owned sandbox + operated isolation/restart/revocation | #425–#429 claim/portable migration/owner review/atomic dispatch/owner model draft are merged and final-head green. Isolated branch adds **synthetic end-to-end generated-source → approved worker claim → post-claim revoke/stop/temp cleanup/no late receipt** with real owned SQL/control and mocked DeepSeek + Popen; final-head CI pending. | Real bubblewrap/process-group kill, ephemeral in-memory/filesystem erasure, concurrent PostgreSQL/Temporal restart, independent security and staging evidence still absent; CW-10 capability default-off |
 | C-05 / CW-11 | Reviewed skills publish/versions/rollback and grant-bound selection | Publisher/run contract E2E + protected mixed-version staging + independent operational review | Registry, selection, rollback, per-claim drain, worker-registration fencing, legacy migration dispatch fence and evidence collector are on main. Merged #453 hardens confirmation, migration ordering and secret scope; follow-up branch fixes shell-input injection, with exact-head CI pending. | Run protected CW11-STAGING with real deployment identities; inspect exact-revision artifact and mixed-version recovery; obtain independent operational sign-off. Production qualification and activation remain disabled |
-| C-06 transactions dependency | Approved ExternalAction exact binding + uncertain provider reconciliation | 16-case chaos with real dispatcher/PG/Temporal; provider evidence | Foundation partial, separate dependency | No duplicate consequential effect; no blind retry; provider contracts |
+| C-06 transactions dependency | Approved ExternalAction exact binding + uncertain provider reconciliation | 16-case chaos with real dispatcher/PG/Temporal; provider evidence | Source foundation partial; PR #456 retryability propagation merged, but regression CI failed; follow-up assertion fix and dedicated no-skip gate pending | Complete remaining fault matrix and operated provider-side evidence; no duplicate consequential effect or blind retry |
 | P-01 / CW-05–07 | Owned durable conversation, idempotent dispatch, activity and steering | API/worker restart + UI reconnect + cross-user tests | Foundations on main, staging missing | Operated reconnect/steer/race, artifact linkage |
 | P-02 / CW-08 | Owned selected context, version/purpose isolation, memory provenance and deletion | Real retrieval/use-time revocation+cross-purpose staging | Foundation on main, staging missing | Expiry, erasure, cross-project rejection |
 | P-03 coworker scenarios | Study/work/context separation/recovery workflows | Four realistic operated scenarios with synthetic accounts | Unverified | Collect matching staging evidence and artifact inspection |
