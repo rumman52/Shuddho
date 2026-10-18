@@ -26,6 +26,10 @@ database/S3 disconnect; Temporal outage; worker/API crash; duplicate message; lo
 provider response; and approval after expiration. Each requires the stated counter,
 state, receipt, budget or process evidence. Defining a row does not execute its fault.
 
+The fail-closed manifest validator, `scripts/transaction_chaos_matrix.py`, now binds each canonical scenario ID to explicit allowed provider-dispatch/applied-mutation counter pairs and outcome values. Model failures and approval-after-expiration must show zero provider dispatch; provider 401/403/429 must show one rejected dispatch and zero applied mutations; provider 500 or malformed response with an applied mutation must remain uncertain; lost provider response must remain uncertain; Temporal outage must show one recovered mutation; and API replay/duplicate admission must not claim a provider mutation. Database/worker/S3 cases admit only bounded counter pairs and outcomes compatible with their recovery boundary. Regression tests reject contradictory pairs/outcomes across all 16 scenarios.
+
+This validator checks the structure and consistency of submitted evidence only. It does not execute faults, verify provider-side observations independently, or establish staging qualification. Boundary-specific integration evidence and operated provider audit remain mandatory.
+
 CW-01 covers repository regressions for binding replay, lost reply, expiry and repeated
 success. CW-02 remains pending until actual public API/PostgreSQL/Temporal process
 interruption cases pass, including before/after claim, provider application and receipt
