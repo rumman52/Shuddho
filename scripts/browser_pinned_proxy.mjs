@@ -3,7 +3,23 @@
 // production never accepts these values from browser content or user input.
 import http from "node:http";
 import net from "node:net";
+import { isIP } from "node:net";
 import { browserProxyClaimValid, parseConnectAuthority } from "./browser_worker_policy.mjs";
+
+
+function networkCheckMatchesTarget(target, checked) {
+  const normalizeHost = (value) => (
+    typeof value === "string" ? value.toLowerCase().replace(/\\.$/, "") : ""
+  );
+  const addresses = checked?.resolved_ips;
+  return (
+    normalizeHost(checked?.hostname) === normalizeHost(target?.host)
+    && Array.isArray(addresses)
+    && addresses.length > 0
+    && addresses.length <= 16
+    && addresses.every((address) => typeof address === "string" && isIP(address) !== 0)
+  );
+}
 
 export async function createPinnedProxy(state, { validateHost, dial = net.connect, navigationTimeoutMs } = {}) {
   if (typeof validateHost !== "function" || typeof dial !== "function" || !Number.isFinite(navigationTimeoutMs) || navigationTimeoutMs <= 0) {
@@ -33,6 +49,11 @@ export async function createPinnedProxy(state, { validateHost, dial = net.connec
       // Never let an old async DNS result authorize a CONNECT after a
       // cancel/pause/claim replacement. Bind the request to the captured ID.
       const checked = await validateHost(claim.commandId, target.host);
+      // A malformed or mismatched broker result must never pass undefined or
+      // non-IP input to net.connect (whose default host can be localhost).
+      if (!networkCheckMatchesTarget(target, checked)) {
+        throw new Error("browser_network_check_invalid");
+      }
       // The client may disconnect while DNS/API authorization is suspended.
       // Refuse any outbound TCP dial after that disconnect.
       if (!browserProxyClaimValid(state, claim) || clientSocket.destroyed) {
