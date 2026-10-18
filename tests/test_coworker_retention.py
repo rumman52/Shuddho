@@ -132,3 +132,105 @@ def test_orphan_cleanup_is_dry_run_first_and_age_bounded(container):
         container.storage.get(orphan, 100)
     assert container.storage.get(recent, 100) == b"recent"
     assert container.storage.get(item["object_key"], 100) == referenced_body
+
+
+def _crash_test_renderer(_draft, _sources, **_options):
+    return [("crash-boundary.txt", "text/plain", b"written before hard worker loss")]
+
+
+def _export_worker_blocked_after_put(settings, task_id, put_ready, release):
+    """Child-process target: persist one blob, then wait to be SIGKILLed."""
+    import asyncio
+
+    from services.coworker.container import Container
+    from services.coworker.runner import DocumentRunner
+
+    value = Container.create(settings)
+    wrapped = value.storage
+
+    class BlockingStore:
+        def put(self, key, data, content_type):
+            result = wrapped.put(key, data, content_type)
+            put_ready.set()
+            release.wait(60)
+            return result
+
+        def __getattr__(self, name):
+            return getattr(wrapped, name)
+
+    value.storage = BlockingStore()
+    try:
+        asyncio.run(DocumentRunner(value, renderer=_crash_test_renderer).phase(task_id, "export"))
+    finally:
+        value.repository.sessions.kw["bind"].dispose()
+
+
+def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkpointed_outputs(container):
+    """A SIGKILL after PUT leaves an orphan; age-bounded cleanup deletes only unreferenced bytes."""
+    import asyncio
+    import multiprocessing
+    import signal
+
+    from test_coworker import FakeModel
+    from services.coworker.runner import DocumentRunner
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("Hard worker-loss test requires POSIX fork semantics")
+
+    account_id = owner(container, "orphan-after-worker-loss")
+    task, _ = container.repository.create_task(
+        account_id,
+        TaskCreate(
+            instruction="Create a crash-recovery report.",
+            notes="This export is synthetic test data.",
+            output_language="en",
+        ),
+        "orphan-after-worker-loss-task",
+    )
+    runner = DocumentRunner(container, FakeModel())
+    asyncio.run(runner.phase(task["id"], "extract"))
+    asyncio.run(runner.phase(task["id"], "draft"))
+
+    context = multiprocessing.get_context("fork")
+    put_ready = context.Event()
+    release = context.Event()
+    process = context.Process(
+        target=_export_worker_blocked_after_put,
+        args=(container.settings, task["id"], put_ready, release),
+    )
+    process.start()
+    try:
+        assert put_ready.wait(20), "Export worker did not persist an object before the crash boundary"
+        prefix = f"{account_id}/outputs/{task['id']}/"
+        stored = container.storage.inventory(prefix=prefix)
+        assert len(stored) == 1
+        orphan_key = stored[0].key
+        assert container.repository.step(task["id"], "export") is None
+
+        # SIGKILL bypasses the export exception handler and its best-effort cleanup.
+        os.kill(process.pid, signal.SIGKILL)
+        process.join(10)
+        assert not process.is_alive()
+        assert process.exitcode == -signal.SIGKILL
+        assert container.storage.get(orphan_key, 1024) == b"written before hard worker loss"
+
+        # Simulate the object becoming eligible for the existing age-bounded sweep.
+        old_time = time.time() - 7200
+        os.utime(container.storage.path(orphan_key), (old_time, old_time))
+        preview = container.retention.cleanup_orphans(
+            prefix=account_id, min_age_seconds=3600, dry_run=True,
+        )
+        assert {item["key"] for item in preview["candidates"]} == {orphan_key}
+        assert preview["deleted"] == 0
+
+        result = container.retention.cleanup_orphans(
+            prefix=account_id, min_age_seconds=3600, dry_run=False,
+        )
+        assert result["deleted"] == 1
+        assert result["failed"] == []
+        with pytest.raises(FileNotFoundError):
+            container.storage.get(orphan_key, 1024)
+    finally:
+        if process.is_alive():
+            os.kill(process.pid, signal.SIGKILL)
+            process.join(10)
