@@ -19,3 +19,12 @@ PR #409 put monotonic proxy claim generations and before-dial / before-200 check
 4. Architecture/core remains INCOMPLETE; CW-10 exact approved generated code, CW-11 reviewed skill publishing/selection, selected memory/context staging, operated recovery, and formal release gates remain in the canonical inventory.
 
 **Release rule:** draft review only. Do not merge, deploy, enable, pay for providers or activate a cohort without explicit authorization and the required gates.
+
+
+## Follow-up: fail closed on malformed broker DNS results — 19 October 2026
+
+The CONNECT proxy previously assumed that the trusted network-check response always contained the expected hostname and a non-empty list of resolved IP literals. It selected `resolved_ips[0]` without validating the response shape. A malformed or mismatched response could therefore pass an undefined/non-IP host into `net.connect`; Node's default host behavior makes that an unsafe assumption even though the normal broker path rejects empty/private results.
+
+The follow-up in `scripts/browser_pinned_proxy.mjs` validates the returned hostname against the CONNECT target (normalizing case and one trailing dot), requires 1–16 resolved entries, and requires every entry to be an IP literal before updating evidence or dialing. Invalid broker output is denied by the existing fail-closed CONNECT error path. The server-side `validate_resolved_addresses` public-address policy remains authoritative; this is an additional response-shape guard, not a replacement for DNS/SSRF controls.
+
+The real local CONNECT test covers a missing response, hostname mismatch, empty and non-array address lists, an invalid IP literal, and excessive result count. It asserts zero outbound dial attempts and no CONNECT 200 acknowledgement. All traffic remains in local test sockets; live Chromium, redirect/DNS rebinding, private-network isolation and staging evidence remain unverified until separately operated.
