@@ -3757,3 +3757,79 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
         assert len(completed["artifacts"]) == 1
 
     asyncio.run(scenario())
+
+
+def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_export(container):
+    """Repeated GET failures, including a later artifact, cannot publish a partial result."""
+    import asyncio
+    import hashlib
+
+    async def scenario():
+        owner = account(container)
+        task = new_task(container, owner)
+        delegate = container.storage
+
+        def render(_draft, _sources, **_options):
+            return [
+                ("report.txt", "text/plain", b"verified report bytes"),
+                ("summary.txt", "text/plain", b"verified summary bytes"),
+            ]
+
+        class FaultingReadStore:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.get_calls = 0
+                self.fail_calls = {1, 3}
+                self.put_keys = []
+
+            def put(self, key, data, content_type):
+                self.put_keys.append(key)
+                return self.wrapped.put(key, data, content_type)
+
+            def get(self, key, max_bytes):
+                self.get_calls += 1
+                if self.get_calls in self.fail_calls:
+                    raise OSError(f"simulated S3 GET disconnect #{self.get_calls}")
+                return self.wrapped.get(key, max_bytes)
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        storage = FaultingReadStore(delegate)
+        container.storage = storage
+        runner = DocumentRunner(container, FakeModel(), renderer=render)
+        await runner.phase(task["id"], "extract")
+        await runner.phase(task["id"], "draft")
+        await runner.phase(task["id"], "export")
+
+        exported = container.repository.step(task["id"], "export")
+        assert exported is not None and len(exported["artifacts"]) == 2
+        expected_puts = list(storage.put_keys)
+        assert len(expected_puts) == 2
+
+        # First attempt fails on artifact one.
+        with pytest.raises(OSError, match="GET disconnect #1"):
+            await runner.phase(task["id"], "complete")
+        state = container.repository.get_task(owner, task["id"])
+        assert state["state"] == "running" and state["artifacts"] == []
+
+        # Second attempt verifies artifact one but fails on artifact two.
+        with pytest.raises(OSError, match="GET disconnect #3"):
+            await runner.phase(task["id"], "complete")
+        state = container.repository.get_task(owner, task["id"])
+        assert state["state"] == "running" and state["artifacts"] == []
+        assert container.repository.step(task["id"], "export") == exported
+        assert storage.put_keys == expected_puts
+
+        # A clean retry verifies both objects before publishing either one.
+        await runner.phase(task["id"], "complete")
+        completed = container.repository.get_task(owner, task["id"])
+        assert completed["state"] == "completed"
+        assert len(completed["artifacts"]) == 2
+        assert storage.put_keys == expected_puts
+        for item in completed["artifacts"]:
+            artifact = container.repository.artifact(owner, item["id"])
+            body = delegate.get(artifact["object_key"], artifact["byte_size"])
+            assert hashlib.sha256(body).hexdigest() == item["sha256"]
+
+    asyncio.run(scenario())
