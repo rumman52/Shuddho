@@ -183,16 +183,32 @@ class DocumentRunner:
         options = {} if skill.id == "report_email" else {"skill_id": skill.id}
         outputs = await asyncio.to_thread(self.renderer, parse_draft(skill.id, saved["draft"]), saved["sources"], **options)
         manifest = []
-        for filename, content_type, body in outputs:
-            await asyncio.to_thread(self.repo.worker_task, task["id"])
-            if not body or len(body) > 16 * 1024 * 1024:
-                raise CoworkerError("export_limit", "The generated document exceeded the export limit.")
-            digest = hashlib.sha256(body).hexdigest()
-            key = f'{task["owner_id"]}/outputs/{task["id"]}/{digest}/{filename}'
-            await asyncio.to_thread(self.container.storage.put, key, body, content_type)
-            manifest.append({"filename": filename, "content_type": content_type, "object_key": key,
-                             "byte_size": len(body), "sha256": digest})
-        await asyncio.to_thread(self.repo.save_step, task["id"], "export", {"artifacts": manifest})
+        attempted_keys = []
+        try:
+            for filename, content_type, body in outputs:
+                await asyncio.to_thread(self.repo.worker_task, task["id"])
+                if not body or len(body) > 16 * 1024 * 1024:
+                    raise CoworkerError("export_limit", "The generated document exceeded the export limit.")
+                digest = hashlib.sha256(body).hexdigest()
+                key = f'{task["owner_id"]}/outputs/{task["id"]}/{digest}/{filename}'
+                # Record the key before PUT: an object store can persist the bytes
+                # and then lose its response, leaving the caller uncertain.
+                attempted_keys.append(key)
+                await asyncio.to_thread(self.container.storage.put, key, body, content_type)
+                manifest.append({"filename": filename, "content_type": content_type, "object_key": key,
+                                 "byte_size": len(body), "sha256": digest})
+            await asyncio.to_thread(self.repo.save_step, task["id"], "export", {"artifacts": manifest})
+        except BaseException:
+            # Until the export checkpoint commits, none of these objects is a
+            # published artifact. Best-effort cleanup includes the current key,
+            # whose PUT may have succeeded despite a lost response. Preserve the
+            # original failure; cleanup failures must never turn it into success.
+            for key in reversed(attempted_keys):
+                try:
+                    await asyncio.shield(asyncio.to_thread(self.container.storage.delete, key))
+                except BaseException:
+                    pass
+            raise
 
     async def complete(self, task):
         saved = await asyncio.to_thread(self.repo.step, task["id"], "export")
