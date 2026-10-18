@@ -3575,3 +3575,71 @@ def test_terminal_v3_run_rejects_late_decision_and_memory_proposal(container):
             MemoryProposal.run_id == run["id"],
         )).all() == []
 
+
+
+def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(container):
+    """A lost PUT response must not leave orphan objects when a later artifact fails."""
+    import asyncio
+    import hashlib
+
+    async def scenario():
+        owner = account(container)
+        task = new_task(container, owner)
+        delegate = container.storage
+
+        def render(_draft, _sources, **_options):
+            return [
+                ("one.txt", "text/plain", b"first artifact"),
+                ("two.txt", "text/plain", b"second artifact"),
+                ("three.txt", "text/plain", b"third artifact"),
+            ]
+
+        class FaultingStore:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.fail_once = True
+                self.put_keys = []
+                self.delete_keys = []
+
+            def put(self, key, data, content_type):
+                self.put_keys.append(key)
+                # Model the ambiguous S3 case: the second PUT persists, but
+                # the response is lost and the worker sees an exception.
+                if key.endswith("/two.txt") and self.fail_once:
+                    self.wrapped.put(key, data, content_type)
+                    self.fail_once = False
+                    raise OSError("simulated S3 PUT response loss")
+                return self.wrapped.put(key, data, content_type)
+
+            def delete(self, key):
+                self.delete_keys.append(key)
+                return self.wrapped.delete(key)
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        storage = FaultingStore(delegate)
+        container.storage = storage
+        runner = DocumentRunner(container, FakeModel(), renderer=render)
+        await runner.extract(task)
+        await runner.draft(task)
+
+        with pytest.raises(OSError, match="simulated S3 PUT response loss"):
+            await runner.export(task)
+
+        prefix = f"{owner}/outputs/{task['id']}/"
+        assert container.repository.step(task["id"], "export") is None
+        assert storage.delete_keys == list(reversed(storage.put_keys))
+        assert container.storage.inventory(prefix=prefix) == []
+
+        # The same deterministic keys can be safely rewritten after recovery.
+        await runner.export(task)
+        saved = container.repository.step(task["id"], "export")
+        assert saved is not None and len(saved["artifacts"]) == 3
+        assert {item["object_key"] for item in saved["artifacts"]} == set(storage.put_keys)
+        for item in saved["artifacts"]:
+            body = container.storage.get(item["object_key"], item["byte_size"])
+            assert hashlib.sha256(body).hexdigest() == item["sha256"]
+        assert len(container.storage.inventory(prefix=prefix)) == 3
+
+    asyncio.run(scenario())
