@@ -363,6 +363,26 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
 
 
 @pytest.mark.skipif(os.getenv("SHUDDHO_TEMPORAL_TESTS") != "true", reason="Real Temporal test server required")
+def test_disposable_database_preflight_rejects_host_overrides_before_connect():
+    from types import SimpleNamespace
+    from sqlalchemy.engine import make_url
+
+    # This fake engine proves target overrides are rejected before connect(), so
+    # fixture setup cannot reach migrations or issue writes to an alternate host.
+    for query_key in ("host", "hostaddr", "port", "service", "servicefile"):
+        engine = SimpleNamespace(
+            dialect=SimpleNamespace(name="postgresql"),
+            url=make_url(
+                "postgresql+psycopg://shuddho_test:placeholder@localhost/"
+                "shuddho_coworker_test?" + query_key + "=remote.example"
+            ),
+            connect=lambda: pytest.fail("preflight attempted a connection before rejecting override"),
+        )
+        sessions = SimpleNamespace(kw={"bind": engine})
+        with pytest.raises(RuntimeError, match="target override"):
+            require_disposable_database(sessions, postgres_required=True)
+
+
 def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
     transaction_container, provider, record_property,
 ):
