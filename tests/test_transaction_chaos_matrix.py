@@ -114,7 +114,7 @@ def test_denials_and_failed_model_decisions_never_mutate():
 def test_lost_provider_response_requires_one_submission_and_application():
     doc = evidence()
     next(x for x in doc["scenarios"] if x["id"] == "lost_provider_response")["applied_mutations"] = 0
-    assert any("one submission" in e for e in check(doc))
+    assert any("expected attempted_mutations=1" in e for e in check(doc))
 
 
 def test_manifest_rejects_reused_run_and_invalid_timestamp():
