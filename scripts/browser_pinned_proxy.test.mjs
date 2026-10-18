@@ -214,3 +214,38 @@ test("real CONNECT allows only an owned authorized HTTPS tunnel to pinned IP", {
     await new Promise((resolve) => upstream.close(resolve));
   }
 });
+
+
+test("real CONNECT fails closed on malformed or mismatched broker DNS results", { timeout: 6000 }, async () => {
+  const cases = [
+    ["missing result", null],
+    ["wrong hostname", { hostname: "other.example", resolved_ips: ["93.184.216.34"] }],
+    ["empty resolved address list", { hostname: "example.com", resolved_ips: [] }],
+    ["non-array address list", { hostname: "example.com", resolved_ips: "93.184.216.34" }],
+    ["invalid IP literal", { hostname: "example.com", resolved_ips: ["localhost"] }],
+    ["too many resolved addresses", { hostname: "example.com", resolved_ips: Array(17).fill("93.184.216.34") }],
+  ];
+
+  for (const [label, checked] of cases) {
+    const state = activeState();
+    let outboundDials = 0;
+    const proxy = await createPinnedProxy(state, {
+      validateHost: async () => checked,
+      dial: () => {
+        outboundDials += 1;
+        throw new Error("malformed network-check result must not dial");
+      },
+      navigationTimeoutMs: 1000,
+    });
+    let client;
+    try {
+      client = await openConnect(proxy);
+      if (!client.destroyed) await once(client, "close");
+      assert.equal(outboundDials, 0, label);
+      assert.ok(!client.received.includes("200 Connection Established"), label);
+      assert.deepEqual(state.evidence, {}, label);
+    } finally {
+      await stopProxy(proxy, client ? [client] : []);
+    }
+  }
+});
