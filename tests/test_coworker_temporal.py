@@ -935,6 +935,117 @@ def test_agent_v2_worker_restart_does_not_duplicate_parallel_task_work(container
 
     asyncio.run(scenario())
 
+def test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow(container):
+    async def scenario():
+        import json
+        import httpx
+        from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+
+        goal = "Create a project document, then use the verified result to draft a follow-up email."
+        enabled = replace(
+            container.settings,
+            agent_runtime_enabled=True,
+            agent_runtime_v3_enabled=True,
+            intelligent_planner_enabled=True,
+            work_services_enabled=True,
+            artifact_services_enabled=True,
+            deepseek_api_key="synthetic-test-key",
+            max_agent_v3_planner_calls=4,
+            agent_v3_planner_token_budget=24000,
+        )
+        container.settings = enabled
+        container.repository.settings = enabled
+        container.agent.settings = enabled
+        owner = account(container)
+        run, _ = container.agent.create(
+            owner,
+            AgentRunCreate(goal=goal, output_language="en"),
+            "agent-v3-deepseek-adapter-e2e",
+        )
+        assert run["runtime_version"] == 3
+
+        decisions = [
+            {
+                "decision": "next_step",
+                "tool": "document.create",
+                "objective": "Create the project document.",
+            },
+            {
+                "decision": "next_step",
+                "tool": "email.draft",
+                "objective": "Draft a follow-up email grounded in the verified document result.",
+            },
+            {"decision": "complete"},
+        ]
+        observed_requests = []
+
+        def respond(request):
+            request_body = json.loads(request.content.decode("utf-8"))
+            user_message = next(
+                message for message in request_body["messages"]
+                if message["role"] == "user"
+            )
+            user_payload = json.loads(user_message["content"])
+            observed_requests.append((request_body, user_payload))
+            decision = decisions[len(observed_requests) - 1]
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(decision),
+                        },
+                    }],
+                    "usage": {"total_tokens": 50},
+                },
+            )
+
+        planner = DeepSeekAgentPlanner(enabled, httpx.MockTransport(respond))
+        runner = DocumentRunner(container, WorkModel())
+        runtime = AgentRuntime(container, runner, planner=planner)
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with make_worker(env, runner, runtime):
+                await dispatch_tick(container, env.client)
+                handle = env.client.get_workflow_handle("shuddho-agent-" + run["id"])
+                async with env.time_skipping_unlocked():
+                    await asyncio.wait_for(handle.result(), 30)
+                history = (await handle.fetch_history()).to_json()
+
+        saved = container.agent.get(owner, run["id"])
+        assert len(observed_requests) == 3
+        assert all(body["model"] == enabled.deepseek_model for body, _ in observed_requests)
+        assert all(body["stream"] is False for body, _ in observed_requests)
+        assert all(body["response_format"] == {"type": "json_object"} for body, _ in observed_requests)
+        assert all(payload["permissions"]["model_may_expand_authority"] is False
+                   for _, payload in observed_requests)
+        assert observed_requests[0][1]["verified_observations"] == []
+        document_observation = observed_requests[1][1]["verified_observations"][0]
+        assert document_observation["tool"] == "document.create"
+        assert document_observation["status"] == "completed"
+        assert document_observation["summary"]["result_excerpt"].strip()
+        final_observations = observed_requests[2][1]["verified_observations"]
+        assert [item["tool"] for item in final_observations] == ["document.create", "email.draft"]
+        assert all(item["status"] == "completed" for item in final_observations)
+
+        assert saved["state"] == "completed"
+        assert saved["runtime_version"] == 3
+        assert saved["planner_mode"] == "v3"
+        assert saved["planner_calls"] == 3
+        assert saved["planner_actual_tokens"] == 150
+        assert [item["decision"] for item in saved["decisions"]] == [
+            "next_step", "next_step", "complete",
+        ]
+        assert [step["tool"] for step in saved["steps"]] == ["document.create", "email.draft"]
+        assert all(item["receipt"]["status"] == "completed" for item in saved["tool_invocations"])
+        assert goal not in history
+        assert "synthetic-test-key" not in history
+        assert "The team completed 12 reviews." not in history
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     ("fault", "status_code", "expected_attempts"),
     [
