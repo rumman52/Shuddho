@@ -2,15 +2,16 @@
 // dependencies are trusted worker-owned network authorization and TCP dialing;
 // production never accepts these values from browser content or user input.
 import http from "node:http";
-import net from "node:net";
-import { isIP } from "node:net";
+import net, { isIP } from "node:net";
 import { browserProxyClaimValid, parseConnectAuthority } from "./browser_worker_policy.mjs";
 
 
 function networkCheckMatchesTarget(target, checked) {
-  const normalizeHost = (value) => (
-    typeof value === "string" ? value.toLowerCase().replace(/\\.$/, "") : ""
-  );
+  const normalizeHost = (value) => {
+    if (typeof value !== "string") return "";
+    const host = value.toLowerCase();
+    return host.endsWith(".") ? host.slice(0, -1) : host;
+  };
   const addresses = checked?.resolved_ips;
   return (
     normalizeHost(checked?.hostname) === normalizeHost(target?.host)
