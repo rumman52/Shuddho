@@ -381,13 +381,20 @@ def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
         if engine.dialect.name != "postgresql":
             pytest.skip("Post-mutation database disconnect qualification requires PostgreSQL")
 
-        owner, transaction_id, action = reviewed_action(value, "database-disconnect-after-provider")
+        owner, _transaction_id, action = reviewed_action(value, "database-disconnect-after-provider")
         service = service_for(value.settings, value.repository.sessions, provider.origin)
         value.actions = service
         adapter = service.providers["google"]
         original_execute = adapter.execute
+        original_service_execute = service.execute
         fault = {"armed": False, "injected": False}
         fault_lock = threading.Lock()
+        execution_attempts = []
+
+        async def tracked_service_execute(identity):
+            with fault_lock:
+                execution_attempts.append((identity, fault["injected"]))
+            return await original_service_execute(identity)
 
         def terminate_receipt_write(connection, cursor, statement, parameters, context, executemany):
             normalized = statement.lstrip().upper()
@@ -431,6 +438,7 @@ def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
                 fault["armed"] = True
             return receipt
 
+        service.execute = tracked_service_execute
         adapter.execute = execute_then_arm
         event.listen(engine, "before_cursor_execute", terminate_receipt_write)
         try:
@@ -443,9 +451,17 @@ def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
         finally:
             event.remove(engine, "before_cursor_execute", terminate_receipt_write)
             adapter.execute = original_execute
+            service.execute = original_service_execute
 
         saved = service.repo.get(owner, action["id"])
         assert fault["injected"] is True, "The targeted PostgreSQL receipt write was not interrupted"
+        assert len(execution_attempts) >= 2, (
+            "The Temporal execution activity did not retry after the receipt-write disconnect"
+        )
+        assert execution_attempts[0] == (action["id"], False)
+        assert any(identity == action["id"] and injected for identity, injected in execution_attempts[1:]), (
+            "No execution activity attempt was observed after the injected PostgreSQL disconnect"
+        )
         # This send-only email connector cannot prove whether the provider applied
         # the effect after receipt persistence failed, so uncertainty must be retained.
         assert saved["state"] == "outcome_unknown"
@@ -460,6 +476,11 @@ def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
             "source_revision": os.getenv("SHUDDHO_TRANSACTION_CHAOS_SOURCE_REVISION", "local-working-tree"),
             "database": engine.dialect.name,
             "postgres_backend_terminated": fault["injected"],
+            "execution_activity_attempts": len(execution_attempts),
+            "retry_after_disconnect_observed": any(
+                identity == action["id"] and injected
+                for identity, injected in execution_attempts[1:]
+            ),
             "provider_dispatch_count": provider.counts()[0],
             "provider_mutation_count": provider.counts()[1],
             "state": saved["state"],
