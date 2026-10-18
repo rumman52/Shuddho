@@ -949,6 +949,8 @@ def test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow(containe
             intelligent_planner_enabled=True,
             work_services_enabled=True,
             artifact_services_enabled=True,
+            agent_handoffs_enabled=True,
+            agent_multi_handoffs_enabled=True,
             deepseek_api_key="synthetic-test-key",
             max_agent_v3_planner_calls=4,
             agent_v3_planner_token_budget=24000,
@@ -1039,6 +1041,21 @@ def test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow(containe
         ]
         assert [step["tool"] for step in saved["steps"]] == ["document.create", "email.draft"]
         assert all(item["receipt"]["status"] == "completed" for item in saved["tool_invocations"])
+
+        # The downstream draft must consume the exact completed upstream artifact,
+        # with owner-scoped provenance and a source ID bound into the draft.
+        upstream = saved["tool_invocations"][0]
+        downstream = saved["tool_invocations"][1]
+        handoff_source_id = "agent-step-" + upstream["id"]
+        email_draft = container.repository.step(downstream["receipt"]["resource_id"], "draft")
+        assert email_draft["handoff_provenance"][0]["tool"] == "document.create"
+        assert email_draft["handoff_provenance"][0]["invocation_id"] == upstream["id"]
+        assert email_draft["draft"]["email"]["body"] == "The team completed 12 reviews."
+        assert email_draft["draft"]["email"]["source_ids"] == [handoff_source_id]
+        assert any(
+            source["id"] == handoff_source_id and len(source["sha256"]) == 64
+            for source in email_draft["sources"]
+        )
         assert goal not in history
         assert "synthetic-test-key" not in history
         assert "The team completed 12 reviews." not in history
