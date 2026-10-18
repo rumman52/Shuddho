@@ -1357,3 +1357,16 @@ Next: review/qualify this branch, merge through normal protections, implement CW
 
 
 **Integration:** this entry is appended rather than prepended to avoid conflicting with #421's simultaneous canonical-progress prepend. Both PRs remain separately reviewable against the same base; refresh main/CI after either is integrated. Direct git push was unavailable (no transport credentials); authorized connector writes were used and remote/local Git tree identities verified.
+
+
+---
+
+## CW-02 artifact storage failure continuation — 19 October 2026 (Asia/Dhaka)
+
+**Refreshed main:** `1344348707066556a0a21e4ec0620e16499294cf`, merge commit for [PR #465](https://github.com/rumman52/Shuddho/pull/465). The export-write failure regression and cleanup are now on main. At the checkpoint refreshed for this follow-up, the `test-and-build` job passed but the required `coworker` job remained in progress; do not describe the exact main revision as fully CI-verified until that job finishes.
+
+**Next bounded slice:** branch `codex/cw02-storage-read-recovery-20261019` now tests (1) transient required-artifact GET failure at the actual `DocumentRunner.phase(..., "complete")` boundary, with no terminal success or published Artifact records and a retry that verifies existing bytes without additional object PUTs; and (2) a lost database response after the export checkpoint commits. The second case exposed a data-loss hazard in PR #465's cleanup logic: a committed checkpoint could reference blobs that unconditional exception cleanup then deleted.
+
+**Correction in this branch:** partial-export cleanup runs only before checkpoint submission. Once checkpoint submission starts, the commit outcome is uncertain, so object deletion is suppressed; retry observes a committed checkpoint and reuses its referenced objects. This deliberately favors preserving potentially referenced data over eager orphan cleanup. Exact-head CI is required before merging.
+
+**Evidence boundary:** test-store fault injection is not live S3 staging evidence. Persistent storage outage, cleanup after hard process death, the remaining CW-02 fault matrix, CW11-STAGING mixed-version drain, browser/sandbox isolation and complete personal-coworker scenarios remain unqualified. No deployment, provider activation or production action was performed.

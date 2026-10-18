@@ -58,3 +58,14 @@ Final local source checks: the new module passed **16 tests** with **1 PostgreSQ
 ## Remaining qualification
 
 This is the next CW-02 integration slice, not completion of the complete sixteen-fault operated release matrix. Model 429/500/timeout, S3 and broader database interruption traces, matching frozen API/worker rollout, independently reviewed real provider mutation counters and exact selected shopping/travel provider qualification remain separate exit gates. Preserve uncertain outcomes when authoritative reconciliation is unavailable.
+
+
+## Follow-up: required-artifact read failure boundary
+
+Regression tests in `tests/test_coworker.py` exercise two ambiguous boundaries:
+- A one-time object-store GET disconnect during the real `complete` phase must leave the task non-terminal and publish no Artifact records. Retry verifies the existing export checkpoint without issuing additional object PUTs.
+- A database response loss after `save_step(..., "export", ...)` has committed must not delete the objects referenced by that checkpoint. Replay observes the checkpoint and completes from the same object set.
+
+The runner cleans partial objects only when failure occurs before checkpoint submission. Once checkpoint submission starts, its commit outcome may be unknown; preserving objects is safer than destructive cleanup. Unreferenced objects left by an ambiguous/failed checkpoint are a cleanup concern and must not be represented as successfully published artifacts.
+
+This is repository-level fault-injection evidence using the test storage implementation. It does **not** qualify a live S3 outage, persistent read failures, orphan cleanup after process death, or the complete sixteen-case operated matrix. Those remain separate gates.
