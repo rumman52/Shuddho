@@ -360,3 +360,110 @@ def test_temporal_server_outage_preserves_approved_outbox_until_recovery(
         assert value.actions.repo.get(owner, action["id"])["state"] == "succeeded"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.skipif(os.getenv("SHUDDHO_TEMPORAL_TESTS") != "true", reason="Real Temporal test server required")
+def test_postgres_backend_disconnect_after_provider_acceptance_never_resends(
+    transaction_container, provider, record_property,
+):
+    """A real PostgreSQL backend loss at receipt persistence cannot resend a provider mutation."""
+    import threading
+
+    from sqlalchemy import event, text
+    from temporalio.testing import WorkflowEnvironment
+    from test_coworker import FakeModel
+    from test_coworker_temporal import make_worker
+    from services.coworker.runner import DocumentRunner
+
+    async def scenario():
+        value = transaction_container
+        engine = value.repository.sessions.kw["bind"]
+        if engine.dialect.name != "postgresql":
+            pytest.skip("Post-mutation database disconnect qualification requires PostgreSQL")
+
+        owner, transaction_id, action = reviewed_action(value, "database-disconnect-after-provider")
+        service = service_for(value.settings, value.repository.sessions, provider.origin)
+        value.actions = service
+        adapter = service.providers["google"]
+        original_execute = adapter.execute
+        fault = {"armed": False, "injected": False}
+        fault_lock = threading.Lock()
+
+        def terminate_receipt_write(connection, cursor, statement, parameters, context, executemany):
+            normalized = statement.lstrip().upper()
+            if not normalized.startswith("UPDATE") or "CW_EXTERNAL_ACTIONS" not in normalized:
+                return
+            if action["id"] not in str(parameters):
+                return
+            with fault_lock:
+                if not fault["armed"] or fault["injected"]:
+                    return
+                fault["armed"] = False
+                fault["injected"] = True
+
+            # Terminate only the active backend for this targeted receipt write.
+            # The fixture preflight restricts this test to the disposable loopback CI DB.
+            pid = connection.connection.driver_connection.info.backend_pid
+            with engine.connect() as killer:
+                database_name, database_role = killer.execute(
+                    text("SELECT current_database(), current_user")
+                ).one()
+                assert (database_name, database_role) == (
+                    "shuddho_coworker_test", "shuddho_test"
+                ), "Fault injection requires the disposable CI PostgreSQL database and role"
+                assert killer.scalar(
+                    text("SELECT pg_terminate_backend(:pid)"), {"pid": pid}
+                ) is True
+                deadline = time.monotonic() + 5
+                while killer.scalar(
+                    text("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = :pid)"),
+                    {"pid": pid},
+                ):
+                    if time.monotonic() >= deadline:
+                        raise AssertionError("Target PostgreSQL backend did not terminate")
+                    time.sleep(0.01)
+
+        async def execute_then_arm(*args, **kwargs):
+            receipt = await original_execute(*args, **kwargs)
+            # The provider has accepted the send; inject the disconnect only
+            # when the worker tries to persist the resulting action receipt.
+            with fault_lock:
+                fault["armed"] = True
+            return receipt
+
+        adapter.execute = execute_then_arm
+        event.listen(engine, "before_cursor_execute", terminate_receipt_write)
+        try:
+            async with await WorkflowEnvironment.start_time_skipping() as env:
+                async with make_worker(env, DocumentRunner(value, FakeModel())):
+                    await dispatch_tick(value, env.client)
+                    handle = env.client.get_workflow_handle("shuddho-action-" + action["id"])
+                    async with env.time_skipping_unlocked():
+                        await asyncio.wait_for(handle.result(), 35)
+        finally:
+            event.remove(engine, "before_cursor_execute", terminate_receipt_write)
+            adapter.execute = original_execute
+
+        saved = service.repo.get(owner, action["id"])
+        assert fault["injected"] is True, "The targeted PostgreSQL receipt write was not interrupted"
+        # This send-only email connector cannot prove whether the provider applied
+        # the effect after receipt persistence failed, so uncertainty must be retained.
+        assert saved["state"] == "outcome_unknown"
+        assert saved["receipt"] is None
+        assert provider.counts() == (1, 1, [action["id"]])
+        record_property("transaction_case", json.dumps({
+            "schema_version": 1,
+            "evidence_level": "postgres_temporal_loopback_provider",
+            "case_id": "database_disconnect_after_provider_acceptance",
+            "action_id": action["id"],
+            "approved_identity": action["preview_hash"],
+            "source_revision": os.getenv("SHUDDHO_TRANSACTION_CHAOS_SOURCE_REVISION", "local-working-tree"),
+            "database": engine.dialect.name,
+            "postgres_backend_terminated": fault["injected"],
+            "provider_dispatch_count": provider.counts()[0],
+            "provider_mutation_count": provider.counts()[1],
+            "state": saved["state"],
+            "receipt_sha256": None,
+        }, sort_keys=True))
+
+    asyncio.run(scenario())
