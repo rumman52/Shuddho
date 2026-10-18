@@ -169,6 +169,17 @@ jobs:
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_conversation_dispatch
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_coworker_postgres
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_coworker
+      - name: Verify bounded Agent planner retry failures without skips
+        run: |
+          uv run --extra coworker pytest tests/test_coworker_temporal.py::test_agent_v3_model_failures_retry_within_bound_without_creating_work tests/test_coworker.py::test_agent_replan_activity_preserves_planner_retryability -q -rs --junitxml=/tmp/cw02-planner-retry.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/cw02-planner-retry.xml --required-module tests.test_coworker_temporal
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/cw02-planner-retry.xml --required-module tests.test_coworker
+      - name: Keep planner retry evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cw02-planner-retry-evidence
+          path: /tmp/cw02-planner-retry.xml
       - name: Qualify CW-11 trusted skill registry and staging collector without skips
         run: |
           uv run --extra coworker pytest tests/test_cw11_registry.py tests/test_cw11_registry_postgres.py tests/test_cw11_staging_evidence.py -q -rs --junitxml=/tmp/cw11-registry.xml

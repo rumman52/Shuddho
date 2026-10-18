@@ -1,3 +1,25 @@
+## CW-02 planner retryability at the Temporal boundary — 18 October 2026 (Asia/Dhaka)
+
+**Roadmap mapping:** Phase 11 model HTTP 429/500/timeout behavior. This is one bounded repository slice, not completion of the full CW-02 transaction-chaos task.
+
+**Observed defect:** `DeepSeekAgentPlanner` already classified transient HTTP failures and timeouts as retryable. `AgentActivities.replan` and `AgentActivities.decide_v3` converted those `PlannerFailure` exceptions to non-retryable Temporal errors, preventing the existing maximum-two-attempt policy from taking effect.
+
+**Implementation:** branch `codex/cw02-planner-retryability-20261018`, [draft PR #456](https://github.com/rumman52/Shuddho/pull/456). `services/coworker/worker.py` now preserves `PlannerFailure.retryable` while retaining the existing capacity-error policy. Regression coverage uses synthetic `httpx.MockTransport` responses and a real Temporal test workflow: 429/500/timeout expect two attempts, permanent 400 expects one, and exhausted failures must not create decisions, memory proposals, or tool work. A dedicated no-skip JUnit gate and artifact were added to `.github/workflows/ci.yml`. Task contract: [CW-02 planner retryability](CW02_PLANNER_RETRYABILITY_2026-10-18.md).
+
+| Evidence level | Status |
+| --- | --- |
+| Implemented | Yes — source/test implementation commit `f1814b6046bd28d5a0d11477a02bb3e17629aa54`; final combined source/test/CI-gate checkpoint is pending |
+| Repository-verified | Pending exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` on the combined candidate |
+| Staging-verified | Not established; remaining CW-02 fault cases and operated provider-side evidence remain separate |
+| Production-qualified | Not established |
+| Activated | No |
+
+No real model provider was contacted; the tests use a synthetic key and mock transport. No protected staging environment, production secret, external transaction, deployment, or activation was used. Independent review is not claimed.
+
+**Next exact action:** inspect the final-head CI jobs and JUnit evidence, fix any genuine failures without weakening assertions, then seek independent review when available. Continue the remaining CW-02 fault matrix and operated qualification only with authorized staging identities and provider-side evidence.
+
+---
+
 ## Runtime v3 late planner cancellation fence — 18 October 2026 (Asia/Dhaka)
 
 **Roadmap mapping:** this is a cross-cutting correctness slice supporting the CW-06 acceptance criterion “cancellation beats delayed result.” It does **not** complete all of CW-06 and is not the roadmap's CW-02 transaction-chaos task. The branch name retains its historical `cw02` segment from the original failing-first test commit.
@@ -9,12 +31,12 @@
 | Evidence level | Status |
 | --- | --- |
 | Implemented | Yes — source and regressions are on PR #455 |
-| Repository-verified | Pending exact-final-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` |
+| Repository-verified | Yes — PR #455 exact-head CI run #39062674571 passed all three required jobs; merged-main CI run #39063079528 passed all three jobs |
 | Staging-verified | Not established; operated CW-02 transaction-chaos and full CW-06 acceptance remain separate |
 | Production-qualified | Not established |
 | Activated | No |
 
-No provider was called, no secret or protected staging environment was accessed, no deployment or capability activation occurred, and no independent review is claimed. **Next exact action:** inspect all required CI jobs on the final PR head, repair real failures without weakening safety assertions, then obtain independent review and complete the authorized operated cancellation/recovery qualification.
+No provider was called, no secret or protected staging environment was accessed, and no deployment or capability activation occurred. Independent review is still outstanding. **Next exact action:** complete the CW-02 planner-failure retryability slice, then continue the remaining fault matrix and authorized operated cancellation/recovery qualification; staging access is not established.
 
 ---
 
