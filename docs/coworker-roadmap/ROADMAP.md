@@ -42,39 +42,19 @@ Evidence anchors:
 - [TX-28 provider boundaries](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/docs/TX28_TRANSACTIONS_REPOSITORY_COMPLETION.md)
 - [Runtime v3](https://github.com/rumman52/Shuddho/blob/ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40/services/coworker/agent_runtime.py)
 
-## Immediate qualification defects
+## Immediate qualification defects and refreshed status — 18 October 2026
 
-The newest chaos test file must be repaired before citing it as safety evidence.
+The original review below identified real CW-01 defects, but its status is historical. Refresh live source and CI before treating those statements as current.
 
-1. `tests/test_transaction_chaos_qualification.py` is absent from the explicit heavy
-   coworker pytest command. The lightweight job installs no coworker extra; the file
-   uses `pytest.importorskip("sqlalchemy")` and `pytest.importorskip("temporalio")`.
-   Therefore green CI does not establish that this file ran. Inspect logs to establish
-   the actual collection/skip result; require zero skips for the mandatory new suite.
-2. The duplicate-binding test expects a second bind to the *same* action ID to fail.
-   `TransactionRepository.bind_external_action` intentionally returns the existing
-   link for that replay; a different action ID is the conflict. Preserve that
-   idempotent contract and test both cases.
-3. The timeout test passes `evidence_type` and `evidence` to
-   `TransactionReconciliationEvidence`; the inspected ORM model declares neither.
-   Its real fields bind the external action, provider, state, receipt and evidence hash.
-   Exercise the dispatcher and repository reconciliation path instead of inserting
-   invented evidence.
-4. The expiration test calls `container.transactions.advance_execution`; no such
-   method exists in the inspected transaction repository. Use the real action
-   approval/claim boundary and verify zero provider mutations.
-5. The new Phase 11 document lists only five outcomes, not the requested 16 injections.
+**CW-01 repository checks are now integrated.** On main `ab3ae23b5b84cea8613a93d340a3e0f2c05753f0`, the mandatory coworker job explicitly runs `tests/test_transaction_chaos_qualification.py`, `tests/test_transaction_chaos_matrix.py`, and the transaction boundary suites through a no-skip JUnit gate. The merged-main CI [#39101295869](https://github.com/rumman52/Shuddho/actions/runs/39101295869) passed `test-and-build`, `coworker`, and `ci-merge-gate`. The valid duplicate-binding contract is same-action replay returns the existing link; a different action conflicts. Expired approval/claim tests exercise the real action boundary. The provider transport is simulated, not live certification.
 
-These are source/CI-configuration findings. The current chaos suite was not executed
-locally during this planning review. CW-01 requires a real reproduction before repair.
-The findings do not establish that the production action service duplicates actions.
+**CW-02 process-recovery integration is present but partial.** `tests/test_transaction_chaos_temporal.py`, `tests/test_transaction_chaos_postgres.py`, and `tests/transaction_process_harness.py` exercise real repository/dispatcher/Temporal paths with a counted loopback provider. Required CI configures disposable PostgreSQL and the Temporal test server, preserves JUnit artifacts, and rejects mandatory skips. This is repository-level integration evidence only.
 
-Open [chaos PR #361](https://github.com/rumman52/Shuddho/pull/361), inspected at
-`f543573220c2254c6f16c8777d0ff9783efcd92c`, changes this file but is not merged.
-It still constructs undeclared ORM fields, references an absent
-`review_binding["external_action_id"]`, and its expiry test only checks a nonempty ID.
-Inspect/reconcile that work before starting another repair PR; do not consider it
-qualified merely because it replaces the missing-method call.
+**Current follow-up:** branch `codex/cw02-scenario-outcome-contract-20261018` tightens `scripts/transaction_chaos_matrix.py` so each of the 16 canonical scenario IDs has explicit allowed provider-dispatch/applied-mutation counts and outcome values. Regression tests reject impossible combinations. Its exact-head CI is pending at this checkpoint. The manifest validator does not execute the fault injection or certify provider-side observations.
+
+**Still unfinished:** the complete 16-fault matrix with every required boundary, database/S3 interruption and recovery behavior, exact provider-side applied-mutation evidence, matching frozen staging identity, independent operational review, and authorized staging qualification. The old [PR #361](https://github.com/rumman52/Shuddho/pull/361) is closed unmerged; do not merge it as a shortcut. It was inspected at `f543573220c2254c6f16c8777d0ff9783efcd92c` and contains invalid assumptions about reconciliation fields and transaction binding. Keep the corrected mainline CW-01 tests and continue from the current source.
+
+No live provider, protected staging secret, deployment, or capability activation is claimed. CW-01 repository verification and partial CW-02 process-recovery tests do not qualify transactions for production.
 
 ## The target experience
 
