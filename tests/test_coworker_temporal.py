@@ -1004,8 +1004,19 @@ def test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow(containe
                 },
             )
 
+        class CaptureHandoffWorkModel(WorkModel):
+            def __init__(self):
+                super().__init__()
+                self.email_sources = []
+
+            def messages(self, task, sources):
+                if task["skill_id"] == "email":
+                    self.email_sources = [dict(source) for source in sources]
+                return super().messages(task, sources)
+
         planner = DeepSeekAgentPlanner(enabled, httpx.MockTransport(respond))
-        runner = DocumentRunner(container, WorkModel())
+        model = CaptureHandoffWorkModel()
+        runner = DocumentRunner(container, model)
         runtime = AgentRuntime(container, runner, planner=planner)
         async with await WorkflowEnvironment.start_time_skipping() as env:
             async with make_worker(env, runner, runtime):
@@ -1047,7 +1058,15 @@ def test_agent_v3_deepseek_adapter_executes_grounded_multistep_workflow(containe
         upstream = saved["tool_invocations"][0]
         downstream = saved["tool_invocations"][1]
         handoff_source_id = "agent-step-" + upstream["id"]
+        assert len(model.email_sources) == 1
+        model_source = model.email_sources[0]
+        assert model_source["id"] == handoff_source_id
+        assert "The team completed 12 reviews." in model_source["text"]
+        import hashlib
+        assert hashlib.sha256(model_source["text"].encode("utf-8")).hexdigest() == model_source["sha256"]
+
         email_draft = container.repository.step(downstream["receipt"]["resource_id"], "draft")
+        assert email_draft["sources"][0]["sha256"] == model_source["sha256"]
         assert email_draft["handoff_provenance"][0]["tool"] == "document.create"
         assert email_draft["handoff_provenance"][0]["invocation_id"] == upstream["id"]
         assert email_draft["draft"]["email"]["body"] == "The team completed 12 reviews."
