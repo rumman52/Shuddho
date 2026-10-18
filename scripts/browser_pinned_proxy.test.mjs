@@ -240,7 +240,8 @@ test("real CONNECT fails closed on malformed or mismatched broker DNS results", 
     let client;
     try {
       client = await openConnect(proxy);
-      if (!client.destroyed) await once(client, "close");
+      const closed = new Promise((resolve) => client.once("close", resolve));
+      if (!client.destroyed) await closed;
       assert.equal(outboundDials, 0, label);
       assert.ok(!client.received.includes("200 Connection Established"), label);
       assert.deepEqual(state.evidence, {}, label);
