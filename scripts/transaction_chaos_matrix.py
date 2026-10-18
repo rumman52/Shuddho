@@ -19,11 +19,65 @@ SCENARIOS = (
     "lost_provider_response", "approval_after_expiration",
 )
 
-NO_APPLIED_MUTATION = frozenset({
-    "model_429", "model_500", "model_timeout", "provider_401",
-    "provider_403", "approval_after_expiration",
-})
-NO_DISPATCH = frozenset({"model_429", "model_500", "model_timeout", "approval_after_expiration"})
+# Each matrix row describes one reviewed fault injection, not a generic
+# "some mutation happened" record. Counts are provider dispatch attempts and
+# independently observed applied mutations for that case's approved identity.
+# Variable-boundary faults admit only explicitly listed counter pairs.
+SCENARIO_CONTRACTS = {
+    "model_429": {"allowed_counts": ("0:0",), "outcomes_by_counts": {"0:0": ("failed", "blocked")}},
+    "model_500": {"allowed_counts": ("0:0",), "outcomes_by_counts": {"0:0": ("failed", "blocked")}},
+    "model_timeout": {"allowed_counts": ("0:0",), "outcomes_by_counts": {"0:0": ("failed", "blocked")}},
+    "provider_401": {"allowed_counts": ("1:0",), "outcomes_by_counts": {"1:0": ("failed", "rejected")}},
+    "provider_403": {"allowed_counts": ("1:0",), "outcomes_by_counts": {"1:0": ("failed", "rejected")}},
+    "provider_429": {"allowed_counts": ("1:0",), "outcomes_by_counts": {"1:0": ("failed", "rejected")}},
+    "provider_500": {
+        "allowed_counts": ("1:0", "1:1"),
+        "outcomes_by_counts": {"1:0": ("failed",), "1:1": ("uncertain",)},
+    },
+    "malformed_response": {
+        "allowed_counts": ("1:0", "1:1"),
+        "outcomes_by_counts": {"1:0": ("failed",), "1:1": ("uncertain",)},
+    },
+    "database_disconnect": {
+        "allowed_counts": ("0:0", "1:0", "1:1"),
+        "outcomes_by_counts": {
+            "0:0": ("failed", "blocked", "uncertain", "recovered"),
+            "1:0": ("failed", "uncertain"),
+            "1:1": ("uncertain", "recovered", "confirmed"),
+        },
+    },
+    "s3_disconnect": {
+        "allowed_counts": ("0:0", "1:0", "1:1"),
+        "outcomes_by_counts": {
+            "0:0": ("failed", "blocked", "recovered"),
+            "1:0": ("failed", "blocked", "uncertain"),
+            # The artifact failure may fail/block the overall task, but it must
+            # never trigger a second external mutation. "confirmed" is not a
+            # successful task result while the required artifact is unavailable.
+            "1:1": ("failed", "blocked", "uncertain", "recovered"),
+        },
+    },
+    "temporal_outage": {"allowed_counts": ("1:1",), "outcomes_by_counts": {"1:1": ("recovered", "confirmed")}},
+    "worker_crash": {
+        "allowed_counts": ("0:0", "1:1"),
+        "outcomes_by_counts": {
+            "0:0": ("uncertain", "blocked"),
+            "1:1": ("uncertain", "recovered", "confirmed"),
+        },
+    },
+    "api_crash": {"allowed_counts": ("0:0",), "outcomes_by_counts": {"0:0": ("recovered",)}},
+    "duplicate_message": {"allowed_counts": ("0:0",), "outcomes_by_counts": {"0:0": ("recovered",)}},
+    "lost_provider_response": {"allowed_counts": ("1:1",), "outcomes_by_counts": {"1:1": ("uncertain",)}},
+    "approval_after_expiration": {"allowed_counts": ("0:0",), "outcomes_by_counts": {"0:0": ("rejected", "blocked")}},
+}
+NO_APPLIED_MUTATION = frozenset(
+    name for name, contract in SCENARIO_CONTRACTS.items()
+    if all(pair.split(":")[1] == "0" for pair in contract["allowed_counts"])
+)
+NO_DISPATCH = frozenset(
+    name for name, contract in SCENARIO_CONTRACTS.items()
+    if all(pair.split(":")[0] == "0" for pair in contract["allowed_counts"])
+)
 MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 
 
@@ -35,6 +89,25 @@ def _timestamp_valid(value):
     except ValueError:
         return False
     return stamp.tzinfo is not None and stamp.utcoffset() is not None
+
+
+def _validate_scenario_contract(name: str, attempts: int, applied: int, outcome: str) -> list[str]:
+    contract = SCENARIO_CONTRACTS[name]
+    pair = f"{attempts}:{applied}"
+    problems = []
+    if pair not in contract["allowed_counts"]:
+        problems.append(
+            f"{name}: mutation counts {pair} violate the scenario contract; "
+            f"expected one of {', '.join(contract['allowed_counts'])}"
+        )
+        return problems
+    allowed_outcomes = contract["outcomes_by_counts"][pair]
+    if outcome not in allowed_outcomes:
+        problems.append(
+            f"{name}: outcome {outcome!r} conflicts with mutation counts {pair}; "
+            f"expected one of {', '.join(allowed_outcomes)}"
+        )
+    return problems
 
 
 def verify_evidence_files(document: dict, directory: Path) -> list[str]:
@@ -150,6 +223,8 @@ def qualify(document: dict, *, expected_revision: str, expected_rollout: str) ->
             problems.append(f"{name}: must demonstrate one submission and one provider mutation")
         if entry.get("outcome") not in ("rejected", "failed", "uncertain", "confirmed", "recovered", "blocked"):
             problems.append(f"{name}: missing explicit outcome")
+        elif type(attempts) is int and type(applied) is int:
+            problems.extend(_validate_scenario_contract(name, attempts, applied, entry["outcome"]))
     for name in SCENARIOS:
         if name not in seen:
             problems.append(f"missing scenario: {name}")
