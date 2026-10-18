@@ -950,6 +950,7 @@ def test_agent_v3_model_failures_retry_within_bound_without_creating_work(
     async def scenario():
         import httpx
         from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+        from sqlalchemy import select
         from services.coworker.models import AgentDecision, MemoryProposal, ToolInvocation
 
         enabled = replace(
