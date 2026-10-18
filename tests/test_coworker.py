@@ -3643,3 +3643,70 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
         assert len(container.storage.inventory(prefix=prefix)) == 3
 
     asyncio.run(scenario())
+
+
+def test_artifact_read_failure_blocks_completion_and_reuses_export_on_retry(container):
+    """A transient object-store GET failure cannot publish a false success or re-export files."""
+    import asyncio
+    import hashlib
+
+    async def scenario():
+        owner = account(container)
+        task = new_task(container, owner)
+        delegate = container.storage
+
+        class FaultingReadStore:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.fail_once = True
+                self.put_keys = []
+                self.get_keys = []
+
+            def put(self, key, data, content_type):
+                self.put_keys.append(key)
+                return self.wrapped.put(key, data, content_type)
+
+            def get(self, key, max_bytes):
+                self.get_keys.append(key)
+                if self.fail_once:
+                    self.fail_once = False
+                    raise OSError("simulated S3 GET disconnect")
+                return self.wrapped.get(key, max_bytes)
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        storage = FaultingReadStore(delegate)
+        container.storage = storage
+        runner = DocumentRunner(container, FakeModel())
+        await runner.phase(task["id"], "extract")
+        await runner.phase(task["id"], "draft")
+        await runner.phase(task["id"], "export")
+
+        exported = container.repository.step(task["id"], "export")
+        assert exported is not None and exported["artifacts"]
+        expected_puts = list(storage.put_keys)
+        assert len(expected_puts) == len(exported["artifacts"])
+
+        with pytest.raises(OSError, match="simulated S3 GET disconnect"):
+            await runner.phase(task["id"], "complete")
+
+        failed = container.repository.get_task(owner, task["id"])
+        assert failed["state"] == "running"
+        assert failed["artifacts"] == []
+        assert container.repository.step(task["id"], "export") == exported
+        assert storage.put_keys == expected_puts
+
+        # Recovery reuses the durable export checkpoint, verifies bytes, and completes once.
+        await runner.phase(task["id"], "complete")
+        completed = container.repository.get_task(owner, task["id"])
+        assert completed["state"] == "completed"
+        assert storage.put_keys == expected_puts
+        assert len(completed["artifacts"]) == len(exported["artifacts"])
+        for item in completed["artifacts"]:
+            artifact = container.repository.artifact(owner, item["id"])
+            body = delegate.get(artifact["object_key"], artifact["byte_size"])
+            assert hashlib.sha256(body).hexdigest() == item["sha256"]
+        assert len(storage.get_keys) >= 1 + len(exported["artifacts"])
+
+    asyncio.run(scenario())
