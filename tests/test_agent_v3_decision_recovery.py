@@ -176,3 +176,41 @@ def test_no_tools_block_cannot_mask_concurrent_terminal_transition(container, mo
     assert container.agent.v3_activity_result(run_id, "workflow/no-tools") is None
     assert container.agent.get(actor, run_id)["state"] == "needs_input"
     assert planner.calls == 0
+
+def test_no_tools_commit_response_loss_replays_without_new_terminal(container, monkeypatch):
+    actor, run_id, runtime, planner = setup(container)
+    monkeypatch.setattr("services.coworker.agent_runtime.intelligent_tool_names", lambda *_a, **_k: [])
+    original = container.agent.block_v3_unavailable_tools
+
+    def lose_reply(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("no-tools commit response lost")
+
+    monkeypatch.setattr(container.agent, "block_v3_unavailable_tools", lose_reply)
+    with pytest.raises(RuntimeError, match="commit response lost"):
+        asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools"))
+    monkeypatch.setattr(container.agent, "block_v3_unavailable_tools", original)
+    assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools")) == {"decision": "blocked"}
+    assert container.agent.get(actor, run_id)["state"] == "blocked"
+    assert planner.calls == 0
+
+
+def test_no_tools_checkpoint_failure_rolls_back_terminal(container, monkeypatch):
+    actor, run_id, runtime, planner = setup(container)
+    monkeypatch.setattr("services.coworker.agent_runtime.intelligent_tool_names", lambda *_a, **_k: [])
+    original_state = container.agent.get(actor, run_id)["state"]
+    original = container.agent._checkpoint
+
+    def fail_checkpoint(*args, **kwargs):
+        if len(args) > 2 and args[2] == "v3_activity_result":
+            raise RuntimeError("checkpoint persistence interrupted")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(container.agent, "_checkpoint", fail_checkpoint)
+    with pytest.raises(RuntimeError, match="checkpoint persistence interrupted"):
+        asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools"))
+    assert container.agent.v3_activity_result(run_id, "workflow/no-tools") is None
+    assert container.agent.get(actor, run_id)["state"] == original_state
+    monkeypatch.setattr(container.agent, "_checkpoint", original)
+    assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools")) == {"decision": "blocked"}
+    assert planner.calls == 0
