@@ -1,3 +1,12 @@
+## Architecture/core continuation — C-01 finalization cancellation integrity (20 October 2026)
+
+- Refreshed main `c2d029c4782768b8aba04c96105eae978d7e2c07`: #491–#494 have **merged**; do not reimplement them. Current merged-main CI was in progress at first inspection. No open PRs at selection.
+- Review branch `codex/c01-finalization-cancel-notfound-fence-20261020` corrects a specific Runtime v3 defect: cancelled/cancel-requested or missing runs could be acknowledged by the Temporal finalization activity without a successful completion. Existing finalization row lock now returns `agent_cancelled`/ `not_found`; exact completed replay and legacy v1/v2 cancelled no-op are retained. [Contract](C01_CANCELLED_FINALIZATION_FENCE_2026-10-20.md).
+- Three new Temporal activity regression scenarios plus a legacy compatibility control were committed ahead of implementation. No failing-first execution is claimed. Exact-head mandatory CI, human review and operated provider/worker recovery still need confirmation; no deployment/activation.
+- All **17** A/C/P/V completion requirements remain open for full qualification. Do not equate this source repair with live Temporal, protected staging, isolation, old-history rollback, external 16-fault receipts or human security/quality sign-off.
+
+---
+
 ## Architecture/core closure — C-01 final completion evidence (20 October 2026)
 
 - Base `b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d`, dedicated branch `codex/c01-v3-completion-evidence-20261020`. Existing merged #490 replay behavior preserved.
