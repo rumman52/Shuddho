@@ -252,3 +252,48 @@ def test_committed_terminal_v3_result_still_replays_without_reservation(containe
     assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/terminal")) == first
     assert container.agent.get(actor, run_id)["planner_calls"] == before == 1
     assert planner.calls == 1
+
+@pytest.mark.parametrize("terminal", ["needs_input", "blocked"])
+def test_v3_cannot_append_fresh_step_after_terminal(container, terminal):
+    actor, run_id, runtime, planner = setup(container)
+    container.agent.v3_terminal(run_id, terminal, "Terminal state won.")
+    before = counts(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        container.agent.append_v3_step(actor, run_id, "email.draft", "Draft a weekly note.")
+    assert caught.value.code == "agent_run_closed"
+    assert counts(container, run_id) == before == [0, 0, 0]
+    assert container.agent.get(actor, run_id)["state"] == terminal
+    assert planner.calls == 0
+
+
+@pytest.mark.parametrize("terminal", ["needs_input", "blocked"])
+def test_v3_cannot_start_queued_step_after_terminal(container, terminal):
+    actor, run_id, runtime, planner = setup(container)
+    decision = asyncio.run(runtime.decide_v3(run_id, activity_key="step/admit"))
+    ordinal = decision["ordinal"]
+    container.agent.v3_terminal(run_id, terminal, "Terminal state won.")
+    with pytest.raises(CoworkerError) as caught:
+        container.agent.begin_invocation(run_id, ordinal)
+    assert caught.value.code == "agent_run_closed"
+    state = container.agent.get(actor, run_id)
+    assert state["state"] == terminal
+    assert state["steps"][-1]["state"] != "running"
+    assert planner.calls == 1
+
+
+@pytest.mark.parametrize("terminal", ["needs_input", "blocked"])
+def test_v3_cannot_commit_late_receipt_over_terminal(container, terminal):
+    actor, run_id, runtime, planner = setup(container)
+    ordinal = asyncio.run(runtime.decide_v3(run_id, activity_key="step/receipt"))["ordinal"]
+    container.agent.v3_terminal(run_id, terminal, "Terminal state won.")
+    with pytest.raises(CoworkerError) as caught:
+        container.agent.finish_invocation(
+            run_id, ordinal, "task", "synthetic-task-id",
+            {"verified": True, "provider_confirmed": False},
+        )
+    assert caught.value.code == "agent_run_closed"
+    with container.repository.sessions() as db:
+        from services.coworker.models import ToolReceipt
+        assert db.query(ToolReceipt).filter(ToolReceipt.run_id == run_id).count() == 0
+    assert container.agent.get(actor, run_id)["state"] == terminal
+    assert planner.calls == 1
