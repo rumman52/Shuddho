@@ -2402,6 +2402,10 @@ class AgentRepository:
                     "The Agent run is no longer active.",
                     409,
                 )
+            # The provider runs outside this transaction. A reservation made
+            # before the deadline never authorizes a late *new* decision;
+            # duplicate committed planner calls returned above stay replayable.
+            self._assert_within_deadline(run)
             # Inference may outlive the selected document or original message
             # binding. Recheck the admission pins before retaining fresh model
             # output; already-committed decisions above remain replayable.
