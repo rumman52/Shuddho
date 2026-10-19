@@ -3,17 +3,16 @@ import asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra")
+pytest.importorskip("temporalio", reason="Install the coworker extra")
+
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
 from services.coworker.models import AgentRun
 from services.coworker.worker import AgentActivities
-
-
-import pytest
-
-pytest.importorskip("sqlalchemy", reason="Install the coworker extra")
-pytest.importorskip("temporalio", reason="Install the coworker extra")
 
 from services.coworker.agent_schemas import AgentPlanStep
 from services.coworker.errors import CoworkerError
