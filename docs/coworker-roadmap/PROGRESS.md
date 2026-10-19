@@ -1,12 +1,3 @@
-## Architecture/core closure — durable v3 decision recovery (19 October 2026)
-
-- Branch `codex/core-v3-durable-decision-retry-20261019`, base main `8a83844b148a811357b8906c58deb3ba8b76f1d3`. [Contract](CORE_V3_DURABLE_DECISION_RECOVERY_2026-10-19.md).
-- Actual Temporal activity attempt 2 previously inferred again and failed `agent_loop_detected` after attempt 1 committed. The activity now derives a stable logical identity and atomically commits the decision, memory/step/terminal effect, exact result and idempotent token settlement through the existing Agent ledger/checkpoints. Uncommitted actual inference attempts remain bounded and charged.
-- New recovery module: 8 passed, zero skips; includes lost commit response and pre-step interruption. Surrounding regressions, independent review and exact-head CI are finalized in the PR; full CI is pending at publication. No migration, workflow argument/history change, grant, default flag, deployment or activation change.
-- Context slice is draft PR #480, independently reviewed with 63 passing local tests; exact-head CI pending. The finite 17 architecture/core acceptance IDs remain in scope; sandbox lifetime, conversation steering/navigation/explicit memory selection and final design/inventory closure continue separately. Operated staging and human qualification remain absent.
-
----
-
 ## CW-02 retention reference snapshot ordering — 19 October 2026 (Asia/Dhaka)
 
 - **Verified starting main:** `a95d87f6aea1f54139737a628675850f95524576`, merged [PR #478](https://github.com/rumman52/Shuddho/pull/478). Exact-main [CI #39260672598](https://github.com/rumman52/Shuddho/actions/runs/39260672598) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. No open PR existed at selection. Historical pending PR/CI statements below are superseded for this starting revision.
@@ -18,6 +9,15 @@
 - **Fresh local staging preflight:** `uv run python -m scripts.staging_prerequisite_preflight --output /tmp/shuddho-staging-preflight.json` returned `blocked_external: RENDER_API_KEY REQUIRED`. This establishes missing access in this session only, not current Render billing/worker state or absence of repository secrets. The next environment owner step is to run the same preflight within the approved staging secret context, then freeze/verify matching API and worker identity and collect operated scenarios.
 - **Completion:** implemented on review branch; full repository verification pending; staging/production qualification and activation not established. All sixteen operated CW-02 cases, matching staging identity, CW-11 mixed-version drain, live browser/sandbox isolation, measured coworker/model quality and independent release reviews remain open. No deployment or activation.
 - **Next:** inspect final-head required CI and independent branch review, integrate through the review process, then execute controlled staging collectors when matching environment/provider access is available. Do not replace missing operated proof with more synthetic PASS records.
+
+---
+
+## Architecture/core closure — durable v3 decision recovery (19 October 2026)
+
+- Branch `codex/core-v3-durable-decision-retry-20261019`, base main `8a83844b148a811357b8906c58deb3ba8b76f1d3`. [Contract](CORE_V3_DURABLE_DECISION_RECOVERY_2026-10-19.md).
+- Actual Temporal activity attempt 2 previously inferred again and failed `agent_loop_detected` after attempt 1 committed. The activity now derives a stable logical identity and atomically commits the decision, memory/step/terminal effect, exact result and idempotent token settlement through the existing Agent ledger/checkpoints. Uncommitted actual inference attempts remain bounded and charged.
+- New recovery module: 8 passed, zero skips; includes lost commit response and pre-step interruption. Surrounding regressions, independent review and exact-head CI are finalized in the PR; full CI is pending at publication. No migration, workflow argument/history change, grant, default flag, deployment or activation change.
+- Context slice is draft PR #480, independently reviewed with 63 passing local tests; exact-head CI pending. The finite 17 architecture/core acceptance IDs remain in scope; sandbox lifetime, conversation steering/navigation/explicit memory selection and final design/inventory closure continue separately. Operated staging and human qualification remain absent.
 
 ---
 
