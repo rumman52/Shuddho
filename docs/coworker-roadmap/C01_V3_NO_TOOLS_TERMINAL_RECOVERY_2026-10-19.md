@@ -34,7 +34,8 @@ the caller reported `blocked` even though a different outcome won.
 - `services/coworker/agent_runtime.py`: delegates the no-tools result to
   the atomic repository operation.
 - `tests/test_agent_v3_decision_recovery.py`: regression assertions for durable
-  replay, late cancellation and a competing `needs_input` transition.
+  replay, late cancellation, a competing `needs_input` transition,
+  lost commit responses and transaction rollback when checkpoint persistence fails.
 
 ## Evidence and qualification boundary
 
