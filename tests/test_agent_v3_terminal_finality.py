@@ -1,5 +1,14 @@
 """C-01: terminal Runtime v3 runs must not be completed or replanned later."""
 import asyncio
+from types import SimpleNamespace
+from uuid import uuid4
+
+from temporalio.exceptions import ApplicationError
+from temporalio.testing import ActivityEnvironment
+
+from services.coworker.models import AgentRun
+from services.coworker.worker import AgentActivities
+
 
 import pytest
 
@@ -125,3 +134,61 @@ def test_legacy_final_completion_keeps_empty_run_behavior(container, version):
         db.get(AgentRun, run_id).runtime_version = version
     runtime.complete(run_id)
     assert container.agent.get(actor, run_id)["state"] == "completed"
+
+
+@pytest.mark.parametrize("cancellation", ["cancelled", "cancel_requested"])
+def test_v3_final_activity_rejects_cancelled_run_without_success_notification(
+    container, cancellation,
+):
+    actor, run_id, runtime, planner = setup(container)
+    if cancellation == "cancelled":
+        container.agent.cancel(actor, run_id)
+    else:
+        # Model a revocation written before a competing finalization activity.
+        with container.repository.sessions.begin() as db:
+            db.get(AgentRun, run_id).cancel_requested = True
+
+    before = container.agent.get(actor, run_id)
+    notifications = []
+    container.automations = SimpleNamespace(
+        notify_run_completed=lambda value: notifications.append(value)
+    )
+    activities = AgentActivities.__new__(AgentActivities)
+    activities.runtime = runtime
+    with pytest.raises(ApplicationError) as caught:
+        asyncio.run(ActivityEnvironment().run(activities.complete, run_id))
+
+    assert caught.value.type == "agent_cancelled"
+    assert caught.value.non_retryable is True
+    after = container.agent.get(actor, run_id)
+    assert after["state"] == before["state"]
+    assert after["event_sequence"] == before["event_sequence"]
+    assert notifications == []
+    assert planner.calls == 0
+
+
+def test_missing_run_cannot_be_acknowledged_as_completed_activity(container):
+    _actor, _run_id, runtime, _planner = setup(container)
+    missing_run_id = str(uuid4())
+    notifications = []
+    container.automations = SimpleNamespace(
+        notify_run_completed=lambda value: notifications.append(value)
+    )
+    activities = AgentActivities.__new__(AgentActivities)
+    activities.runtime = runtime
+
+    with pytest.raises(ApplicationError) as caught:
+        asyncio.run(ActivityEnvironment().run(activities.complete, missing_run_id))
+
+    assert caught.value.type == "not_found"
+    assert caught.value.non_retryable is True
+    assert notifications == []
+
+
+def test_legacy_cancelled_completion_retains_noop_compatibility(container):
+    actor, run_id, runtime, _planner = setup(container)
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run_id).runtime_version = 2
+    container.agent.cancel(actor, run_id)
+    runtime.complete(run_id)
+    assert container.agent.get(actor, run_id)["state"] == "cancelled"
