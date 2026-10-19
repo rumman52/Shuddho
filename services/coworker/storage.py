@@ -134,6 +134,10 @@ class S3ObjectStore:
             if token is not None:
                 request["ContinuationToken"] = token
             response = self.client.list_objects_v2(**request)
+            truncated = response.get("IsTruncated")
+            if type(truncated) is not bool:
+                # An absent or non-boolean flag is not evidence of a final page.
+                raise ValueError("S3 inventory missing boolean IsTruncated")
             for item in response.get("Contents", []):
                 modified = item.get("LastModified")
                 if not isinstance(modified, datetime):
@@ -143,6 +147,10 @@ class S3ObjectStore:
                 if modified.tzinfo is None:
                     modified = modified.replace(tzinfo=timezone.utc)
                 key = validate_key(str(item["Key"]))
+                if prefix and not key.startswith(prefix):
+                    # Never allow an unexpected backend listing to expand the
+                    # owner/prefix scope of retention deletion.
+                    raise ValueError("S3 inventory returned key outside requested prefix")
                 # An ambiguous listing must not count the same deletion twice
                 # or be reported as a complete reconciliation snapshot.
                 if key in seen_keys:
@@ -153,7 +161,7 @@ class S3ObjectStore:
                     modified_at=modified.astimezone(timezone.utc),
                     byte_size=int(item.get("Size", 0)),
                 ))
-            if not response.get("IsTruncated"):
+            if not truncated:
                 break
             next_token = response.get("NextContinuationToken")
             if not isinstance(next_token, str) or not next_token.strip():

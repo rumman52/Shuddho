@@ -1,3 +1,12 @@
+## CW-02 S3 inventory owner-scope and terminal-page integrity — 19 October 2026 (Asia/Dhaka)
+
+- **Starting main:** `b91d7952da640cc59c9c826ca0c0a18f9f23599b`, merged [PR #477](https://github.com/rumman52/Shuddho/pull/477). At task selection exact-head [CI #39238717292](https://github.com/rumman52/Shuddho/actions/runs/39238717292) had `test-and-build` success and mandatory `coworker` in progress. No independent PR review recorded. Merged-main CI remains a separate check.
+- **Demonstrated gap:** Although #477 rejects missing continuation tokens, cycles, duplicate keys and malformed dates, the S3 listing adapter still trusted `IsTruncated` values of arbitrary types and accepted S3 keys outside the requested owner/prefix. `RetentionRepository.cleanup_orphans` uses the returned list for deletion.
+- **Bounded implementation:** require actual boolean `IsTruncated` and enforce the requested prefix on each listed object before returning any inventory. Added deterministic fake-S3 fixtures for invalid final-page values and foreign-prefix keys on first/second pages. Preserve all existing guards, permissions and object-store interface. Require exact-head mandatory CI and independent review before merging the review PR.
+- **Limit:** synthetic response-integrity tests, not actual S3 outage/erasure evidence. Full 16 operated CW-02 fault cases, CW-11 staging, browser/code sandbox isolation, live coworker outcome quality and independent release review remain open.
+
+---
+
 ## CW-02 S3 inventory pagination and orphan-recovery safety — 19 October 2026 (Asia/Dhaka)
 
 - **Verified starting main:** `dfe7c3c5592c8bd8edc8d5487454c2e86c7eeddf`, [PR #476](https://github.com/rumman52/Shuddho/pull/476) merged to main. Its exact-head [CI #39228196768](https://github.com/rumman52/Shuddho/actions/runs/39228196768) passed `test-and-build`, mandatory `coworker` and `ci-merge-gate`. No submitted independent review was found. The merged-main CI must be checked separately.

@@ -404,3 +404,38 @@ def test_s3_inventory_invalid_object_timestamp_fails_closed(bad_timestamp):
     with pytest.raises(ValueError, match="missing valid LastModified"):
         store.inventory(prefix="owner")
     assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("bad_truncation", [None, 0, 1, "false", "true"])
+def test_s3_inventory_requires_boolean_page_completion(bad_truncation):
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": bad_truncation,
+               "Contents": [_s3_item("owner/safe.txt")]},
+    })
+    with pytest.raises(ValueError, match="boolean IsTruncated"):
+        store.inventory(prefix="owner")
+    assert len(client.calls) == 1
+
+
+def test_s3_inventory_foreign_prefix_never_reaches_orphan_cleanup():
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": False, "Contents": [
+            _s3_item("owner/expected.txt"),
+            _s3_item("other-account/foreign.txt"),
+        ]},
+    })
+    with pytest.raises(ValueError, match="outside requested prefix"):
+        store.inventory(prefix="owner/")
+    assert len(client.calls) == 1
+
+
+def test_s3_inventory_second_page_foreign_prefix_rejected():
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": True, "NextContinuationToken": "next",
+               "Contents": [_s3_item("owner/valid.txt")]},
+        "next": {"IsTruncated": False,
+                 "Contents": [_s3_item("another-account/foreign.txt")]},
+    })
+    with pytest.raises(ValueError, match="outside requested prefix"):
+        store.inventory(prefix="owner/")
+    assert len(client.calls) == 2
