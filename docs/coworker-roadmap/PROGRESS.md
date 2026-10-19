@@ -1501,3 +1501,12 @@ Next: review/qualify this branch, merge through normal protections, implement CW
 **Correction in this branch:** partial-export cleanup runs only before checkpoint submission. Once checkpoint submission starts, the commit outcome is uncertain, so object deletion is suppressed; retry observes a committed checkpoint and reuses its referenced objects. This deliberately favors preserving potentially referenced data over eager orphan cleanup. Exact-head CI is required before merging.
 
 **Evidence boundary:** test-store fault injection is not live S3 staging evidence. Persistent storage outage, cleanup after hard process death, the remaining CW-02 fault matrix, CW11-STAGING mixed-version drain, browser/sandbox isolation and complete personal-coworker scenarios remain unqualified. No deployment, provider activation or production action was performed.
+
+---
+
+## Architecture/core closure — C-01 terminal completion/replan finality (20 October 2026)
+
+- **Starting main:** `79c111d7bc3ec8ae1ad65b55e4f78595aec54e46` already includes merged #485. The concurrent draft #486 addresses late tool start/receipt; this slice intentionally does not modify it.
+- **Root cause:** `complete_run` could turn a v3 run already `needs_input` or `blocked` into `completed` if existing receipt counts match. `replace_remaining_plan` could also change prepared tool steps after a terminal outcome.
+- **Correction:** [PR #487](https://github.com/rumman52/Shuddho/pull/487) inserts v3-only `agent_run_closed` checks under the owning AgentRun row lock. Already-completed and cancelled idempotence and legacy v1/v2 behavior are preserved. [Contract](C01_TERMINAL_COMPLETION_REPLAN_FINALITY_2026-10-20.md).
+- **Evidence:** five regression test instances committed before implementation; mandatory exact-head CI and independent review pending. No live staging, worker-restart, PostgreSQL race, provider cost, human security signoff or production activation claimed. C-01/A-02 and full Architecture/Core acceptance remain incomplete.
