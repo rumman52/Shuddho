@@ -1,8 +1,11 @@
 """Synthetic CW-02 evidence tests; passing locally does not certify live staging."""
 import hashlib
 import json
+
+import pytest
 from scripts.transaction_chaos_matrix import (
     SCENARIOS, NO_APPLIED_MUTATION, NO_DISPATCH, qualify, verify_evidence_files,
+    _strict_json_loads,
 )
 
 
@@ -85,6 +88,8 @@ def _bundle(tmp_path, doc):
             "attempted_mutations": row["attempted_mutations"],
             "applied_mutations": row["applied_mutations"],
             "outcome": row["outcome"],
+            "operator": row["operator"], "environment": row["environment"],
+            "result": row["result"],
             "provider_observation_source": "provider_sandbox",
             "provider_observation_reference": "synthetic-" + row["id"],
         }
@@ -192,3 +197,58 @@ def test_expired_approval_manifest_cannot_claim_provider_dispatch():
 
 def test_exact_counter_contract_accepts_controlled_provider_outcomes():
     assert check(evidence()) == []
+
+
+def test_manifest_rejects_boolean_schema_version():
+    doc = evidence()
+    doc["schema_version"] = True
+    assert "schema_version must equal 1" in check(doc)
+
+
+def test_fault_record_operator_environment_and_result_bound_to_manifest(tmp_path):
+    for field, bad in (("operator", "unrelated-person"),
+                       ("environment", "local"), ("result", "failed")):
+        doc = _bundle(tmp_path, evidence())
+        target = tmp_path / "lost_provider_response.json"
+        data = json.loads(target.read_bytes())
+        data[field] = bad
+        raw = json.dumps(data, sort_keys=True).encode()
+        target.write_bytes(raw)
+        row = next(item for item in doc["scenarios"] if item["id"] == "lost_provider_response")
+        row["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+        assert any("identity/counter mismatch" in problem
+                   for problem in verify_evidence_files(doc, tmp_path)), field
+
+
+def test_fault_record_duplicate_keys_fail_closed_with_matching_hash(tmp_path):
+    doc = _bundle(tmp_path, evidence())
+    target = tmp_path / "lost_provider_response.json"
+    raw = target.read_bytes()
+    assert b'"outcome": "uncertain"' in raw
+    raw = raw.replace(b'"outcome": "uncertain"',
+                      b'"outcome": "uncertain", "outcome": "confirmed"')
+    target.write_bytes(raw)
+    row = next(item for item in doc["scenarios"] if item["id"] == "lost_provider_response")
+    row["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+    assert any("unreadable evidence JSON" in problem
+               for problem in verify_evidence_files(doc, tmp_path))
+
+
+def test_duplicate_keys_and_nonfinite_manifest_json_rejected():
+    with pytest.raises(ValueError, match="duplicate JSON"):
+        _strict_json_loads('{"schema_version": 1, "schema_version": 1}')
+    with pytest.raises(ValueError, match="nonfinite JSON"):
+        _strict_json_loads('{"schema_version": NaN}')
+
+
+def test_fault_record_nonfinite_counter_rejected_even_with_updated_digest(tmp_path):
+    doc = _bundle(tmp_path, evidence())
+    target = tmp_path / "lost_provider_response.json"
+    raw = target.read_bytes()
+    assert b'"attempted_mutations": 1' in raw
+    raw = raw.replace(b'"attempted_mutations": 1', b'"attempted_mutations": NaN')
+    target.write_bytes(raw)
+    row = next(item for item in doc["scenarios"] if item["id"] == "lost_provider_response")
+    row["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+    assert any("unreadable evidence JSON" in problem
+               for problem in verify_evidence_files(doc, tmp_path))
