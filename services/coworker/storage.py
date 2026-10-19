@@ -126,28 +126,42 @@ class S3ObjectStore:
     def inventory(self, prefix=""):
         prefix = validate_key(prefix) if prefix else ""
         token = None
+        seen_tokens: set[str] = set()
+        seen_keys: set[str] = set()
         result = []
         while True:
             request = {"Bucket": self.bucket, "Prefix": prefix, "MaxKeys": 1000}
-            if token:
+            if token is not None:
                 request["ContinuationToken"] = token
             response = self.client.list_objects_v2(**request)
             for item in response.get("Contents", []):
                 modified = item.get("LastModified")
                 if not isinstance(modified, datetime):
-                    continue
+                    # Skipping a malformed entry falsely reports a complete
+                    # retention inventory and can conceal an orphaned object.
+                    raise ValueError("S3 inventory object missing valid LastModified")
                 if modified.tzinfo is None:
                     modified = modified.replace(tzinfo=timezone.utc)
+                key = validate_key(str(item["Key"]))
+                # An ambiguous listing must not count the same deletion twice
+                # or be reported as a complete reconciliation snapshot.
+                if key in seen_keys:
+                    raise ValueError("S3 inventory returned a duplicate object key")
+                seen_keys.add(key)
                 result.append(StoredObject(
-                    key=validate_key(str(item["Key"])),
+                    key=key,
                     modified_at=modified.astimezone(timezone.utc),
                     byte_size=int(item.get("Size", 0)),
                 ))
             if not response.get("IsTruncated"):
                 break
-            token = response.get("NextContinuationToken")
-            if not token:
-                break
+            next_token = response.get("NextContinuationToken")
+            if not isinstance(next_token, str) or not next_token.strip():
+                raise ValueError("S3 inventory truncated without continuation token")
+            if next_token in seen_tokens:
+                raise ValueError("S3 inventory repeated continuation token")
+            seen_tokens.add(next_token)
+            token = next_token
         return result
 
     def download_url(self, key, filename, content_type):
