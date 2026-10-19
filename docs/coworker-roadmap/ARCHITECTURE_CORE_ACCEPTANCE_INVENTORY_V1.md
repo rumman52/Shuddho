@@ -1,3 +1,11 @@
+## Refreshed 20 October 2026 — merged code versus qualification
+
+- Verified latest inspected `main` is `c2d029c4782768b8aba04c96105eae978d7e2c07`; PRs #491–#494 were merged. Their older branch/pending status statements below are historical.
+- C-01 finalization cancellation/missing-run acknowledgement has a new bounded [source fix and regression contract](C01_CANCELLED_FINALIZATION_FENCE_2026-10-20.md) on review branch `codex/c01-finalization-cancel-notfound-fence-20261020`; neither its exact-head CI nor staging is claimed passed.
+- All 17 A/C/P/V requirements remain **not fully qualified**. Repository-level code/test progress is separate from protected staging, CW-02 16-scenario provider evidence, live network/sandbox isolation, CW-11 mixed-version drain, retained-history and rollback proof, independent reviews and activation. Production defaults remain unchanged.
+
+---
+
 ## Current architecture/core checkpoint — 20 October 2026 (Asia/Dhaka)
 
 - Inspected main `b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d` includes #480–#490. No open PR existed at selection. Older pending-source statements below are historical, not a queue to reimplement.
