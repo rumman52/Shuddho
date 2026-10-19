@@ -1,3 +1,12 @@
+## Architecture/core closure — C-01 completed-step deadline retry (20 October 2026)
+
+- **Starting main:** `7aa69522d8be40360123c4ec6d21896c3c9792cd` includes merged #489. PR #489's exact-head CI passed; post-merge CI was still in progress at snapshot.
+- **Defect:** `execute_step` rejected a completed Runtime v3 invocation on delayed activity retry if the task deadline had passed, before consulting its existing durable state.
+- **Patch:** [PR #490](https://github.com/rumman52/Shuddho/pull/490) replays previously completed v3 invocation without dispatch, but rejects cancellations/competing terminal outcomes and enforces deadline before fresh work. Legacy v1/v2 behavior preserved. [Contract](C01_V3_STEP_COMPLETION_DEADLINE_REPLAY_2026-10-20.md).
+- **Evidence:** five regression instances committed before source change; must complete mandatory exact-head CI with zero skips and independent review. Synthetic receipt fixture does not establish operated Temporal/PostgreSQL or provider verification. C-01/A-02 and broader A/C/P/V acceptance remain open.
+
+---
+
 ## Architecture/core closure — C-01 terminal tool state integrity (20 October 2026)
 
 - **Base:** main `79c111d7bc3ec8ae1ad65b55e4f78595aec54e46`, merged #485. Independent [PR #486](https://github.com/rumman52/Shuddho/pull/486) prevents late Runtime v3 tool plan/start/receipt and approved-action readiness transitions from reviving an already-terminal run.
