@@ -3,7 +3,7 @@
 - Objective: preserve an age-eligible output whose export checkpoint commits while object inventory is in flight, in both preview and explicit orphan cleanup.
 - Dependency/source: main `a95d87f6aea1f54139737a628675850f95524576` (merged #478). Exact-main [CI #39260672598](https://github.com/rumman52/Shuddho/actions/runs/39260672598) passed `test-and-build`, `coworker`, and `ci-merge-gate`. No open PR existed at selection.
 - Branch: `codex/cw02-retention-reference-snapshot-20261019`; target `main`.
-- Existing interfaces: `RetentionService.orphan_candidates/cleanup_orphans`, `ObjectStore.inventory`, `CoworkerRepository.save_step`, and durable `Step.output.artifacts` references. No new ledger, schema, API, provider authority, feature flag, or workflow history.
+- Existing interfaces: `RetentionService.orphan_candidates/cleanup_orphans`, `ObjectStore.inventory`, `Repository.save_step`, and durable `Step.output.artifacts` references. No new ledger, schema, API, provider authority, feature flag, or workflow history.
 - Files: `services/coworker/retention.py`, `tests/test_coworker_retention.py`, this task contract and canonical `PROGRESS.md`.
 - Root cause: the database reference snapshot precedes the potentially slow paginated object listing. A checkpoint committed during that listing is invisible to the old snapshot, so an age-eligible referenced output can be offered for deletion and deleted.
 - Reproduction: the new deterministic SQLite/local-store test commits a real export checkpoint from the inventory boundary. Both preview and apply fail against unchanged main; an equally old genuine orphan is the positive cleanup control.
