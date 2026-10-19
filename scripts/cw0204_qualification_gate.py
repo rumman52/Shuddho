@@ -145,6 +145,38 @@ def validate_checkpoint(checkpoint, *, source_revision, rollout_id):
     return errors
 
 
+def validate_fault_observation_chronology(manifest, checkpoint):
+    """CW-02 faults must be observed after the frozen API and worker were ready.
+
+    Invalid/missing deployment and scenario values are handled by their existing
+    structural validators. This only adds the missing chronology requirement.
+    """
+    deployments = checkpoint.get("deployments")
+    if not isinstance(deployments, dict):
+        return []
+    ready = []
+    for role in ("api", "worker"):
+        deployment = deployments.get(role)
+        observed = _time(deployment.get("observed_at")) if isinstance(deployment, dict) else None
+        if observed is None:
+            return []
+        ready.append(observed)
+    readiness_floor = max(ready)
+    entries = manifest.get("scenarios")
+    if not isinstance(entries, list):
+        return []
+    errors = []
+    for row in entries:
+        if not isinstance(row, dict) or row.get("id") not in SCENARIOS:
+            continue
+        observed = _time(row.get("observed_at"))
+        if observed is not None and observed < readiness_floor:
+            errors.append(
+                f"CW-02 {row['id']}: fault observed before frozen API/worker deployment was ready"
+            )
+    return errors
+
+
 def fault_tree_sha256(folder):
     """Hash actual bytes of every scenario, not just manifest-provided strings."""
     entries = []
@@ -270,6 +302,7 @@ def qualify_release(*, manifest_path, checkpoint_path, evidence_dir, workflow_ev
         errors = qualify(manifest, expected_revision=source_revision, expected_rollout=rollout_id)
         errors += verify_evidence_files(manifest, evidence_dir)
         errors += validate_checkpoint(checkpoint, source_revision=source_revision, rollout_id=rollout_id)
+        errors += validate_fault_observation_chronology(manifest, checkpoint)
         workflow_errors, workflow_tree = verify_workflow_evidence_files(checkpoint, workflow_evidence_dir)
         errors += workflow_errors
         if errors or workflow_tree is None:

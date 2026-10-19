@@ -45,7 +45,7 @@ def _checkpoint():
     }
 
 
-def _bundle(folder):
+def _bundle(folder, *, fault_observed_at=OBSERVED):
     directory = folder / "evidence"
     directory.mkdir()
     no_dispatch = {"model_429", "model_500", "model_timeout", "approval_after_expiration"}
@@ -67,7 +67,7 @@ def _bundle(folder):
         )
         body = {
             "scenario_id": name, "source_revision": REV, "rollout_id": ROLLOUT,
-            "test_run_id": f"synthetic-{i}", "observed_at": OBSERVED,
+            "test_run_id": f"synthetic-{i}", "observed_at": fault_observed_at,
             "attempted_mutations": attempted, "applied_mutations": applied, "outcome": outcome,
             "operator": "synthetic-ci", "environment": "staging", "result": "passed",
             "provider_observation_source": "provider_sandbox",
@@ -78,7 +78,7 @@ def _bundle(folder):
         entries.append({
             "id": name, "result": "passed", "environment": "staging",
             "test_run_id": body["test_run_id"], "evidence_sha256": sha256(raw),
-            "operator": "synthetic-ci", "observed_at": OBSERVED,
+            "operator": "synthetic-ci", "observed_at": fault_observed_at,
             "attempted_mutations": attempted, "applied_mutations": applied,
             "outcome": outcome, "evidence_file": name + ".json",
         })
@@ -326,3 +326,23 @@ def test_extra_deployment_metadata_cannot_bypass_workflow_chronology():
     checkpoint["deployments"]["documentation"] = {"observed_at": OBSERVED}
     errors = validate_checkpoint(checkpoint, source_revision=REV, rollout_id=ROLLOUT)
     assert any("workflow observed before frozen" in error for error in errors)
+
+
+def test_fault_evidence_predating_frozen_deployment_denied_even_when_signed(tmp_path):
+    # The fixture signs an otherwise coherent manifest/checkpoint/evidence bundle.
+    # CW-02 must reject a 16-row fault matrix observed before API/worker readiness.
+    args = _bundle(tmp_path, fault_observed_at="2026-10-12T08:59:59Z")
+    problems = qualify_release(**args)
+    assert any("CW-02" in error and "before frozen" in error for error in problems)
+
+
+def test_fault_evidence_after_frozen_deployment_accepted(tmp_path):
+    args = _bundle(tmp_path, fault_observed_at="2026-10-12T09:00:01Z")
+    assert qualify_release(**args) == []
+
+
+def test_fault_evidence_timezone_offsets_compare_as_instants(tmp_path):
+    # 14:59:59 +06:00 is 08:59:59 UTC, one second before frozen readiness.
+    args = _bundle(tmp_path, fault_observed_at="2026-10-12T14:59:59+06:00")
+    assert any("CW-02" in error and "before frozen" in error
+               for error in qualify_release(**args))
