@@ -386,9 +386,13 @@ class RetentionService:
 
     def orphan_candidates(self, *, prefix: str = "", min_age_seconds: int = 3600) -> list[dict]:
         cutoff = utcnow() - timedelta(seconds=max(300, min_age_seconds))
+        inventory = self.storage.inventory(prefix)
+        # Listing may take multiple network pages. Read references afterwards so
+        # checkpoints committed during that scan protect their existing objects.
+        # This is not atomic with later writes; operated sweeps need quiescence.
         referenced = self.referenced_object_keys()
         result = []
-        for item in self.storage.inventory(prefix):
+        for item in inventory:
             if item.key in referenced or item.modified_at > cutoff:
                 continue
             result.append({
