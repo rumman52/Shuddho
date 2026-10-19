@@ -192,12 +192,7 @@ class AgentRuntime:
             "context": context_payload,
         }
         if not tools and not self.repo.v3_can_complete(run_id):
-            self.repo.v3_terminal(
-                run_id,
-                "blocked",
-                "No registered tool is currently available for this bounded run.",
-            )
-            return {"decision": "blocked"}
+            return self.repo.block_v3_unavailable_tools(run_id, activity_key=activity_key)
 
         reservation = self.repo.reserve_planner(run_id, self._v3_planner_reservation())
         actual_tokens = None

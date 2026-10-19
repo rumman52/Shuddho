@@ -22,6 +22,15 @@
 
 ---
 
+## Architecture/core closure — C-01 no-tool terminal retry integrity (19 October 2026)
+
+- **Baseline:** `main` `129fa78a578df10ad861a9ded7a3a3a4fec90cf8`, after merged [#481](https://github.com/rumman52/Shuddho/pull/481). Dedicated [PR #482](https://github.com/rumman52/Shuddho/pull/482) addresses a bypass of that durable decision-result path when no tools are enabled.
+- **Defect and scoped fix:** previously the no-tool branch persisted `blocked` without a logical activity result checkpoint, and could return `blocked` after a concurrent cancellation or `needs_input` transition. The existing AgentRun transaction now atomically checks active authority, records one blocked event and one retry-identity result. No additional ledger/schema, broader grant, new tool, workflow-history change or activation.
+- **Evidence status:** three replay/cancellation/competing-terminal regression tests were committed before implementation; two additional lost-response/atomic-rollback tests were added after the fix. The test-only CI attempt was superseded/cancelled before coworker tests completed, so failing-first execution is **unverified**, not claimed. Exact final-head CI and independent review are required for repository verification. [Contract](C01_V3_NO_TOOLS_TERMINAL_RECOVERY_2026-10-19.md).
+- **Closure boundary:** C-01 and A-02 remain partially implemented and not staging-qualified. Operated Temporal/PostgreSQL recovery, browser/sandbox and CW-11 mixed-version isolation, realistic coworker quality, independent operational/security review and production activation remain open.
+
+---
+
 ## Architecture/core closure — durable v3 decision recovery (19 October 2026)
 
 - Branch `codex/core-v3-durable-decision-retry-20261019`, base main `8a83844b148a811357b8906c58deb3ba8b76f1d3`. [Contract](CORE_V3_DURABLE_DECISION_RECOVERY_2026-10-19.md).
