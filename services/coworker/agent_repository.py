@@ -1491,6 +1491,12 @@ class AgentRepository:
             run = self._run(db, owner, run_id, lock=True)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            # Replanning cannot replace a terminal Runtime v3 decision.
+            # Preserve existing legacy replan behavior for v1/v2.
+            if run.runtime_version == 3 and run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "This terminal Runtime v3 run cannot replace its plan.", 409,
+                )
             self._assert_within_deadline(run)
             if from_ordinal < 1:
                 raise CoworkerError("invalid_replan", "The replan boundary is invalid.", 422)
@@ -2867,6 +2873,13 @@ class AgentRepository:
                 return
             if run.cancel_requested or run.state == "cancelled":
                 return
+            # The completed-state retry remains a no-op above. A different
+            # terminal v3 outcome is final even when all receipts happen to
+            # match; a late completion must not overwrite needs_input/blocked.
+            if run.runtime_version == 3 and run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "This terminal Runtime v3 run cannot be completed again.", 409,
+                )
             remaining = db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run_id, ToolInvocation.state != "completed",
             ))
