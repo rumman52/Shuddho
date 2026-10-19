@@ -75,8 +75,10 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
     problems = []
     # Reject redirects through directory symlinks and ambiguous extra artifacts.
     # A reviewer must know precisely which 16 evidence files were considered.
-    if directory.is_symlink() or not directory.is_dir():
+    if directory.is_symlink():
         return ["evidence directory missing or unsafe"]
+    if not directory.is_dir():
+        return ["evidence directory does not exist"]
     base = directory.resolve()
     expected_files = {name + ".json" for name in SCENARIOS}
     try:
