@@ -22,6 +22,15 @@
 
 ---
 
+## Architecture/core closure — durable v3 decision recovery (19 October 2026)
+
+- Branch `codex/core-v3-durable-decision-retry-20261019`, base main `8a83844b148a811357b8906c58deb3ba8b76f1d3`. [Contract](CORE_V3_DURABLE_DECISION_RECOVERY_2026-10-19.md).
+- Actual Temporal activity attempt 2 previously inferred again and failed `agent_loop_detected` after attempt 1 committed. The activity now derives a stable logical identity and atomically commits the decision, memory/step/terminal effect, exact result and idempotent token settlement through the existing Agent ledger/checkpoints. Uncommitted actual inference attempts remain bounded and charged.
+- New recovery module: 8 passed, zero skips; includes lost commit response and pre-step interruption. Surrounding regressions, independent review and exact-head CI are finalized in the PR; full CI is pending at publication. No migration, workflow argument/history change, grant, default flag, deployment or activation change.
+- Context slice is draft PR #480, independently reviewed with 63 passing local tests; exact-head CI pending. The finite 17 architecture/core acceptance IDs remain in scope; sandbox lifetime, conversation steering/navigation/explicit memory selection and final design/inventory closure continue separately. Operated staging and human qualification remain absent.
+
+---
+
 ## CW-02 S3 inventory owner-scope and terminal-page integrity — 19 October 2026 (Asia/Dhaka)
 
 - **Starting main:** `b91d7952da640cc59c9c826ca0c0a18f9f23599b`, merged [PR #477](https://github.com/rumman52/Shuddho/pull/477). At task selection exact-head [CI #39238717292](https://github.com/rumman52/Shuddho/actions/runs/39238717292) had `test-and-build` success and mandatory `coworker` in progress. No independent PR review recorded. Merged-main CI remains a separate check.

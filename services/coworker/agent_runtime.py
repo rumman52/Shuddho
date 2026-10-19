@@ -154,13 +154,17 @@ class AgentRuntime:
         )
         return min(per_call, self.container.settings.agent_v3_planner_token_budget)
 
-    async def decide_v3(self, run_id: str) -> dict:
+    async def decide_v3(self, run_id: str, *, activity_key: str | None = None) -> dict:
         run = self.repo.worker_run(run_id)
         if run["runtime_version"] != 3:
             raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
         if run["cancel_requested"] or run["state"] == "cancelled":
             raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
         self.repo.assert_v3_within_deadline(run_id)
+        if activity_key:
+            replay = self.repo.v3_activity_result(run_id, activity_key)
+            if replay is not None:
+                return replay
 
         current = self.repo.get(run["owner_id"], run_id)
         observations = [
@@ -210,54 +214,15 @@ class AgentRuntime:
                 cost_microusd = (
                     actual_tokens * self.container.settings.agent_v3_planner_cost_microusd_per_1k_tokens + 999
                 ) // 1000
-            self.repo.record_v3_decision(
-                run_id,
-                decision,
-                planner_call=reservation["call"],
-                model=evidence["model"],
+            return self.repo.commit_v3_decision(
+                run_id, decision, activity_key=activity_key,
+                planner_call=reservation["call"], model=evidence["model"],
                 prompt_sha256=evidence["prompt_sha256"],
                 tool_schema_sha256=evidence["tool_schema_sha256"],
-                observation_count=len(observations),
-                total_tokens=actual_tokens,
-                cost_microusd=cost_microusd,
+                observation_count=len(observations), total_tokens=actual_tokens,
+                cost_microusd=cost_microusd, memory_repository=self.container.memory,
+                context_sources=context_sources,
             )
-            self.repo.set_planner_mode(run_id, "v3")
-            if decision.memory_proposal is not None:
-                self.container.memory.propose_from_agent(
-                    run["owner_id"],
-                    run_id,
-                    decision.memory_proposal,
-                    context_sources,
-                )
-
-            if decision.decision == "next_step":
-                ordinal = self.repo.append_v3_step(
-                    run["owner_id"], run_id, decision.tool, decision.objective
-                )
-                return {"decision": "next_step", "ordinal": ordinal}
-            if decision.decision == "complete":
-                if not self.repo.v3_can_complete(run_id):
-                    raise CoworkerError(
-                        "agent_unverified_completion",
-                        "Runtime v3 requested completion without verified tool receipts.",
-                        409,
-                    )
-                return {"decision": "complete"}
-            if decision.decision == "needs_input":
-                self.repo.v3_terminal(run_id, "needs_input", decision.message)
-                return {"decision": "needs_input"}
-            if decision.decision == "blocked":
-                self.repo.v3_terminal(run_id, "blocked", decision.message)
-                return {"decision": "blocked"}
-            if decision.decision == "awaiting_approval":
-                if not self.repo.v3_approval_waiting(run_id):
-                    raise CoworkerError(
-                        "approval_state_unverified",
-                        "Runtime v3 cannot claim an approval wait without a persisted waiting action.",
-                        409,
-                    )
-                return {"decision": "awaiting_approval"}
-            return {"decision": "wait", "wait_seconds": int(decision.wait_seconds)}
         except PlannerFailure as error:
             actual_tokens = error.total_tokens
             raise
