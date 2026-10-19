@@ -477,3 +477,20 @@ def test_v3_commit_deadline_gate_preserves_exact_previously_committed_result(con
     assert state["planner_calls"] == 2
     assert state["planner_actual_tokens"] == 36
     assert planner.calls == 1
+
+
+def test_direct_v3_decision_persistence_rejects_expired_run(container):
+    actor, run_id, runtime, planner = setup(container)
+    _expire_run_deadline(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        container.agent.record_v3_decision(
+            run_id, AgentV3Decision.model_validate({
+                "decision": "needs_input", "message": "Late uncommitted result."
+            }),
+            planner_call=1, model="test-model", prompt_sha256="a" * 64,
+            tool_schema_sha256="b" * 64, observation_count=0,
+            total_tokens=24, cost_microusd=0,
+        )
+    assert caught.value.code == "agent_deadline"
+    assert counts(container, run_id) == [0, 0, 0]
+    assert planner.calls == 0
