@@ -58,3 +58,70 @@ def test_unfinished_v3_run_cannot_report_success_without_verified_steps(containe
     assert caught.value.code == "agent_incomplete"
     assert container.agent.get(actor, run_id)["state"] not in {"completed", "failed", "cancelled"}
     assert planner.calls == 1
+
+
+def test_v3_final_completion_requires_at_least_one_verified_tool(container):
+    actor, run_id, runtime, planner = setup(container)
+    before = container.agent.get(actor, run_id)
+    checkpoints = container.agent.checkpoints(actor, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        runtime.complete(run_id)
+    assert caught.value.code == "agent_unverified_completion"
+    after = container.agent.get(actor, run_id)
+    assert after["state"] == before["state"]
+    assert after["event_sequence"] == before["event_sequence"]
+    assert container.agent.checkpoints(actor, run_id) == checkpoints
+    assert planner.calls == 0
+
+
+@pytest.mark.parametrize("resource_type, summary", [
+    ("task", {"task_state": "needs_input", "has_missing_information": True}),
+    ("action", {"action_state": "outcome_unknown", "provider_confirmed": False}),
+])
+def test_v3_final_completion_rechecks_receipt_quality(container, resource_type, summary):
+    actor, run_id, runtime, planner = setup(container)
+    ordinal = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/step"))["ordinal"]
+    # Synthetic receipt fixture isolates finalization, not provider qualification.
+    container.agent.begin_invocation(run_id, ordinal)
+    container.agent.finish_invocation(run_id, ordinal, resource_type, "synthetic-result", summary)
+    assert container.agent.v3_can_complete(run_id) is False
+    before = container.agent.get(actor, run_id)
+    checkpoints = container.agent.checkpoints(actor, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        runtime.complete(run_id)
+    assert caught.value.code == "agent_unverified_completion"
+    after = container.agent.get(actor, run_id)
+    assert after["state"] == before["state"]
+    assert after["event_sequence"] == before["event_sequence"]
+    assert container.agent.checkpoints(actor, run_id) == checkpoints
+    assert planner.calls == 1
+
+
+def test_v3_verified_completion_and_completed_replay_preserve_one_result(container):
+    from tests.test_agent_v3_decision_recovery import _commit_synthetic_completed_step, _expire_run_deadline
+
+    actor, run_id, runtime, planner = setup(container)
+    ordinal = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/step"))["ordinal"]
+    _commit_synthetic_completed_step(container, run_id, ordinal)
+    runtime.complete(run_id)
+    saved = container.agent.get(actor, run_id)
+    checkpoints = container.agent.checkpoints(actor, run_id)
+    assert saved["state"] == "completed"
+    _expire_run_deadline(container, run_id)
+    runtime.complete(run_id)
+    after = container.agent.get(actor, run_id)
+    assert after["state"] == "completed"
+    assert after["event_sequence"] == saved["event_sequence"]
+    assert container.agent.checkpoints(actor, run_id) == checkpoints
+    assert planner.calls == 1
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_final_completion_keeps_empty_run_behavior(container, version):
+    from services.coworker.models import AgentRun
+
+    actor, run_id, runtime, _planner = setup(container)
+    with container.repository.sessions.begin() as db:
+        db.get(AgentRun, run_id).runtime_version = version
+    runtime.complete(run_id)
+    assert container.agent.get(actor, run_id)["state"] == "completed"
