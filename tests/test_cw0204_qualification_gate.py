@@ -28,11 +28,11 @@ def _save(path, value):
     path.write_bytes(canonical_bytes(value))
 
 
-def _checkpoint():
+def _checkpoint(*, schema_version=1):
     api = {"status": "passed", "source_revision": REV, "deployment_id": "synthetic-api-01", "observed_at": OBSERVED}
     worker = {"status": "passed", "source_revision": REV, "deployment_id": "synthetic-worker-01", "observed_at": OBSERVED}
     return {
-        "schema_version": 1, "environment": "staging", "source_revision": REV, "rollout_id": ROLLOUT,
+        "schema_version": schema_version, "environment": "staging", "source_revision": REV, "rollout_id": ROLLOUT,
         "deployments": {"api": api, "worker": worker},
         "infrastructure": {name: {"status": "passed", "observation_ref": "synthetic-" + name}
                            for name in INFRASTRUCTURE},
@@ -45,7 +45,8 @@ def _checkpoint():
     }
 
 
-def _bundle(folder, *, fault_observed_at=OBSERVED):
+def _bundle(folder, *, fault_observed_at=OBSERVED, checkpoint_schema_version=1,
+            witness_schema_version=1):
     directory = folder / "evidence"
     directory.mkdir()
     no_dispatch = {"model_429", "model_500", "model_timeout", "approval_after_expiration"}
@@ -85,7 +86,7 @@ def _bundle(folder, *, fault_observed_at=OBSERVED):
     _save(folder / "manifest.json", {
         "schema_version": 1, "source_revision": REV, "rollout_id": ROLLOUT, "scenarios": entries,
     })
-    checkpoint = _checkpoint()
+    checkpoint = _checkpoint(schema_version=checkpoint_schema_version)
     workflow_dir = folder / "workflow-evidence"
     workflow_dir.mkdir()
     for row in checkpoint["workflows"]:
@@ -110,7 +111,7 @@ def _bundle(folder, *, fault_observed_at=OBSERVED):
     ))
     der = pub.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     witness = {
-        "schema_version": 1, "role": "independent_release_reviewer",
+        "schema_version": witness_schema_version, "role": "independent_release_reviewer",
         "reviewer_id": "synthetic-reviewer", "attested_at": ATTESTED,
         "source_revision": REV, "rollout_id": ROLLOUT,
         "manifest_sha256": sha256((folder / "manifest.json").read_bytes()),
@@ -346,3 +347,30 @@ def test_fault_evidence_timezone_offsets_compare_as_instants(tmp_path):
     args = _bundle(tmp_path, fault_observed_at="2026-10-12T14:59:59+06:00")
     assert any("CW-02" in error and "before frozen" in error
                for error in qualify_release(**args))
+
+
+@pytest.mark.parametrize("schema_value", [True, 1.0])
+def test_signed_checkpoint_rejects_noninteger_schema_version(tmp_path, schema_value):
+    # The witness really signs a self-consistent checkpoint with the wrong type.
+    args = _bundle(tmp_path, checkpoint_schema_version=schema_value)
+    assert any("checkpoint schema/environment mismatch" in problem
+               for problem in qualify_release(**args))
+
+
+@pytest.mark.parametrize("schema_value", [True, 1.0])
+def test_valid_signature_cannot_grant_noninteger_reviewer_schema(tmp_path, schema_value):
+    # A valid signature/pinned key must not override the exact JSON type contract.
+    args = _bundle(tmp_path, witness_schema_version=schema_value)
+    assert any("attestation schema_version must be integer 1" in problem
+               for problem in qualify_release(**args))
+
+
+def test_unrelated_deployment_metadata_does_not_change_witness_clock(tmp_path):
+    # Additional metadata cannot redefine API/worker deployment readiness.
+    args = _bundle(tmp_path)
+    checkpoint, _ = read_json_file(args["checkpoint_path"])
+    checkpoint["deployments"]["documentation"] = {"observed_at": "2026-10-12T11:00:00Z"}
+    _save(args["checkpoint_path"], checkpoint)
+    problems = qualify_release(**args)
+    assert any("checkpoint_sha256 mismatch" in error for error in problems)
+    assert not any("reviewer signed before evidence" in error for error in problems)
