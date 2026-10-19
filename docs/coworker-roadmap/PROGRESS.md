@@ -16,6 +16,19 @@
 
 ---
 
+## Architecture/core checkpoint — A-03 compatibility inventory and combined verification (20 October 2026)
+
+- Inspected main `b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d`; dedicated documentation branch `codex/a03-compatibility-inventory-20261020`. [62-revision review and rollback inventory](A03_MIGRATION_COMPATIBILITY_2026-10-20.md). Alembic ScriptDirectory and source metadata confirm one linear chain of 62 revisions with head0062; all local links resolve. Independent review corrected five explicitly refused expand-only downgrades and clarified reviewed research's database version versus Temporal type.
+- Three separate, unmerged source PRs: [#491](https://github.com/rumman52/Shuddho/pull/491), head `e7644e64ac47fd81652894108dc2698bd4f02765`, final completion result validation; [#492](https://github.com/rumman52/Shuddho/pull/492), head `7e9d5f96658a80d6dc96e9dc4961e0250d1e1710`, sandbox supervision/cleanup; [#493](https://github.com/rumman52/Shuddho/pull/493), head `ab428153cb4828f945252f020062e7b48b205651`, conversation retry/navigation identity. Their source trees match the corresponding locally tested commits. No PR is treated as merged or activated.
+- Combined local source head `6cc65704ea7fb9ad5005405dc5b253b39e848a30`, tree `d13cef85655742286560609215a2081cd11afba2`, applies all three without conflicts: **245 related Python tests passed, zero skips/failures**, mandatory collection gates passed. Full JavaScript workspaces passed, including web-editor **120 tests**; final TypeScript/Vite build passed. Independent source reviews resolved all substantiated Critical/Important findings.
+- Full local Python run on the C-01 source tree matching #491: **2338 passed, 86 skipped, 17 warnings**, zero failed/error tests. Skips: 43 need PostgreSQL (41 dedicated DB, one concurrent admission, one post-mutation disconnect); 41 need a Temporal server; two ML collection skips need PyTorch. This is not a zero-skip mandatory-integration verdict. Local JUnit2 emitted record_property warnings; six proposal-fixture serialization warnings also occurred. Required GitHub coworker CI supplies separate PostgreSQL/Temporal/browser evidence.
+- At this checkpoint, all three PRs have successful test-and-build checks; their full coworker/merge gates remain to be refreshed. CI runs: [#491](https://github.com/rumman52/Shuddho/actions/runs/39314867789), [#492](https://github.com/rumman52/Shuddho/actions/runs/39316114712), [#493](https://github.com/rumman52/Shuddho/actions/runs/39316327464).
+- Offline evaluation gates passed: agent12/12, routing27/27, multilingual23/23, permanent suite410 scenarios, long-horizon6/6 scenarios with62/62 milestones, curated quality5/5. These are deterministic/offline contracts, not live model usefulness, cost/latency, human acceptance or availability measurements.
+- **Remaining scope unchanged:** all17 A/C/P/V rows; archived-history replay corpus, exact old/new binary compatibility, sixteen operated CW-02 artifacts, live browser/sandbox isolation, CW-11 mixed-worker drain/rollback, four realistic coworker outcomes, human security/operations review and production qualification. A-01/A-02/A-04 contracts were reviewed at bounded source interfaces; A-03 inventory now exists but compatibility/replay/operated evidence remains unverified.
+- Current staging preflight is blocked by missing RENDER_API_KEY in this session. Complete the remaining final-head CI/review gates, then use existing prerequisite/freeze/qualification collectors in the approved staging context. No paid infrastructure, external messages/transactions, schema change, deployment or activation was performed.
+
+---
+
 ## Architecture/core closure — C-01 terminal Runtime v3 planner reservation fence (20 October 2026)
 
 - **Starting main:** `7c2eced6396f2cdf93106bf05e006b7c423eecfb` includes merged #480–#483. Existing Core v3 committed retry and no-tool block fixes are preserved.
