@@ -134,6 +134,53 @@ def test_orphan_cleanup_is_dry_run_first_and_age_bounded(container):
     assert container.storage.get(item["object_key"], 100) == referenced_body
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_orphan_scan_preserves_checkpoint_committed_during_inventory(container, monkeypatch, dry_run):
+    """A slow listing must not make a newly committed export look unreferenced."""
+    account_id = owner(container, "checkpoint-during-inventory")
+    task, _ = container.repository.create_task(
+        account_id,
+        TaskCreate(instruction="Preserve recovered export.", notes="synthetic", output_language="en"),
+        "checkpoint-during-inventory-task",
+    )
+    body = b"export awaiting checkpoint recovery"
+    checkpoint_key = f"{account_id}/outputs/{task['id']}/checkpoint.txt"
+    orphan_key = f"{account_id}/outputs/abandoned/orphan.txt"
+    for key in (checkpoint_key, orphan_key):
+        container.storage.put(key, body, "text/plain")
+        old_time = time.time() - 7200
+        os.utime(container.storage.path(key), (old_time, old_time))
+
+    inventory = container.storage.inventory
+
+    def inventory_with_committed_checkpoint(prefix=""):
+        items = inventory(prefix)
+        # A separate repository transaction commits while object listing is in
+        # flight; no sleep or mocked database state determines this ordering.
+        container.repository.save_step(task["id"], "export", {"artifacts": [{
+            "filename": "checkpoint.txt", "content_type": "text/plain",
+            "object_key": checkpoint_key, "byte_size": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+        }]})
+        return items
+
+    monkeypatch.setattr(container.storage, "inventory", inventory_with_committed_checkpoint)
+    result = container.retention.cleanup_orphans(
+        prefix=f"{account_id}/", min_age_seconds=3600, dry_run=dry_run,
+    )
+
+    assert {item["key"] for item in result["candidates"]} == {orphan_key}
+    assert result["deleted"] == (0 if dry_run else 1)
+    assert result["failed"] == []
+    assert container.repository.step(task["id"], "export")["artifacts"][0]["object_key"] == checkpoint_key
+    assert container.storage.get(checkpoint_key, 1024) == body
+    if dry_run:
+        assert container.storage.get(orphan_key, 1024) == body
+    else:
+        with pytest.raises(FileNotFoundError):
+            container.storage.get(orphan_key, 1024)
+
+
 def _crash_test_renderer(_draft, _sources, **_options):
     return [("crash-boundary.txt", "text/plain", b"written before hard worker loss")]
 

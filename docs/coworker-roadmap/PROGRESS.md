@@ -1,3 +1,15 @@
+## CW-02 retention reference snapshot ordering — 19 October 2026 (Asia/Dhaka)
+
+- **Verified starting main:** `a95d87f6aea1f54139737a628675850f95524576`, merged [PR #478](https://github.com/rumman52/Shuddho/pull/478). Exact-main [CI #39260672598](https://github.com/rumman52/Shuddho/actions/runs/39260672598) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. No open PR existed at selection. Historical pending PR/CI statements below are superseded for this starting revision.
+- **Demonstrated defect:** orphan cleanup sampled database references before potentially slow object inventory. An age-eligible object checkpointed during the listing could be falsely identified and deleted. Both new preview/apply cases failed against unchanged production code.
+- **Bounded implementation:** branch `codex/cw02-retention-reference-snapshot-20261019` reads references after inventory completes. Its real SQLite export checkpoint/local-store regressions preserve newly referenced bytes while retaining a genuine orphan cleanup control. Existing minimum-age, prefix, inventory-validation and failure/retry behavior remain unchanged. [Task contract and residual boundary](CW02_RETENTION_REFERENCE_SNAPSHOT_2026-10-19.md).
+- **Verification:** baseline retention suite 20 passed; pre-fix regression 2 failed, 20 deselected; post-fix retention suite 22 passed, zero skips/failures/errors; mandatory JUnit collection gate passed. Full local suite and final-head required CI are pending. Initial independent read-only source review confirms the bounded defect/fix; final branch review remains pending. This is agent review, not human security/operations certification.
+- **Residual boundary:** references committed after the post-inventory database read can still race deletion. This slice does not establish atomic garbage collection; operated cleanup requires quiescent writers until coordinated exclusion is qualified. Synthetic aged local objects are not real S3 outage/erasure evidence.
+- **Completion:** implemented on review branch; full repository verification pending; staging/production qualification and activation not established. All sixteen operated CW-02 cases, matching staging identity, CW-11 mixed-version drain, live browser/sandbox isolation, measured coworker/model quality and independent release reviews remain open. No deployment or activation.
+- **Next:** inspect final-head required CI and independent branch review, integrate through the review process, then execute controlled staging collectors when matching environment/provider access is available. Do not replace missing operated proof with more synthetic PASS records.
+
+---
+
 ## CW-02 S3 inventory owner-scope and terminal-page integrity — 19 October 2026 (Asia/Dhaka)
 
 - **Starting main:** `b91d7952da640cc59c9c826ca0c0a18f9f23599b`, merged [PR #477](https://github.com/rumman52/Shuddho/pull/477). At task selection exact-head [CI #39238717292](https://github.com/rumman52/Shuddho/actions/runs/39238717292) had `test-and-build` success and mandatory `coworker` in progress. No independent PR review recorded. Merged-main CI remains a separate check.
