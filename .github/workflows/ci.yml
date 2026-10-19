@@ -113,8 +113,9 @@ jobs:
           uv run pytest tests/test_mandatory_test_gate.py -q
       - name: Qualify committed Agent v3 decision recovery without skips
         run: |
-          uv run --extra coworker pytest tests/test_agent_v3_decision_recovery.py -q -rs --junitxml=/tmp/v3-decision-recovery.xml
+          uv run --extra coworker pytest tests/test_agent_v3_decision_recovery.py tests/test_agent_v3_terminal_finality.py -q -rs --junitxml=/tmp/v3-decision-recovery.xml
           uv run python -m scripts.mandatory_test_gate /tmp/v3-decision-recovery.xml --required-module tests.test_agent_v3_decision_recovery
+          uv run python -m scripts.mandatory_test_gate /tmp/v3-decision-recovery.xml --required-module tests.test_agent_v3_terminal_finality
       - name: Qualify PostgreSQL transaction fault boundaries without skips
         run: |
           uv run --extra coworker pytest tests/test_transaction_chaos_postgres.py -q -rs --junitxml=/tmp/transaction-postgres.xml

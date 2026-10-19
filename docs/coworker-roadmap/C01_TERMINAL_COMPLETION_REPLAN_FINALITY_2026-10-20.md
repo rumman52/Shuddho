@@ -29,8 +29,11 @@ no duplicate ledger, model behavior or new orchestrator.
   existing cancellation outcome and v1/v2 compatibility.
 - Recheck and reject while holding existing AgentRun lock, no network/model
   calls, new provider claims or external action authority.
-- Required exact-head CI, independent review, matching operated staging and
-  deployable recovery evidence remain separate acceptance gates.
+- Required exact-head CI explicitly collects both `test_agent_v3_decision_recovery.py`
+  and `test_agent_v3_terminal_finality.py` with a mandatory, no-skips
+  `tests.test_agent_v3_terminal_finality` gate.
+- Independent review, matching operated staging and deployable recovery evidence
+  remain separate acceptance gates.
 
 ## Scope and evidence
 
