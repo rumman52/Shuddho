@@ -69,6 +69,7 @@ def _bundle(folder):
             "scenario_id": name, "source_revision": REV, "rollout_id": ROLLOUT,
             "test_run_id": f"synthetic-{i}", "observed_at": OBSERVED,
             "attempted_mutations": attempted, "applied_mutations": applied, "outcome": outcome,
+            "operator": "synthetic-ci", "environment": "staging", "result": "passed",
             "provider_observation_source": "provider_sandbox",
             "provider_observation_reference": "synthetic-" + str(i),
         }

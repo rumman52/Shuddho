@@ -52,6 +52,24 @@ def _timestamp_valid(value):
     return stamp.tzinfo is not None and stamp.utcoffset() is not None
 
 
+def _unique_json_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate JSON object key")
+        result[name] = value
+    return result
+
+
+def _reject_nonfinite(value):
+    raise ValueError(f"nonfinite JSON number: {value}")
+
+
+def _strict_json_loads(data):
+    return json.loads(data, object_pairs_hook=_unique_json_object,
+                      parse_constant=_reject_nonfinite)
+
+
 def verify_evidence_files(document: dict, directory: Path) -> list[str]:
     """Integrity checks only: independent staging/provenance audit is still required."""
     problems = []
@@ -79,7 +97,7 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
             if hashlib.sha256(raw).hexdigest() != entry.get("evidence_sha256"):
                 problems.append(f"{name}: evidence hash mismatch")
                 continue
-            record = json.loads(raw)
+            record = _strict_json_loads(raw)
         except (OSError, ValueError, UnicodeError):
             problems.append(f"{name}: unreadable evidence JSON")
             continue
@@ -95,6 +113,9 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
             "attempted_mutations": entry.get("attempted_mutations"),
             "applied_mutations": entry.get("applied_mutations"),
             "outcome": entry.get("outcome"),
+            "operator": entry.get("operator"),
+            "environment": entry.get("environment"),
+            "result": entry.get("result"),
         }
         if any(record.get(key) != value for key, value in expected.items()):
             problems.append(f"{name}: evidence identity/counter mismatch")
@@ -109,7 +130,7 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
 def qualify(document: dict, *, expected_revision: str, expected_rollout: str) -> list[str]:
     """Return qualification rejection reasons; never assume success."""
     problems: list[str] = []
-    if document.get("schema_version") != 1:
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         problems.append("schema_version must equal 1")
     if not expected_revision or document.get("source_revision") != expected_revision:
         problems.append("source_revision mismatch")
@@ -191,7 +212,7 @@ def main() -> int:
                         help="Directory containing one checksummed staging evidence JSON per scenario")
     args = parser.parse_args()
     try:
-        document = json.loads(args.evidence.read_text(encoding="utf-8"))
+        document = _strict_json_loads(args.evidence.read_text(encoding="utf-8"))
         if not isinstance(document, dict):
             raise ValueError("evidence must be a JSON object")
         problems = qualify(document, expected_revision=args.source_revision, expected_rollout=args.rollout_id)

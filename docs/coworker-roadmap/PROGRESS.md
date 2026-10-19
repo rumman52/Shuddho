@@ -1,3 +1,11 @@
+## Current continuation — CW-02 fault evidence integrity hardening (19 October 2026, Asia/Dhaka)
+
+- **Main:** `c04eccf3ce9ca8778da0931c2f1d96d4ac3270dc` (PR #471 merged). [PR #471 head CI #39213261699](https://github.com/rumman52/Shuddho/actions/runs/39213261699) had test-and-build passed, mandatory coworker still in progress at last inspection; [merged-main CI #39214301418](https://github.com/rumman52/Shuddho/actions/runs/39214301418) was also in progress. No independent PR #471 review was recorded.
+- **CW-02 next bounded slice:** `codex/cw02-fault-evidence-identity-hardening-20261019` enforces operator/environment/result identity agreement between the manifest and each checksummed fault record; rejects duplicate JSON object keys, nonfinite JSON constants, and boolean schema-version substitutions. Update both CW-02-only and signed CW-02–04 synthetic fixtures so stronger checks run through mandatory CI. The branch must pass exact-head CI and independent review before merge.
+- **Evidence boundary:** This is offline internal-consistency checking only, not confirmation of operator identity or independent provider observations. All sixteen real fault cases, controlled staging identity, real browser/sandbox isolation, CW-11 drain, human security review, model quality and production qualification remain open. No activation is authorized.
+
+---
+
 ## Current continuation — CW-02 PR #471 conflict resolution and cleanup recovery (19 October 2026, Asia/Dhaka)
 
 - **Base:** main `7e20e1bb9dd5f80af30e104d8cc71ab1635224a6` (merged #470); required mainline CI [#39164154651](https://github.com/rumman52/Shuddho/actions/runs/39164154651) completed successfully.
