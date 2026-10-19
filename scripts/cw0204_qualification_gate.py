@@ -179,7 +179,12 @@ def validate_fault_observation_chronology(manifest, checkpoint):
 
 
 def fault_tree_sha256(folder):
-    """Hash actual bytes of every scenario, not just manifest-provided strings."""
+    """Hash the exact controlled sixteen-file evidence set."""
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("CW-02 evidence directory missing or unsafe")
+    expected_files = {name + ".json" for name in SCENARIOS}
+    if {entry.name for entry in folder.iterdir()} != expected_files:
+        raise ValueError("CW-02 requires exactly sixteen named fault evidence files")
     entries = []
     for name in sorted(SCENARIOS):
         path = folder / (name + ".json")

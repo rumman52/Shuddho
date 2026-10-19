@@ -1,3 +1,11 @@
+## CW-02 exact fault artifact-set integrity — 19 October 2026 (Asia/Dhaka)
+
+- **Inspected main:** `2cc3778c9219d943a0e56938f2d4e4c6f75727b5` (PR #475 merged), PR #475 exact-head CI [#39220814698](https://github.com/rumman52/Shuddho/actions/runs/39220814698) passed required `test-and-build`, `coworker` and `ci-merge-gate`; no independent PR review submitted. Its merged-main CI must be checked independently.
+- **New bounded acceptance:** The 16 CW-02 artifact names constitute a closed set. Both standalone `verify_evidence_files` and signed `fault_tree_sha256` reject symlinked evidence directories and unmanifested extra entries; preserve checksums, source/run identity, per-file symlink rejection and the same signed witness trust model. The branch includes unit and signed-bundle synthetic tests for exact set, extras and alias directory. Require exact-head CI + independent review before merge.
+- **Qualification boundary:** Structural evidence integrity is not operated staging proof. Full 16 real fault injections, provider-applied mutation counters, CW-11 mixed-version drain, live browser/sandbox isolation, quality, independent security/operations review and production activation remain OPEN.
+
+---
+
 ## CW-02–04 signed release schema strictness — 19 October 2026 (Asia/Dhaka)
 
 - **Starting revision:** `main` `e43762a1aeb43602edc9c88be082f2c9d1668b17`, merged [PR #474](https://github.com/rumman52/Shuddho/pull/474). PR exact-head [CI #39218975244](https://github.com/rumman52/Shuddho/actions/runs/39218975244) had test-and-build passed, mandatory coworker in progress; merged-main CI also running at task selection. No independent review found. Do not claim all gates complete.

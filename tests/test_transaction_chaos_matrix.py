@@ -252,3 +252,20 @@ def test_fault_record_nonfinite_counter_rejected_even_with_updated_digest(tmp_pa
     row["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
     assert any("unreadable evidence JSON" in problem
                for problem in verify_evidence_files(doc, tmp_path))
+
+
+def test_cw02_rejects_unexpected_fault_evidence_files(tmp_path):
+    doc = _bundle(tmp_path, evidence())
+    assert verify_evidence_files(doc, tmp_path) == []
+    (tmp_path / "unbound-extra.json").write_text('{"result":"passed"}', encoding="utf-8")
+    assert any("exactly sixteen" in reason for reason in verify_evidence_files(doc, tmp_path))
+
+
+def test_cw02_rejects_symlinked_evidence_directory(tmp_path):
+    actual_dir = tmp_path / "real-faults"
+    actual_dir.mkdir()
+    doc = _bundle(actual_dir, evidence())
+    link = tmp_path / "alias"
+    link.symlink_to(actual_dir, target_is_directory=True)
+    assert any("missing or unsafe" in reason for reason in verify_evidence_files(doc, link))
+    assert verify_evidence_files(doc, actual_dir) == []
