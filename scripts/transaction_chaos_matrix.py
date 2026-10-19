@@ -73,9 +73,20 @@ def _strict_json_loads(data):
 def verify_evidence_files(document: dict, directory: Path) -> list[str]:
     """Integrity checks only: independent staging/provenance audit is still required."""
     problems = []
-    base = directory.resolve()
-    if not base.is_dir():
+    # Reject redirects through directory symlinks and ambiguous extra artifacts.
+    # A reviewer must know precisely which 16 evidence files were considered.
+    if directory.is_symlink():
+        return ["evidence directory missing or unsafe"]
+    if not directory.is_dir():
         return ["evidence directory does not exist"]
+    base = directory.resolve()
+    expected_files = {name + ".json" for name in SCENARIOS}
+    try:
+        actual_files = {item.name for item in directory.iterdir()}
+    except OSError:
+        return ["evidence directory unreadable"]
+    if actual_files != expected_files:
+        problems.append("CW-02 requires exactly sixteen named fault evidence files")
     for entry in document.get("scenarios", []):
         if not isinstance(entry, dict) or entry.get("id") not in SCENARIOS:
             continue

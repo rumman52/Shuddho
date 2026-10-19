@@ -374,3 +374,25 @@ def test_unrelated_deployment_metadata_does_not_change_witness_clock(tmp_path):
     problems = qualify_release(**args)
     assert any("checkpoint_sha256 mismatch" in error for error in problems)
     assert not any("reviewer signed before evidence" in error for error in problems)
+
+
+def test_signed_release_rejects_extra_cw02_fault_file(tmp_path):
+    args = _bundle(tmp_path)
+    assert qualify_release(**args) == []
+    (args["evidence_dir"] / "unbound-extra.json").write_text(
+        '{"run":"not-in-manifest"}', encoding="utf-8",
+    )
+    assert any("exactly sixteen" in reason for reason in qualify_release(**args))
+    with pytest.raises(ValueError, match="exactly sixteen"):
+        fault_tree_sha256(args["evidence_dir"])
+
+
+def test_signed_release_rejects_symlinked_cw02_evidence_directory(tmp_path):
+    args = _bundle(tmp_path)
+    original = args["evidence_dir"]
+    moved = tmp_path / "real-evidence"
+    original.rename(moved)
+    original.symlink_to(moved, target_is_directory=True)
+    assert any("missing or unsafe" in reason for reason in qualify_release(**args))
+    with pytest.raises(ValueError, match="missing or unsafe"):
+        fault_tree_sha256(original)
