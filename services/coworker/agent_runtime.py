@@ -165,6 +165,12 @@ class AgentRuntime:
             replay = self.repo.v3_activity_result(run_id, activity_key)
             if replay is not None:
                 return replay
+        # A distinct logical decision cannot reopen a terminal Agent run.
+        # Preserve exact checkpoint replay above even for needs_input/blocked.
+        if run["state"] in {"completed", "failed", "needs_input", "blocked"}:
+            raise CoworkerError(
+                "agent_run_closed", "The Agent run is no longer accepting new decisions.", 409,
+            )
 
         current = self.repo.get(run["owner_id"], run_id)
         observations = [

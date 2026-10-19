@@ -1,3 +1,12 @@
+## Architecture/core closure — C-01 terminal Runtime v3 planner reservation fence (20 October 2026)
+
+- **Starting main:** `7c2eced6396f2cdf93106bf05e006b7c423eecfb` includes merged #480–#483. Existing Core v3 committed retry and no-tool block fixes are preserved.
+- **Root cause:** a new post-terminal Runtime v3 activity could enter `reserve_planner` after needs_input/blocked, reserving provider/daily tokens before eventual late-decision rejection. [Contract](C01_TERMINAL_RESERVATION_FENCE_2026-10-20.md).
+- **Bounded fix / PR:** [#485](https://github.com/rumman52/Shuddho/pull/485) rejects new logical decisions early and under the AgentRun reservation lock; exact committed result replay, cancellation errors and v1/v2 behavior stay unchanged. No schema, grants, capability defaults, paid providers or activation.
+- **Evidence boundary:** five test instances committed before implementation; require exact final-head CI and independent review before declaring repository verification. No deployed Postgres/Temporal, live provider/cost, mixed-version or operated staging evidence supplied. A-02/C-01 remain open at complete acceptance level.
+
+---
+
 ## Architecture/core closure — P-01 conversation activity refresh ordering (19 October 2026)
 
 - **Starting main:** `bc88f124e61f003bcbf70dbba2303590992edd0a`, merged PR #482. [Task contract](P01_CONVERSATION_ACTIVITY_REFRESH_ORDER_2026-10-19.md).

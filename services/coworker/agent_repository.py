@@ -1248,6 +1248,14 @@ class AgentRepository:
                 raise not_found()
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            # Runtime v3 may replay an already committed activity result, but
+            # must not reserve fresh provider capacity after a terminal event.
+            # Locking this row prevents a concurrent terminal transition from
+            # racing a new reservation; preserve existing v1/v2 behavior.
+            if run.runtime_version == 3 and run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "The Agent run is no longer accepting new model calls.", 409,
+                )
             self._assert_within_deadline(run)
             max_calls = (
                 self.settings.max_agent_v3_planner_calls
