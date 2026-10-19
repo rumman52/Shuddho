@@ -2875,9 +2875,22 @@ class AgentRepository:
     def complete_run(self, run_id: str):
         with self.sessions.begin() as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
-            if run is None or run.state == "completed":
+            if run is None:
+                # An unknown run is not a successfully finalized run. The
+                # completion activity must fail closed instead of confirming
+                # absent work to the durable coordinator.
+                raise not_found()
+            if run.state == "completed":
+                # A committed completion remains safe to replay.
                 return
             if run.cancel_requested or run.state == "cancelled":
+                # Legacy coordinators have always treated this as a no-op.
+                # Runtime v3 must not acknowledge a competing cancellation
+                # as a successful completion activity.
+                if run.runtime_version == 3:
+                    raise CoworkerError(
+                        "agent_cancelled", "This Agent run was cancelled.", 409,
+                    )
                 return
             # The completed-state retry remains a no-op above. A different
             # terminal v3 outcome is final even when all receipts happen to
