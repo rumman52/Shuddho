@@ -267,7 +267,6 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
             os.kill(process.pid, signal.SIGKILL)
             process.join(10)
 
-
 def test_orphan_cleanup_reports_delete_failure_without_claiming_deletion(container):
     """A failed object deletion is surfaced and never counted as successful cleanup."""
     account_id = owner(container, "orphan-delete-failure")
@@ -298,3 +297,16 @@ def test_orphan_cleanup_reports_delete_failure_without_claiming_deletion(contain
     assert result["deleted"] == 0
     assert result["failed"] == [key]
     assert container.storage.get(key, 1024) == body
+
+    # A failed sweep must remain safely retryable after object-store recovery.
+    container.retention.storage = container.storage
+    recovered = container.retention.cleanup_orphans(
+        prefix=account_id,
+        min_age_seconds=3600,
+        dry_run=False,
+    )
+    assert {item["key"] for item in recovered["candidates"]} == {key}
+    assert recovered["deleted"] == 1
+    assert recovered["failed"] == []
+    with pytest.raises(FileNotFoundError):
+        container.storage.get(key, 1024)

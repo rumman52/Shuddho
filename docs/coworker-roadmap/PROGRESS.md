@@ -1,9 +1,20 @@
-## Current continuation — CW-02 cleanup fault accounting (19 October 2026, Asia/Dhaka)
+## Current continuation — CW-02 PR #471 conflict resolution and cleanup recovery (19 October 2026, Asia/Dhaka)
 
-- **Main:** `1a852034576a9a5124187d9901203864b3664ed6`; PR #468 hard-worker-loss recovery merged and exact-head required CI passed.
-- **Next CW-02 branch:** `codex/cw02-orphan-delete-failure-reporting-20261019` adds a fault-injection regression proving that age-bounded orphan cleanup reports an object-store deletion failure in `failed`, does not increment `deleted`, and leaves the object readable. Exact-head CI is pending.
-- **CW-09 PR #470:** malformed/mismatched broker DNS response validation is under mandatory CI. See [PR #470](https://github.com/rumman52/Shuddho/pull/470).
-- **Evidence limits:** no local checkout execution is claimed. These tests use local object storage/SQLite and do not prove live S3 or protected staging. The sixteen-row CW-02 operated evidence matrix, CW-11 mixed-version drain, real browser/sandbox isolation, independent review, personal-coworker quality and production qualification remain open.
+- **Base:** main `7e20e1bb9dd5f80af30e104d8cc71ab1635224a6` (merged #470); required mainline CI [#39164154651](https://github.com/rumman52/Shuddho/actions/runs/39164154651) completed successfully.
+- **Work:** [PR #471](https://github.com/rumman52/Shuddho/pull/471), `codex/cw02-orphan-delete-failure-reporting-20261019`, retains the existing deletion-failure regression and adds a recovery retry: the first cleanup must report the failed key without deleting it; after restoring the store, a second age-bounded cleanup must delete the same orphan.
+- **Previous branch verification:** exact-head [CI #39160757345](https://github.com/rumman52/Shuddho/actions/runs/39160757345) passed test-and-build, mandatory coworker and ci-merge-gate on `1a248f6317509ab8676ef71d23cc23acd674001c`; it does **not** validate the new merge/recovery commit, whose exact-head checks remain pending.
+- **Integration:** merge the newer main tree without discarding #470 browser DNS protections or already-merged CW-02 recovery tests, and retain one canonical continuation record.
+- **Evidence boundary:** local SQLite/object-store failure injection is not live S3 or operated staging. Sixteen distinct CW-02 staging artifacts, independent provider-side observations, CW-11 mixed-version drain, real browser/sandbox isolation, independent security review, quality qualification and authorized activation are still open.
+
+---
+
+## Current continuation — CW-02 and CW-09 gates (19 October 2026, Asia/Dhaka)
+
+- **Main:** `1a852034576a9a5124187d9901203864b3664ed6`. PR #468 hard-worker-loss orphan-recovery test is merged and its exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` passed.
+- **Merged-main CI:** run [#39159745525](https://github.com/actions/runs/39159745525) on this SHA was still running at the last refresh. Do not call mainline fully verified until all required jobs pass.
+- **CW-09 follow-up branch:** `codex/cw09-proxy-dns-response-shape-20261019-v2` validates broker response hostname and resolved-IP structure before dialing from the real CONNECT handler. Local socket regressions cover missing/mismatched hostname, empty/non-array lists, invalid IP literals and excessive entries. Exact-head CI has not run yet.
+- **Evidence boundaries:** no local checkout was available to execute these tests directly during authoring; GitHub CI remains the executable verification gate. Local proxy sockets do not prove live Chromium, DNS rebinding, private-network isolation or staging.
+- **Still open:** the complete sixteen-row CW-02 operated evidence matrix; protected CW11-STAGING mixed-version drain; browser/sandbox isolation; independent review; personal-coworker quality and production qualification. No deployment, provider activation or production action is claimed.
 
 
 ---
