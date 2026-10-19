@@ -3,6 +3,7 @@ import {
   CoworkerClient, WorkspaceError, type ConversationRecord,
   type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
+import { RefreshOrder } from "./refreshOrder";
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
 export default function ConversationWorkspace({ client, openAgent }: {
@@ -28,6 +29,9 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [disabled, setDisabled] = useState(false);
   const createKey = useRef<string | null>(null);
   const messageKey = useRef<string | null>(null);
+  const refreshOrder = useRef(new RefreshOrder());
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -107,38 +111,52 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }
 
   async function reloadConversation(id: string) {
+    if (selectedRef.current !== id) return;
+    const revision = refreshOrder.current.start();
     const [messagesResponse, activityResponse, listResponse] = await Promise.all([
       client.conversationHistory(id), client.conversationActivityHistory(id), client.conversations(),
     ]);
+    if (selectedRef.current !== id || !refreshOrder.current.isCurrent(revision)) return;
     setMessages(messagesResponse.items);
     setActivity(activityResponse.items);
     setConversations(listResponse.items);
   }
 
   useEffect(() => {
+    // A response from an old conversation or refresh must not roll back newer
+    // run progress, especially after a user-initiated dispatch/cancellation.
+    refreshOrder.current.invalidate();
     setMessages([]);
     setActivity([]);
     if (!selected) return;
     const controller = new AbortController();
+    let polling = false;
     const reload = async () => {
+      if (polling || controller.signal.aborted) return;
+      polling = true;
+      const revision = refreshOrder.current.start();
       try {
         const [chat, projection, latestList] = await Promise.all([
           client.conversationHistory(selected, controller.signal),
           client.conversationActivityHistory(selected, controller.signal),
           client.conversations(controller.signal),
         ]);
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && selectedRef.current === selected
+            && refreshOrder.current.isCurrent(revision)) {
           setMessages(chat.items);
           setActivity(projection.items);
           setConversations(latestList.items);
         }
       } catch (cause) {
-        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Could not refresh conversation.");
+        if (!controller.signal.aborted && refreshOrder.current.isCurrent(revision))
+          setError(cause instanceof Error ? cause.message : "Could not refresh conversation.");
+      } finally {
+        polling = false;
       }
     };
     void reload();
     const timer = window.setInterval(() => { void reload(); }, 5000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    return () => { controller.abort(); window.clearInterval(timer); refreshOrder.current.invalidate(); };
   }, [client, selected]);
 
   async function create(event: FormEvent) {

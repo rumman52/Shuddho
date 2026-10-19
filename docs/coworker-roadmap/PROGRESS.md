@@ -1,3 +1,12 @@
+## Architecture/core closure — P-01 conversation activity refresh ordering (19 October 2026)
+
+- **Starting main:** `bc88f124e61f003bcbf70dbba2303590992edd0a`, merged PR #482. [Task contract](P01_CONVERSATION_ACTIVITY_REFRESH_ORDER_2026-10-19.md).
+- **Source-level defect:** `ConversationWorkspace` runs a 5-second activity polling loop without preventing simultaneous requests or rejecting older responses. A slow response can overwrite a more recent run state; a post-dispatch explicit refresh can also lose to a stale poll. The activity API is read-only, but misleading progress affects P-01 continuity.
+- **Bounded change:** serialize only background polls and reject stale results using a monotonic request revision shared with explicit refreshes; invalidate on conversation switching/unmount, and avoid applying an old conversation's response. No new ledger, API, provider, navigation, or authorization behavior.
+- **Regression coverage:** new Node unit tests for out-of-order completion, conversation switch, and explicit action refresh. Full frontend test/build, final-head mandatory CI, independent review and staging UI reconnect remain to be verified at the PR. No activation.
+
+---
+
 ## Architecture/core closure — P-01/P-02 source identity (19 October 2026)
 
 - Starting main `8a83844b148a811357b8906c58deb3ba8b76f1d3` contains merged #479; no open PR existed at fresh task selection. #479 exact-head required CI passed. Merged-main CI is checked separately.
