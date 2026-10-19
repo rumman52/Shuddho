@@ -1,3 +1,11 @@
+## CW-02–04 signed release schema strictness — 19 October 2026 (Asia/Dhaka)
+
+- **Starting revision:** `main` `e43762a1aeb43602edc9c88be082f2c9d1668b17`, merged [PR #474](https://github.com/rumman52/Shuddho/pull/474). PR exact-head [CI #39218975244](https://github.com/rumman52/Shuddho/actions/runs/39218975244) had test-and-build passed, mandatory coworker in progress; merged-main CI also running at task selection. No independent review found. Do not claim all gates complete.
+- **Bounded task:** `codex/cw0204-signed-schema-type-fail-closed-20261019` rejects JSON `true` or `1.0` for `checkpoint.schema_version` and signed independent-review `schema_version`, complementing strict CW-02 manifest handling. Freshly signed synthetic fixtures test both, plus ensure only frozen API/worker observations define the review timestamp floor. Require final-head mandatory CI and independent review before merge.
+- **Release boundary:** code and synthetic evidence integrity only. Sixteen operated fault cases, CW-11 mixed worker drain, browser/code isolation, independent security/operations review, staging model quality and production activation all remain OPEN.
+
+---
+
 ## CW-02 chronology mainline integration checkpoint — 19 October 2026 (Asia/Dhaka)
 
 - **Correct source-of-truth:** `main` at `f1ae5b643da3a4a6ef9be0b16638b653bf8ba3b5` contains [merged PR #472](https://github.com/rumman52/Shuddho/pull/472), whose head [CI #39215117594](https://github.com/rumman52/Shuddho/actions/runs/39215117594) passed all three required jobs. [PR #473](https://github.com/rumman52/Shuddho/pull/473) is reported merged, but **its base was the #472 feature branch, not main**, so the CW-02 signed-fault chronology check was absent from main at inspection. No independent GitHub PR reviews were recorded for #472/#473.

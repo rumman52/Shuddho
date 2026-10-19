@@ -70,7 +70,8 @@ def _time(value):
 
 def validate_checkpoint(checkpoint, *, source_revision, rollout_id):
     errors = []
-    if checkpoint.get("schema_version") != 1 or checkpoint.get("environment") != "staging":
+    if (type(checkpoint.get("schema_version")) is not int or checkpoint["schema_version"] != 1
+            or checkpoint.get("environment") != "staging"):
         errors.append("checkpoint schema/environment mismatch")
     if (checkpoint.get("source_revision") != source_revision or
             not GIT_SHA.fullmatch(source_revision) or checkpoint.get("rollout_id") != rollout_id or not rollout_id):
@@ -269,6 +270,10 @@ def verify_witness(witness, *, pem, trusted_key_sha256, manifest_sha256,
         "evidence_tree_sha256": tree_sha256,
         "workflow_tree_sha256": workflow_tree_sha256,
     }
+    # JSON true and 1.0 compare equal to integer 1 in Python but are not
+    # permitted release contract schema versions.
+    if type(witness.get("schema_version")) is not int:
+        errors.append("attestation schema_version must be integer 1")
     for field, value in required.items():
         if witness.get(field) != value:
             errors.append(f"attestation {field} mismatch")
@@ -308,7 +313,9 @@ def qualify_release(*, manifest_path, checkpoint_path, evidence_dir, workflow_ev
         if errors or workflow_tree is None:
             return errors or ["CW-04 workflow evidence incomplete"]
         timestamps = [_time(item.get("observed_at")) for item in manifest["scenarios"] + checkpoint["workflows"]]
-        timestamps += [_time(row.get("observed_at")) for row in checkpoint["deployments"].values()]
+        # Only frozen API/worker deployments define the release witness clock.
+        timestamps += [_time(checkpoint["deployments"][role].get("observed_at"))
+                       for role in ("api", "worker")]
         latest = max((t for t in timestamps if t is not None), default=None)
         return verify_witness(witness, pem=pem, trusted_key_sha256=trusted_key_sha256,
                               manifest_sha256=sha256(manifest_raw),
