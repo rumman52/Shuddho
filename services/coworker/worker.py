@@ -173,7 +173,9 @@ class AgentActivities:
     @activity.defn(name="shuddho_agent_decide_v3")
     async def decide_v3(self, run_id: str):
         try:
-            return await self.runtime.decide_v3(run_id)
+            info = activity.info() if activity.in_activity() else None
+            key = f"{info.workflow_run_id}/{info.activity_id}" if info is not None else None
+            return await self.runtime.decide_v3(run_id, activity_key=key)
         except CoworkerError as error:
             raise ApplicationError(
                 error.message, type=error.code,

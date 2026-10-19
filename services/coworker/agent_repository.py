@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from contextlib import nullcontext
 from datetime import timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -1308,22 +1309,27 @@ class AgentRepository:
             return {"call": run.planner_calls, "reserved_tokens": reserve_tokens, "day": day}
 
     def settle_planner_capacity(
-        self,
-        run_id: str,
-        call: int,
-        actual_tokens: int | None,
-        cost_microusd: int | None = None,
+        self, run_id: str, call: int, actual_tokens: int | None,
+        cost_microusd: int | None = None, *, _db=None,
     ) -> None:
-        with self.sessions.begin() as db:
+        with (nullcontext(_db) if _db is not None else self.sessions.begin()) as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            key = f"planner_capacity_settled:0:{call}"
+            if db.scalar(select(AgentCheckpoint.id).where(
+                AgentCheckpoint.run_id == run_id, AgentCheckpoint.checkpoint_key == key,
+            )) is not None:
+                return
             settle_provider_lease(
                 db, kind="planner", resource_id=run_id, sequence=call,
                 actual_tokens=actual_tokens,
             )
-            run = db.get(AgentRun, run_id)
-            if run is not None and actual_tokens is not None:
+            if actual_tokens is not None:
                 run.planner_actual_tokens += max(0, int(actual_tokens))
                 if cost_microusd is not None:
                     run.planner_cost_microusd += max(0, int(cost_microusd))
+            self._checkpoint(db, run, "planner_capacity_settled", resource_id=str(call))
 
     def release_planner_capacity(self, run_id: str, call: int) -> None:
         self.settle_planner_capacity(run_id, call, None)
@@ -2115,11 +2121,79 @@ class AgentRepository:
                 ),
             }
 
-    def append_v3_step(self, owner: str, run_id: str, tool_name: str, objective: str) -> int:
+    def v3_activity_result(self, run_id: str, activity_key: str) -> dict | None:
+        identity = hashlib.sha256(activity_key.encode("utf-8")).hexdigest()
+        with self.sessions() as db:
+            row = db.scalar(select(AgentCheckpoint).where(
+                AgentCheckpoint.run_id == run_id,
+                AgentCheckpoint.checkpoint_key == f"v3_activity_result:0:{identity}",
+            ))
+            return dict(row.evidence["result"]) if row is not None else None
+
+    def commit_v3_decision(
+        self, run_id: str, decision: AgentV3Decision, *, activity_key: str | None,
+        planner_call: int, model: str, prompt_sha256: str, tool_schema_sha256: str,
+        observation_count: int, total_tokens: int | None, cost_microusd: int | None,
+        memory_repository, context_sources: dict,
+    ) -> dict:
+        """Commit a decision, its local effects and retry result as one run transaction.
+
+        Provider inference happens outside this transaction. An interrupted uncommitted
+        attempt may infer again within its budget; committed work is replayed exactly.
+        """
+        identity = hashlib.sha256(activity_key.encode("utf-8")).hexdigest() if activity_key else None
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if identity:
+                existing = db.scalar(select(AgentCheckpoint).where(
+                    AgentCheckpoint.run_id == run_id,
+                    AgentCheckpoint.checkpoint_key == f"v3_activity_result:0:{identity}",
+                ))
+                if existing is not None:
+                    # A concurrent attempt may have inferred too; charge that actual
+                    # attempt while reusing the winning local decision and effects.
+                    self.settle_planner_capacity(run_id, planner_call, total_tokens, cost_microusd, _db=db)
+                    return dict(existing.evidence["result"])
+            self.record_v3_decision(
+                run_id, decision, planner_call=planner_call, model=model,
+                prompt_sha256=prompt_sha256, tool_schema_sha256=tool_schema_sha256,
+                observation_count=observation_count, total_tokens=total_tokens,
+                cost_microusd=cost_microusd, _db=db,
+            )
+            run.planner_mode = "v3"
+            if decision.memory_proposal is not None:
+                memory_repository.propose_from_agent(
+                    run.owner_id, run_id, decision.memory_proposal, context_sources, _db=db,
+                )
+            result = {"decision": decision.decision}
+            if decision.decision == "next_step":
+                result["ordinal"] = self.append_v3_step(
+                    run.owner_id, run_id, decision.tool, decision.objective, _db=db,
+                )
+            elif decision.decision == "complete":
+                if not self.v3_can_complete(run_id, _db=db):
+                    raise CoworkerError("agent_unverified_completion", "Runtime v3 requested completion without verified tool receipts.", 409)
+            elif decision.decision in {"needs_input", "blocked"}:
+                self.v3_terminal(run_id, decision.decision, decision.message, _db=db)
+            elif decision.decision == "awaiting_approval":
+                if not self.v3_approval_waiting(run_id, _db=db):
+                    raise CoworkerError("approval_state_unverified", "Runtime v3 cannot claim an approval wait without a persisted waiting action.", 409)
+            else:
+                result["wait_seconds"] = int(decision.wait_seconds)
+            self.settle_planner_capacity(run_id, planner_call, total_tokens, cost_microusd, _db=db)
+            if identity:
+                self._checkpoint(db, run, "v3_activity_result", resource_id=identity, evidence={"result": result})
+            return result
+
+    def append_v3_step(self, owner: str, run_id: str, tool_name: str, objective: str, *, _db=None) -> int:
         """Translate one model-selected registered tool into server-owned arguments."""
         from .agent_planner import action_selection_candidates, exact_user_python_source, explicit_browser_url, intelligent_tool_names
 
-        with self.sessions.begin() as db:
+        with (nullcontext(_db) if _db is not None else self.sessions.begin()) as db:
             run = self._run(db, owner, run_id, lock=True)
             if run.runtime_version != 3:
                 raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
@@ -2240,8 +2314,9 @@ class AgentRepository:
         observation_count: int,
         total_tokens: int | None,
         cost_microusd: int | None,
+        _db=None,
     ) -> None:
-        with self.sessions.begin() as db:
+        with (nullcontext(_db) if _db is not None else self.sessions.begin()) as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
             if run is None:
                 raise not_found()
@@ -2290,8 +2365,8 @@ class AgentRepository:
             )
             self._audit(db, run.owner_id, run.id, "agent_v3_decision_recorded")
 
-    def v3_can_complete(self, run_id: str) -> bool:
-        with self.sessions() as db:
+    def v3_can_complete(self, run_id: str, *, _db=None) -> bool:
+        with (nullcontext(_db) if _db is not None else self.sessions()) as db:
             run = db.get(AgentRun, run_id)
             if run is None:
                 raise not_found()
@@ -2316,10 +2391,10 @@ class AgentRepository:
                     return False
             return incomplete == 0
 
-    def v3_terminal(self, run_id: str, state: str, message: str) -> None:
+    def v3_terminal(self, run_id: str, state: str, message: str, *, _db=None) -> None:
         if state not in {"needs_input", "blocked"}:
             raise CoworkerError("agent_state", "Unsupported Runtime v3 terminal state.", 422)
-        with self.sessions.begin() as db:
+        with (nullcontext(_db) if _db is not None else self.sessions.begin()) as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
             if run is None:
                 raise not_found()
@@ -2328,8 +2403,8 @@ class AgentRepository:
             self._event(db, run, state, state, message[:300])
             self._audit(db, run.owner_id, run.id, f"agent_run_{state}")
 
-    def v3_approval_waiting(self, run_id: str) -> bool:
-        with self.sessions() as db:
+    def v3_approval_waiting(self, run_id: str, *, _db=None) -> bool:
+        with (nullcontext(_db) if _db is not None else self.sessions()) as db:
             return db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run_id,
                 ToolInvocation.state == "awaiting_approval",

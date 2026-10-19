@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from datetime import timedelta
 from uuid import uuid4
 
@@ -140,13 +141,14 @@ class MemoryRepository:
         run_id: str,
         proposal: AgentMemoryProposal,
         source_map: dict[str, dict],
+        *, _db=None,
     ) -> dict:
         self._enabled()
         if not self.settings.context_retrieval_enabled:
             raise CoworkerError("context_retrieval_unavailable", "Context retrieval is not enabled.", 409)
         if not set(proposal.source_ids).issubset(source_map):
             raise CoworkerError("memory_proposal_source", "The memory proposal cites an unavailable context source.", 409)
-        with self.sessions.begin() as db:
+        with (nullcontext(_db) if _db is not None else self.sessions.begin()) as db:
             run = db.scalar(select(AgentRun).where(
                 AgentRun.id == run_id, AgentRun.owner_id == owner,
             ).with_for_update())
