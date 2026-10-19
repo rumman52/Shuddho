@@ -201,3 +201,8 @@ Refreshed `main` is `4015dc9fc30525b2344f522d5e0b195ed5d35fd3`; [PR #414](https:
 ## Fresh CW-10 conversation scope checkpoint — 16 October 2026 (Asia/Dhaka)
 
 Current merged baseline `badc8bbb66c8ead4a43c3463e32112b1bfd7e996` includes #420 inert proposal persistence. Its exact PR-head CI #38780057144 passed all three mandatory jobs; earlier C-04 entries saying persistence is absent are historical. C-04 remains **source partial**, with human review/atomic approved claim and operated isolation absent. New branch `codex/cw10-conversation-proposal-scope-20261016` repairs missing original conversation source/message/run validation at proposal creation, replay and read; [contract](CW10_CONVERSATION_PROPOSAL_SCOPE_2026-10-16.md). Sixteen failing-first HTTP/DB cases reproduced the omission. Required new exact-head CI/review remains pending. A/P/V evidence levels and staging blockers remain unchanged; no completion percentage or activation is inferred.
+
+
+## C-04 source follow-up — 20 October 2026
+
+The separate `codex/cw10-sandbox-cleanup-order-20261020` review branch fixes truthful file cleanup before completion, wall/disk enforcement during blocked control, and unexpected supervisor/monitor failure. Six failing-first real-subprocess cases are covered; final related suites 189 passed, zero skips. Independent review's monitor exception finding is repaired. See [contract](CW10_WORKER_LIFETIME_CLEANUP_2026-10-20.md). Exact-head CI and actual namespace/staging qualification remain required; this does not close the full C-04 row or the 17-row inventory.

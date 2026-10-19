@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -383,87 +384,114 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
             except (OSError, subprocess.SubprocessError):
                 raise WorkerError("sandbox_runner_unavailable") from None
 
-            next_control = started
-            interrupted = None
-            timed_out = False
-            while process.poll() is None:
-                now = time.monotonic()
-                if now - started >= wall_seconds:
-                    timed_out = True
-                    terminate_group(process)
-                    break
-                if directory_size(scratch_path, disk_limit) > disk_limit:
-                    terminate_group(process)
-                    raise WorkerError("sandbox_resource_limit")
-                if now >= next_control:
+            monitor_stop = threading.Event()
+            monitor_errors: list[str] = []
+
+            def enforce_limits() -> None:
+                while not monitor_stop.wait(0.05):
                     try:
-                        control = client.post(
-                            f"/api/v1/internal/sandbox-worker/executions/{execution_id}/control",
-                            {"worker_id": worker_id},
+                        code = (
+                            "sandbox_timeout" if time.monotonic() - started >= wall_seconds
+                            else "sandbox_resource_limit"
+                            if directory_size(scratch_path, disk_limit) > disk_limit
+                            else None
                         )
-                    except WorkerError as error:
-                        # A failed heartbeat cannot renew the worker's lease.
-                        # The server may already have revoked authorization,
-                        # and a lost/invalid response does not prove otherwise.
-                        interrupted = (
-                            "claim_lost"
-                            if error.code == "sandbox_worker_claim_invalid"
-                            else "control_unavailable"
-                        )
+                    except Exception:
+                        # Inability to inspect the reviewed filesystem bound is
+                        # not authority to leave untrusted code running. This
+                        # includes deep-tree RecursionError on Python 3.11.
+                        code = "sandbox_resource_limit"
+                    if code is not None:
+                        if process.poll() is None:
+                            monitor_errors.append(code)
+                            terminate_group(process)
+                        return
+
+            monitor = threading.Thread(target=enforce_limits, daemon=True)
+            try:
+                monitor.start()
+                next_control = started
+                interrupted = None
+                timed_out = False
+                while process.poll() is None:
+                    now = time.monotonic()
+                    if now - started >= wall_seconds:
+                        timed_out = True
                         terminate_group(process)
                         break
-                    else:
-                        if control.get("action") == "stop":
-                            interrupted = str(control.get("reason") or "worker_interrupted")
+                    if directory_size(scratch_path, disk_limit) > disk_limit:
+                        terminate_group(process)
+                        raise WorkerError("sandbox_resource_limit")
+                    if now >= next_control:
+                        try:
+                            control = client.post(
+                                f"/api/v1/internal/sandbox-worker/executions/{execution_id}/control",
+                                {"worker_id": worker_id},
+                            )
+                        except WorkerError as error:
+                            # A failed heartbeat cannot renew the worker's lease.
+                            # The server may already have revoked authorization,
+                            # and a lost/invalid response does not prove otherwise.
+                            interrupted = (
+                                "claim_lost"
+                                if error.code == "sandbox_worker_claim_invalid"
+                                else "control_unavailable"
+                            )
                             terminate_group(process)
                             break
-                        if control.get("action") != "continue":
-                            # Do not interpret an unexpected or empty response
-                            # as a grant to keep running untrusted code.
-                            interrupted = "control_invalid"
-                            terminate_group(process)
-                            break
-                    next_control = now + CONTROL_SECONDS
-                time.sleep(0.1)
+                        else:
+                            if control.get("action") == "stop":
+                                interrupted = str(control.get("reason") or "worker_interrupted")
+                                terminate_group(process)
+                                break
+                            if control.get("action") != "continue":
+                                # Do not interpret an unexpected or empty response
+                                # as a grant to keep running untrusted code.
+                                interrupted = "control_invalid"
+                                terminate_group(process)
+                                break
+                        next_control = now + CONTROL_SECONDS
+                    time.sleep(0.1)
 
-            elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
-            if timed_out:
-                raise WorkerError("sandbox_timeout")
-            if interrupted:
-                raise WorkerError("worker_interrupted")
+                if monitor_errors:
+                    raise WorkerError(monitor_errors[0])
 
-            return_code = process.wait()
-            try:
-                stdout_raw = read_bounded(stdout_file, output_limit)
-                stderr_raw = read_bounded(stderr_file, output_limit)
-            except WorkerError:
-                raise
-            if return_code == -getattr(signal, "SIGXFSZ", 25):
-                raise WorkerError("sandbox_output_limit")
-            if return_code in {
-                -getattr(signal, "SIGKILL", 9),
-                -getattr(signal, "SIGSEGV", 11),
-            }:
-                raise WorkerError("sandbox_resource_limit")
+                elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
+                if timed_out:
+                    raise WorkerError("sandbox_timeout")
+                if interrupted:
+                    raise WorkerError("worker_interrupted")
 
-            stdout = stdout_raw.decode("utf-8", errors="replace")
-            stderr = stderr_raw.decode("utf-8", errors="replace")
-            artifact = None
-            if return_code == 0 and purpose == "interactive_artifact":
-                artifact_limit = int(policy["artifacts"]["interactive_html"]["max_bytes"])
-                artifact_body = read_artifact_file(
-                    scratch_path / "shuddho-preview.html",
-                    artifact_limit,
-                )
-                artifact = {
-                    "kind": "interactive_html",
-                    "body_b64": base64.b64encode(artifact_body).decode("ascii"),
-                    "sha256": hashlib.sha256(artifact_body).hexdigest(),
-                    "byte_size": len(artifact_body),
-                }
-            client.post(
-                f"/api/v1/internal/sandbox-worker/executions/{execution_id}/complete",
-                {
+                return_code = process.wait()
+                try:
+                    stdout_raw = read_bounded(stdout_file, output_limit)
+                    stderr_raw = read_bounded(stderr_file, output_limit)
+                except WorkerError:
+                    raise
+                if return_code == -getattr(signal, "SIGXFSZ", 25):
+                    raise WorkerError("sandbox_output_limit")
+                if return_code in {
+                    -getattr(signal, "SIGKILL", 9),
+                    -getattr(signal, "SIGSEGV", 11),
+                }:
+                    raise WorkerError("sandbox_resource_limit")
+
+                stdout = stdout_raw.decode("utf-8", errors="replace")
+                stderr = stderr_raw.decode("utf-8", errors="replace")
+                artifact = None
+                if return_code == 0 and purpose == "interactive_artifact":
+                    artifact_limit = int(policy["artifacts"]["interactive_html"]["max_bytes"])
+                    artifact_body = read_artifact_file(
+                        scratch_path / "shuddho-preview.html",
+                        artifact_limit,
+                    )
+                    artifact = {
+                        "kind": "interactive_html",
+                        "body_b64": base64.b64encode(artifact_body).decode("ascii"),
+                        "sha256": hashlib.sha256(artifact_body).hexdigest(),
+                        "byte_size": len(artifact_body),
+                    }
+                completion = {
                     "worker_id": worker_id,
                     "policy_version": POLICY_VERSION,
                     "executor_contract": EXECUTOR_CONTRACT,
@@ -476,8 +504,25 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
                     "filesystem_isolated": True,
                     "environment_sanitized": True,
                     "artifact": artifact,
-                },
-            )
+                }
+            finally:
+                # Every exit, including an unexpected transport/filesystem
+                # exception, must reap the process before removing its files.
+                monitor_stop.set()
+                if process.poll() is None:
+                    terminate_group(process)
+                if monitor.ident is not None:
+                    monitor.join()
+
+    # Destruction is attested only after output handles and both private
+    # directories have closed successfully. A lost response cannot leave the
+    # source/scratch behind after the server accepted this observation.
+    if monitor_errors:
+        raise WorkerError(monitor_errors[0])
+    client.post(
+        f"/api/v1/internal/sandbox-worker/executions/{execution_id}/complete",
+        completion,
+    )
 
 
 def main() -> int:

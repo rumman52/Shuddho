@@ -100,6 +100,10 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      - name: Qualify sandbox worker lifetime and cleanup without skips
+        run: |
+          uv run --extra coworker pytest tests/test_sandbox_worker_lifecycle.py -q -rs --junitxml=/tmp/sandbox-lifecycle.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/sandbox-lifecycle.xml --required-module tests.test_sandbox_worker_lifecycle
       - name: Build isolated sandbox worker image
         run: docker build -f Dockerfile.sandbox-worker -t shuddho-sandbox-worker:ci .
       - name: Run mandatory transaction safety regressions without skips
