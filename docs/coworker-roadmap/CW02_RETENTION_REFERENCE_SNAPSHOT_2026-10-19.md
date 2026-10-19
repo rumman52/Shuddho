@@ -21,7 +21,8 @@
 - [x] Add preview/apply regression using a real committed export Step during inventory; run against unchanged production code (2 failed, 20 deselected).
 - [x] Materialize inventory before reading current references; preserve return shape and cutoff semantics.
 - [ ] Run retention and surrounding storage/export tests, mandatory JUnit gate, and repository suite; disclose unavailable infrastructure.
-- [ ] Obtain independent read-only branch review, publish a draft PR, inspect final-head mandatory CI, and update canonical progress without claiming staging qualification.
+- [x] Obtain independent read-only branch review and publish [draft PR #479](https://github.com/rumman52/Shuddho/pull/479); no Critical/Important findings.
+- [ ] Inspect final-head mandatory CI and full local suite; update the PR with observed results without claiming staging qualification.
 
 ## Completion evidence
 
@@ -33,4 +34,8 @@
 | Production-qualified | No |
 | Activated | No |
 
-Focused evidence: `uv run --extra coworker pytest tests/test_coworker_retention.py -q -rs --junitxml=/tmp/shuddho-retention.xml` — 22 passed, zero skips; mandatory module gate passed. Full local suite, final branch review and exact-head CI remain pending.
+Focused evidence: `uv run --extra coworker pytest tests/test_coworker_retention.py -q -rs --junitxml=/tmp/shuddho-retention.xml` — 22 passed, zero skips; mandatory module gate passed. Independent final read-only branch review found no Critical/Important findings and reran both new cases (2 passed, 20 deselected). Full local suite is running and exact-head CI remains pending at publication; consult PR #479 for final results.
+
+Fresh local staging preflight returned `blocked_external: RENDER_API_KEY REQUIRED`; no provider or deployed infrastructure was contacted. This is a session access blocker, not a re-verification of dated infrastructure observations. The environment owner must run preflight within the approved staging secret context, freeze matching API/worker identity, then collect operated evidence.
+
+Review rulings: post-snapshot concurrent GC needs writer/deleter coordination and remains an explicit limitation; live S3/PostgreSQL/Temporal qualification remains outside this local test; full-suite/CI and historical baseline evidence are verified by the primary executor rather than the reviewer. No reviewer finding was silently waived and no Minor findings were reported.
