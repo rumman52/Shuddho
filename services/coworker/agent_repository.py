@@ -1591,6 +1591,10 @@ class AgentRepository:
             run = self._run(db, owner, run_id, lock=True)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if run.runtime_version == 3 and run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "This terminal Runtime v3 run cannot accept another plan.", 409,
+                )
             self._assert_within_deadline(run)
             existing = db.scalar(select(func.count()).select_from(ToolInvocation).where(
                 ToolInvocation.run_id == run.id, ToolInvocation.owner_id == owner,
@@ -2565,6 +2569,10 @@ class AgentRepository:
                 raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if run.runtime_version == 3 and run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "This terminal Runtime v3 run cannot re-arm an action.", 409,
+                )
             action = db.scalar(select(ExternalAction).where(
                 ExternalAction.id == action_id,
                 ExternalAction.owner_id == run.owner_id,

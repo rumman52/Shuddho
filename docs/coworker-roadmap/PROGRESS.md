@@ -1,8 +1,8 @@
 ## Architecture/core closure — C-01 terminal tool state integrity (20 October 2026)
 
-- **Base:** main `79c111d7bc3ec8ae1ad65b55e4f78595aec54e46`, merged #485. Independent [PR #486](https://github.com/rumman52/Shuddho/pull/486) prevents late Runtime v3 tool plan/start/receipt transitions from reviving an already-terminal run.
+- **Base:** main `79c111d7bc3ec8ae1ad65b55e4f78595aec54e46`, merged #485. Independent [PR #486](https://github.com/rumman52/Shuddho/pull/486) prevents late Runtime v3 tool plan/start/receipt and approved-action readiness transitions from reviving an already-terminal run.
 - **Root cause and scope:** `append_v3_step`, `begin_invocation` and `finish_invocation` did not check non-cancel terminal Runtime v3 outcomes under their existing row locks. The fix adds fail-closed guards while preserving legacy v1/v2 operations and exact committed result replay. [Contract](C01_TERMINAL_TOOL_STATE_FENCE_2026-10-20.md).
-- **Evidence:** six parameterized regression instances were committed before the patch. Exact-head CI and independent review are required; unexecuted/cancelled test-only CI is not failing-first evidence. No live provider/worker or staged process-recovery proof is claimed.
+- **Evidence:** six regression instances were committed before implementation; four additional plan/action-readiness cases were added with the follow-up guards. Exact-head CI and independent review are required; unexecuted/cancelled test-only CI is not failing-first evidence. No live provider/worker or staged process-recovery proof is claimed.
 - **Remaining:** C-01/A-02/P-03, CW-09 live isolation, CW-10 sandbox, CW-11 mixed worker and all operated quality, security, rollback, activation gates remain open. No schema, new authority, default flag or production action.
 
 ---
