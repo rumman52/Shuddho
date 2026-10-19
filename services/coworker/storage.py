@@ -137,7 +137,9 @@ class S3ObjectStore:
             for item in response.get("Contents", []):
                 modified = item.get("LastModified")
                 if not isinstance(modified, datetime):
-                    continue
+                    # Skipping a malformed entry falsely reports a complete
+                    # retention inventory and can conceal an orphaned object.
+                    raise ValueError("S3 inventory object missing valid LastModified")
                 if modified.tzinfo is None:
                     modified = modified.replace(tzinfo=timezone.utc)
                 key = validate_key(str(item["Key"]))

@@ -392,3 +392,15 @@ def test_s3_inventory_duplicate_keys_cannot_inflate_cleanup_counts():
     with pytest.raises(ValueError, match="duplicate object key"):
         store.inventory(prefix="owner")
     assert len(client.calls) == 2
+
+
+@pytest.mark.parametrize("bad_timestamp", [None, "not-a-timestamp"])
+def test_s3_inventory_invalid_object_timestamp_fails_closed(bad_timestamp):
+    row = _s3_item("owner/hidden-orphan.txt")
+    row["LastModified"] = bad_timestamp
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": False, "Contents": [row]},
+    })
+    with pytest.raises(ValueError, match="missing valid LastModified"):
+        store.inventory(prefix="owner")
+    assert len(client.calls) == 1
