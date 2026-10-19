@@ -239,11 +239,26 @@ class AgentRuntime:
             )
 
     async def execute_step(self, run_id: str, ordinal: int) -> dict:
-        self.repo.assert_within_deadline(run_id)
         run = self.repo.worker_run(run_id)
+        # Legacy runtimes retain their existing deadline-before-replay behavior.
+        if run["runtime_version"] != 3:
+            self.repo.assert_within_deadline(run_id)
         invocation = self.repo.invocation_for_step(run_id, ordinal)
+        if run["runtime_version"] == 3:
+            # Never report a cancelled or competing terminal run as successful.
+            if run["cancel_requested"] or run["state"] == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if run["state"] in {"needs_input", "blocked", "failed"}:
+                raise CoworkerError(
+                    "agent_run_closed", "The Agent run cannot resume a terminal step.", 409,
+                )
         if invocation["state"] == "completed":
+            # A committed v3 receipt is safe to replay after the deadline:
+            # do not invoke a tool or create a second observation.
             return {"status": "completed"}
+        if run["runtime_version"] == 3:
+            # Fresh/uncompleted tool work must still stop at the deadline.
+            self.repo.assert_within_deadline(run_id)
         dependency = self.repo.dependency_state(run["owner_id"], run_id, ordinal)
         if not dependency["ready"]:
             raise CoworkerError("dependency_blocked", "This agent step is waiting for its required prior step.", 409)

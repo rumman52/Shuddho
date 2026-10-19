@@ -494,3 +494,62 @@ def test_direct_v3_decision_persistence_rejects_expired_run(container):
     assert caught.value.code == "agent_deadline"
     assert counts(container, run_id) == [0, 0, 0]
     assert planner.calls == 0
+
+
+def _commit_synthetic_completed_step(container, run_id, ordinal):
+    # Repository receipt fixture only, not evidence of a real provider outcome.
+    container.agent.begin_invocation(run_id, ordinal)
+    container.agent.finish_invocation(
+        run_id, ordinal, "task", "synthetic-completed-task",
+        {"task_state": "completed", "artifact_count": 1, "has_missing_information": False},
+    )
+
+
+def test_v3_completed_step_replays_after_deadline_without_tool_redispatch(container):
+    actor, run_id, runtime, planner = setup(container)
+    ordinal = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/step-replay"))["ordinal"]
+    _commit_synthetic_completed_step(container, run_id, ordinal)
+    before = container.agent.get(actor, run_id)
+    _expire_run_deadline(container, run_id)
+    assert asyncio.run(runtime.execute_step(run_id, ordinal)) == {"status": "completed"}
+    after = container.agent.get(actor, run_id)
+    assert after["state"] == before["state"]
+    assert after["event_sequence"] == before["event_sequence"]
+    assert counts(container, run_id) == [1, 1, 1]
+    assert planner.calls == 1
+
+
+def test_v3_unfinished_step_cannot_start_after_deadline(container):
+    actor, run_id, runtime, planner = setup(container)
+    ordinal = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/new-step"))["ordinal"]
+    _expire_run_deadline(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.execute_step(run_id, ordinal))
+    assert caught.value.code == "agent_deadline"
+    assert container.agent.invocation_for_step(run_id, ordinal)["state"] == "prepared"
+    assert planner.calls == 1
+
+
+def test_v3_cancelled_completed_step_cannot_replay_after_deadline(container):
+    actor, run_id, runtime, planner = setup(container)
+    ordinal = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/step-cancel"))["ordinal"]
+    _commit_synthetic_completed_step(container, run_id, ordinal)
+    container.agent.cancel(actor, run_id)
+    _expire_run_deadline(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.execute_step(run_id, ordinal))
+    assert caught.value.code == "agent_cancelled"
+    assert container.agent.get(actor, run_id)["state"] == "cancelled"
+
+
+@pytest.mark.parametrize("terminal", ["needs_input", "blocked"])
+def test_v3_other_terminal_state_does_not_replay_completed_step(container, terminal):
+    actor, run_id, runtime, planner = setup(container)
+    ordinal = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/step-terminal"))["ordinal"]
+    _commit_synthetic_completed_step(container, run_id, ordinal)
+    container.agent.v3_terminal(run_id, terminal, "Terminal outcome won.")
+    _expire_run_deadline(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.execute_step(run_id, ordinal))
+    assert caught.value.code == "agent_run_closed"
+    assert container.agent.get(actor, run_id)["state"] == terminal
