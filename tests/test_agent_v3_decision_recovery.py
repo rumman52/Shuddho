@@ -214,3 +214,41 @@ def test_no_tools_checkpoint_failure_rolls_back_terminal(container, monkeypatch)
     monkeypatch.setattr(container.agent, "_checkpoint", original)
     assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools")) == {"decision": "blocked"}
     assert planner.calls == 0
+
+
+@pytest.mark.parametrize("state", ["needs_input", "blocked"])
+def test_terminal_v3_run_rejects_new_planner_reservation_without_budget_charge(container, state):
+    actor, run_id, runtime, planner = setup(container)
+    container.agent.v3_terminal(run_id, state, "Terminal outcome already persisted.")
+    before = container.agent.get(actor, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        container.agent.reserve_planner(run_id, runtime._v3_planner_reservation())
+    assert caught.value.code == "agent_run_closed"
+    after = container.agent.get(actor, run_id)
+    assert after["state"] == state
+    assert after["planner_calls"] == before["planner_calls"] == 0
+    assert after["planner_actual_tokens"] == before["planner_actual_tokens"] == 0
+    assert planner.calls == 0
+
+
+@pytest.mark.parametrize("state", ["needs_input", "blocked"])
+def test_terminal_v3_run_cannot_infer_new_activity(container, state):
+    actor, run_id, runtime, planner = setup(container)
+    container.agent.v3_terminal(run_id, state, "Terminal outcome already persisted.")
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/new-after-terminal"))
+    assert caught.value.code == "agent_run_closed"
+    assert container.agent.v3_activity_result(run_id, "workflow/new-after-terminal") is None
+    assert container.agent.get(actor, run_id)["planner_calls"] == 0
+    assert planner.calls == 0
+
+
+def test_committed_terminal_v3_result_still_replays_without_reservation(container):
+    actor, run_id, runtime, planner = setup(container, decision="needs_input")
+    first = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/terminal"))
+    assert first == {"decision": "needs_input"}
+    assert container.agent.get(actor, run_id)["state"] == "needs_input"
+    before = container.agent.get(actor, run_id)["planner_calls"]
+    assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/terminal")) == first
+    assert container.agent.get(actor, run_id)["planner_calls"] == before == 1
+    assert planner.calls == 1
