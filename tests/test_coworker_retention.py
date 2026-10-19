@@ -310,3 +310,85 @@ def test_orphan_cleanup_reports_delete_failure_without_claiming_deletion(contain
     assert recovered["failed"] == []
     with pytest.raises(FileNotFoundError):
         container.storage.get(key, 1024)
+
+
+class _SyntheticS3Listing:
+    """Deterministic paginated S3 listing; no external provider is contacted."""
+
+    def __init__(self, pages):
+        self.pages = pages
+        self.calls = []
+
+    def list_objects_v2(self, **kwargs):
+        self.calls.append(kwargs)
+        token = kwargs.get("ContinuationToken")
+        return self.pages[token]
+
+
+def _s3_listing_store(pages):
+    from services.coworker.storage import S3ObjectStore
+
+    client = _SyntheticS3Listing(pages)
+    settings = Settings(
+        database_url="sqlite:///synthetic-inventory-not-used.db",
+        auth_issuer=ISSUER, storage_bucket="synthetic-private-bucket",
+        environment="development", storage_backend="s3",
+    )
+    return S3ObjectStore(settings, client=client), client
+
+
+def _s3_item(key):
+    from datetime import datetime, timezone
+    return {"Key": key, "Size": 5, "LastModified": datetime(2026, 10, 19, tzinfo=timezone.utc)}
+
+
+def test_s3_inventory_complete_multipage_listing_is_preserved():
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": True, "NextContinuationToken": "page-two",
+               "Contents": [_s3_item("owner/docs/first.txt")]},
+        "page-two": {"IsTruncated": False,
+                     "Contents": [_s3_item("owner/docs/second.txt")]},
+    })
+    items = store.inventory(prefix="owner/docs")
+    assert [item.key for item in items] == [
+        "owner/docs/first.txt", "owner/docs/second.txt",
+    ]
+    assert client.calls == [
+        {"Bucket": "synthetic-private-bucket", "Prefix": "owner/docs", "MaxKeys": 1000},
+        {"Bucket": "synthetic-private-bucket", "Prefix": "owner/docs",
+         "MaxKeys": 1000, "ContinuationToken": "page-two"},
+    ]
+
+
+@pytest.mark.parametrize("bad_token", [None, "", 7])
+def test_s3_inventory_incomplete_listing_fails_closed(bad_token):
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": True, "NextContinuationToken": bad_token,
+               "Contents": [_s3_item("owner/orphan.txt")]},
+    })
+    with pytest.raises(ValueError, match="truncated without continuation token"):
+        store.inventory(prefix="owner")
+    assert len(client.calls) == 1
+
+
+def test_s3_inventory_repeated_token_cannot_loop_forever():
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": True, "NextContinuationToken": "repeat",
+               "Contents": [_s3_item("owner/first.txt")]},
+        "repeat": {"IsTruncated": True, "NextContinuationToken": "repeat",
+                   "Contents": [_s3_item("owner/second.txt")]},
+    })
+    with pytest.raises(ValueError, match="repeated continuation token"):
+        store.inventory(prefix="owner")
+    assert len(client.calls) == 2
+
+
+def test_s3_inventory_duplicate_keys_cannot_inflate_cleanup_counts():
+    store, client = _s3_listing_store({
+        None: {"IsTruncated": True, "NextContinuationToken": "next",
+               "Contents": [_s3_item("owner/once.txt")]},
+        "next": {"IsTruncated": False, "Contents": [_s3_item("owner/once.txt")]},
+    })
+    with pytest.raises(ValueError, match="duplicate object key"):
+        store.inventory(prefix="owner")
+    assert len(client.calls) == 2

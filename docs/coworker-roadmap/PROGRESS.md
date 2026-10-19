@@ -1,3 +1,12 @@
+## CW-02 S3 inventory pagination and orphan-recovery safety — 19 October 2026 (Asia/Dhaka)
+
+- **Verified starting main:** `dfe7c3c5592c8bd8edc8d5487454c2e86c7eeddf`, [PR #476](https://github.com/rumman52/Shuddho/pull/476) merged to main. Its exact-head [CI #39228196768](https://github.com/rumman52/Shuddho/actions/runs/39228196768) passed `test-and-build`, mandatory `coworker` and `ci-merge-gate`. No submitted independent review was found. The merged-main CI must be checked separately.
+- **Demonstrated code gap:** `S3ObjectStore.inventory` previously returned a partial inventory when `IsTruncated` was true but `NextContinuationToken` was absent. It also lacked repeated-token and duplicate-key guards. This threatens the integrity/boundedness of existing `RetentionRepository.orphan_candidates` and `cleanup_orphans`, which consume the listing.
+- **Bounded fix:** retain the existing ObjectStore protocol; reject incomplete, cycling and duplicate-key S3 listings instead of reporting partial completion or looping. Deterministic fake-S3 tests cover a valid multi-page scan, absent/blank/invalid tokens, repeated token and duplicate keys. These tests are in existing mandatory `tests/test_coworker_retention.py`. Require exact-head CI and independent review before mainline merge.
+- **Evidence boundary:** repository S3-response simulation only. Real S3 read/write failures, sixteen operated CW-02 provider/process faults, staging identities, CW-11 mixed-version drain, browser/sandbox isolation and human security/production qualification remain open. No activation.
+
+---
+
 ## CW-02 exact fault artifact-set integrity — 19 October 2026 (Asia/Dhaka)
 
 - **Inspected main:** `2cc3778c9219d943a0e56938f2d4e4c6f75727b5` (PR #475 merged), PR #475 exact-head CI [#39220814698](https://github.com/rumman52/Shuddho/actions/runs/39220814698) passed required `test-and-build`, `coworker` and `ci-merge-gate`; no independent PR review submitted. Its merged-main CI must be checked independently.
