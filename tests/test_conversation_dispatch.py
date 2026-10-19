@@ -61,6 +61,41 @@ def test_explicit_dispatch_is_atomic_and_idempotent(container):
     assert len(activity) == 1 and activity[0]["run_id"] == first["run_id"]
 
 
+def test_dispatch_replay_rejects_changed_output_language(container):
+    owner, conv, conversations, dispatch = setup(container, key="dispatch-language-binding")
+    msg = message(conversations, owner, conv)
+    first, _ = dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1, output_language="en")
+    with pytest.raises(CoworkerError) as conflict:
+        dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1, output_language="bn")
+    assert conflict.value.code == "idempotency_conflict"
+    replay, created = dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1, output_language="en")
+    assert not created and replay["run_id"] == first["run_id"]
+    with dispatch.sessions() as db:
+        assert len(db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()) == 1
+        assert db.get(AgentRun, first["run_id"]).output_language == "en"
+
+
+def test_pending_goal_memory_cannot_outlive_its_erased_conversation(container):
+    from services.coworker.agent_schemas import AgentMemoryProposal
+    from test_context_memory import enable_pa04
+
+    enable_pa04(container)
+    owner, conv, conversations, dispatch = setup(container, key="erased-conversation-memory")
+    msg = message(conversations, owner, conv)
+    admitted, _ = dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1)
+    _context, sources = container.context.planner_context(owner, admitted["run_id"])
+    proposal = container.memory.propose_from_agent(owner, admitted["run_id"], AgentMemoryProposal(
+        namespace="project", key="quarterly_report", value="Prepare quarterly sales reports.",
+        language="en", source_ids=["goal"],
+    ), sources)
+    container.agent.cancel(owner, admitted["run_id"])
+    conversations.delete(owner, conv["id"])
+    with pytest.raises(CoworkerError) as denied:
+        container.memory.accept_proposal(owner, proposal["id"])
+    assert denied.value.code == "memory_proposal_source_invalidated"
+    assert container.memory.list(owner) == []
+
+
 def test_stale_message_revision_is_rejected_without_orphan_run(container):
     owner, conv, conversations, dispatch = setup(container)
     first = message(conversations, owner, conv)

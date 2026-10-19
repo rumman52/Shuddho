@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from .config import Settings
 from .context_policy import filter_sensitive, is_stale, memory_conflict, relevance_score
+from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
 from .agent_schemas import AgentMemoryProposal
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
@@ -210,14 +211,19 @@ class MemoryRepository:
             return [self._proposal_dto(row) for row in rows]
 
     def _validate_proposal_sources(self, db, row: MemoryProposal) -> None:
+        run = db.scalar(select(AgentRun).where(
+            AgentRun.id == row.run_id, AgentRun.owner_id == row.owner_id,
+        ))
+        if run is None:
+            raise CoworkerError("memory_proposal_source_invalidated", "A cited context source is no longer available.", 409)
+        try:
+            require_admitted_conversation_run_sources(db, run)
+        except CoworkerError:
+            raise CoworkerError(
+                "memory_proposal_source_invalidated", "A cited context source is no longer available.", 409,
+            ) from None
         for ref in list(row.source_refs or []):
             if ref.get("type") == "goal":
-                run = db.scalar(select(AgentRun).where(
-                    AgentRun.id == row.run_id,
-                    AgentRun.owner_id == row.owner_id,
-                ))
-                if run is None:
-                    raise CoworkerError("memory_proposal_source_invalidated", "A cited context source is no longer available.", 409)
                 continue
             if ref.get("type") != "document":
                 raise CoworkerError("memory_proposal_source_invalidated", "A cited context source is no longer available.", 409)
@@ -232,7 +238,8 @@ class MemoryRepository:
                 Document.owner_id == row.owner_id,
                 Document.deleted.is_(False),
             ))
-            if version is None or document is None or version.document_id != document.id:
+            if (version is None or document is None or version.document_id != document.id
+                or (version.expires_at is not None and aware(version.expires_at) <= utcnow())):
                 raise CoworkerError("memory_proposal_source_invalidated", "A cited context source is no longer available.", 409)
 
     def accept_proposal(self, owner: str, proposal_id: str) -> dict:

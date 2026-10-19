@@ -1,3 +1,13 @@
+## Architecture/core closure — P-01/P-02 source identity (19 October 2026)
+
+- Starting main `8a83844b148a811357b8906c58deb3ba8b76f1d3` contains merged #479; no open PR existed at fresh task selection. #479 exact-head required CI passed. Merged-main CI is checked separately.
+- Branch `codex/core-context-source-closure-20261019` fixes three reproduced core/context failures: changed dispatch output-language replay, expired-source memory acceptance, and goal-memory acceptance after originating conversation erasure. [Contract](CORE_CONTEXT_SOURCE_CLOSURE_2026-10-19.md).
+- Failing-first result: 3 failed, 1 positive control passed. Focused final result: 63 passed, zero skips/failures/errors across conversation admission/dispatch/context and memory; mandatory collection gate passed. Final-head full CI and independent review are pending at publication; inspect this branch's PR checks for final results.
+- This is one coherent source slice in the user's full Architecture/Core scope. Remaining implementation review found durable Runtime v3 retry, sandbox cleanup/process-boundary and conversation steering/navigation gaps; these are being handled separately. The existing 17 A/C/P/V acceptance rows remain in scope.
+- No staging, human security review, production qualification or activation is claimed. Current local staging access is not supplied; do not manufacture provider/deployment evidence.
+
+---
+
 ## CW-02 retention reference snapshot ordering — 19 October 2026 (Asia/Dhaka)
 
 - **Verified starting main:** `a95d87f6aea1f54139737a628675850f95524576`, merged [PR #478](https://github.com/rumman52/Shuddho/pull/478). Exact-main [CI #39260672598](https://github.com/rumman52/Shuddho/actions/runs/39260672598) passed `test-and-build`, mandatory `coworker`, and `ci-merge-gate`. No open PR existed at selection. Historical pending PR/CI statements below are superseded for this starting revision.
