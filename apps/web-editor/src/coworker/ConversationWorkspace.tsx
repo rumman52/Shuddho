@@ -7,7 +7,7 @@ import { RefreshOrder } from "./refreshOrder";
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
 export default function ConversationWorkspace({ client, openAgent }: {
-  client: CoworkerClient; openAgent: () => void;
+  client: CoworkerClient; openAgent: (runId: string) => void;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [selected, setSelected] = useState("");
@@ -27,8 +27,8 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [disabled, setDisabled] = useState(false);
-  const createKey = useRef<string | null>(null);
-  const messageKey = useRef<string | null>(null);
+  const createKey = useRef<{ fingerprint: string; key: string } | null>(null);
+  const messageKey = useRef<{ fingerprint: string; key: string } | null>(null);
   const refreshOrder = useRef(new RefreshOrder());
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
@@ -164,9 +164,10 @@ export default function ConversationWorkspace({ client, openAgent }: {
     if (working || !title.trim()) return;
     setWorking(true); setError(""); setNotice("");
     try {
-      const key = createKey.current ?? crypto.randomUUID();
-      createKey.current = key;
-      const record = await client.createConversation(title.trim(), key);
+      const normalizedTitle = title.trim();
+      if (createKey.current?.fingerprint !== normalizedTitle)
+        createKey.current = { fingerprint: normalizedTitle, key: crypto.randomUUID() };
+      const record = await client.createConversation(normalizedTitle, createKey.current.key);
       const response = await client.conversations();
       setConversations(response.items);
       setSelected(record.id);
@@ -183,9 +184,12 @@ export default function ConversationWorkspace({ client, openAgent }: {
     if (!selected || working || !draft.trim()) return;
     setWorking(true); setError(""); setNotice("");
     try {
-      const key = messageKey.current ?? crypto.randomUUID();
-      messageKey.current = key;
-      await client.appendConversationMessage(selected, draft.trim(), key, selectedSources);
+      const text = draft.trim();
+      const sources = [...selectedSources];
+      const fingerprint = JSON.stringify({ conversation: selected, text, sources });
+      if (messageKey.current?.fingerprint !== fingerprint)
+        messageKey.current = { fingerprint, key: crypto.randomUUID() };
+      await client.appendConversationMessage(selected, text, messageKey.current.key, sources);
       setDraft("");
       setSelectedSources([]);
       messageKey.current = null;
@@ -285,7 +289,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
         <ol aria-label="Conversation messages">
           {messages.map(item => {
             const run = statusByMessage.get(item.id);
-            const linked = item.resource_links.some(link => link.resource_type === "agent_run");
+            const linked = item.resource_links.find(link => link.resource_type === "agent_run");
             return <li key={item.id}>
               <p dir="auto">{item.text}</p>
               <small>Message {item.sequence} · {new Date(item.created_at).toLocaleString()}</small>
@@ -298,7 +302,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
                 <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>
                   Start bounded Agent work
                 </button>}
-              {linked && <button type="button" onClick={openAgent}>View Agent runs</button>}
+              {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent runs</button>}
             </li>;
           })}
         </ol>
@@ -316,7 +320,6 @@ export default function ConversationWorkspace({ client, openAgent }: {
                     setSelectedSources(current => event.target.checked
                       ? [...current, doc.version_id].slice(0, 5)
                       : current.filter(id => id !== doc.version_id));
-                    messageKey.current = null;
                   }} />
                 {doc.name} · version {doc.version}
               </label>

@@ -25,6 +25,15 @@
 
 ---
 
+## Architecture/core closure — P-01 conversation request and navigation identity (20 October 2026)
+
+- Branch `codex/p01-conversation-request-navigation-20261020`, base `b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d`. [Contract](P01_CONVERSATION_REQUEST_NAVIGATION_2026-10-20.md).
+- Reproduced three defects with mounted React components: an old linked run opens unrelated recent work; edited message/title retries reuse the original accepted payload key. Final source preserves exact linked-run GET even outside recent30 and binds retry keys to normalized request payloads, including conversation and ordered source identity.
+- Six mounted component scenarios pass: old linked run, rejected target without fallback, identical message/title replay, changed message/title. Full JavaScript workspace suite passed; web-editor runner **120 passed, zero failures/skips/cancellations**. Final web-editor TypeScript/Vite build passed. Independent read-only agent review found no Critical/Important findings. React renderer is a development-only dependency; the test bundle uses the same native React instance to avoid hanging act MessagePorts.
+- Required final-head CI remains pending at publication. Chromium download in this session failed; mounted component/client fixtures are not a full browser/API/worker reconnect qualification. No schema, approval, model provider, backend history limit, production dependency, deployment or activation change. P-01/P-03 and the full A/C/P/V inventory remain unqualified.
+
+---
+
 ## Architecture/core closure — P-01 conversation activity refresh ordering (19 October 2026)
 
 - **Starting main:** `bc88f124e61f003bcbf70dbba2303590992edd0a`, merged PR #482. [Task contract](P01_CONVERSATION_ACTIVITY_REFRESH_ORDER_2026-10-19.md).
