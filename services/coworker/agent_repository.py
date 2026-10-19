@@ -2164,14 +2164,16 @@ class AgentRepository:
                 raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
-            self._assert_within_deadline(run)
             if identity:
                 existing = db.scalar(select(AgentCheckpoint).where(
                     AgentCheckpoint.run_id == run_id,
                     AgentCheckpoint.checkpoint_key == f"v3_activity_result:0:{identity}",
                 ))
                 if existing is not None:
+                    # A competing attempt may have committed the result before
+                    # the deadline elapsed; never create a second terminal event.
                     return dict(existing.evidence["result"])
+            self._assert_within_deadline(run)
             if run.state in AGENT_TERMINAL_STATES:
                 raise CoworkerError(
                     "agent_run_closed", "A different terminal transition already closed this Agent run.", 409,

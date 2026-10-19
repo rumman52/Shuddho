@@ -160,11 +160,14 @@ class AgentRuntime:
             raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
         if run["cancel_requested"] or run["state"] == "cancelled":
             raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
-        self.repo.assert_v3_within_deadline(run_id)
         if activity_key:
+            # The exact checkpoint already owns its effects. Replaying that
+            # result after the deadline creates no new inference or tool work.
             replay = self.repo.v3_activity_result(run_id, activity_key)
             if replay is not None:
                 return replay
+        # A new activity still cannot reserve model capacity past the deadline.
+        self.repo.assert_v3_within_deadline(run_id)
         # A distinct logical decision cannot reopen a terminal Agent run.
         # Preserve exact checkpoint replay above even for needs_input/blocked.
         if run["state"] in {"completed", "failed", "needs_input", "blocked"}:
