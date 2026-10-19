@@ -85,3 +85,8 @@ This closes a repository-level gap in exercising a failure after partial verific
 The test then ages the stranded object beyond the existing retention safety window. Dry-run must identify only that unreferenced object; explicit cleanup must delete it; an equally old object referenced by another task's durable export Step must remain readable and must not appear as a candidate.
 
 This proves the repository's age-bounded orphan reconciliation for a hard local worker loss and the protection of durable Step references. It uses SQLite and the local object store in test infrastructure. It is not live S3 evidence, a production cleanup authorization, or one of the sixteen operated staging artifacts. Exact-head mandatory CI remains required.
+
+
+## Follow-up: orphan deletion failure is observable — 19 October 2026
+
+`tests/test_coworker_retention.py::test_orphan_cleanup_reports_delete_failure_without_claiming_deletion` injects an object-store deletion failure after an orphan becomes eligible for the existing age-bounded cleanup. The contract is strict: the key remains in `failed`, `deleted` remains zero, and the object remains readable; once storage recovers, a retry must successfully delete the same orphan. This is local test-store fault injection, not a live S3 deletion test or staging artifact. Exact-head mandatory CI must pass before this regression is treated as verified.

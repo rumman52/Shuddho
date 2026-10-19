@@ -1,3 +1,13 @@
+## Current continuation — CW-02 PR #471 conflict resolution and cleanup recovery (19 October 2026, Asia/Dhaka)
+
+- **Base:** main `7e20e1bb9dd5f80af30e104d8cc71ab1635224a6` (merged #470); required mainline CI [#39164154651](https://github.com/rumman52/Shuddho/actions/runs/39164154651) completed successfully.
+- **Work:** [PR #471](https://github.com/rumman52/Shuddho/pull/471), `codex/cw02-orphan-delete-failure-reporting-20261019`, retains the existing deletion-failure regression and adds a recovery retry: the first cleanup must report the failed key without deleting it; after restoring the store, a second age-bounded cleanup must delete the same orphan.
+- **Previous branch verification:** exact-head [CI #39160757345](https://github.com/rumman52/Shuddho/actions/runs/39160757345) passed test-and-build, mandatory coworker and ci-merge-gate on `1a248f6317509ab8676ef71d23cc23acd674001c`; it does **not** validate the new merge/recovery commit, whose exact-head checks remain pending.
+- **Integration:** merge the newer main tree without discarding #470 browser DNS protections or already-merged CW-02 recovery tests, and retain one canonical continuation record.
+- **Evidence boundary:** local SQLite/object-store failure injection is not live S3 or operated staging. Sixteen distinct CW-02 staging artifacts, independent provider-side observations, CW-11 mixed-version drain, real browser/sandbox isolation, independent security review, quality qualification and authorized activation are still open.
+
+---
+
 ## Current continuation — CW-02 and CW-09 gates (19 October 2026, Asia/Dhaka)
 
 - **Main:** `1a852034576a9a5124187d9901203864b3664ed6`. PR #468 hard-worker-loss orphan-recovery test is merged and its exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` passed.
