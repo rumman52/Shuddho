@@ -1519,3 +1519,12 @@ Next: review/qualify this branch, merge through normal protections, implement CW
 - **Root cause:** `complete_run` could turn a v3 run already `needs_input` or `blocked` into `completed` if existing receipt counts match. `replace_remaining_plan` could also change prepared tool steps after a terminal outcome.
 - **Correction:** [PR #487](https://github.com/rumman52/Shuddho/pull/487) inserts v3-only `agent_run_closed` checks under the owning AgentRun row lock. Already-completed and cancelled idempotence and legacy v1/v2 behavior are preserved. [Contract](C01_TERMINAL_COMPLETION_REPLAN_FINALITY_2026-10-20.md).
 - **Evidence:** five regression test instances committed before implementation; the CI suite now explicitly includes this module with a required-module/no-skips gate. Mandatory exact-head CI and independent review pending. No live staging, worker-restart, PostgreSQL race, provider cost, human security signoff or production activation claimed. C-01/A-02 and full Architecture/Core acceptance remain incomplete.
+
+---
+
+## Architecture/core closure — C-01 committed decision replay after deadline (20 October 2026)
+
+- **Starting main:** `9d830f3d7f9fe405020a45c42ab99bf05dea5b65`, merged PRs #486/#487 preserved. [PR #488](https://github.com/rumman52/Shuddho/pull/488) covers a distinct committed-activity replay/deadline ordering gap.
+- **Defect:** `decide_v3` checked the task deadline before looking up an exact committed retry result. A lost response retried after expiry could reject an already-durable result; the no-tools repository helper had a similar internal race.
+- **Scope:** move only the committed-result lookup ahead of deadline validation, keeping cancellation first and maintaining deadline checks on all *new* work. [Task contract](C01_V3_DEADLINE_REPLAY_2026-10-20.md). No new provider calls, ledger, flags or authority.
+- **Evidence:** five cases committed before implementation, plus one internal no-tools helper test; mandatory test module collection already configured in CI. Exact final-head CI, independent review and operated PostgreSQL/Temporal qualification remain open until verified. Full A/C/P/V not closed.

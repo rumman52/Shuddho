@@ -412,3 +412,15 @@ def test_expired_v3_run_without_a_checkpoint_remains_fail_closed(container):
     assert caught.value.code == "agent_deadline"
     assert container.agent.v3_activity_result(run_id, "workflow/never-committed") is None
     assert planner.calls == 0
+
+
+def test_no_tools_checkpoint_helper_replays_exact_result_after_deadline(container, monkeypatch):
+    actor, run_id, runtime, planner = setup(container)
+    monkeypatch.setattr("services.coworker.agent_runtime.intelligent_tool_names", lambda *_a, **_k: [])
+    assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools-internal")) == {"decision": "blocked"}
+    _expire_run_deadline(container, run_id)
+    assert container.agent.block_v3_unavailable_tools(
+        run_id, activity_key="workflow/no-tools-internal",
+    ) == {"decision": "blocked"}
+    assert planner.calls == 0
+    assert counts(container, run_id) == [0, 0, 0]
