@@ -1,3 +1,13 @@
+## Architecture/core closure — C-01 final completion evidence (20 October 2026)
+
+- Base `b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d`, dedicated branch `codex/c01-v3-completion-evidence-20261020`. Existing merged #490 replay behavior preserved.
+- Reproduced three finalization bypasses: empty run, missing-information receipt, unconfirmed action receipt. Pre-fix run: **3 failed, 3 positive controls passed**. Finalization now reuses `v3_can_complete` inside the existing run-row transaction. No schema, new authority, capability default or activation change.
+- Focused final recovery/finality checks: **56 passed, zero skips**; baseline **50 passed**. Independent read-only agent review found no Critical/Important findings. Full local suite is running; mandatory exact-head GitHub CI remains required. [Contract](C01_V3_COMPLETION_EVIDENCE_2026-10-20.md).
+- Current staging preflight is **blocked_external: RENDER_API_KEY REQUIRED** in this session. This does not establish remote billing/deployment status. Operated browser/sandbox isolation, CW-11 mixed-version drain, sixteen CW-02 staging artifacts, realistic coworker/model quality and independent human release reviews remain unverified. The full 17-row A/C/P/V inventory remains in scope and INCOMPLETE.
+- Next source tasks found by independent review: sandbox cleanup-before-completion and deadline enforcement during control I/O; conversation linked-run navigation and payload-bound UI retries. Each requires a separate reviewable task. No production activation or merge performed.
+
+---
+
 ## Architecture/core closure — C-01 completed-step deadline retry (20 October 2026)
 
 - **Starting main:** `7aa69522d8be40360123c4ec6d21896c3c9792cd` includes merged #489. PR #489's exact-head CI passed; post-merge CI was still in progress at snapshot.

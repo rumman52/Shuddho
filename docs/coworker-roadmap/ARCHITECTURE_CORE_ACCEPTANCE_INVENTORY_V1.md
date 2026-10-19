@@ -1,3 +1,14 @@
+## Current architecture/core checkpoint — 20 October 2026 (Asia/Dhaka)
+
+- Inspected main `b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d` includes #480–#490. No open PR existed at selection. Older pending-source statements below are historical, not a queue to reimplement.
+- All **17 existing A/C/P/V requirements** remain the completion denominator; this work does not declare any row fully qualified. The current C-01/A-02 review branch enforces verified-result quality at final completion; 3 regression failures before fix, 56 focused recovery/finality checks after fix, independent agent review without Critical/Important findings. Exact-head CI remains pending. [Contract](C01_V3_COMPLETION_EVIDENCE_2026-10-20.md).
+- Concrete independent source-review findings: C-04 worker reports destruction before temporary cleanup and can overrun a short wall bound during blocking control I/O; P-01 linked-run navigation discards the run ID and edited payload retries retain stale request keys. These are implementation defects, separate from missing operated evidence.
+- Staging preflight in this session: `blocked_external: RENDER_API_KEY REQUIRED`. Actual deployed identity/provider access is not established. CW-02 sixteen operated artifacts; CW-09 live Chromium/DNS/redirect/network isolation; CW-10 real sandbox cleanup/process isolation; CW-11 mixed-worker/drain/rollback; P-03 realistic outcomes; V-02..04 release/quality/human sign-off remain unverified or blocked. No merge, deployment or activation.
+
+Historical checkpoints below are retained for traceability and superseded by this dated entry where inconsistent.
+
+---
+
 ## Current continuation checkpoint — 19 October 2026 (Asia/Dhaka)
 
 - **Current main:** `1a852034576a9a5124187d9901203864b3664ed6`. PR #468 (CW-02 hard worker-loss orphan recovery) is merged; its exact-head `test-and-build`, `coworker`, and `ci-merge-gate` all passed.

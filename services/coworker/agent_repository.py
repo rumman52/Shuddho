@@ -2903,6 +2903,16 @@ class AgentRepository:
                     "The agent run cannot complete without one verified receipt per completed tool.",
                     409,
                 )
+            # Finalization is a separate retried activity from the planner.
+            # Recheck its v3 result contract under the same run lock: matching
+            # counts alone allow empty runs or incomplete/unconfirmed results.
+            # Legacy runtimes retain their existing partial-outcome semantics.
+            if run.runtime_version == 3 and not self.v3_can_complete(run_id, _db=db):
+                raise CoworkerError(
+                    "agent_unverified_completion",
+                    "Runtime v3 cannot complete without verified successful tool results.",
+                    409,
+                )
             self._checkpoint(
                 db, run, "complete",
                 evidence={
