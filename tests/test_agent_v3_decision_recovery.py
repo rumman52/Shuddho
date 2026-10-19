@@ -343,3 +343,72 @@ def test_v3_action_waiting_cannot_rearm_after_terminal(container, terminal):
     with container.repository.sessions() as db:
         from services.coworker.models import ExternalAction
         assert db.get(ExternalAction, action["id"]).agent_ready is False
+
+
+def _expire_run_deadline(container, run_id):
+    from datetime import datetime, timedelta, timezone
+    from services.coworker.models import AgentRun
+    with container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, run_id)
+        assert run is not None
+        run.deadline_at = datetime.now(timezone.utc) - timedelta(seconds=2)
+
+
+def test_committed_v3_decision_replays_after_deadline_without_new_inference(container):
+    actor, run_id, runtime, planner = setup(container)
+    first = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/deadline-replay"))
+    assert first == {"decision": "next_step", "ordinal": 1}
+    before = container.agent.get(actor, run_id)
+    _expire_run_deadline(container, run_id)
+    assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/deadline-replay")) == first
+    after = container.agent.get(actor, run_id)
+    assert counts(container, run_id) == [1, 1, 1]
+    assert after["planner_calls"] == before["planner_calls"] == 1
+    assert planner.calls == 1
+
+
+def test_expired_v3_run_rejects_fresh_activity_without_inference(container):
+    actor, run_id, runtime, planner = setup(container)
+    first = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/original"))
+    assert first["decision"] == "next_step"
+    _expire_run_deadline(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/new-after-deadline"))
+    assert caught.value.code == "agent_deadline"
+    assert container.agent.v3_activity_result(run_id, "workflow/new-after-deadline") is None
+    assert counts(container, run_id) == [1, 1, 1]
+    assert planner.calls == 1
+
+
+def test_committed_no_tool_block_replays_after_deadline(container, monkeypatch):
+    actor, run_id, runtime, planner = setup(container)
+    monkeypatch.setattr("services.coworker.agent_runtime.intelligent_tool_names", lambda *_a, **_k: [])
+    original = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools-deadline"))
+    assert original == {"decision": "blocked"}
+    _expire_run_deadline(container, run_id)
+    assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/no-tools-deadline")) == original
+    assert container.agent.get(actor, run_id)["state"] == "blocked"
+    assert counts(container, run_id) == [0, 0, 0]
+    assert planner.calls == 0
+
+
+def test_cancelled_v3_activity_does_not_replay_after_deadline(container):
+    actor, run_id, runtime, planner = setup(container)
+    assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/cancelled-deadline"))["ordinal"] == 1
+    container.agent.cancel(actor, run_id)
+    _expire_run_deadline(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/cancelled-deadline"))
+    assert caught.value.code == "agent_cancelled"
+    assert container.agent.get(actor, run_id)["state"] == "cancelled"
+    assert planner.calls == 1
+
+
+def test_expired_v3_run_without_a_checkpoint_remains_fail_closed(container):
+    actor, run_id, runtime, planner = setup(container)
+    _expire_run_deadline(container, run_id)
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/never-committed"))
+    assert caught.value.code == "agent_deadline"
+    assert container.agent.v3_activity_result(run_id, "workflow/never-committed") is None
+    assert planner.calls == 0
