@@ -62,11 +62,13 @@ export default function AgentWorkspace({
   documents,
   reviewAction,
   openActions,
+  focusRunId = null,
 }: {
   client: CoworkerClient;
   documents: SourceDocument[];
   reviewAction: (action: ExternalAction) => void;
   openActions: () => void;
+  focusRunId?: string | null;
 }) {
   const [enabled, setEnabled] = useState(false);
   const [runs, setRuns] = useState<AgentRun[]>([]);
@@ -101,20 +103,21 @@ export default function AgentWorkspace({
         }
         throw failure;
       }),
-    ]).then(([tools, history, accounts, memory, proposals, reads]) => {
+      focusRunId ? client.agentRun(focusRunId, controller.signal) : Promise.resolve(null),
+    ]).then(([tools, history, accounts, memory, proposals, reads, focused]) => {
       if (controller.signal.aborted) return;
       setEnabled(tools.enabled);
-      setRuns(history.runs);
+      setRuns(focused ? [focused, ...history.runs.filter(item => item.id !== focused.id)] : history.runs);
       setConnections(accounts.connections.filter(item => item.active));
       setMemoryFacts(memory.facts.filter(item => item.active));
       setMemoryProposals(proposals.proposals);
       setReadGrants(reads.grants.filter(item => item.state === "active"));
-      setRun(current => current ?? history.runs[0] ?? null);
+      setRun(current => current ?? focused ?? history.runs[0] ?? null);
     }).catch(failure => {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     });
     return () => controller.abort();
-  }, [client, reload]);
+  }, [client, reload, focusRunId]);
 
   useEffect(() => {
     if (!run) {
