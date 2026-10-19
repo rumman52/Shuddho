@@ -2247,6 +2247,10 @@ class AgentRepository:
                 raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "This terminal Runtime v3 run cannot accept new tool steps.", 409,
+                )
             self._assert_within_deadline(run)
             placeholder = db.scalar(select(AgentStep).where(
                 AgentStep.run_id == run.id, AgentStep.owner_id == owner, AgentStep.ordinal == 0,
@@ -2465,6 +2469,10 @@ class AgentRepository:
                 raise not_found()
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            if run.runtime_version == 3 and run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "This terminal Runtime v3 run cannot start a tool invocation.", 409,
+                )
             self._assert_within_deadline(run)
             step = db.scalar(select(AgentStep).where(
                 AgentStep.run_id == run_id, AgentStep.ordinal == ordinal,
@@ -2607,6 +2615,12 @@ class AgentRepository:
                 raise CoworkerError("agent_step_missing", "The planned agent step could not be recovered.", 409)
             if run.cancel_requested or run.state == "cancelled":
                 raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            # The tool completed late: never revive a terminal v3 run or
+            # attribute its observation to a different winning outcome.
+            if run.runtime_version == 3 and run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "This terminal Runtime v3 run cannot accept a late receipt.", 409,
+                )
             if db.get(ToolReceipt, invocation.id) is None:
                 db.add(ToolReceipt(
                     invocation_id=invocation.id, run_id=run_id, owner_id=run.owner_id,
