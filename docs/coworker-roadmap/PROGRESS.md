@@ -1,3 +1,11 @@
+## CW-02 signed fault-evidence chronology gate — 19 October 2026 (Asia/Dhaka)
+
+- **Dependency:** [PR #472](https://github.com/rumman52/Shuddho/pull/472) exact-head `22c173d7b451fbc49769d87b7f236f5f7f4c1661` passed all three CI jobs in [#39215117594](https://github.com/rumman52/Shuddho/actions/runs/39215117594) and was marked ready for independent review; it was not merged at task selection. Main `c04eccf3ce9ca8778da0931c2f1d96d4ac3270dc` passed all CI jobs [#39214301418](https://github.com/rumman52/Shuddho/actions/runs/39214301418).
+- **This stacked task:** branch `codex/cw02-fault-evidence-chronology-20261019` closes an unverified CW-02 evidence gate: fault observations earlier than frozen API or worker readiness must fail the signed CW-02–04 qualifier. Deterministic synthetic signed fixtures cover before, after and timezone-offset cases. The source/test head must pass its own exact-head CI and independent review. Retarget to main after #472 merges and revalidate checks before merging this task.
+- **Limits:** signing/binding proves evidence consistency only, not live provider truth. Sixteen operated fault scenarios, CW11-STAGING mixed-worker drain, browser isolation, live AI usefulness and all production release gates remain open; no activation is claimed.
+
+---
+
 ## Current continuation — CW-02 fault evidence integrity hardening (19 October 2026, Asia/Dhaka)
 
 - **Main:** `c04eccf3ce9ca8778da0931c2f1d96d4ac3270dc` (PR #471 merged). [PR #471 head CI #39213261699](https://github.com/rumman52/Shuddho/actions/runs/39213261699) had test-and-build passed, mandatory coworker still in progress at last inspection; [merged-main CI #39214301418](https://github.com/rumman52/Shuddho/actions/runs/39214301418) was also in progress. No independent PR #471 review was recorded.
