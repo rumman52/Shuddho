@@ -1,3 +1,11 @@
+## CW-02 chronology mainline integration checkpoint — 19 October 2026 (Asia/Dhaka)
+
+- **Correct source-of-truth:** `main` at `f1ae5b643da3a4a6ef9be0b16638b653bf8ba3b5` contains [merged PR #472](https://github.com/rumman52/Shuddho/pull/472), whose head [CI #39215117594](https://github.com/rumman52/Shuddho/actions/runs/39215117594) passed all three required jobs. [PR #473](https://github.com/rumman52/Shuddho/pull/473) is reported merged, but **its base was the #472 feature branch, not main**, so the CW-02 signed-fault chronology check was absent from main at inspection. No independent GitHub PR reviews were recorded for #472/#473.
+- **This integration task:** `codex/cw02-chronology-mainline-integration-20261019` reuses the exact functional implementation and signed synthetic regression tests already authored in #473, cherry-picking only `scripts/cw0204_qualification_gate.py`, `tests/test_cw0204_qualification_gate.py`, and the existing CW-02 contract onto current main. It verifies that fault observations cannot predate the later of frozen API and worker readiness, including timezone offsets and signed contradictory bundles. Publish one main-targeted PR and require exact-head mandatory CI and independent review before merge.
+- **Evidence level:** implementation carried into a new branch; verification/merge pending until observed. The signed gate proves structural consistency, not an actual operated staging fault, provider mutation, reviewer identity, or production release. CW-02 sixteen operated cases, CW-11 staged worker drain, real browser/sandbox isolation, independent security review, live coworker task quality and activation remain OPEN.
+
+---
+
 ## Current continuation — CW-02 fault evidence integrity hardening (19 October 2026, Asia/Dhaka)
 
 - **Main:** `c04eccf3ce9ca8778da0931c2f1d96d4ac3270dc` (PR #471 merged). [PR #471 head CI #39213261699](https://github.com/rumman52/Shuddho/actions/runs/39213261699) had test-and-build passed, mandatory coworker still in progress at last inspection; [merged-main CI #39214301418](https://github.com/rumman52/Shuddho/actions/runs/39214301418) was also in progress. No independent PR #471 review was recorded.
