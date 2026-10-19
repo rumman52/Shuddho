@@ -2130,6 +2130,46 @@ class AgentRepository:
             ))
             return dict(row.evidence["result"]) if row is not None else None
 
+    def block_v3_unavailable_tools(self, run_id: str, *, activity_key: str | None = None) -> dict:
+        """Atomically persist a no-tool terminal result for one logical v3 activity.
+
+        An already-committed result may be replayed by the same activity. A
+        competing cancellation or terminal transition must never be overwritten
+        or misreported as this activity's result.
+        """
+        identity = hashlib.sha256(activity_key.encode("utf-8")).hexdigest() if activity_key else None
+        with self.sessions.begin() as db:
+            run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.runtime_version != 3:
+                raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
+            if run.cancel_requested or run.state == "cancelled":
+                raise CoworkerError("agent_cancelled", "This agent run was cancelled.", 409)
+            self._assert_within_deadline(run)
+            if identity:
+                existing = db.scalar(select(AgentCheckpoint).where(
+                    AgentCheckpoint.run_id == run_id,
+                    AgentCheckpoint.checkpoint_key == f"v3_activity_result:0:{identity}",
+                ))
+                if existing is not None:
+                    return dict(existing.evidence["result"])
+            if run.state in AGENT_TERMINAL_STATES:
+                raise CoworkerError(
+                    "agent_run_closed", "A different terminal transition already closed this Agent run.", 409,
+                )
+            require_admitted_conversation_run_sources(db, run)
+            message = "No registered tool is currently available for this bounded run."
+            self._event(db, run, "blocked", "blocked", message)
+            self._audit(db, run.owner_id, run.id, "agent_run_blocked")
+            result = {"decision": "blocked"}
+            if identity:
+                self._checkpoint(
+                    db, run, "v3_activity_result", resource_id=identity,
+                    evidence={"result": result},
+                )
+            return result
+
     def commit_v3_decision(
         self, run_id: str, decision: AgentV3Decision, *, activity_key: str | None,
         planner_call: int, model: str, prompt_sha256: str, tool_schema_sha256: str,
