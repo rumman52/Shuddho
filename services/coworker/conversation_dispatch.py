@@ -82,6 +82,14 @@ class ConversationDispatchService:
                 ))
                 if run is None:
                     raise CoworkerError("conversation_run_missing", "The linked run is unavailable.", 409)
+                replay_request = AgentRunCreate(goal=message.text, output_language=output_language)
+                fingerprint = hashlib.sha256(json.dumps(
+                    replay_request.model_dump(mode="json"), sort_keys=True,
+                ).encode()).hexdigest()
+                if run.fingerprint != fingerprint:
+                    raise CoworkerError(
+                        "idempotency_conflict", "This message was dispatched with different options.", 409,
+                    )
                 return {"run_id": run.id, "state": run.state, "message_id": message.id,
                         "conversation_id": conversation.id, "replayed": True}, False
             if conversation.message_sequence != expected_sequence or message.sequence != expected_sequence:

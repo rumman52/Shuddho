@@ -15,7 +15,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.auth import Principal
 from services.coworker.context_policy import CONTEXT_HIERARCHY
 from services.coworker.memory_schemas import MemoryFactCreate
-from services.coworker.models import MemoryFact, Step, Task, utcnow
+from services.coworker.models import DocumentVersion, MemoryFact, Step, Task, utcnow
 from services.coworker.schemas import TaskCreate
 from services.coworker.migrate import upgrade
 from services.coworker.schemas import UploadRequest
@@ -188,6 +188,35 @@ def test_goal_grounded_memory_proposal_is_inert_until_acceptance(container):
     assert result["proposal"]["state"] == "accepted"
     assert result["fact"]["provenance"]["type"] == "proposal"
     assert result["fact"]["value"] == "Use concise weekly updates."
+
+
+@pytest.mark.parametrize("expired", [True, False])
+def test_pending_memory_rechecks_document_expiry_at_owner_acceptance(container, expired):
+    enable_pa04(container)
+    alice = owner(container, "memory-expiry-review")
+    document = uploaded_text(container, alice)
+    run, _ = container.agent.create(alice, AgentRunCreate(
+        goal="Remember the Project Alpha deadline.", document_ids=[document["id"]],
+        output_language="en",
+    ), "memory-expiry-review-run")
+    context, sources = container.context.planner_context(alice, run["id"])
+    source_id = context["items"][0]["source_id"]
+    proposal = container.memory.propose_from_agent(alice, run["id"], AgentMemoryProposal(
+        namespace="project", key="reviewed_deadline", value="Project Alpha deadline is Friday.",
+        language="en", source_ids=[source_id],
+    ), sources)
+    if expired:
+        with container.repository.sessions.begin() as db:
+            db.get(DocumentVersion, sources[source_id]["version_id"]).expires_at = utcnow() - timedelta(seconds=1)
+        with pytest.raises(CoworkerError) as denied:
+            container.memory.accept_proposal(alice, proposal["id"])
+        assert denied.value.code == "memory_proposal_source_invalidated"
+        assert container.memory.list(alice) == []
+        assert container.memory.proposals(alice)[0]["state"] == "proposed"
+    else:
+        accepted = container.memory.accept_proposal(alice, proposal["id"])
+        assert accepted["fact"]["value"] == "Project Alpha deadline is Friday."
+        assert container.memory.accept_proposal(alice, proposal["id"])["fact"]["id"] == accepted["fact"]["id"]
 
 
 
