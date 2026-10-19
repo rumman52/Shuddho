@@ -424,3 +424,56 @@ def test_no_tools_checkpoint_helper_replays_exact_result_after_deadline(containe
     ) == {"decision": "blocked"}
     assert planner.calls == 0
     assert counts(container, run_id) == [0, 0, 0]
+
+@pytest.mark.parametrize("decision_type", ["needs_input", "blocked", "wait", "next_step"])
+def test_v3_inference_after_deadline_cannot_commit_new_decision(container, monkeypatch, decision_type):
+    actor, run_id, runtime, planner = setup(container, decision=decision_type)
+    original = planner.decide
+
+    async def expire_while_inference_is_in_flight(*args, **kwargs):
+        inferred = await original(*args, **kwargs)
+        _expire_run_deadline(container, run_id)
+        return inferred
+
+    monkeypatch.setattr(planner, "decide", expire_while_inference_is_in_flight)
+    activity_key = "workflow/inference-expired-" + decision_type
+    with pytest.raises(CoworkerError) as caught:
+        asyncio.run(runtime.decide_v3(run_id, activity_key=activity_key))
+    assert caught.value.code == "agent_deadline"
+    assert container.agent.v3_activity_result(run_id, activity_key) is None
+    assert counts(container, run_id) == [0, 0, 0]
+    state = container.agent.get(actor, run_id)
+    assert state["state"] not in {"completed", "needs_input", "blocked"}
+    assert state["planner_calls"] == 1
+    # Actual provider inference was charged in the established finally path.
+    assert state["planner_actual_tokens"] == 24
+    assert planner.calls == 1
+
+
+def test_v3_commit_deadline_gate_preserves_exact_previously_committed_result(container):
+    actor, run_id, runtime, planner = setup(container)
+    key = "workflow/previously-committed"
+    first = asyncio.run(runtime.decide_v3(run_id, activity_key=key))
+    assert first == {"decision": "next_step", "ordinal": 1}
+    reserved = container.agent.reserve_planner(run_id, runtime._v3_planner_reservation())
+    _expire_run_deadline(container, run_id)
+    # A separately inferred duplicate must settle its real budget, but must
+    # not create new steps/memory or replace the winning activity checkpoint.
+    result = container.agent.commit_v3_decision(
+        run_id,
+        AgentV3Decision.model_validate({
+            "decision": "needs_input", "message": "Stale duplicated inference."
+        }),
+        activity_key=key, planner_call=reserved["call"],
+        model="test-model", prompt_sha256="a" * 64,
+        tool_schema_sha256="b" * 64, observation_count=0,
+        total_tokens=12, cost_microusd=0,
+        memory_repository=container.memory, context_sources={},
+    )
+    assert result == first
+    assert container.agent.v3_activity_result(run_id, key) == first
+    assert counts(container, run_id) == [1, 1, 1]
+    state = container.agent.get(actor, run_id)
+    assert state["planner_calls"] == 2
+    assert state["planner_actual_tokens"] == 36
+    assert planner.calls == 1
