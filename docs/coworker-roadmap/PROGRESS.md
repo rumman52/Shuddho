@@ -1,3 +1,15 @@
+## Part 01 — connected-read grant admission TOCTOU (20 October 2026, Asia/Dhaka)
+
+- **Base main SHA:** `bb366506d07ab2748fbbc8ea8d36b7b799f9cfb7` (PR #496 merge). Main reported `protected: false`; V-01 remains open. At baseline inspection, main CI run #39370641652 had `test-and-build` green and `coworker` still running.
+- **Root cause:** `ConnectorReadRepository.create` validated a read connection in a separate session, then persisted the grant later without rechecking active state or current scopes. A disconnect/scope change between those operations could leave an active grant row attached to revoked authority.
+- **Implementation on branch `codex/part01-connected-read-grant-admission-20261020`:** the grant transaction now locks the owner-scoped active connection before grant/idempotency state, matches provider/capability/subject/account to the preflight authorization, and rechecks every required scope. This follows the disconnect path's connection-first lock order.
+- **Regression tests added:** deterministically disconnect the connection after preflight, and separately remove scopes after preflight. Each must reject before any read grant is persisted. Existing successful creation/sync tests remain positive controls.
+- **Contract:** [PART01_CONNECTED_READ_GRANT_ADMISSION_2026-10-20.md](PART01_CONNECTED_READ_GRANT_ADMISSION_2026-10-20.md). No migration, capability default, API surface or production configuration changed.
+- **Verification status:** source and regression tests are committed on the review branch; focused tests have not been executed in this editing session. Exact-head `test-and-build`, `coworker`, `ci-merge-gate` and independent review are pending. Do not merge based on early green jobs.
+- **Staging requirement:** exercise connection-first locking with a real PostgreSQL instance and concurrent grant-admission/disconnect operations. SQLite/unit evidence alone does not prove PostgreSQL row-lock behavior. Production remains unchanged and no capability is activated.
+
+---
+
 ## Part 00 governance audit — 20 October 2026 (Asia/Dhaka)
 
 - **Current main:** `bdd12f24390077cc838d4f528b5d8c58eb8c8a78` (PR #495 merged). This supersedes older checkpoint references to `c2d029c4782768b8aba04c96105eae978d7e2c07`.
