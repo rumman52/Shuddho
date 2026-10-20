@@ -1,12 +1,24 @@
+## Part 02 — connected-read use-time authorization (20 October 2026, Asia/Dhaka)
+
+- **Base main SHA:** `ae4208e2b82c8120c72dd37707c91c2ba12e6697` (PR #497 merge). At task start, `test-and-build` passed but mandatory `coworker` remained in progress; `ci-merge-gate` had not yet reported. Do not claim full verification until the final exact-head run finishes.
+- **Finding:** `snapshots` validated a grant in one transaction and fetched private payloads in another. `apply_sync` checked grant state/expiry but did not recheck current connection scope/capability after provider I/O and before persistence. `reset_cursor` could mutate a revoked grant's cursor.
+- **Implementation on review branch:** `codex/part02-connected-read-use-time-authorization-20261020`. Added `PermissionGateway.validate_read_grant_in_session` with connection-first then grant row locking; `validate_read_grant` delegates to it. Snapshot/cursor reads keep authorization locks through the protected query; `apply_sync` revalidates current connection/grant/capability/scopes before snapshot/cursor/audit writes and owner-scopes snapshot lookup; cursor reset requires a currently valid grant.
+- **Regression tests added:** (1) snapshot authorization must use the same active transaction as payload retrieval, (2) scope removal before sync persistence rejects and leaves snapshot/cursor unchanged, (3) a revoked grant cannot reset its cursor or generation.
+- **Contract:** [PART02_CONNECTED_READ_USE_TIME_AUTHORIZATION_2026-10-20.md](PART02_CONNECTED_READ_USE_TIME_AUTHORIZATION_2026-10-20.md). No migration, endpoint, policy version, feature default, deployment or activation change.
+- **Verification status:** source/test/docs commits are on the review branch; focused tests were not executed from this connected GitHub editing session. Exact-head `test-and-build`, mandatory zero-skip `coworker`, `ci-merge-gate` and independent review remain pending. PR should remain draft until the implementation and test diff has been reviewed.
+- **Concurrency boundary:** actual PostgreSQL testing is required to prove revoke/read serialization under `SELECT FOR UPDATE`. An already-authorized read or provider call that began before revocation cannot be retroactively recalled; the key guarantee is that authority is revalidated under locks for database access/persistence and revoked results are not persisted.
+- **Governance:** PR #497 merged while mandatory CI was still running and without a submitted independent review; `main` reports `protected: false`. V-01 [issue #484](https://github.com/rumman52/Shuddho/issues/484) remains an owner/admin action. No merge command was issued in this task.
+- **Qualification remains incomplete:** no protected staging, live provider/browser/sandbox, production or release activation is claimed.
+
+---
+
 ## Part 01 — connected-read grant admission TOCTOU (20 October 2026, Asia/Dhaka)
 
-- **Base main SHA:** `bb366506d07ab2748fbbc8ea8d36b7b799f9cfb7` (PR #496 merge). Main reported `protected: false`; V-01 remains open. At baseline inspection, main CI run #39370641652 had `test-and-build` green and `coworker` still running.
-- **Root cause:** `ConnectorReadRepository.create` validated a read connection in a separate session, then persisted the grant later without rechecking active state or current scopes. A disconnect/scope change between those operations could leave an active grant row attached to revoked authority.
-- **Implementation on branch `codex/part01-connected-read-grant-admission-20261020`:** the grant transaction now locks the owner-scoped active connection before grant/idempotency state, matches provider/capability/subject/account to the preflight authorization, and rechecks every required scope. This follows the disconnect path's connection-first lock order.
-- **Regression tests added:** deterministically disconnect the connection after preflight, and separately remove scopes after preflight. Each must reject before any read grant is persisted. Existing successful creation/sync tests remain positive controls.
+- **Base main SHA:** `bb366506d07ab2748fbbc8ea8d36b7b799f9cfb7` (PR #496 merge).
+- **Root cause:** `ConnectorReadRepository.create` validated a read connection in a separate session, then persisted the grant without rechecking active state or current scopes. A disconnect/scope change in that gap could leave an active grant row attached to revoked authority.
+- **Implementation:** PR [#497](https://github.com/rumman52/Shuddho/pull/497) merged a connection-first lock and current identity/scope check in the grant-creation transaction, plus deterministic disconnect/scope-revocation regressions.
+- **Verification boundary:** PR #497 was merged while mandatory `coworker` was still running and without a submitted independent review. Its merge is not proof of complete required CI or governance. Recheck the exact merge-head results.
 - **Contract:** [PART01_CONNECTED_READ_GRANT_ADMISSION_2026-10-20.md](PART01_CONNECTED_READ_GRANT_ADMISSION_2026-10-20.md). No migration, capability default, API surface or production configuration changed.
-- **Verification status:** source and regression tests are committed on the review branch; focused tests have not been executed in this editing session. Exact-head `test-and-build`, `coworker`, `ci-merge-gate` and independent review are pending. Do not merge based on early green jobs.
-- **Staging requirement:** exercise connection-first locking with a real PostgreSQL instance and concurrent grant-admission/disconnect operations. SQLite/unit evidence alone does not prove PostgreSQL row-lock behavior. Production remains unchanged and no capability is activated.
 
 ---
 
