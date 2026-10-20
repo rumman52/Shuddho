@@ -31,7 +31,10 @@ _SOURCE_BASE = {
 
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|passwd|secret|client[_ -]?secret)\b"
-    r"\s*[:=]\s*([^\s,;]{6,})"
+    r"\s*[:=]\s*"
+    # Match complete quoted values before the legacy unquoted token fallback.
+    # Otherwise, password="two word secret" leaks everything after "two".
+    r"(?:\"(?:\\.|[^\"\\\r\n])*\"|'(?:\\.|[^'\\\r\n])*'|\x60(?:\\.|[^\x60\\\r\n])*\x60|[^\s,;]{6,})"
 )
 _BEARER = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")
