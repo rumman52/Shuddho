@@ -19,7 +19,7 @@ from test_transaction_terms import terms
 
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
-from services.coworker.models import TransactionExecutionLink, TransactionReconciliationEvidence, TransactionTermsSnapshot, utcnow
+from services.coworker.models import TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionTermsSnapshot, utcnow
 from services.coworker.transaction_repository import TransactionDraft
 
 
@@ -576,6 +576,76 @@ def test_tampered_persisted_reconciliation_evidence_blocks_history_and_sync(
             )
         ).all()
     assert len(saved_rows) == 1
+    assert container.transactions.get(owner, transaction_id)["state"] == "confirmed"
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["sequence_gap", "revision_mismatch", "event_digest", "missing_evidence"],
+)
+def test_tx05_saved_evidence_history_must_match_transaction_event_ledger(
+    container,
+    tamper,
+):
+    """Receipt hashes alone cannot authenticate the event order or revision."""
+    enable_transactions(container)
+    owner = account(container, f"tx05-ledger-{tamper}")
+    confirmed = reviewed_transaction(container, owner, f"tx05-ledger-{tamper}")
+    action, _link = bound_action(
+        container, owner, confirmed, f"tx05-ledger-action-{tamper}"
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+    approved = container.actions.repo.approve(
+        owner, action["id"], action["preview_hash"]
+    )
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    receipt = {
+        "provider": "google",
+        "status": "accepted_by_gmail",
+        "provider_id": f"tx05-ledger-{tamper}",
+        "message_id": f'<{action["id"]}@shuddho.invalid>',
+        "confirmed_at": utcnow().isoformat(),
+    }
+    container.actions.repo.finish(action["id"], "succeeded", receipt=receipt)
+    saved = container.transactions.sync_external_action(owner, transaction_id)
+    assert saved["transaction"]["state"] == "confirmed"
+    assert len(container.transactions.execution_surface(owner, transaction_id)["evidence"]) == 1
+
+    # Tamper with metadata outside evidence_sha256 or delete only the evidence,
+    # keeping its immutable-looking transaction event intact.
+    with container.repository.sessions.begin() as db:
+        evidence = db.scalar(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        )
+        event = db.scalar(
+            select(TransactionEvent).where(
+                TransactionEvent.transaction_id == transaction_id,
+                TransactionEvent.owner_id == owner,
+                TransactionEvent.event_type == "transaction_execution_observed",
+            )
+        )
+        assert evidence is not None and event is not None
+        assert event.details["evidence_sha256"] == evidence.evidence_sha256
+        if tamper == "sequence_gap":
+            evidence.sequence = 9
+        elif tamper == "revision_mismatch":
+            evidence.transaction_revision += 9
+        elif tamper == "event_digest":
+            event.details = {**event.details, "evidence_sha256": "0" * 64}
+        else:
+            db.delete(evidence)
+
+    # The historical ledger must be validated before serving receipt history
+    # or allowing a replay to change state/append another observation.
+    with pytest.raises(CoworkerError) as history_error:
+        container.transactions.execution_surface(owner, transaction_id)
+    assert history_error.value.code == "transaction_evidence_integrity_failed"
+    with pytest.raises(CoworkerError) as replay_error:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert replay_error.value.code == "transaction_evidence_integrity_failed"
     assert container.transactions.get(owner, transaction_id)["state"] == "confirmed"
 
 
