@@ -5,9 +5,6 @@
 **Scope:** A-01 trust boundaries, A-04 current permission enforcement, P-02 revocation
 
 ## Objective
-**Scope:** A-01 trust boundaries, A-04 current permission enforcement, P-02 revocation
-
-## Objective
 
 Keep connected-read authorization current through the database operation that consumes it. A permission check in a prior transaction is not sufficient when revocation, scope removal or expiry can occur before private payload retrieval or sync persistence.
 
@@ -36,7 +33,7 @@ The public `cursor` read also validated separately from fetching the cursor.
 - Moved snapshot payload reads and cursor reads into the same transaction as authorization. The connection/grant locks remain held through the protected query.
 - Revalidated authority inside `apply_sync` after the external provider read and before any snapshot/cursor/audit persistence. Snapshot lookup is explicitly owner-scoped.
 - Required an active, current grant before cursor reset; a revoked grant cannot mutate cursor state.
-- Added three regression tests for transaction-scoped snapshot reads, scope removal before sync persistence, and cursor reset after revocation.
+- Added three focused test functions covering transaction-scoped snapshot reads, scope/capability changes before sync persistence (two parameter cases), and cursor reset after revocation; the snapshot response test also preserves the existing `capability` field. A separate real-PostgreSQL concurrent revoke/read regression is on the follow-up branch.
 
 ## Acceptance scenarios
 
@@ -47,14 +44,14 @@ The public `cursor` read also validated separately from fetching the cursor.
 | Required OAuth scope removed after provider response | Reject with `connector_scope_missing`; do not persist snapshot or advance cursor |
 | Grant revoked before cursor reset | Reject with `connector_read_revoked`; cursor and generation remain unchanged |
 | Expired grant / inactive connection / changed registered contract | Reject through the same validator |
-| Concurrent revoke while a protected read holds the connection/grant locks | PostgreSQL serialization must be exercised in protected staging; repository unit tests alone do not prove operated lock behavior |
+| Concurrent revoke while a protected read holds the connection/grant locks | New PostgreSQL CI regression must pass on the follow-up head; separate protected staging still required |
 
 ## Verification boundary
 
-- Source and regression tests are committed on the review branch.
+- The source fix is merged in PR #498. The PostgreSQL concurrency test and updated evidence record are on follow-up branch `codex/part02-postgres-concurrency-evidence-20261020`.
 - Focused test execution is not claimed from this connected GitHub editing session.
-- Required exact-head `test-and-build`, zero-skip `coworker`, and `ci-merge-gate` remain pending until reported for the final PR head.
-- Independent code review remains required before integration.
+- On PR #498's merge SHA, `test-and-build` passed while `coworker` was still in progress; no completed `ci-merge-gate` result was available at the latest observation. Follow-up exact-head checks remain pending.
+- PR #498 has no submitted independent review. Independent review of the merged source and follow-up concurrency regression remains required.
 - Added a real-PostgreSQL CI regression that pauses after authorization, observes a concurrent revoke attempting its grant-row lock, and asserts the revoke waits until the snapshot transaction finishes. Exact-head CI is pending; protected staging and independent review remain required.
 - No staging, production qualification or capability activation is claimed.
 
