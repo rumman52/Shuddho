@@ -142,11 +142,11 @@ def test_malformed_mixed_review_ids_fail_with_explicit_gate_error():
 
 # These tests control only the remote API boundary. The real live validator and
 # current-head policy run unchanged; snapshots model PR changes between reads.
-def live_review_api(monkeypatch, final_pull, *, reviews=None, page_size=None):
+def live_review_api(monkeypatch, final_pull, *, reviews=None, page_size=None, initial_pull=None):
     from scripts import independent_review_gate as gate
 
     calls = []
-    initial_pull = pull()
+    initial_pull = pull() if initial_pull is None else initial_pull
     rows = [review()] if reviews is None else reviews
     if page_size is not None:
         monkeypatch.setattr(gate, "PAGE_SIZE", page_size)
@@ -210,4 +210,20 @@ def test_live_review_denies_final_pr_read_failure(monkeypatch):
     gate, _ = live_review_api(monkeypatch, ReviewGateError("final snapshot unavailable"))
 
     with pytest.raises(ReviewGateError, match="final snapshot unavailable"):
+        gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
+
+
+@pytest.mark.parametrize(
+    "initial_pull",
+    [
+        pull(sha=OLD),
+        pull(draft=True),
+        {**pull(), "user": {"login": "independent-maintainer"}},
+    ],
+    ids=["initial-head-mismatch", "initial-draft", "initial-self-review"],
+)
+def test_live_review_cannot_rehabilitate_invalid_initial_snapshot(monkeypatch, initial_pull):
+    gate, _ = live_review_api(monkeypatch, pull(), initial_pull=initial_pull)
+
+    with pytest.raises(gate.ReviewGateError):
         gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
