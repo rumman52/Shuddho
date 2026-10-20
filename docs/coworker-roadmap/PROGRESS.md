@@ -1,3 +1,14 @@
+## V-01 next bounded task — historical pre-merge evidence audit (21 October 2026, Asia/Dhaka)
+
+- Fresh `main` before this work: `1f50654d514a5c3c0079886c7154cecc4e793e8e` (PR #519 merge). [#519](https://github.com/rumman52/Shuddho/pull/519) merged **20 October 2026 18:42:34 UTC** with **zero submitted reviews**, despite exact-head [CI #39471452728](https://github.com/rumman52/Shuddho/actions/runs/39471452728) ending **FAILURE** at 18:30:39 UTC. `test-and-build` and `coworker` had passed; `ci-merge-gate` failed at 18:30:38 UTC. This is a confirmed merge-after-failed-gate incident, not a merely pending job. Recorded in [issue #484](https://github.com/rumman52/Shuddho/issues/484#issuecomment-6298600506).
+- Branch `audit/v01-premerge-evidence-20261021` adds a **read-only**, fail-closed historical evidence classifier and focused regression tests. The classifier binds the exact PR SHA, reviews, three job outcomes and pre-merge completion timestamps; it refuses to equate no observed incident with effective branch protection. [Contract](V01_PREMERGE_EVIDENCE_AUDIT_2026-10-21.md).
+- Focused isolated local test suite: **15 passed**, no skips. Local `py_compile` passed. These are NOT full repository or exact-head GitHub CI results, and the script is not configured as a required merge check.
+- Current main branch summary reported `protected: false`, enforcement off; the rulesets list was `[]`, while the detailed protection endpoint returned **403** to the installed GitHub integration. Effective organizational/admin policies and tested bypass actors still require authorized inspection. Source audit/CI cannot enforce repository merges.
+- **V-01 #484 OPEN / native protection NOT VERIFIED.** No repository-settings write, deployment, secret, cost, staging/prod activation or new execution authority. External staging prerequisites #291 and all seventeen A/C/P/V acceptance rows remain incomplete. Do not merge this branch without independent human review and final-head checks.
+- Next: exact-head CI and independent review of this draft PR; independently, repository owner/admin enforces main rules and proves a failed/unreviewed PR cannot merge and a final-head reviewed PR can. Only that admin proof can change V-01 status.
+
+---
+
 ## V-01 continuation — PR metadata revalidation during review retrieval (21 October 2026, Asia/Dhaka)
 
 - Refreshed base main: `3eba42fb767ca29e24eca4ead22273eae09dd535`, merged #518. GitHub reports #518 merged at 17:50:47 UTC on 20 October and zero submitted reviews. Its earlier exact-head run #39462233199 passed both code jobs but **failed** independent-review gating; later run #39469590777 was still running during task selection. No effective governance acceptance is inferred.
