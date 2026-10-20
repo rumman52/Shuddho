@@ -438,6 +438,7 @@ class ConnectorReadRepository:
                 "id": row.id,
                 "grant_id": row.grant_id,
                 "provider": row.provider,
+                "capability": row.capability,
                 "provider_resource_id": row.provider_resource_id,
                 "provider_version": row.provider_version,
                 "sha256": row.content_sha256,
