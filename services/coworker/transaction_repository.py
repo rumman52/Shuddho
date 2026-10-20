@@ -815,6 +815,54 @@ class TransactionRepository:
             "created_at": iso(row.created_at),
         }
 
+    @classmethod
+    def _verify_execution_evidence(
+        cls,
+        evidence: TransactionReconciliationEvidence,
+        link: TransactionExecutionLink,
+    ) -> None:
+        """Authenticate persisted provider evidence before read or replay.
+
+        A stored digest column alone is not sufficient: receipt JSON and the
+        bound provider/action identity can be modified behind that digest.
+        """
+        receipt = evidence.receipt
+        if receipt is not None and not isinstance(receipt, dict):
+            raise CoworkerError(
+                "transaction_evidence_integrity_failed",
+                "Saved transaction reconciliation evidence failed integrity verification.",
+                409,
+            )
+        receipt_sha256 = cls._fingerprint(receipt) if receipt is not None else None
+        expected_evidence_sha256 = cls._fingerprint({
+            "external_action_id": evidence.external_action_id,
+            "action_state": evidence.action_state,
+            "provider": evidence.provider,
+            "action_kind": evidence.action_kind,
+            "preview_hash": evidence.preview_hash,
+            "receipt_sha256": receipt_sha256,
+            "error_code": evidence.error_code,
+            "action_finished_at": (
+                iso(evidence.action_finished_at) if evidence.action_finished_at else None
+            ),
+        })
+        if (
+            evidence.transaction_id != link.transaction_id
+            or evidence.owner_id != link.owner_id
+            or evidence.external_action_id != link.external_action_id
+            or evidence.provider != link.provider
+            or evidence.action_kind != link.action_kind
+            or evidence.preview_hash != link.preview_hash
+            or evidence.receipt_sha256 != receipt_sha256
+            or not isinstance(evidence.evidence_sha256, str)
+            or not hmac.compare_digest(evidence.evidence_sha256, expected_evidence_sha256)
+        ):
+            raise CoworkerError(
+                "transaction_evidence_integrity_failed",
+                "Saved transaction reconciliation evidence failed integrity verification.",
+                409,
+            )
+
     @staticmethod
     def _evidence_dto(row: TransactionReconciliationEvidence) -> dict:
         return {
@@ -1068,6 +1116,7 @@ class TransactionRepository:
             )
         )
         if existing is not None:
+            self._verify_execution_evidence(existing, link)
             return existing, False
         sequence = int(
             db.scalar(
@@ -1166,6 +1215,17 @@ class TransactionRepository:
             # projecting a confirmed transaction.
             verify_stored_terms_snapshot_integrity(terms)
 
+            # Existing receipt history must authenticate before state changes,
+            # deduplication, or append of new outcome evidence.
+            prior_evidence = db.scalars(
+                select(TransactionReconciliationEvidence).where(
+                    TransactionReconciliationEvidence.transaction_id == row.id,
+                    TransactionReconciliationEvidence.owner_id == owner,
+                )
+            ).all()
+            for saved in prior_evidence:
+                self._verify_execution_evidence(saved, link)
+
             target = self._projected_transaction_state(action.state)
             if not self._state_projection_allowed(row.state, target):
                 raise CoworkerError(
@@ -1223,6 +1283,8 @@ class TransactionRepository:
                 )
                 .order_by(TransactionReconciliationEvidence.sequence)
             ).all()
+            for saved in evidence:
+                self._verify_execution_evidence(saved, link)
             action = db.scalar(
                 select(ExternalAction).where(
                     ExternalAction.id == link.external_action_id,
