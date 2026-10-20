@@ -95,11 +95,13 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
         raise EvidenceError("missing required job evidence")
 
     findings = []
+    job_finished = {}
     for name in REQUIRED_JOBS:
         job = job_by_name[name]
         if job.get("status") != "completed" or not isinstance(job.get("conclusion"), str):
             raise EvidenceError(f"incomplete job evidence: {name}")
         finished = _when(job.get("completed_at"))
+        job_finished[name] = finished
         if job["conclusion"] != "success":
             findings.append(f"{name}:{job['conclusion']}")
         if finished > merged_at:
@@ -133,6 +135,7 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
                 latest[key] = review
 
     approvers = []
+    approval_times = []
     change_requests = []
     for login, review in latest.items():
         user = review["user"]
@@ -143,10 +146,16 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
             change_requests.append(login)
         if review["state"] == "APPROVED" and review.get("commit_id") == sha:
             approvers.append(login)
+            approval_times.append(_when(review["submitted_at"]))
     if change_requests:
         findings.append("outstanding_independent_changes_requested")
     if not approvers:
         findings.append("no_independent_current_head_approval")
+    elif all(when > job_finished["ci-merge-gate"] for when in approval_times):
+        # The successful final review may exist by merge time, but none of
+        # those approvals was available when this particular CI gate ended.
+        # Historical evidence alone cannot establish a later gate re-run.
+        findings.append("ci-merge-gate:completed_before_independent_approval")
 
     return {
         "classification": "observed_governance_incident" if findings else "no_incident_in_supplied_evidence",
