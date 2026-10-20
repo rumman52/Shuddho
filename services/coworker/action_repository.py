@@ -22,6 +22,7 @@ from .errors import CoworkerError
 from .models import Account, ActionProposal, AgentCheckpoint, Artifact, AuditEvent, Connection, ConnectorReadGrant, ConnectorSubscription, ExecutionGrant, ExternalAction, NegotiationCase, NegotiationOffer, NegotiationProposal, OAuthAttempt, Transaction, TransactionExecutionLink, TransactionTermsSnapshot, utcnow
 from .repository import aware, iso, not_found
 from .reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+from .transaction_integrity import verify_stored_terms_snapshot_integrity
 from .worker_claims import add_worker_claim, lock_running_worker
 
 TERMINAL = {"succeeded", "failed", "cancelled", "expired", "outcome_unknown"}
@@ -196,7 +197,15 @@ class ActionRepository:
             or link is None
             or terms is None
             or terms.owner_id != owner
-            or transaction.current_terms_revision != manifest["terms_revision"]
+        ):
+            raise CoworkerError(
+                "transaction_action_binding_changed",
+                "The reviewed transaction no longer matches this external action.",
+                409,
+            )
+        verify_stored_terms_snapshot_integrity(terms)
+        if (
+            transaction.current_terms_revision != manifest["terms_revision"]
             or terms.terms_sha256 != manifest["terms_sha256"]
             or link.transaction_revision != manifest["transaction_revision"]
             or link.terms_revision != manifest["terms_revision"]
