@@ -479,6 +479,7 @@ class PermissionGateway:
         spec = connector_read_capability(connection.provider, grant.capability)
         if (
             grant.provider != connection.provider
+            or grant.capability != connection.capability
             or grant.operation != spec.operation
             or grant.contract_version != spec.version
             or grant.audience != spec.audience
