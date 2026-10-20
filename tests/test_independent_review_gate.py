@@ -182,6 +182,9 @@ def test_live_review_rechecks_unchanged_pr_after_all_review_pages(monkeypatch):
         f"{base}/reviews?per_page=2&page=1",
         f"{base}/reviews?per_page=2&page=2",
         base,
+        f"{base}/reviews?per_page=2&page=1",
+        f"{base}/reviews?per_page=2&page=2",
+        base,
     ]
 
 
@@ -266,3 +269,89 @@ def test_pending_and_comment_reviews_need_not_have_submission_timestamps():
     comment = review(id=3, state="COMMENTED", login="other")
     comment.pop("submitted_at")
     assert require_current_head_review(pull(), [review(), pending, comment], HEAD) == "independent-maintainer"
+
+
+def test_live_review_denies_dismissal_inserted_during_validation(monkeypatch):
+    from scripts import independent_review_gate as gate
+
+    reads = {"reviews": 0}
+
+    def get_json(url, token):
+        assert token == "test-token"
+        if "/reviews?" not in url:
+            return pull()
+        reads["reviews"] += 1
+        if reads["reviews"] == 1:
+            return [review()]
+        return [review(), review(id=2, state="DISMISSED")]
+
+    monkeypatch.setattr(gate, "_get_json", get_json)
+    with pytest.raises(gate.ReviewGateError, match="changed|approval|review"):
+        gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
+
+
+def test_live_review_denies_new_change_request_during_validation(monkeypatch):
+    from scripts import independent_review_gate as gate
+
+    reads = {"reviews": 0}
+
+    def get_json(url, token):
+        if "/reviews?" not in url:
+            return pull()
+        reads["reviews"] += 1
+        if reads["reviews"] == 1:
+            return [review(login="alice")]
+        return [review(login="alice"), review(id=2, login="bob", state="CHANGES_REQUESTED")]
+
+    monkeypatch.setattr(gate, "_get_json", get_json)
+    with pytest.raises(gate.ReviewGateError, match="changed|changes requested"):
+        gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
+
+
+def test_live_review_rechecks_pr_after_second_review_read(monkeypatch):
+    from scripts import independent_review_gate as gate
+
+    calls = {"pr": 0}
+
+    def get_json(url, token):
+        if "/reviews?" in url:
+            return [review()]
+        calls["pr"] += 1
+        return pull(sha=OLD) if calls["pr"] >= 3 else pull()
+
+    monkeypatch.setattr(gate, "_get_json", get_json)
+    with pytest.raises(gate.ReviewGateError, match="head changed"):
+        gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
+
+
+def test_live_review_requires_second_review_read_to_succeed(monkeypatch):
+    from scripts import independent_review_gate as gate
+
+    calls = {"reviews": 0}
+
+    def get_json(url, token):
+        if "/reviews?" not in url:
+            return pull()
+        calls["reviews"] += 1
+        if calls["reviews"] == 1:
+            return [review()]
+        raise gate.ReviewGateError("confirmation review evidence unavailable")
+
+    monkeypatch.setattr(gate, "_get_json", get_json)
+    with pytest.raises(gate.ReviewGateError, match="confirmation review evidence unavailable"):
+        gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
+
+
+def test_live_review_stable_two_snapshots_validate_successfully(monkeypatch):
+    from scripts import independent_review_gate as gate
+
+    calls = []
+
+    def get_json(url, token):
+        calls.append(url)
+        return [review()] if "/reviews?" in url else pull()
+
+    monkeypatch.setattr(gate, "_get_json", get_json)
+    assert gate.validate_live_review("owner/repo", 7, HEAD, "test-token") == "independent-maintainer"
+    assert sum("/reviews?" in call for call in calls) == 2
+    assert sum("/reviews?" not in call for call in calls) == 3
