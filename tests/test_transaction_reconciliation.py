@@ -441,9 +441,64 @@ def test_sync_rejects_tampered_persisted_terms_before_receipt_projection(
     after = container.transactions.get(owner, transaction_id)
     assert after["state"] == before["state"]
     assert after["revision"] == before["revision"]
-    assert container.transactions.execution_surface(
-        owner, transaction_id
-    )["evidence"] == []
+    # The external surface now rejects corrupted terms itself. Inspect the
+    # persisted evidence rows directly to assert that sync added nothing.
+    with container.repository.sessions() as db:
+        evidence = db.scalars(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        ).all()
+    assert evidence == []
+
+
+@pytest.mark.parametrize("tampered_field", ["terms", "price"])
+def test_execution_surface_rejects_stale_digest_and_disables_reconciliation_lookup(
+    container,
+    tampered_field,
+):
+    """Read-only reconciliation authority must authenticate bound saved terms."""
+    enable_transactions(container)
+    owner = account(container, f"tx05-read-surface-integrity-{tampered_field}")
+    confirmed = reviewed_transaction(
+        container, owner, f"tx05-read-surface-integrity-{tampered_field}"
+    )
+    action, link = bound_action(
+        container, owner, confirmed, f"tx05-read-surface-action-{tampered_field}"
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+
+    intact = container.transactions.execution_surface(owner, transaction_id)
+    assert intact["link"]["id"] == link["id"]
+    assert intact["evidence"] == []
+
+    if tampered_field == "terms":
+        tamper_terms_snapshot(container, confirmed)
+    else:
+        binding = confirmed["review_binding"]
+        with container.repository.sessions.begin() as db:
+            stored = db.get(
+                TransactionTermsSnapshot,
+                (binding["transaction_id"], binding["terms_revision"]),
+            )
+            assert stored is not None
+            stored.price = {**stored.price, "currency": "usd"}
+
+    # The execution link, preview and digest column still agree, but the
+    # canonical saved terms/price no longer authenticate that digest.
+    with pytest.raises(CoworkerError) as surface_blocked:
+        container.transactions.execution_surface(owner, transaction_id)
+    assert surface_blocked.value.code == "transaction_terms_integrity_failed"
+
+    # This API obtains its provider action ID through execution_surface;
+    # corrupt persisted terms must not yield provider-reconciliation authority.
+    with pytest.raises(CoworkerError) as lookup_blocked:
+        container.transactions.reconciliation_action_id(owner, transaction_id)
+    assert lookup_blocked.value.code == "transaction_terms_integrity_failed"
+
+    assert container.actions.repo.get(owner, action["id"])["state"] == "awaiting_approval"
+    assert container.transactions.get(owner, transaction_id)["state"] == "awaiting_approval"
 
 
 def test_terms_cannot_change_after_external_action_is_bound(container):
