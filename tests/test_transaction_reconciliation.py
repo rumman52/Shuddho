@@ -501,6 +501,84 @@ def test_execution_surface_rejects_stale_digest_and_disables_reconciliation_look
     assert container.transactions.get(owner, transaction_id)["state"] == "awaiting_approval"
 
 
+
+@pytest.mark.parametrize(
+    "tampered_field",
+    ["receipt", "receipt_sha256", "evidence_sha256", "provider", "preview_hash"],
+)
+def test_tampered_persisted_reconciliation_evidence_blocks_history_and_sync(
+    container,
+    tampered_field,
+):
+    """A saved receipt is not trustworthy simply because an evidence row exists."""
+    enable_transactions(container)
+    owner = account(container, f"tx05-evidence-integrity-{tampered_field}")
+    confirmed = reviewed_transaction(
+        container, owner, f"tx05-evidence-integrity-{tampered_field}"
+    )
+    action, _link = bound_action(
+        container, owner, confirmed, f"tx05-evidence-action-{tampered_field}"
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+    approved = container.actions.repo.approve(
+        owner, action["id"], action["preview_hash"]
+    )
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    receipt = {
+        "provider": "google",
+        "status": "accepted_by_gmail",
+        "provider_id": f"message-{tampered_field}",
+        "message_id": f'<{action["id"]}@shuddho.invalid>',
+        "confirmed_at": utcnow().isoformat(),
+    }
+    container.actions.repo.finish(action["id"], "succeeded", receipt=receipt)
+    initial = container.transactions.sync_external_action(owner, transaction_id)
+    assert initial["transaction"]["state"] == "confirmed"
+    assert initial["evidence"]["receipt"] == receipt
+    intact = container.transactions.execution_surface(owner, transaction_id)
+    assert len(intact["evidence"]) == 1
+
+    # Simulate corrupted persisted evidence while the linked action and its
+    # original provider receipt remain unchanged. No connected provider call.
+    with container.repository.sessions.begin() as db:
+        saved = db.scalar(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        )
+        assert saved is not None
+        if tampered_field == "receipt":
+            saved.receipt = {**saved.receipt, "status": "not_confirmed"}
+        elif tampered_field == "receipt_sha256":
+            saved.receipt_sha256 = "0" * 64
+        elif tampered_field == "evidence_sha256":
+            saved.evidence_sha256 = "0" * 64
+        elif tampered_field == "provider":
+            saved.provider = "microsoft"
+        else:
+            saved.preview_hash = "0" * 64
+
+    with pytest.raises(CoworkerError) as history_blocked:
+        container.transactions.execution_surface(owner, transaction_id)
+    assert history_blocked.value.code == "transaction_evidence_integrity_failed"
+
+    # Replaying a completed action must not dedupe against or append past a
+    # corrupted reconciliation row, even if its digest no longer matches.
+    with pytest.raises(CoworkerError) as replay_blocked:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert replay_blocked.value.code == "transaction_evidence_integrity_failed"
+    with container.repository.sessions() as db:
+        saved_rows = db.scalars(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        ).all()
+    assert len(saved_rows) == 1
+    assert container.transactions.get(owner, transaction_id)["state"] == "confirmed"
+
+
 def test_terms_cannot_change_after_external_action_is_bound(container):
     enable_transactions(container)
     owner = account(container, "tx05-locked-terms")
