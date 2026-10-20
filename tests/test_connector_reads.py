@@ -417,6 +417,138 @@ def test_disconnect_revokes_read_grant_and_blocks_cached_context(container):
         assert db.query(ConnectorSnapshot).filter_by(grant_id=grant["id"]).count() == 1
 
 
+def test_snapshot_read_keeps_authorization_locks_through_payload_query(
+    container, monkeypatch
+):
+    enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+
+    repo = container.connector_reads.repo
+    original = repo.permission_gateway.validate_read_grant_in_session
+    observed_sessions = []
+
+    def validate_in_active_transaction(db, owner_id, grant_id, *, audience):
+        assert db.in_transaction()
+        observed_sessions.append(db)
+        return original(db, owner_id, grant_id, audience=audience)
+
+    def reject_separate_validation(*_args, **_kwargs):
+        raise AssertionError(
+            "snapshot access must not authorize in a separate transaction"
+        )
+
+    monkeypatch.setattr(
+        repo.permission_gateway,
+        "validate_read_grant_in_session",
+        validate_in_active_transaction,
+    )
+    monkeypatch.setattr(
+        repo.permission_gateway,
+        "validate_read_grant",
+        reject_separate_validation,
+    )
+
+    snapshots = repo.snapshots(owner, grant["id"])
+    assert len(snapshots) == 1
+    assert snapshots[0]["capability"] == "email_read"
+    assert observed_sessions
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_code"),
+    [
+        ("scope", "connector_scope_missing"),
+        ("capability", "connector_read_grant_invalid"),
+    ],
+)
+def test_apply_sync_rechecks_current_connection_authority_before_persisting_provider_data(
+    container, change, expected_code
+):
+    enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    repo = container.connector_reads.repo
+    expected_cursor = repo.cursor(owner, grant["id"])["cursor"]
+
+    with container.repository.sessions.begin() as db:
+        current_connection = db.scalar(select(Connection).where(
+            Connection.id == connection["id"],
+            Connection.owner_id == owner,
+        ).with_for_update())
+        assert current_connection is not None
+        if change == "scope":
+            current_connection.scopes = []
+        else:
+            current_connection.capability = "calendar_read"
+
+    with pytest.raises(CoworkerError) as rejected:
+        repo.apply_sync(
+            owner,
+            grant["id"],
+            expected_cursor,
+            {
+                "cursor": "must-not-advance",
+                "changes": [{
+                    "resource_id": "arrived-after-authority-change",
+                    "provider_version": "1",
+                    "state": "active",
+                    "payload": {"subject": "must not be persisted"},
+                }],
+            },
+        )
+    assert rejected.value.code == expected_code
+
+    with container.repository.sessions() as db:
+        cursor = db.scalar(select(ConnectorCursor).where(
+            ConnectorCursor.owner_id == owner,
+            ConnectorCursor.grant_id == grant["id"],
+        ))
+        assert cursor is not None
+        assert cursor.cursor == expected_cursor
+        assert db.scalar(select(ConnectorSnapshot).where(
+            ConnectorSnapshot.owner_id == owner,
+            ConnectorSnapshot.grant_id == grant["id"],
+            ConnectorSnapshot.provider_resource_id
+            == "arrived-after-authority-change",
+        )) is None
+
+
+def test_revoked_grant_cannot_reset_its_cursor(container):
+    enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner)
+    grant = create_grant(container, owner, connection)
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    repo = container.connector_reads.repo
+
+    with container.repository.sessions() as db:
+        before = db.scalar(select(ConnectorCursor).where(
+            ConnectorCursor.owner_id == owner,
+            ConnectorCursor.grant_id == grant["id"],
+        ))
+        assert before is not None
+        old_cursor = before.cursor
+        old_generation = before.generation
+
+    repo.revoke(owner, grant["id"])
+    with pytest.raises(CoworkerError) as rejected:
+        repo.reset_cursor(owner, grant["id"])
+    assert rejected.value.code == "connector_read_revoked"
+
+    with container.repository.sessions() as db:
+        after = db.scalar(select(ConnectorCursor).where(
+            ConnectorCursor.owner_id == owner,
+            ConnectorCursor.grant_id == grant["id"],
+        ))
+        assert after is not None
+        assert after.cursor == old_cursor
+        assert after.generation == old_generation
+
+
 def test_calendar_read_is_bounded_and_untrusted(container):
     enable_reads(container)
     owner = account(container)

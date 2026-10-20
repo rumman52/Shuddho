@@ -419,13 +419,22 @@ class PermissionGateway:
                 "account": connection.email,
             }
 
-    def validate_read_grant(
+    def validate_read_grant_in_session(
         self,
+        db,
         owner_id: str,
         grant_id: str,
         *,
         audience: str = CONNECTOR_READ_AUDIENCE,
     ) -> dict:
+        """Validate read authority inside the caller's transaction.
+
+        The connection row is locked before the grant row, matching disconnect
+        and grant-admission lock order. Callers that read or mutate protected
+        connector state must keep this transaction open through that operation;
+        validating in one transaction and consuming the result in another
+        reintroduces a revocation time-of-check/time-of-use gap.
+        """
         if not self.settings.connector_reads_enabled:
             raise CoworkerError(
                 "connector_reads_disabled",
@@ -438,77 +447,89 @@ class PermissionGateway:
                 "This connector request is not intended for the read worker.",
                 403,
             )
+        snapshot = db.scalar(select(ConnectorReadGrant).where(
+            ConnectorReadGrant.id == grant_id,
+            ConnectorReadGrant.owner_id == owner_id,
+        ))
+        if snapshot is None:
+            raise not_found()
+        connection = db.scalar(select(Connection).where(
+            Connection.id == snapshot.connection_id,
+            Connection.owner_id == owner_id,
+        ).with_for_update())
+        grant = db.scalar(select(ConnectorReadGrant).where(
+            ConnectorReadGrant.id == grant_id,
+            ConnectorReadGrant.owner_id == owner_id,
+            ConnectorReadGrant.connection_id == snapshot.connection_id,
+        ).with_for_update())
+        if connection is None or grant is None:
+            raise not_found()
+        if not connection.active or grant.state != "active":
+            raise CoworkerError(
+                "connector_read_revoked",
+                "This connected read authorization is no longer active.",
+                409,
+            )
+        if aware(grant.expires_at) <= utcnow():
+            raise CoworkerError(
+                "connector_read_expired",
+                "This connected read authorization expired.",
+                409,
+            )
+        spec = connector_read_capability(connection.provider, grant.capability)
+        if (
+            grant.provider != connection.provider
+            or grant.capability != connection.capability
+            or grant.operation != spec.operation
+            or grant.contract_version != spec.version
+            or grant.audience != spec.audience
+            or list(grant.required_scopes or []) != list(spec.required_scopes)
+            or grant.purpose != "agent_context"
+            or grant.destination != "planner_context"
+        ):
+            raise CoworkerError(
+                "connector_read_grant_invalid",
+                "The connected read authorization no longer matches its registered capability.",
+                409,
+            )
+        missing = [
+            scope for scope in spec.required_scopes
+            if scope not in set(connection.scopes or [])
+        ]
+        if missing:
+            raise CoworkerError(
+                "connector_scope_missing",
+                "The connected account no longer has the required read permission.",
+                409,
+            )
+        return {
+            "id": grant.id,
+            "owner_id": grant.owner_id,
+            "connection_id": connection.id,
+            "provider": connection.provider,
+            "capability": grant.capability,
+            "operation": grant.operation,
+            "version": grant.contract_version,
+            "audience": grant.audience,
+            "required_scopes": list(grant.required_scopes or []),
+            "purpose": grant.purpose,
+            "destination": grant.destination,
+            "expires_at": iso(grant.expires_at),
+            "subject_id": connection.subject,
+            "account": connection.email,
+        }
+
+    def validate_read_grant(
+        self,
+        owner_id: str,
+        grant_id: str,
+        *,
+        audience: str = CONNECTOR_READ_AUDIENCE,
+    ) -> dict:
         with self.sessions.begin() as db:
-            snapshot = db.scalar(select(ConnectorReadGrant).where(
-                ConnectorReadGrant.id == grant_id,
-                ConnectorReadGrant.owner_id == owner_id,
-            ))
-            if snapshot is None:
-                raise not_found()
-            connection = db.scalar(select(Connection).where(
-                Connection.id == snapshot.connection_id,
-                Connection.owner_id == owner_id,
-            ).with_for_update())
-            grant = db.scalar(select(ConnectorReadGrant).where(
-                ConnectorReadGrant.id == grant_id,
-                ConnectorReadGrant.owner_id == owner_id,
-                ConnectorReadGrant.connection_id == snapshot.connection_id,
-            ).with_for_update())
-            if connection is None or grant is None:
-                raise not_found()
-            if not connection.active or grant.state != "active":
-                raise CoworkerError(
-                    "connector_read_revoked",
-                    "This connected read authorization is no longer active.",
-                    409,
-                )
-            if aware(grant.expires_at) <= utcnow():
-                raise CoworkerError(
-                    "connector_read_expired",
-                    "This connected read authorization expired.",
-                    409,
-                )
-            spec = connector_read_capability(connection.provider, grant.capability)
-            if (
-                grant.provider != connection.provider
-                or grant.operation != spec.operation
-                or grant.contract_version != spec.version
-                or grant.audience != spec.audience
-                or list(grant.required_scopes or []) != list(spec.required_scopes)
-                or grant.purpose != "agent_context"
-                or grant.destination != "planner_context"
-            ):
-                raise CoworkerError(
-                    "connector_read_grant_invalid",
-                    "The connected read authorization no longer matches its registered capability.",
-                    409,
-                )
-            missing = [
-                scope for scope in spec.required_scopes
-                if scope not in set(connection.scopes or [])
-            ]
-            if missing:
-                raise CoworkerError(
-                    "connector_scope_missing",
-                    "The connected account no longer has the required read permission.",
-                    409,
-                )
-            return {
-                "id": grant.id,
-                "owner_id": grant.owner_id,
-                "connection_id": connection.id,
-                "provider": connection.provider,
-                "capability": grant.capability,
-                "operation": grant.operation,
-                "version": grant.contract_version,
-                "audience": grant.audience,
-                "required_scopes": list(grant.required_scopes or []),
-                "purpose": grant.purpose,
-                "destination": grant.destination,
-                "expires_at": iso(grant.expires_at),
-                "subject_id": connection.subject,
-                "account": connection.email,
-            }
+            return self.validate_read_grant_in_session(
+                db, owner_id, grant_id, audience=audience
+            )
 
     def revoke_connection(self, owner_id: str, connection_id: str) -> None:
         with self.sessions.begin() as db:
