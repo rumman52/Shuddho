@@ -227,7 +227,8 @@ def main() -> None:
         result = assess_native_policy()
         result['findings'] = ['evidence_read_or_validation_failed']
     print(json.dumps(result, sort_keys=True, indent=2))
-    raise SystemExit(0 if result['classification'] == 'configuration_candidate' else 2)
+    # A configuration candidate is still unverified: never emit exit 0 as a gate.
+    raise SystemExit(3 if result['classification'] == 'configuration_candidate' else 2)
 
 
 if __name__ == '__main__':
