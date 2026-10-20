@@ -123,7 +123,13 @@ def validate_live_review(
             raise ReviewGateError("Malformed GitHub review page")
         reviews.extend(result)
         if len(result) < PAGE_SIZE:
-            return require_current_head_review(pull_request, reviews, expected_head_sha)
+            # Preserve the initial snapshot check, but do not accept it as
+            # current authority after one or more awaited review-page reads.
+            require_current_head_review(pull_request, reviews, expected_head_sha)
+            current_pull_request = _get_json(base, token)
+            return require_current_head_review(
+                current_pull_request, reviews, expected_head_sha
+            )
     raise ReviewGateError("Review history exceeds bounded pagination limit")
 
 

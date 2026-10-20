@@ -1,3 +1,15 @@
+## V-01 continuation — PR metadata revalidation during review retrieval (21 October 2026, Asia/Dhaka)
+
+- Refreshed base main: `3eba42fb767ca29e24eca4ead22273eae09dd535`, merged #518. GitHub reports #518 merged at 17:50:47 UTC on 20 October and zero submitted reviews. Its earlier exact-head run #39462233199 passed both code jobs but **failed** independent-review gating; later run #39469590777 was still running during task selection. No effective governance acceptance is inferred.
+- Next bounded defect: `validate_live_review` fetched PR metadata only before paginating reviews. A concurrent push, draft conversion, close or merge during retrieval could leave old metadata accepted with an old-head review.
+- Test-first evidence: test-only head `36ea88e83dcf5a6a01c3b720cc77b28152aa0e3f`, [CI #39471147429](https://github.com/rumman52/Shuddho/actions/runs/39471147429), job 118795217428: **9 failed, 1,219 passed, 71 skipped**. All failures were the intended new live-validator cases. Lightweight optional-dependency skips are not mandatory coworker evidence.
+- Implementation on `fix/v01-review-fetch-revalidation-20261020`, draft [#519](https://github.com/rumman52/Shuddho/pull/519): preserve initial validation, refetch PR metadata after the terminating review page, then reapply the current-head/eligibility/independence policy. No workflow, permission, schema or release flag changes.
+- Independent agent review of the design/tests found no Critical/Important issue and requested initial-invalid/final-valid coverage. Three such cases were added before implementation. Final whole-diff agent review and exact-head code CI remain pending at this checkpoint; consult the final PR description for fresh evidence. Agent review does not satisfy independent human approval.
+- [Contract](V01_REVIEW_FETCH_REVALIDATION_2026-10-21.md). This check is defense in depth, not an atomic merge transaction. Review changes after collection or PR changes after the final read require native GitHub review/check protections and event-driven reevaluation.
+- **V-01 #484 remains OPEN**. Do not merge this unreviewed draft or count code CI as branch-protection evidence. Owner/admin must enforce and negatively test required checks/reviews without routine bypass. Staging prerequisites #291 and the full A/C/P/V qualification requirements remain incomplete. No deployment or production activation was performed.
+
+---
+
 ## Current continuation — TX-03 integrity regression and corrective PR #503 (20 October 2026, Asia/Dhaka)
 
 - **Current main at the regression:** `e8dfccdde32604824f67975be0a170c2563caec4`, after PR #502.
