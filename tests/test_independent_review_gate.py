@@ -182,6 +182,9 @@ def test_live_review_rechecks_unchanged_pr_after_all_review_pages(monkeypatch):
         f"{base}/reviews?per_page=2&page=1",
         f"{base}/reviews?per_page=2&page=2",
         base,
+        f"{base}/reviews?per_page=2&page=1",
+        f"{base}/reviews?per_page=2&page=2",
+        base,
     ]
 
 
