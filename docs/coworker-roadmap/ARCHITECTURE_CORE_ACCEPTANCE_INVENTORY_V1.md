@@ -1,9 +1,11 @@
-## Refreshed 20 October 2026 — merged code versus qualification
+## Refreshed 20 October 2026 — governance audit and qualification evidence
 
-- Verified latest inspected `main` is `c2d029c4782768b8aba04c96105eae978d7e2c07`; PRs #491–#494 were merged. Their older branch/pending status statements below are historical.
-- C-01 finalization cancellation/missing-run acknowledgement has a new bounded [source fix and regression contract](C01_CANCELLED_FINALIZATION_FENCE_2026-10-20.md) on review branch `codex/c01-finalization-cancel-notfound-fence-20261020`; neither its exact-head CI nor staging is claimed passed.
-- All 17 A/C/P/V requirements remain **not fully qualified**. Repository-level code/test progress is separate from protected staging, CW-02 16-scenario provider evidence, live network/sandbox isolation, CW-11 mixed-version drain, retained-history and rollback proof, independent reviews and activation. Production defaults remain unchanged.
-
+- **Current `main`:** `bdd12f24390077cc838d4f528b5d8c58eb8c8a78`, the merge commit for [PR #495](https://github.com/rumman52/Shuddho/pull/495). The C-01 cancellation/missing-run finalization fix is merged; do not reimplement it.
+- **PR #495 exact-head checks:** `test-and-build`, `coworker`, and `ci-merge-gate` ultimately all passed on `228c85ac65a7c8c18bb02fb53eeb7d4865c6689b` ([run #39319946005](https://github.com/rumman52/Shuddho/actions/runs/39319946005)). However, PR #495 merged at 2026-10-19 20:34:17 UTC before `coworker` finished at 20:52:09 UTC and `ci-merge-gate` finished at 20:52:16 UTC. The submitted PR-review list was empty at audit time. Later passing checks do not retroactively satisfy pre-merge gates or independent review.
+- **Merged-main CI:** `test-and-build`, `coworker`, and `ci-merge-gate` all passed on the exact current `main` SHA in [run #39320415139](https://github.com/rumman52/Shuddho/actions/runs/39320415139). This establishes that the current mainline check run is green, not that merge governance is enforced.
+- **V-01 remains UNVERIFIED:** the GitHub rulesets endpoint returned an empty list; reading legacy branch protection returned `403 Resource not accessible by integration`. This access limitation does not prove that `main` is either protected or unprotected. The repository owner/admin must inspect the effective policy and prove pending/failing checks block merge and independently reviewed, passing changes can merge. Track: [issue #484](https://github.com/rumman52/Shuddho/issues/484).
+- **Staging remains separately blocked:** [issue #291](https://github.com/rumman52/Shuddho/issues/291) still lists outstanding worker, Temporal/S3 credentials, synthetic identity, provider and release-freeze prerequisites. Do not expose secrets or enable production capabilities.
+- All 17 A/C/P/V requirements remain **not fully qualified**. Repository-level source and CI evidence is distinct from operated staging, the 16-scenario CW-02 provider fault matrix, live browser/network isolation, sandbox isolation, CW-11 mixed-worker drain/rollback, retained-history compatibility, independent security/quality review and explicit activation. Production defaults remain unchanged.
 ---
 
 ## Current architecture/core checkpoint — 20 October 2026 (Asia/Dhaka)
