@@ -52,7 +52,7 @@ The public `cursor` read also validated separately from fetching the cursor.
 - Focused test execution is not claimed from this connected GitHub editing session.
 - Required exact-head `test-and-build`, zero-skip `coworker`, and `ci-merge-gate` remain pending until reported for the final PR head.
 - Independent code review remains required before integration.
-- PostgreSQL concurrency testing must confirm that snapshot reads and grant revocation serialize in the intended connection-first lock order.
+- Added a real-PostgreSQL CI regression that pauses after authorization, observes a concurrent revoke attempting its grant-row lock, and asserts the revoke waits until the snapshot transaction finishes. Exact-head CI is pending; protected staging and independent review remain required.
 - No staging, production qualification or capability activation is claimed.
 
 ## Residual limits
