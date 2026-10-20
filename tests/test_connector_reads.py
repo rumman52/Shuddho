@@ -48,7 +48,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
 
 
 class ReadGoogle:
@@ -227,6 +227,60 @@ def create_grant(container, owner, connection):
     )
     assert created is True
     return grant
+
+
+@pytest.mark.parametrize("change", ["disconnect", "scope_revocation"])
+def test_read_grant_admission_rechecks_connection_after_preflight(
+    container, monkeypatch, change
+):
+    enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner)
+    connection_id = connection["id"]
+    original_validate = container.permissions.validate_read_connection
+
+    def validate_then_change_connection(*args, **kwargs):
+        authorization = original_validate(*args, **kwargs)
+        if change == "disconnect":
+            container.actions.repo.disconnect(owner, connection_id)
+        else:
+            with container.repository.sessions.begin() as db:
+                row = db.scalar(select(Connection).where(
+                    Connection.id == connection_id,
+                    Connection.owner_id == owner,
+                ).with_for_update())
+                assert row is not None
+                row.scopes = []
+        return authorization
+
+    monkeypatch.setattr(
+        container.permissions,
+        "validate_read_connection",
+        validate_then_change_connection,
+    )
+    idempotency_key = "read-admission-race-" + change
+    request = ConnectorReadGrantCreate(
+        connection_id=connection_id,
+        expires_at=utcnow() + timedelta(days=7),
+    )
+
+    with pytest.raises(CoworkerError) as rejected:
+        container.connector_reads.repo.create(owner, request, idempotency_key)
+
+    if change == "disconnect":
+        assert rejected.value.status_code == 404
+    else:
+        assert rejected.value.code == "connector_scope_missing"
+
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ConnectorReadGrant).where(
+            ConnectorReadGrant.owner_id == owner,
+            ConnectorReadGrant.idempotency_key == idempotency_key,
+        )) is None
+        assert db.scalar(select(ConnectorCursor).where(
+            ConnectorCursor.owner_id == owner,
+            ConnectorCursor.connection_id == connection_id,
+        )) is None
 
 
 def test_connector_reads_flag_requires_pa05_context_and_runtime(container):

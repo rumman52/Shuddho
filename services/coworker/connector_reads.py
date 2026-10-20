@@ -132,6 +132,40 @@ class ConnectorReadRepository:
         with self.sessions.begin() as db:
             if db.get(Account, owner) is None:
                 raise not_found()
+
+            # Disconnect takes the connection lock before revoking read grants.
+            # Recheck under that same lock so a disconnect or scope change after
+            # preflight cannot leave a newly active grant behind.
+            connection = db.scalar(select(Connection).where(
+                Connection.id == connection_id,
+                Connection.owner_id == owner,
+                Connection.active.is_(True),
+            ).with_for_update())
+            if connection is None:
+                raise not_found()
+
+            if (
+                connection.provider != authorization["provider"]
+                or connection.capability != authorization["capability"]
+                or connection.subject != authorization["subject_id"]
+                or connection.email != authorization["account"]
+            ):
+                raise CoworkerError(
+                    "connector_read_grant_invalid",
+                    "The connected account changed during authorization.",
+                    409,
+                )
+            missing_scopes = [
+                scope for scope in authorization["required_scopes"]
+                if scope not in set(connection.scopes or [])
+            ]
+            if missing_scopes:
+                raise CoworkerError(
+                    "connector_scope_missing",
+                    "The connected account no longer has the required read permission.",
+                    409,
+                )
+
             previous = db.scalar(select(ConnectorReadGrant).where(
                 ConnectorReadGrant.owner_id == owner,
                 ConnectorReadGrant.idempotency_key == idempotency_key,
