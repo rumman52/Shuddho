@@ -1,3 +1,13 @@
+## V-01 continuation — live review snapshot confirmation (21 October 2026, Asia/Dhaka)
+
+- Baseline main `e937dd974c04c725faca74fb5d6c3569f83c1b2c` (merged PR #523). [PR #523](https://github.com/rumman52/Shuddho/pull/523) **merged 2026-10-20 20:06:45 UTC** with **zero submitted reviews**. Exact-head [CI #39487739882](https://github.com/rumman52/Shuddho/actions/runs/39487739882): `test-and-build` success, `coworker` cancelled, `ci-merge-gate` failure. Native controls still BLOCKED [#484](https://github.com/rumman52/Shuddho/issues/484).
+- Next bounded defect: live `scripts/independent_review_gate.py` re-fetched PR metadata after review pagination, but failed to re-fetch independent review *state*; a dismissal or newly submitted change request could be absent from the stale approval snapshot. This is a source gate weakness, **not a native branch protection fix**.
+- Draft [PR #524](https://github.com/rumman52/Shuddho/pull/524), test-first `1f19e502f60accae966de5b3620bb069dba736e3`; actual [RED CI #39490196014](https://github.com/rumman52/Shuddho/actions/runs/39490196014) showed **5 intended regression failures, 1,266 tests passed, 71 skipped**. Fix `dfcf9e1f7178a7a23cbafd5ab47be33c54e88f60` re-fetches bounded review pagination, rejects changed evidence, and rechecks PR metadata after second fetch. `200e8595b401d91479d0f660a07cfe6342fd151a` updates original test's exact API call assertions.
+- [Task contract](V01_REVIEW_SNAPSHOT_CONFIRMATION_2026-10-21.md). **Verification pending on final doc-inclusive PR head:** all three required jobs must complete successfully; no early merge, no bypass, and no independent-approval claim from automation.
+- V-01 [#484](https://github.com/rumman52/Shuddho/issues/484) still needs owner/admin enforced native branch protections and negative-control verification. Staging [#291](https://github.com/rumman52/Shuddho/issues/291) is separately blocked. No production enablement, schema, credentials, provider calls, payments or deployment changed.
+
+---
+
 ## V-01 continuation — historical approval vs CI gate chronology (21 October 2026, Asia/Dhaka)
 
 - Baseline `main` `13360a9cd4e2d64fa9f2f2bf8c35befd4ca531ad` after #522; PR #522 **merged 2026-10-20 19:45:33 UTC**, no submitted independent human reviews, after code job success but before `coworker` cancellation and `ci-merge-gate` failure on exact-head [CI #39484713573](https://github.com/rumman52/Shuddho/actions/runs/39484713573). Both latter conclusions occurred **after merge**. Recorded in [#484](https://github.com/rumman52/Shuddho/issues/484#issuecomment-6300108322).
