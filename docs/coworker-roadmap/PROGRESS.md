@@ -1,3 +1,14 @@
+## V-01 continuation — workflow provenance binding for merge evidence (21 October 2026, Asia/Dhaka)
+
+- Refreshed `main` at start: `25c79968d763ce8d5bdba53ed0d0d66ba7bb2562` after #520. The #520 draft was merged at 19:03:54 UTC on 20 October 2026 **without reviews** while its exact-head [CI #39479360250](https://github.com/rumman52/Shuddho/actions/runs/39479360250) had `test-and-build` success, `coworker` cancelled, and `ci-merge-gate` failure. This is a **new governance incident**, not V-01 acceptance.
+- Bounded source defect: `scripts/v01_merge_evidence.py` checked exact commit SHA but not whether the workflow run belonged to the PR's source branch/head repository and target repository. Introduced nine provenance controls first on SHA `b3c8b594caf39078fb22fe8c274e0ce1a264c70e`; [RED CI #39481027487](https://github.com/rumman52/Shuddho/actions/runs/39481027487) confirmed **9 intended failures, 1,246 passed, 71 optional skips**, in test-and-build before implementation.
+- Draft [PR #521](https://github.com/rumman52/Shuddho/pull/521), branch `fix/v01-evidence-run-provenance-20261021`. Production code now rejects missing/mismatched `head_branch`, `head_repository.id`, and base `repository.id` against PR metadata; invalid evidence remains fail-closed. [Task contract](V01_WORKFLOW_PROVENANCE_BINDING_2026-10-21.md).
+- **Verification boundary:** only the test-first RED result is fully confirmed at this checkpoint. Need to inspect final SHA full CI and independent human review before even considering merge. The evidence script is read-only and not enforceable native branch protection.
+- **Governance V-01 #484 BLOCKED** until an authorized admin configures and proves non-bypassable exact-head CI and independent-review rules with negative controls. External staging [#291](https://github.com/rumman52/Shuddho/issues/291) incomplete. No permissions, secrets, deployment, production flag, paid resources or activation were changed.
+- **Next:** verify final-head tests and coworker, request independent maintainer review, keep the PR draft/unmerged. Native owner/admin policy work is an independently required release prerequisite.
+
+---
+
 ## V-01 next bounded task — historical pre-merge evidence audit (21 October 2026, Asia/Dhaka)
 
 - Fresh `main` before this work: `1f50654d514a5c3c0079886c7154cecc4e793e8e` (PR #519 merge). [#519](https://github.com/rumman52/Shuddho/pull/519) merged **20 October 2026 18:42:34 UTC** with **zero submitted reviews**, despite exact-head [CI #39471452728](https://github.com/rumman52/Shuddho/actions/runs/39471452728) ending **FAILURE** at 18:30:39 UTC. `test-and-build` and `coworker` had passed; `ci-merge-gate` failed at 18:30:38 UTC. This is a confirmed merge-after-failed-gate incident, not a merely pending job. Recorded in [issue #484](https://github.com/rumman52/Shuddho/issues/484#issuecomment-6298600506).
