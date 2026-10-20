@@ -263,6 +263,49 @@ def test_review_binding_rejects_inconsistent_snapshot_total_without_hash_change(
     assert blocked.value.code == "transaction_terms_integrity_failed"
 
 
+@pytest.mark.parametrize(
+    "tampered_field",
+    ["term_whitespace", "price_currency_case", "quote_id_whitespace"],
+)
+def test_review_binding_rejects_noncanonical_stored_snapshot(container, tampered_field):
+    """Re-parsing must not conceal a change in the exact persisted terms."""
+    enable_transactions(container)
+    owner = account(container, f"tx03-noncanonical-{tampered_field}")
+    transaction = create_transaction(container, owner, f"tx03-noncanonical-{tampered_field}")
+    saved = container.transactions.set_terms(
+        owner, transaction["id"], 1, terms()
+    )
+    review = container.transactions.start_review(
+        owner, transaction["id"], saved["transaction"]["revision"]
+    )
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(
+            TransactionTermsSnapshot,
+            (transaction["id"], saved["terms"]["revision"]),
+        )
+        assert row is not None
+        if tampered_field == "term_whitespace":
+            changed = [dict(term) for term in row.terms]
+            changed[0]["value"] = f" {changed[0]['value']} "
+            row.terms = changed
+        elif tampered_field == "price_currency_case":
+            row.price = {**row.price, "currency": "usd"}
+        else:
+            row.provider_quote_id = f" {row.provider_quote_id} "
+
+    # The stored hash is unchanged: these edits normalize to the original
+    # Pydantic values, but the persisted reviewed terms are no longer exact.
+    with pytest.raises(CoworkerError) as blocked:
+        container.transactions.review_binding(
+            owner,
+            transaction["id"],
+            review["revision"],
+            expected_terms_sha256=saved["terms"]["terms_sha256"],
+        )
+    assert blocked.value.code == "transaction_terms_integrity_failed"
+
+
 def test_changed_terms_force_fresh_review_and_old_hash_is_rejected(container):
     enable_transactions(container)
     owner = account(container, "tx03-change")

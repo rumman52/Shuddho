@@ -611,6 +611,34 @@ def test_tampered_terms_after_approval_block_provider_execution(container):
     assert result["error_code"] == "transaction_terms_integrity_failed"
 
 
+def test_noncanonical_stored_price_after_approval_blocks_provider_claim(container):
+    """A formatting-only DB edit must not slip past the bound action guard."""
+    enable_transactions(container)
+    owner = account(container, "tx05-noncanonical-price-after-approval")
+    confirmed = reviewed_transaction(container, owner, "tx05-noncanonical-price-after-approval")
+    action, _link = bound_action(
+        container, owner, confirmed, "tx05-noncanonical-price-after-approval-action"
+    )
+    approved = container.actions.repo.approve(
+        owner, action["id"], action["preview_hash"]
+    )
+    binding = confirmed["review_binding"]
+    with container.repository.sessions.begin() as db:
+        row = db.get(
+            TransactionTermsSnapshot,
+            (binding["transaction_id"], binding["terms_revision"]),
+        )
+        assert row is not None
+        row.price = {**row.price, "currency": "usd"}
+
+    # Pydantic would canonicalize "usd" to "USD", leaving the old hash
+    # unchanged; the already-approved persisted price must still be exact.
+    assert container.actions.repo.claim_execution(approved["id"]) is None
+    result = container.actions.repo.get(owner, action["id"])
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "transaction_terms_integrity_failed"
+
+
 def test_quote_expiry_after_approval_blocks_provider_claim(container, monkeypatch):
     enable_transactions(container)
     owner = account(container, "tx05-expired-before-claim")

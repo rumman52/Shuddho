@@ -62,7 +62,8 @@ def verify_stored_terms_snapshot_integrity(snapshot) -> None:
                 "quote_expires_at": _snapshot_datetime(snapshot.quote_expires_at),
             }
         )
-        expected_digest = fingerprint_json(canonical_terms_payload(request))
+        canonical_payload = canonical_terms_payload(request)
+        expected_digest = fingerprint_json(canonical_payload)
     except (ValidationError, AttributeError, TypeError, ValueError, OverflowError):
         raise CoworkerError(
             "transaction_terms_integrity_failed",
@@ -76,6 +77,13 @@ def verify_stored_terms_snapshot_integrity(snapshot) -> None:
         or len(stored_digest) != 64
         or not stored_digest.isascii()
         or not hmac.compare_digest(expected_digest, stored_digest)
+        # Pydantic intentionally normalizes user input (trimming text and
+        # uppercasing currencies). That normalization is correct on initial
+        # write, but must not hide changes to an already-persisted snapshot.
+        # The write path stores sorted, fully canonical terms and price.
+        or snapshot.terms != canonical_payload["terms"]
+        or snapshot.price != canonical_payload["price"]
+        or snapshot.provider_quote_id != request.provider_quote_id
         or getattr(snapshot, "currency", None) != request.price.currency
         or type(getattr(snapshot, "total_minor", None)) is not int
         or snapshot.total_minor != request.price.total_minor
