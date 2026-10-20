@@ -930,6 +930,20 @@ class TransactionRepository:
                     "Saved transaction reconciliation evidence failed integrity verification.",
                     409,
                 )
+        # The most recent provider observation must justify the persisted
+        # terminal outcome. A deleted final observation+receipt pair can
+        # otherwise leave a contiguous, mutually consistent *prefix* while
+        # the transaction still claims confirmation (or final failure).
+        if (
+            row.state in {"confirmed", "failed", "outcome_unknown"}
+            and evidence
+            and self._projected_transaction_state(evidence[-1].action_state) != row.state
+        ):
+            raise CoworkerError(
+                "transaction_evidence_integrity_failed",
+                "Saved transaction reconciliation evidence failed integrity verification.",
+                409,
+            )
 
     @staticmethod
     def _evidence_dto(row: TransactionReconciliationEvidence) -> dict:

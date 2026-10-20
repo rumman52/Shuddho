@@ -669,6 +669,87 @@ def test_tx05_saved_evidence_history_must_match_transaction_event_ledger(
     assert container.transactions.get(owner, transaction_id)["state"] == "confirmed"
 
 
+@pytest.mark.parametrize("tamper", ["erase_latest_pair", "forge_terminal_state"])
+def test_tx05_terminal_transaction_must_match_last_observed_provider_outcome(
+    container,
+    tamper,
+):
+    """Both evidence ledgers can agree while the projected result is wrong."""
+    enable_transactions(container)
+    owner = account(container, f"tx05-final-observation-{tamper}")
+    confirmed = reviewed_transaction(container, owner, f"tx05-final-observation-{tamper}")
+    action, _link = bound_action(
+        container, owner, confirmed, f"tx05-final-observation-action-{tamper}"
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+    approved = container.actions.repo.approve(
+        owner, action["id"], action["preview_hash"]
+    )
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    container.actions.repo.finish(
+        action["id"], "outcome_unknown", error_code="provider_timeout"
+    )
+    unknown = container.transactions.sync_external_action(owner, transaction_id)
+    assert unknown["transaction"]["state"] == "outcome_unknown"
+
+    receipt = {
+        "provider": "google",
+        "status": "accepted_by_gmail",
+        "provider_id": f"tx05-final-{tamper}",
+        "message_id": f'<{action["id"]}@shuddho.invalid>',
+        "confirmed_at": utcnow().isoformat(),
+    }
+    container.actions.repo.finish(action["id"], "succeeded", receipt=receipt)
+    settled = container.transactions.sync_external_action(owner, transaction_id)
+    assert settled["transaction"]["state"] == "confirmed"
+    assert [
+        item["action_state"]
+        for item in container.transactions.execution_surface(owner, transaction_id)["evidence"]
+    ] == ["outcome_unknown", "succeeded"]
+
+    with container.repository.sessions.begin() as db:
+        if tamper == "erase_latest_pair":
+            latest = db.scalar(
+                select(TransactionReconciliationEvidence).where(
+                    TransactionReconciliationEvidence.transaction_id == transaction_id,
+                    TransactionReconciliationEvidence.owner_id == owner,
+                ).order_by(TransactionReconciliationEvidence.sequence.desc())
+            )
+            last_event = db.scalar(
+                select(TransactionEvent).where(
+                    TransactionEvent.transaction_id == transaction_id,
+                    TransactionEvent.owner_id == owner,
+                    TransactionEvent.event_type == "transaction_execution_observed",
+                ).order_by(TransactionEvent.sequence.desc())
+            )
+            assert latest is not None and latest.action_state == "succeeded"
+            assert last_event is not None and last_event.state == "confirmed"
+            db.delete(latest)
+            db.delete(last_event)
+        else:
+            from services.coworker.models import Transaction
+            row = db.get(Transaction, transaction_id)
+            assert row is not None and row.state == "confirmed"
+            row.state = "failed"
+
+    # Contiguous event sequence and matching *remaining* receipts are not
+    # enough. Neither history nor sync may serve/recreate a false settlement.
+    with pytest.raises(CoworkerError) as blocked_history:
+        container.transactions.execution_surface(owner, transaction_id)
+    assert blocked_history.value.code == "transaction_evidence_integrity_failed"
+    with pytest.raises(CoworkerError) as blocked_sync:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert blocked_sync.value.code == "transaction_evidence_integrity_failed"
+    with container.repository.sessions() as db:
+        rows = db.scalars(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        ).all()
+    assert len(rows) == (1 if tamper == "erase_latest_pair" else 2)
+
+
 def test_terms_cannot_change_after_external_action_is_bound(container):
     enable_transactions(container)
     owner = account(container, "tx05-locked-terms")
