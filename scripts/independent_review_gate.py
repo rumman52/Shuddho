@@ -45,8 +45,9 @@ def require_current_head_review(
     if head["sha"] != expected_head_sha:
         raise ReviewGateError("Pull request head changed since the workflow started")
 
-    latest: dict[str, dict] = {}
-    for item in sorted(reviews, key=lambda r: r.get("id", -1) if isinstance(r, dict) else -1):
+    # Validate before sorting: untrusted mixed-type IDs must fail closed
+    # as ReviewGateError rather than raising an uncontrolled TypeError.
+    for item in reviews:
         if (
             not isinstance(item, dict)
             or type(item.get("id")) is not int
@@ -56,6 +57,9 @@ def require_current_head_review(
             or item.get("state") not in REVIEW_STATES
         ):
             raise ReviewGateError("Malformed review data")
+
+    latest: dict[str, dict] = {}
+    for item in sorted(reviews, key=lambda r: r["id"]):
         if item["state"] in {"PENDING", "COMMENTED"}:
             continue
         latest[item["user"]["login"].casefold()] = item
