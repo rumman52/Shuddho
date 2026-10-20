@@ -271,13 +271,14 @@ class ContextService:
             if source["state"] != "active":
                 invalidated.append({
                     "source_id": source["source_id"],
-                    "label": source.get("label", "Unavailable source"),
+                    "label": filter_sensitive(source.get("label", "Unavailable source"))[0],
                     "reason": source["reason"],
                 })
                 continue
             if not self._source_current(owner, source):
                 invalidated.append({
-                    "source_id": source["source_id"], "label": source["label"],
+                    "source_id": source["source_id"],
+                    "label": filter_sensitive(source["label"])[0],
                     "reason": "unavailable_or_changed",
                 })
                 continue
@@ -300,7 +301,8 @@ class ContextService:
             # the model even if a previously authorized read returned bytes.
             if not self._source_current(owner, source):
                 invalidated.append({
-                    "source_id": source["source_id"], "label": source["label"],
+                    "source_id": source["source_id"],
+                    "label": filter_sensitive(source["label"])[0],
                     "reason": "unavailable_or_changed",
                 })
                 continue
