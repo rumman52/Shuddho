@@ -252,12 +252,10 @@ class ConnectorReadRepository:
             return self._grant_dto(row)
 
     def cursor(self, owner: str, grant_id: str) -> dict:
-        self.permission_gateway.validate_read_grant(
-            owner,
-            grant_id,
-            audience=CONNECTOR_READ_AUDIENCE,
-        )
-        with self.sessions() as db:
+        with self.sessions.begin() as db:
+            self.permission_gateway.validate_read_grant_in_session(
+                db, owner, grant_id, audience=CONNECTOR_READ_AUDIENCE
+            )
             row = db.scalar(select(ConnectorCursor).where(
                 ConnectorCursor.grant_id == grant_id,
                 ConnectorCursor.owner_id == owner,
@@ -272,6 +270,9 @@ class ConnectorReadRepository:
 
     def reset_cursor(self, owner: str, grant_id: str) -> None:
         with self.sessions.begin() as db:
+            self.permission_gateway.validate_read_grant_in_session(
+                db, owner, grant_id, audience=CONNECTOR_READ_AUDIENCE
+            )
             row = db.scalar(select(ConnectorCursor).where(
                 ConnectorCursor.grant_id == grant_id,
                 ConnectorCursor.owner_id == owner,
@@ -305,6 +306,11 @@ class ConnectorReadRepository:
                 502,
             )
         with self.sessions.begin() as db:
+            # Recheck current authority after the provider read and keep the
+            # connection/grant locks through snapshot and cursor persistence.
+            self.permission_gateway.validate_read_grant_in_session(
+                db, owner, grant_id, audience=CONNECTOR_READ_AUDIENCE
+            )
             grant = db.scalar(select(ConnectorReadGrant).where(
                 ConnectorReadGrant.id == grant_id,
                 ConnectorReadGrant.owner_id == owner,
@@ -315,12 +321,6 @@ class ConnectorReadRepository:
             ).with_for_update())
             if grant is None or cursor is None:
                 raise not_found()
-            if grant.state != "active" or aware(grant.expires_at) <= utcnow():
-                raise CoworkerError(
-                    "connector_read_revoked",
-                    "This connected read authorization is no longer active.",
-                    409,
-                )
             if cursor.cursor != expected_cursor:
                 raise CoworkerError(
                     "connector_sync_conflict",
@@ -350,6 +350,7 @@ class ConnectorReadRepository:
                     ignored += 1
                     continue
                 current = db.scalar(select(ConnectorSnapshot).where(
+                    ConnectorSnapshot.owner_id == owner,
                     ConnectorSnapshot.grant_id == grant_id,
                     ConnectorSnapshot.provider_resource_id == resource_id,
                 ).with_for_update())
@@ -422,12 +423,12 @@ class ConnectorReadRepository:
         *,
         limit: int = 20,
     ) -> list[dict]:
-        self.permission_gateway.validate_read_grant(
-            owner,
-            grant_id,
-            audience=CONNECTOR_READ_AUDIENCE,
-        )
-        with self.sessions() as db:
+        # Keep authorization locks held through the protected payload read so
+        # revocation cannot commit between validation and snapshot retrieval.
+        with self.sessions.begin() as db:
+            self.permission_gateway.validate_read_grant_in_session(
+                db, owner, grant_id, audience=CONNECTOR_READ_AUDIENCE
+            )
             rows = db.scalars(select(ConnectorSnapshot).where(
                 ConnectorSnapshot.owner_id == owner,
                 ConnectorSnapshot.grant_id == grant_id,
@@ -437,7 +438,6 @@ class ConnectorReadRepository:
                 "id": row.id,
                 "grant_id": row.grant_id,
                 "provider": row.provider,
-                "capability": row.capability,
                 "provider_resource_id": row.provider_resource_id,
                 "provider_version": row.provider_version,
                 "sha256": row.content_sha256,
