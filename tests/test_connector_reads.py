@@ -453,6 +453,7 @@ def test_snapshot_read_keeps_authorization_locks_through_payload_query(
 
     snapshots = repo.snapshots(owner, grant["id"])
     assert len(snapshots) == 1
+    assert snapshots[0]["capability"] == "email_read"
     assert observed_sessions
 
 
