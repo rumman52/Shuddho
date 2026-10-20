@@ -30,6 +30,7 @@ from urllib.request import Request, urlopen
 REQUIRED_JOBS = frozenset({'test-and-build', 'coworker', 'ci-merge-gate'})
 REPO_PATTERN = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
 BRANCH = 'main'
+GITHUB_ACTIONS_APP_ID = 15368  # GitHub Actions first-party app; pinned CI status source
 
 
 def _enabled(value: object) -> bool:
@@ -67,17 +68,23 @@ def _missing_status_checks(policy: object, *, ruleset: bool) -> list[str]:
     strict_key = 'strict_required_status_checks_policy' if ruleset else 'strict'
     if policy.get(strict_key) is not True:
         issues.append('strict_required_checks_missing')
-    if ruleset:
-        checks = policy.get('required_status_checks')
-        contexts = [c.get('context') for c in checks if isinstance(c, dict)] if isinstance(checks, list) else []
-    else:
-        contexts = policy.get('contexts', [])
-        checks = policy.get('checks', [])
-        contexts = (contexts if isinstance(contexts, list) else []) + ([c.get('context') for c in checks if isinstance(c, dict)] if isinstance(checks, list) else [])
-    missing = sorted(REQUIRED_JOBS - {s for s in contexts if isinstance(s, str)})
-    issues.extend(f'missing_required_checks:{name}' for name in missing)
+    source_key = 'integration_id' if ruleset else 'app_id'
+    checks = policy.get('required_status_checks' if ruleset else 'checks')
+    listed = [item for item in checks if isinstance(item, dict)] if isinstance(checks, list) else []
+    contexts = [item.get('context') for item in listed]
+    if not ruleset and isinstance(policy.get('contexts'), list):
+        contexts += policy['contexts']
+    for name in sorted(REQUIRED_JOBS):
+        if name not in contexts:
+            issues.append(f'missing_required_checks:{name}')
+            continue
+        matching = [item for item in listed if item.get('context') == name]
+        if not matching or any(
+            type(item.get(source_key)) is not int
+            or item[source_key] != GITHUB_ACTIONS_APP_ID for item in matching
+        ):
+            issues.append(f'required_check_source_unpinned:{name}')
     return issues
-
 
 def _branch_protection_findings(protection: object) -> list[str]:
     if not isinstance(protection, dict) or protection.get('message'):
