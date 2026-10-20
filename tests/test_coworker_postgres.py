@@ -2,6 +2,8 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import timedelta
+from threading import Event, get_ident
 from uuid import uuid4
 
 import pytest
@@ -9,12 +11,22 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytestmark = [pytest.mark.coworker_integration, pytest.mark.skipif(not os.getenv("SHUDDHO_TEST_POSTGRES_URL"), reason="Dedicated PostgreSQL test database required")]
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from services.coworker.auth import Principal
 from services.coworker.config import Settings
+from services.coworker.connector_reads import ConnectorReadRepository
+from services.coworker.connector_registry import connector_read_capability
 from services.coworker.database import session_factory
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
+from services.coworker.models import (
+    Connection,
+    ConnectorCursor,
+    ConnectorReadGrant,
+    ConnectorSnapshot,
+    utcnow,
+)
+from services.coworker.permission_gateway import PermissionGateway
 from services.coworker.repository import Repository
 from services.coworker.schemas import TaskCreate
 
@@ -91,6 +103,137 @@ def test_migrations_use_private_schema_and_repeat_safely(repository):
             "provider",
             "action_kind",
         } <= link_columns
+
+
+def test_connected_snapshot_read_serializes_with_grant_revocation(
+    repository, monkeypatch
+):
+    owner_id = owner(repository)
+    settings = replace(repository.settings, connector_reads_enabled=True)
+    permissions = PermissionGateway(repository.sessions, settings)
+    reads = ConnectorReadRepository(repository.sessions, settings, permissions)
+    spec = connector_read_capability("google", "email_read")
+    connection_id = str(uuid4())
+    grant_id = str(uuid4())
+    now = utcnow()
+
+    with repository.sessions.begin() as db:
+        db.add(Connection(
+            id=connection_id,
+            owner_id=owner_id,
+            provider="google",
+            capability="email_read",
+            subject="postgres-read-subject",
+            email="postgres-read@example.test",
+            scopes=list(spec.required_scopes),
+            token_ciphertext="sealed-test-credential",
+            active=True,
+        ))
+        db.add(ConnectorReadGrant(
+            id=grant_id,
+            owner_id=owner_id,
+            connection_id=connection_id,
+            idempotency_key="postgres-read-" + grant_id,
+            fingerprint="a" * 64,
+            provider="google",
+            capability="email_read",
+            operation=spec.operation,
+            contract_version=spec.version,
+            audience=spec.audience,
+            required_scopes=list(spec.required_scopes),
+            purpose="agent_context",
+            destination="planner_context",
+            state="active",
+            expires_at=now + timedelta(hours=1),
+        ))
+        db.add(ConnectorCursor(
+            grant_id=grant_id,
+            owner_id=owner_id,
+            connection_id=connection_id,
+            provider="google",
+            capability="email_read",
+            cursor="cursor-1",
+            generation=1,
+            state="active",
+        ))
+        db.add(ConnectorSnapshot(
+            id=str(uuid4()),
+            owner_id=owner_id,
+            grant_id=grant_id,
+            connection_id=connection_id,
+            provider="google",
+            capability="email_read",
+            provider_resource_id="message-1",
+            provider_version="1",
+            content_sha256="b" * 64,
+            payload={"subject": "private snapshot"},
+            state="active",
+        ))
+
+    authorization_held = Event()
+    release_snapshot_read = Event()
+    revoke_started = Event()
+    revoke_lock_attempted = Event()
+    revoke_thread_id = []
+    original_validate = permissions.validate_read_grant_in_session
+    original_revoke = reads.revoke
+    engine = repository.sessions.kw["bind"]
+
+    def pause_after_validation(db, current_owner, current_grant, *, audience):
+        result = original_validate(
+            db, current_owner, current_grant, audience=audience
+        )
+        authorization_held.set()
+        if not release_snapshot_read.wait(timeout=10):
+            raise AssertionError("test did not release the protected snapshot read")
+        return result
+
+    def observed_revoke(current_owner, current_grant):
+        revoke_thread_id.append(get_ident())
+        revoke_started.set()
+        return original_revoke(current_owner, current_grant)
+
+    def observe_revoke_lock(
+        _connection, _cursor, statement, _parameters, _context, _executemany
+    ):
+        if (
+            revoke_thread_id
+            and get_ident() == revoke_thread_id[0]
+            and "cw_connector_read_grants" in statement
+            and "FOR UPDATE" in statement.upper()
+        ):
+            revoke_lock_attempted.set()
+
+    monkeypatch.setattr(
+        permissions, "validate_read_grant_in_session", pause_after_validation
+    )
+    monkeypatch.setattr(reads, "revoke", observed_revoke)
+    event.listen(engine, "before_cursor_execute", observe_revoke_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            read_future = pool.submit(reads.snapshots, owner_id, grant_id)
+            try:
+                assert authorization_held.wait(timeout=5)
+                revoke_future = pool.submit(reads.revoke, owner_id, grant_id)
+                assert revoke_started.wait(timeout=5)
+                assert revoke_lock_attempted.wait(timeout=5)
+                # Revoke must wait on the grant lock held by the snapshot transaction.
+                with pytest.raises(TimeoutError):
+                    revoke_future.result(timeout=0.2)
+            finally:
+                release_snapshot_read.set()
+            snapshots = read_future.result(timeout=5)
+            revoked = revoke_future.result(timeout=5)
+    finally:
+        release_snapshot_read.set()
+        event.remove(engine, "before_cursor_execute", observe_revoke_lock)
+
+    assert snapshots[0]["payload"] == {"subject": "private snapshot"}
+    assert revoked["state"] == "revoked"
+    with repository.sessions() as db:
+        persisted = db.get(ConnectorReadGrant, grant_id)
+        assert persisted is not None
+        assert persisted.state == "revoked"
 
 
 def test_simultaneous_retries_share_one_task_and_usage_record(repository):
