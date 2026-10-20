@@ -306,6 +306,22 @@ def test_outcome_unknown_never_retries_and_late_receipt_can_confirm(container):
     assert unknown["transaction"]["state"] == "outcome_unknown"
     assert unknown["evidence"]["receipt"] is None
 
+    # Repeated inconclusive provider checks are not new outcome evidence.
+    # A fresh error/timestamp must not create a second unknown settlement.
+    container.actions.repo.finish(
+        action["id"],
+        "outcome_unknown",
+        error_code="reconciliation_no_receipt",
+    )
+    still_same = container.transactions.sync_external_action(owner, transaction_id)
+    assert still_same["transaction"]["state"] == "outcome_unknown"
+    assert still_same["evidence"]["error_code"] == "provider_timeout"
+    assert still_same["evidence"]["evidence_sha256"] == unknown["evidence"]["evidence_sha256"]
+    assert len(container.transactions.execution_surface(
+        owner,
+        transaction_id,
+    )["evidence"]) == 1
+
     # A late unverified failure must not turn uncertain external settlement
     # into an apparent definitive transaction failure or append false evidence.
     container.actions.repo.finish(

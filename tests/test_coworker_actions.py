@@ -444,6 +444,39 @@ def test_late_failure_cannot_resolve_uncertain_provider_outcome_without_evidence
     assert repo.get(owner, action["id"])["state"] == "succeeded"
 
 
+def test_repeated_inconclusive_reconciliation_preserves_action_evidence(container):
+    enable_actions(container)
+    repo, owner = container.actions.repo, account(container)
+    action = approved(repo, owner)
+    assert repo.claim_execution(action["id"]) is not None
+    repo.finish(action["id"], "outcome_unknown", error_code="provider_timeout")
+    before = repo.get(owner, action["id"])
+    with repo.sessions() as db:
+        original_audits = len(db.scalars(select(AuditEvent).where(
+            AuditEvent.resource_id == action["id"],
+            AuditEvent.action == "action.outcome_unknown",
+        )).all())
+
+    # No new provider receipt: an inconclusive read-only reconciliation must
+    # not manufacture a new outcome timestamp, replace the original error,
+    # or append another outcome audit/checkpoint.
+    repo.finish(action["id"], "outcome_unknown", error_code="reconciliation_no_receipt")
+    after = repo.get(owner, action["id"])
+    assert after["state"] == "outcome_unknown"
+    assert after["error_code"] == before["error_code"] == "provider_timeout"
+    assert after["finished_at"] == before["finished_at"]
+    assert repo.claim_execution(action["id"]) is None
+    with repo.sessions() as db:
+        assert len(db.scalars(select(AuditEvent).where(
+            AuditEvent.resource_id == action["id"],
+            AuditEvent.action == "action.outcome_unknown",
+        )).all()) == original_audits
+
+    # A real confirmed receipt still resolves the uncertain action.
+    repo.finish(action["id"], "succeeded", receipt={"provider_id": "later-confirmed"})
+    assert repo.get(owner, action["id"])["state"] == "succeeded"
+
+
 def test_disconnect_between_token_lookup_and_send_prevents_mutation(container):
     provider = enable_actions(container)
     repo, owner = container.actions.repo, account(container)
