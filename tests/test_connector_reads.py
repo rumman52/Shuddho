@@ -48,7 +48,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
 
 
 class ReadGoogle:
@@ -276,6 +276,10 @@ def test_read_grant_admission_rechecks_connection_after_preflight(
         assert db.scalar(select(ConnectorReadGrant).where(
             ConnectorReadGrant.owner_id == owner,
             ConnectorReadGrant.idempotency_key == idempotency_key,
+        )) is None
+        assert db.scalar(select(ConnectorCursor).where(
+            ConnectorCursor.owner_id == owner,
+            ConnectorCursor.connection_id == connection_id,
         )) is None
 
 
