@@ -178,6 +178,17 @@ jobs:
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_conversation_dispatch
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_coworker_postgres
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_coworker
+      - name: Verify connected-read authorization and revocation without skips
+        run: |
+          uv run --extra coworker pytest tests/test_connector_reads.py tests/test_permission_gateway.py -q -rs --junitxml=/tmp/connected-read-authority.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/connected-read-authority.xml --required-module tests.test_connector_reads
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/connected-read-authority.xml --required-module tests.test_permission_gateway
+      - name: Keep connected-read authority evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connected-read-authority-evidence
+          path: /tmp/connected-read-authority.xml
       - name: Qualify CW-11 trusted skill registry and staging collector without skips
         run: |
           uv run --extra coworker pytest tests/test_cw11_registry.py tests/test_cw11_registry_postgres.py tests/test_cw11_staging_evidence.py -q -rs --junitxml=/tmp/cw11-registry.xml
