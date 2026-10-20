@@ -19,7 +19,7 @@ from test_transaction_terms import terms
 
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
-from services.coworker.models import TransactionExecutionLink, TransactionReconciliationEvidence, utcnow
+from services.coworker.models import TransactionExecutionLink, TransactionReconciliationEvidence, TransactionTermsSnapshot, utcnow
 from services.coworker.transaction_repository import TransactionDraft
 
 
@@ -552,6 +552,66 @@ def test_account_erasure_removes_transaction_execution_evidence(container):
             )
         ) is None
 
+
+
+
+
+def tamper_terms_snapshot(container, confirmed):
+    binding = confirmed["review_binding"]
+    with container.repository.sessions.begin() as db:
+        row = db.get(
+            TransactionTermsSnapshot,
+            (binding["transaction_id"], binding["terms_revision"]),
+        )
+        assert row is not None
+        changed_terms = [dict(item) for item in row.terms]
+        changed_terms[0]["value"] = "Tampered room description"
+        row.terms = changed_terms
+
+
+def test_tampered_terms_block_bound_action_approval(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-tampered-before-approval")
+    confirmed = reviewed_transaction(container, owner, "tx05-tampered-before-approval")
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-tampered-before-approval-action",
+    )
+    tamper_terms_snapshot(container, confirmed)
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.actions.repo.approve(
+            owner,
+            action["id"],
+            action["preview_hash"],
+        )
+    assert blocked.value.code == "transaction_terms_integrity_failed"
+    assert container.actions.repo.get(owner, action["id"])["state"] == "awaiting_approval"
+
+
+def test_tampered_terms_after_approval_block_provider_execution(container):
+    enable_transactions(container)
+    owner = account(container, "tx05-tampered-after-approval")
+    confirmed = reviewed_transaction(container, owner, "tx05-tampered-after-approval")
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        "tx05-tampered-after-approval-action",
+    )
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    tamper_terms_snapshot(container, confirmed)
+
+    assert container.actions.repo.claim_execution(approved["id"]) is None
+    result = container.actions.repo.get(owner, action["id"])
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "transaction_terms_integrity_failed"
 
 
 def test_quote_expiry_after_approval_blocks_provider_claim(container):

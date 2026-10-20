@@ -184,6 +184,50 @@ def test_fresh_terms_survive_state_revisions_but_expired_quote_blocks_review(con
     assert expired.value.code == "transaction_quote_expired"
 
 
+@pytest.mark.parametrize("tampered_field", ["terms", "price"])
+def test_review_binding_rejects_tampered_stored_terms_snapshot(container, tampered_field):
+    enable_transactions(container)
+    owner = account(container, f"tx03-integrity-{tampered_field}")
+    transaction = create_transaction(container, owner, f"tx03-integrity-{tampered_field}")
+    saved = container.transactions.set_terms(
+        owner,
+        transaction["id"],
+        1,
+        terms(),
+    )
+    review = container.transactions.start_review(
+        owner,
+        transaction["id"],
+        saved["transaction"]["revision"],
+    )
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(
+            TransactionTermsSnapshot,
+            (transaction["id"], saved["terms"]["revision"]),
+        )
+        assert row is not None
+        if tampered_field == "terms":
+            changed_terms = [dict(item) for item in row.terms]
+            changed_terms[0]["value"] = "Tampered room description"
+            row.terms = changed_terms
+        else:
+            changed_price = dict(row.price)
+            changed_price["subtotal_minor"] -= 1
+            changed_price["total_minor"] -= 1
+            row.price = changed_price
+            row.total_minor -= 1
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.transactions.review_binding(
+            owner,
+            transaction["id"],
+            review["revision"],
+            expected_terms_sha256=saved["terms"]["terms_sha256"],
+        )
+    assert blocked.value.code == "transaction_terms_integrity_failed"
+
+
 def test_changed_terms_force_fresh_review_and_old_hash_is_rejected(container):
     enable_transactions(container)
     owner = account(container, "tx03-change")
