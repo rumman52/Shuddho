@@ -1,3 +1,13 @@
+## V-01 continuation — independent review submission evidence (21 October 2026, Asia/Dhaka)
+
+- Refreshed main `d335fe98dcd277daa02011c0900ad957f62e7495` was the merge commit of PR #521. [Exact-head CI #39481714982](https://github.com/rumman52/Shuddho/actions/runs/39481714982): `test-and-build` passed at 19:16:21 UTC; PR #521 **merged at 19:26:14 UTC without submitted reviews**; `coworker` was cancelled at 19:27:28 UTC and `ci-merge-gate` failed at 19:27:36 UTC. Both were **post-merge** outcomes. V-01 native governance is still blocked [#484](https://github.com/rumman52/Shuddho/issues/484#issuecomment-6299558811).
+- Chosen bounded source defect: `scripts/independent_review_gate.py` did not verify submission timestamps for APPROVED/CHANGES_REQUESTED/DISMISSED reviews or reject duplicate review IDs. These are malformed-evidence acceptance gaps, **not** the cause or cure of the native settings misconfiguration.
+- Draft [PR #522](https://github.com/rumman52/Shuddho/pull/522). Test-only SHA `4b5848c4088f672c7e86521413aee7d3afe4888d` produced authoritative [RED #39484280083](https://github.com/rumman52/Shuddho/actions/runs/39484280083): **6 expected failures, 1,256 passed, 71 skipped**. Fix SHA `e907878b3b5cca3252405131637f20f5792d0cf4` adds timezone-aware submitted-at and globally unique review-ID validation, preserving nonactionable PENDING/COMMENTED semantics.
+- [Bounded task contract](V01_REVIEW_SUBMISSION_EVIDENCE_2026-10-21.md). At checkpoint, exact-final-head **GREEN and mandatory coworker** must be independently read from GitHub Actions. A test-only red result is not verification of implementation; a green `test-and-build` alone is not a green full workflow.
+- **Do not merge**: owner/admin main branch controls and independent final-head human review are not proven; V-01 [#484](https://github.com/rumman52/Shuddho/issues/484) remains OPEN. No new permissions, releases, credentials, providers, production/staging deployments, or cost.
+
+---
+
 ## V-01 continuation — workflow provenance binding for merge evidence (21 October 2026, Asia/Dhaka)
 
 - Refreshed `main` at start: `25c79968d763ce8d5bdba53ed0d0d66ba7bb2562` after #520. The #520 draft was merged at **19:03:54 UTC** on 20 October 2026 **without reviews**, after `test-and-build` succeeded (18:59:43) but **before** `coworker` finished cancelled (19:04:38) and `ci-merge-gate` finished failure (19:04:46) on exact-head [CI #39479360250](https://github.com/rumman52/Shuddho/actions/runs/39479360250). This is a **new governance incident**, not V-01 acceptance.

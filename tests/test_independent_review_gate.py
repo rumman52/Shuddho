@@ -35,6 +35,7 @@ def review(
         "state": state,
         "commit_id": sha,
         "author_association": association,
+        "submitted_at": "2026-10-20T18:20:00Z",
     }
 
 
@@ -227,3 +228,41 @@ def test_live_review_cannot_rehabilitate_invalid_initial_snapshot(monkeypatch, i
 
     with pytest.raises(gate.ReviewGateError):
         gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
+
+
+@pytest.mark.parametrize("bad_submitted", [None, "not-a-timestamp", "2026-10-20T18:20:00"])
+def test_unproven_actionable_review_submission_is_never_an_approval(bad_submitted):
+    # APPROVED is not valid evidence if its submission cannot be dated.
+    item = review()
+    item["submitted_at"] = bad_submitted
+    with pytest.raises(ReviewGateError, match="submission"):
+        require_current_head_review(pull(), [item], HEAD)
+
+
+def test_actionable_approval_without_submission_field_fails_closed():
+    item = review()
+    del item["submitted_at"]
+    with pytest.raises(ReviewGateError, match="submission"):
+        require_current_head_review(pull(), [item], HEAD)
+
+
+def test_malformed_dismissed_review_cannot_be_ignored_beside_good_approval():
+    dismissed = review(id=2, login="other-maintainer", state="DISMISSED")
+    dismissed.pop("submitted_at")
+    with pytest.raises(ReviewGateError, match="submission"):
+        require_current_head_review(pull(), [review(), dismissed], HEAD)
+
+
+def test_duplicate_review_ids_across_review_pages_fail_closed():
+    # GitHub review ids are globally unique; conflicting duplicates must not
+    # be used to infer a latest approval.
+    with pytest.raises(ReviewGateError, match="duplicate"):
+        require_current_head_review(pull(), [review(), review(id=1, login="other")], HEAD)
+
+
+def test_pending_and_comment_reviews_need_not_have_submission_timestamps():
+    pending = review(id=2, state="PENDING", login="other")
+    pending.pop("submitted_at")
+    comment = review(id=3, state="COMMENTED", login="other")
+    comment.pop("submitted_at")
+    assert require_current_head_review(pull(), [review(), pending, comment], HEAD) == "independent-maintainer"
