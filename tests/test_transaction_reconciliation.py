@@ -306,6 +306,18 @@ def test_outcome_unknown_never_retries_and_late_receipt_can_confirm(container):
     assert unknown["transaction"]["state"] == "outcome_unknown"
     assert unknown["evidence"]["receipt"] is None
 
+    # A late unverified failure must not turn uncertain external settlement
+    # into an apparent definitive transaction failure or append false evidence.
+    container.actions.repo.finish(
+        action["id"],
+        "failed",
+        error_code="worker_restarted",
+    )
+    still_unknown = container.transactions.sync_external_action(owner, transaction_id)
+    assert still_unknown["transaction"]["state"] == "outcome_unknown"
+    assert still_unknown["evidence"]["action_state"] == "outcome_unknown"
+    assert still_unknown["evidence"]["evidence_sha256"] == unknown["evidence"]["evidence_sha256"]
+
     with pytest.raises(CoworkerError) as unavailable:
         container.transactions.reconciliation_action_id(owner, transaction_id)
     assert unavailable.value.code == "reconciliation_unavailable"
