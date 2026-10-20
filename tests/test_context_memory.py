@@ -558,3 +558,45 @@ def test_conversation_context_never_imports_unselected_prior_workspace_tasks(con
     assert context["budget"]["used_bytes"] == 0
     assert admitted["run_id"] != direct["id"]
 
+
+
+def test_retrieved_prior_task_labels_never_leak_secret_metadata(container):
+    """Planner and API context labels must obey retrieved-text redaction policy."""
+    enable_pa04(container)
+    alice = owner(container, "p02-label-redaction")
+    secret = "multi word private deployment token"
+    task, _ = container.repository.create_task(
+        alice,
+        TaskCreate(
+            instruction=f'Deployment status api_key="{secret}" summary',
+            notes="Deployment status progress report.",
+            output_language="en",
+        ),
+        "p02-label-source",
+        enqueue=False,
+    )
+    with container.repository.sessions.begin() as db:
+        record = db.get(Task, task["id"])
+        record.state = "completed"
+        record.phase = "complete"
+        record.updated_at = utcnow()
+
+    run, _ = container.agent.create(
+        alice,
+        AgentRunCreate(goal="Summarize deployment status progress.", output_language="en"),
+        "p02-label-run",
+    )
+    planner, _ = container.context.planner_context(alice, run["id"])
+    view = container.context.for_run(alice, run["id"])
+    planner_labels = [
+        item["label"] for item in planner["items"]
+        if item["source_type"] == "prior_task"
+    ]
+    public_labels = [
+        item["label"] for item in view["items"]
+        if item["precedence"] == "prior_task"
+    ]
+    assert planner_labels and public_labels
+    for label in planner_labels + public_labels:
+        assert secret not in label
+        assert "api_key=[REDACTED]" in label
