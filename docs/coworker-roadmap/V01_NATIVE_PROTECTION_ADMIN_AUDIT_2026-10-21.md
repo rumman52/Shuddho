@@ -17,6 +17,35 @@ The merged [PR #524](https://github.com/rumman52/Shuddho/pull/524) did **not** m
 
 This script deliberately **does not** infer settings from workflow YAML, mix partial unrelated rules into a fictional compliant policy, or mark V-01 qualified.
 
+## V-01 follow-up: pin CI status check sources (21 October 2026)
+
+The initial diagnostic accepted a required job name without proving the origin of
+its status. GitHub documents that write-authorized actors/integrations can set
+commit statuses, and selecting **any source** for a required check permits a
+same-named result from another actor. This follow-up closes that *diagnostic*
+false-positive; it does not change GitHub settings.
+
+- For branch protection, each of the three mandatory checks must appear in
+  `required_status_checks.checks[]` with its `app_id` equal to the
+  first-party GitHub Actions application ID, **15368**.
+- For active rulesets, each check must have `integration_id: 15368` in
+  the `required_status_checks` rule parameters.
+- Legacy `contexts[]` strings without pinned source metadata, null or -1
+  (any source), different IDs, bool/string IDs, and duplicate same-name
+  entries with mixed sources are all classified **blocked**.
+- Confirm the genuine producer identity in live GitHub check-run metadata
+  before configuring policy. If GitHub changes the first-party app identity,
+  update this known ID only after independent verification; do not simply
+  weaken source matching to get a candidate.
+- The script still emits exit 2 for blocked, or exit 3 for an unverified
+  configuration candidate. A green audit is **not** native protection,
+  independent approval, live negative-control evidence or release authority.
+
+References:
+- https://docs.github.com/en/rest/branches/branch-protection
+- https://docs.github.com/en/rest/repos/rules
+- https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
+
 ## Run in a trusted administrator terminal
 
 Option A: read-only live evidence. Use a token with permission to **read** repository administration metadata. Never put it in command output or issue comments:
