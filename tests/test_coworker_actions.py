@@ -421,6 +421,29 @@ def test_disconnect_and_preflight_failure_cannot_rewrite_inflight_result(contain
     assert not provider.sent
 
 
+def test_late_failure_cannot_resolve_uncertain_provider_outcome_without_evidence(container):
+    provider = enable_actions(container)
+    repo, owner = container.actions.repo, account(container)
+    action = approved(repo, owner)
+    assert repo.claim_execution(action["id"]) is not None
+    repo.finish(action["id"], "outcome_unknown", error_code="provider_timeout")
+    prior = repo.get(owner, action["id"])
+    assert prior["state"] == "outcome_unknown"
+
+    # A late failure cannot establish that a timed-out provider mutation did
+    # not take effect. Only a confirmed provider receipt can resolve uncertainty.
+    repo.finish(action["id"], "failed", error_code="worker_restarted")
+    after = repo.get(owner, action["id"])
+    assert after["state"] == "outcome_unknown"
+    assert after["error_code"] == "provider_timeout"
+    assert after["finished_at"] == prior["finished_at"]
+    assert repo.claim_execution(action["id"]) is None
+    assert not provider.sent
+
+    repo.finish(action["id"], "succeeded", receipt={"provider_id": "late-confirmed"})
+    assert repo.get(owner, action["id"])["state"] == "succeeded"
+
+
 def test_disconnect_between_token_lookup_and_send_prevents_mutation(container):
     provider = enable_actions(container)
     repo, owner = container.actions.repo, account(container)
