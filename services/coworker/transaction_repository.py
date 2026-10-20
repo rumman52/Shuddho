@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
