@@ -863,6 +863,53 @@ class TransactionRepository:
                 409,
             )
 
+    def _verify_execution_history(
+        self,
+        db,
+        row: Transaction,
+        link: TransactionExecutionLink,
+        evidence: list[TransactionReconciliationEvidence],
+    ) -> None:
+        """Cross-check evidence sequence/revisions against durable transaction events.
+
+        Evidence hashes cover the provider outcome, not ordering metadata.
+        Each new evidence row is committed alongside one observed event.
+        Check both ledgers before projecting or exposing historical outcomes.
+        """
+        events = db.scalars(
+            select(TransactionEvent).where(
+                TransactionEvent.transaction_id == row.id,
+                TransactionEvent.owner_id == row.owner_id,
+                TransactionEvent.event_type == "transaction_execution_observed",
+            ).order_by(TransactionEvent.sequence)
+        ).all()
+        if len(events) != len(evidence):
+            raise CoworkerError(
+                "transaction_evidence_integrity_failed",
+                "Saved transaction reconciliation evidence failed integrity verification.",
+                409,
+            )
+        for expected_sequence, (saved, event) in enumerate(
+            zip(evidence, events), start=1
+        ):
+            self._verify_execution_evidence(saved, link)
+            details = event.details if isinstance(event.details, dict) else {}
+            if (
+                saved.sequence != expected_sequence
+                or saved.transaction_revision != event.revision
+                or saved.transaction_revision < link.transaction_revision
+                or saved.transaction_revision > row.revision
+                or event.state != self._projected_transaction_state(saved.action_state)
+                or details.get("external_action_id") != saved.external_action_id
+                or details.get("action_state") != saved.action_state
+                or details.get("evidence_sha256") != saved.evidence_sha256
+            ):
+                raise CoworkerError(
+                    "transaction_evidence_integrity_failed",
+                    "Saved transaction reconciliation evidence failed integrity verification.",
+                    409,
+                )
+
     @staticmethod
     def _evidence_dto(row: TransactionReconciliationEvidence) -> dict:
         return {
@@ -1221,10 +1268,9 @@ class TransactionRepository:
                 select(TransactionReconciliationEvidence).where(
                     TransactionReconciliationEvidence.transaction_id == row.id,
                     TransactionReconciliationEvidence.owner_id == owner,
-                )
+                ).order_by(TransactionReconciliationEvidence.sequence)
             ).all()
-            for saved in prior_evidence:
-                self._verify_execution_evidence(saved, link)
+            self._verify_execution_history(db, row, link, prior_evidence)
 
             target = self._projected_transaction_state(action.state)
             if not self._state_projection_allowed(row.state, target):
@@ -1283,8 +1329,7 @@ class TransactionRepository:
                 )
                 .order_by(TransactionReconciliationEvidence.sequence)
             ).all()
-            for saved in evidence:
-                self._verify_execution_evidence(saved, link)
+            self._verify_execution_history(db, row, link, evidence)
             action = db.scalar(
                 select(ExternalAction).where(
                     ExternalAction.id == link.external_action_id,
