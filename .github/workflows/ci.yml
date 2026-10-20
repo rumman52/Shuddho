@@ -115,6 +115,16 @@ jobs:
           uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_reconciliation_boundary
           uv run python -m scripts.mandatory_test_gate /tmp/transaction-safety.xml --required-module tests.test_transaction_mutation_guard
           uv run pytest tests/test_mandatory_test_gate.py -q
+      - name: Verify TX-03 stored transaction terms integrity without skips
+        run: |
+          uv run --extra coworker pytest \
+            tests/test_transaction_terms.py::test_review_binding_rejects_tampered_stored_terms_snapshot \
+            tests/test_transaction_reconciliation.py::test_tampered_terms_block_bound_action_approval \
+            tests/test_transaction_reconciliation.py::test_tampered_terms_after_approval_block_provider_execution \
+            -q -rs --junitxml=/tmp/tx03-terms-integrity.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/tx03-terms-integrity.xml --required-module tests.test_transaction_terms
+          uv run python -m scripts.mandatory_test_gate /tmp/tx03-terms-integrity.xml --required-module tests.test_transaction_reconciliation
+
       - name: Qualify committed Agent v3 decision recovery without skips
         run: |
           uv run --extra coworker pytest tests/test_agent_v3_decision_recovery.py tests/test_agent_v3_terminal_finality.py -q -rs --junitxml=/tmp/v3-decision-recovery.xml
