@@ -126,3 +126,14 @@ def test_cli_uses_status_two_when_config_is_missing(tmp_path):
         '--branch-protection-json', str(fixture)], capture_output=True, text=True)
     assert proc.returncode == 2
     assert json.loads(proc.stdout)['classification'] == 'blocked'
+
+
+def test_cli_candidate_is_nonzero_until_negative_controls(tmp_path):
+    fixture = tmp_path / 'candidate.json'
+    fixture.write_text(json.dumps(protection()))
+    proc = subprocess.run([sys.executable, '-m', 'scripts.v01_native_protection_audit',
+        '--branch-protection-json', str(fixture)], capture_output=True, text=True)
+    assert proc.returncode == 3
+    output = json.loads(proc.stdout)
+    assert output['classification'] == 'configuration_candidate'
+    assert output['enforcement_verified'] is False
