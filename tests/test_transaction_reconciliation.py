@@ -379,6 +379,73 @@ def test_invalid_success_receipt_fails_closed_without_confirming_transaction(con
 
 
 
+@pytest.mark.parametrize("tampered_field", ["terms", "price"])
+def test_sync_rejects_tampered_persisted_terms_before_receipt_projection(
+    container,
+    tampered_field,
+):
+    """A matching stored hash does not verify the bytes of a persisted snapshot."""
+    enable_transactions(container)
+    owner = account(container, f"tx05-sync-snapshot-integrity-{tampered_field}")
+    confirmed = reviewed_transaction(
+        container,
+        owner,
+        f"tx05-sync-snapshot-integrity-{tampered_field}",
+    )
+    action, _link = bound_action(
+        container,
+        owner,
+        confirmed,
+        f"tx05-sync-snapshot-integrity-action-{tampered_field}",
+    )
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+    approved = container.actions.repo.approve(
+        owner,
+        action["id"],
+        action["preview_hash"],
+    )
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    container.actions.repo.finish(
+        action["id"],
+        "succeeded",
+        receipt={
+            "provider": "google",
+            "status": "accepted_by_gmail",
+            "provider_id": "mail-tx05-integrity",
+            "confirmed_at": utcnow().isoformat(),
+        },
+    )
+
+    binding = confirmed["review_binding"]
+    with container.repository.sessions.begin() as db:
+        row = db.get(
+            TransactionTermsSnapshot,
+            (binding["transaction_id"], binding["terms_revision"]),
+        )
+        assert row is not None
+        if tampered_field == "terms":
+            changed_terms = [dict(item) for item in row.terms]
+            changed_terms[0]["value"] = "Tampered room after execution"
+            row.terms = changed_terms
+        else:
+            # Normalization would conceal this changed stored price at hash check.
+            row.price = {**row.price, "currency": "usd"}
+        # Deliberately retain the old terms_sha256: it matches the execution
+        # link, but no longer authenticates the stored canonical terms.
+
+    before = container.transactions.get(owner, transaction_id)
+    assert before["state"] == "awaiting_approval"
+    with pytest.raises(CoworkerError) as blocked:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert blocked.value.code == "transaction_terms_integrity_failed"
+    after = container.transactions.get(owner, transaction_id)
+    assert after["state"] == before["state"]
+    assert after["revision"] == before["revision"]
+    assert container.transactions.execution_surface(
+        owner, transaction_id
+    )["evidence"] == []
+
+
 def test_terms_cannot_change_after_external_action_is_bound(container):
     enable_transactions(container)
     owner = account(container, "tx05-locked-terms")
