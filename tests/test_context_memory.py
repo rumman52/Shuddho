@@ -604,6 +604,7 @@ def test_retrieved_prior_task_labels_never_leak_secret_metadata(container):
 
 def test_invalidated_workspace_document_label_does_not_expose_secret(container):
     """Expired source metadata is also emitted in API invalidation records."""
+    from sqlalchemy import select
     from services.coworker.models import Document
 
     enable_pa04(container)
@@ -620,7 +621,9 @@ def test_invalidated_workspace_document_label_does_not_expose_secret(container):
     )
     with container.repository.sessions.begin() as db:
         db.get(Document, document["id"]).filename = 'project api_key="multi word private token".txt'
-        version = db.get(DocumentVersion, run["input_versions"][0])
+        version = db.scalar(select(DocumentVersion).where(
+            DocumentVersion.document_id == document["id"]
+        ))
         version.expires_at = utcnow() - timedelta(seconds=1)
 
     view = container.context.for_run(alice, run["id"])
