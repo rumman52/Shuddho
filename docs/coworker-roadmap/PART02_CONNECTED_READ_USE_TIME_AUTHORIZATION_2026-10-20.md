@@ -1,7 +1,10 @@
 # Part 02 — Connected-read use-time authorization and atomic payload access
 
 **Date:** 20 October 2026 (Asia/Dhaka)  
-**Status:** Implemented on review branch; exact-head CI and independent review pending  
+**Status:** Source fix merged in PR #498; PostgreSQL concurrency follow-up pending exact-head CI and independent review  
+**Scope:** A-01 trust boundaries, A-04 current permission enforcement, P-02 revocation
+
+## Objective
 **Scope:** A-01 trust boundaries, A-04 current permission enforcement, P-02 revocation
 
 ## Objective
