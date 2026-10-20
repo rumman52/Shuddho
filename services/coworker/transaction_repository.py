@@ -1160,6 +1160,11 @@ class TransactionRepository:
                     "The linked external action no longer matches the transaction evidence.",
                     409,
                 )
+            # The stored digest may still equal the execution link even if the
+            # persisted terms/price were changed behind that digest. Recompute
+            # their canonical integrity before recording provider evidence or
+            # projecting a confirmed transaction.
+            verify_stored_terms_snapshot_integrity(terms)
 
             target = self._projected_transaction_state(action.state)
             if not self._state_projection_allowed(row.state, target):
