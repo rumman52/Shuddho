@@ -48,6 +48,34 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
         raise EvidenceError("invalid PR head")
     if run.get("head_sha") != sha:
         raise EvidenceError("workflow is not for the PR final head")
+    # GitHub can associate the same commit with multiple branches/PRs. Head SHA
+    # alone cannot establish that these check results came from this PR.
+    base = pr.get("base")
+    head_repo = head.get("repo") if isinstance(head, dict) else None
+    base_repo = base.get("repo") if isinstance(base, dict) else None
+    run_head_repo = run.get("head_repository")
+    run_base_repo = run.get("repository")
+    if (
+        not isinstance(head.get("ref"), str)
+        or not head["ref"]
+        or not isinstance(head_repo, dict)
+        or type(head_repo.get("id")) is not int
+        or not isinstance(base_repo, dict)
+        or type(base_repo.get("id")) is not int
+        or not isinstance(run.get("head_branch"), str)
+        or not run["head_branch"]
+        or not isinstance(run_head_repo, dict)
+        or type(run_head_repo.get("id")) is not int
+        or not isinstance(run_base_repo, dict)
+        or type(run_base_repo.get("id")) is not int
+    ):
+        raise EvidenceError("missing PR/workflow branch or repository provenance")
+    if (
+        run["head_branch"] != head["ref"]
+        or run_head_repo["id"] != head_repo["id"]
+        or run_base_repo["id"] != base_repo["id"]
+    ):
+        raise EvidenceError("workflow provenance does not match PR branch/repositories")
     if run.get("event") not in {"pull_request", "pull_request_review"}:
         raise EvidenceError("workflow is not a PR review/check event")
     if run.get("status") != "completed":
