@@ -38,7 +38,7 @@ def enable_transactions(container):
     container.transactions.settings = settings
 
 
-def reviewed_transaction(container, owner, key="tx05-reviewed"):
+def reviewed_transaction(container, owner, key="tx05-reviewed", *, expires_minutes=10):
     created, was_created = container.transactions.create(
         owner,
         TransactionDraft(
@@ -50,7 +50,12 @@ def reviewed_transaction(container, owner, key="tx05-reviewed"):
         key,
     )
     assert was_created is True
-    saved = container.transactions.set_terms(owner, created["id"], 1, terms())
+    saved = container.transactions.set_terms(
+        owner,
+        created["id"],
+        1,
+        terms(expires_minutes=expires_minutes),
+    )
     review = container.transactions.start_review(
         owner,
         created["id"],
@@ -398,7 +403,7 @@ def test_cancelled_transaction_cannot_approve_bound_action(container):
     assert container.actions.repo.get(owner, action["id"])["state"] == "awaiting_approval"
 
 
-def test_quote_expiry_is_rechecked_before_bound_action_approval(container):
+def test_quote_expiry_is_rechecked_before_bound_action_approval(container, monkeypatch):
     enable_transactions(container)
     owner = account(container, "tx05-expired-before-approval")
     created, _ = container.transactions.create(
@@ -431,18 +436,10 @@ def test_quote_expiry_is_rechecked_before_bound_action_approval(container):
         "tx05-expired-before-approval-action",
     )
 
-    with container.repository.sessions.begin() as db:
-        from services.coworker.models import TransactionTermsSnapshot
-        row = db.get(
-            TransactionTermsSnapshot,
-            (
-                confirmed["review_binding"]["transaction_id"],
-                confirmed["review_binding"]["terms_revision"],
-            ),
-        )
-        expired_at = utcnow() - timedelta(seconds=1)
-        row.quote_expires_at = expired_at
-        row.quoted_at = expired_at - timedelta(minutes=1)
+    # Advance only the action boundary clock: the signed quote remains immutable.
+    # Rewriting quote timestamps would correctly fail integrity verification.
+    future = utcnow() + timedelta(minutes=2)
+    monkeypatch.setattr("services.coworker.action_repository.utcnow", lambda: future)
 
     with pytest.raises(CoworkerError) as expired:
         container.actions.repo.approve(
@@ -614,10 +611,15 @@ def test_tampered_terms_after_approval_block_provider_execution(container):
     assert result["error_code"] == "transaction_terms_integrity_failed"
 
 
-def test_quote_expiry_after_approval_blocks_provider_claim(container):
+def test_quote_expiry_after_approval_blocks_provider_claim(container, monkeypatch):
     enable_transactions(container)
     owner = account(container, "tx05-expired-before-claim")
-    confirmed = reviewed_transaction(container, owner, "tx05-expired-before-claim")
+    confirmed = reviewed_transaction(
+        container,
+        owner,
+        "tx05-expired-before-claim",
+        expires_minutes=1,
+    )
     action, _link = bound_action(
         container,
         owner,
@@ -630,18 +632,10 @@ def test_quote_expiry_after_approval_blocks_provider_claim(container):
         action["preview_hash"],
     )
 
-    with container.repository.sessions.begin() as db:
-        from services.coworker.models import TransactionTermsSnapshot
-        row = db.get(
-            TransactionTermsSnapshot,
-            (
-                confirmed["review_binding"]["transaction_id"],
-                confirmed["review_binding"]["terms_revision"],
-            ),
-        )
-        expired_at = utcnow() - timedelta(seconds=1)
-        row.quote_expires_at = expired_at
-        row.quoted_at = expired_at - timedelta(minutes=1)
+    # Keep the approved snapshot hash valid; simulate expiry without rewriting it.
+    # The action execution TTL is three minutes, so advance by only two.
+    future = utcnow() + timedelta(minutes=2)
+    monkeypatch.setattr("services.coworker.action_repository.utcnow", lambda: future)
 
     assert container.actions.repo.claim_execution(approved["id"]) is None
     result = container.actions.repo.get(owner, action["id"])
