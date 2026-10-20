@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import hashlib
 import hmac
-import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -30,6 +28,11 @@ from .models import (
     utcnow,
 )
 from .repository import aware, iso, not_found
+from .transaction_integrity import (
+    canonical_terms_payload,
+    fingerprint_json,
+    verify_stored_terms_snapshot_integrity,
+)
 from .transaction_schemas import TransactionCreate, TransactionTermsDraft
 
 
@@ -264,14 +267,7 @@ class TransactionRepository:
 
     @staticmethod
     def _fingerprint(value: dict) -> str:
-        return hashlib.sha256(
-            json.dumps(
-                value,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-            ).encode("utf-8")
-        ).hexdigest()
+        return fingerprint_json(value)
 
     def _connection_identity(
         self,
@@ -489,22 +485,7 @@ class TransactionRepository:
 
     @staticmethod
     def _terms_payload(request: TransactionTermsDraft) -> dict:
-        terms = sorted(
-            [
-                {"name": item.name, "value": item.value}
-                for item in request.terms
-            ],
-            key=lambda item: (item["name"].casefold(), item["name"], item["value"]),
-        )
-        price = request.price.model_dump(mode="json")
-        return {
-            "schema_version": 1,
-            "terms": terms,
-            "price": price,
-            "provider_quote_id": request.provider_quote_id,
-            "quoted_at": request.quoted_at.astimezone(timezone.utc).isoformat(),
-            "quote_expires_at": request.quote_expires_at.astimezone(timezone.utc).isoformat(),
-        }
+        return canonical_terms_payload(request)
 
     @classmethod
     def _terms_sha256(cls, request: TransactionTermsDraft) -> str:
@@ -657,6 +638,7 @@ class TransactionRepository:
                 "The current transaction revision does not have exact final terms.",
                 409,
             )
+        verify_stored_terms_snapshot_integrity(terms)
         if expected_terms_sha256 is not None and not hmac.compare_digest(
             terms.terms_sha256,
             expected_terms_sha256,

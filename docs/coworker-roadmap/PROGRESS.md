@@ -1,3 +1,15 @@
+## Current continuation — TX-03 integrity regression and corrective PR #503 (20 October 2026, Asia/Dhaka)
+
+- **Current main at the regression:** `e8dfccdde32604824f67975be0a170c2563caec4`, after PR #502.
+- **Regression evidence:** main CI [#39397296464](https://github.com/rumman52/Shuddho/actions/runs/39397296464) completed with `test-and-build` success, `coworker` failure (**4 failed, 1,452 passed**), and `ci-merge-gate` failure. The failing tests reject tampered stored terms/price before review binding, action approval, and provider claim.
+- **Root cause:** PR #502 changed only two test files; it did not change production code. `TransactionRepository._require_current_fresh_terms` and `ActionRepository._validate_transaction_source_binding` trusted the stored `terms_sha256` value without recomputing it from persisted terms/price/quote data.
+- **Corrective work:** draft [PR #503](https://github.com/rumman52/Shuddho/pull/503) adds shared canonical snapshot verification, validates redundant currency/total fields, and checks integrity at review binding and transaction-bound action approval/execution. The PR remains unmerged.
+- **Verification boundary:** inspect the final PR #503 head and require exact-head `test-and-build`, mandatory `coworker`, and `ci-merge-gate` to pass; perform independent review and do not weaken assertions. A test-only or stale-head green run is insufficient.
+- **V-01 remains OPEN:** repository rulesets currently return an empty list; this connection receives 403 for branch-protection reads and cannot change effective protection. Owner/admin action is still required to configure and test merge rules.
+- **Overall status: INCOMPLETE.** No staging/production qualification or activation is claimed.
+
+---
+
 ## Current architecture/core continuation — post-merge verification and governance (20 October 2026, Asia/Dhaka)
 
 - **Current main:** `41a22aab83d48d78b65ebc530cb2889aeb54947b`, merge commit for PR #500.

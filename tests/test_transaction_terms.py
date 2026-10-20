@@ -228,6 +228,41 @@ def test_review_binding_rejects_tampered_stored_terms_snapshot(container, tamper
     assert blocked.value.code == "transaction_terms_integrity_failed"
 
 
+def test_review_binding_rejects_inconsistent_snapshot_total_without_hash_change(container):
+    enable_transactions(container)
+    owner = account(container, "tx03-integrity-redundant-total")
+    transaction = create_transaction(container, owner, "tx03-integrity-redundant-total")
+    saved = container.transactions.set_terms(
+        owner,
+        transaction["id"],
+        1,
+        terms(),
+    )
+    review = container.transactions.start_review(
+        owner,
+        transaction["id"],
+        saved["transaction"]["revision"],
+    )
+
+    # Corrupt only the redundant database column; the canonical price/hash stay intact.
+    with container.repository.sessions.begin() as db:
+        row = db.get(
+            TransactionTermsSnapshot,
+            (transaction["id"], saved["terms"]["revision"]),
+        )
+        assert row is not None
+        row.total_minor -= 1
+
+    with pytest.raises(CoworkerError) as blocked:
+        container.transactions.review_binding(
+            owner,
+            transaction["id"],
+            review["revision"],
+            expected_terms_sha256=saved["terms"]["terms_sha256"],
+        )
+    assert blocked.value.code == "transaction_terms_integrity_failed"
+
+
 def test_changed_terms_force_fresh_review_and_old_hash_is_rejected(container):
     enable_transactions(container)
     owner = account(container, "tx03-change")
