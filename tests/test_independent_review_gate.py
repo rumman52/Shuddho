@@ -65,7 +65,7 @@ def test_missing_or_ineligible_approval_fails_closed(reviews):
 
 
 def test_stale_previous_approval_cannot_survive_new_commit():
-    with pytest.raises(ReviewGateError, match="current head"):
+    with pytest.raises(ReviewGateError, match="head changed"):
         require_current_head_review(pull(sha=OLD), [review(sha=OLD)], HEAD)
     with pytest.raises(ReviewGateError):
         require_current_head_review(pull(), [review(sha=OLD), review(id=2, state="COMMENTED")], HEAD)
