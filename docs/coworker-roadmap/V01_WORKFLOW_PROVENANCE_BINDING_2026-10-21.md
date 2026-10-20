@@ -2,7 +2,7 @@
 
 ## Why this next task is needed
 - `main` at task start: `25c79968d763ce8d5bdba53ed0d0d66ba7bb2562` (PR #520 merged).
-- [PR #520](https://github.com/rumman52/Shuddho/pull/520) was merged on 2026-10-20 19:03:54 UTC with zero submitted reviews. Its exact-head [workflow #39479360250](https://github.com/rumman52/Shuddho/actions/runs/39479360250) concluded **cancelled** and the gate **failed**: `test-and-build` success, `coworker` cancelled, `ci-merge-gate` failure. This is a fresh governance incident; it is not an acceptable merge.
+- [PR #520](https://github.com/rumman52/Shuddho/pull/520) merged on 2026-10-20 **19:03:54 UTC** with zero submitted reviews. At merge, exact-head [workflow #39479360250](https://github.com/rumman52/Shuddho/actions/runs/39479360250) was **incomplete**: `test-and-build` had succeeded at 18:59:43; `coworker` only finished **CANCELLED at 19:04:38**, and `ci-merge-gate` only finished **FAILURE at 19:04:46**, both **after** the merge. The overall run concluded cancelled. This is a merge-before-gates-finished incident, not a pre-merge gate rejection; V-01 remains blocked.
 - The read-only classifier in `scripts/v01_merge_evidence.py` previously matched `run.head_sha` to `pr.head.sha` but did **not** verify the originating head branch or head/base repositories. A foreign run at the same SHA could be misreported as clean evidence.
 
 ## Bounded contract
