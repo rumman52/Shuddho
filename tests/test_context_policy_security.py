@@ -27,3 +27,17 @@ def test_plain_secret_assignment_and_normal_context_still_work():
     assert redacted == "Deploy api_key=[REDACTED] to staging."
     assert reasons == ["secret_assignment"]
     assert filter_sensitive("Public project meeting at noon.") == ("Public project meeting at noon.", [])
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        'api_key="incomplete multi word private value',
+        "password='unfinished private phrase with spaces",
+    ],
+)
+def test_unterminated_quoted_secret_fails_closed(assignment: str):
+    redacted, reasons = filter_sensitive(f"Header {assignment}")
+    assert redacted.endswith("=[REDACTED]")
+    assert "private" not in redacted
+    assert "secret_assignment" in reasons
