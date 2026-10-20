@@ -138,3 +138,76 @@ def test_malformed_mixed_review_ids_fail_with_explicit_gate_error():
         require_current_head_review(
             pull(), [review(), {"id": "not-an-integer", "state": "APPROVED"}], HEAD
         )
+
+
+# These tests control only the remote API boundary. The real live validator and
+# current-head policy run unchanged; snapshots model PR changes between reads.
+def live_review_api(monkeypatch, final_pull, *, reviews=None, page_size=None):
+    from scripts import independent_review_gate as gate
+
+    calls = []
+    initial_pull = pull()
+    rows = [review()] if reviews is None else reviews
+    if page_size is not None:
+        monkeypatch.setattr(gate, "PAGE_SIZE", page_size)
+
+    def get_json(url, token):
+        assert token == "test-token"
+        calls.append(url)
+        if "/reviews?" in url:
+            page = int(url.rsplit("page=", 1)[1])
+            start = (page - 1) * gate.PAGE_SIZE
+            return rows[start : start + gate.PAGE_SIZE]
+        if len([call for call in calls if "/reviews?" not in call]) == 1:
+            return initial_pull
+        if isinstance(final_pull, Exception):
+            raise final_pull
+        return final_pull
+
+    monkeypatch.setattr(gate, "_get_json", get_json)
+    return gate, calls
+
+
+def test_live_review_rechecks_unchanged_pr_after_all_review_pages(monkeypatch):
+    gate, calls = live_review_api(
+        monkeypatch, pull(), reviews=[review(), review(id=2, state="COMMENTED")],
+        page_size=2,
+    )
+
+    assert gate.validate_live_review("owner/repo", 7, HEAD, "test-token") == "independent-maintainer"
+    base = "https://api.github.com/repos/owner/repo/pulls/7"
+    assert calls == [
+        base,
+        f"{base}/reviews?per_page=2&page=1",
+        f"{base}/reviews?per_page=2&page=2",
+        base,
+    ]
+
+
+@pytest.mark.parametrize(
+    "final_pull",
+    [
+        pull(sha=OLD),
+        pull(draft=True),
+        pull(state="closed"),
+        {**pull(), "merged_at": "2026-10-20T17:50:47Z"},
+        {**pull(), "user": {"login": "independent-maintainer"}},
+        {},
+        None,
+    ],
+    ids=["new-head", "converted-to-draft", "closed", "merged", "self-review", "malformed", "missing"],
+)
+def test_live_review_denies_pr_changed_while_fetching_reviews(monkeypatch, final_pull):
+    gate, _ = live_review_api(monkeypatch, final_pull)
+
+    with pytest.raises(gate.ReviewGateError):
+        gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
+
+
+def test_live_review_denies_final_pr_read_failure(monkeypatch):
+    from scripts.independent_review_gate import ReviewGateError
+
+    gate, _ = live_review_api(monkeypatch, ReviewGateError("final snapshot unavailable"))
+
+    with pytest.raises(ReviewGateError, match="final snapshot unavailable"):
+        gate.validate_live_review("owner/repo", 7, HEAD, "test-token")
