@@ -1,10 +1,11 @@
-## Architecture/core continuation — C-01 finalization cancellation integrity (20 October 2026)
+## Part 00 governance audit — 20 October 2026 (Asia/Dhaka)
 
-- Refreshed main `c2d029c4782768b8aba04c96105eae978d7e2c07`: #491–#494 have **merged**; do not reimplement them. Current merged-main CI was in progress at first inspection. No open PRs at selection.
-- Review branch `codex/c01-finalization-cancel-notfound-fence-20261020` corrects a specific Runtime v3 defect: cancelled/cancel-requested or missing runs could be acknowledged by the Temporal finalization activity without a successful completion. Existing finalization row lock now returns `agent_cancelled`/ `not_found`; exact completed replay and legacy v1/v2 cancelled no-op are retained. [Contract](C01_CANCELLED_FINALIZATION_FENCE_2026-10-20.md).
-- Three new Temporal activity regression scenarios plus a legacy compatibility control were committed ahead of implementation. No failing-first execution is claimed. Exact-head mandatory CI, human review and operated provider/worker recovery still need confirmation; no deployment/activation.
-- All **17** A/C/P/V completion requirements remain open for full qualification. Do not equate this source repair with live Temporal, protected staging, isolation, old-history rollback, external 16-fault receipts or human security/quality sign-off.
-
+- **Current main:** `bdd12f24390077cc838d4f528b5d8c58eb8c8a78` (PR #495 merged). This supersedes older checkpoint references to `c2d029c4782768b8aba04c96105eae978d7e2c07`.
+- **PR #495 / C-01:** the Runtime v3 finalization fix for cancelled/cancel-requested and missing runs is merged. Its exact-head `test-and-build`, `coworker`, and `ci-merge-gate` eventually passed ([run #39319946005](https://github.com/rumman52/Shuddho/actions/runs/39319946005)), but the PR merged before `coworker` and `ci-merge-gate` completed. No submitted PR review was recorded. Do not count later green checks as proof that pre-merge governance worked. [Contract](C01_CANCELLED_FINALIZATION_FENCE_2026-10-20.md).
+- **Current main CI:** all three required checks passed on exact `main` SHA `bdd12f24390077cc838d4f528b5d8c58eb8c8a78` in [run #39320415139](https://github.com/rumman52/Shuddho/actions/runs/39320415139).
+- **V-01 remains OPEN; repository-level enforcement is not demonstrated:** GitHub's branch endpoint reports `protected: false` for `main`, and the repository rulesets API returned an empty list. The detailed legacy branch-protection endpoint returned 403 to the connected integration; inspect any applicable organization-level policy in Settings → Rules/Branches. Prove pending/failing checks block merge and that a passing independently reviewed PR can merge. [Issue #484](https://github.com/rumman52/Shuddho/issues/484).
+- **Staging remains blocked by external prerequisites:** [issue #291](https://github.com/rumman52/Shuddho/issues/291) still lists the persistent worker, Temporal/S3 credentials, synthetic identity, provider setup and release-freeze checks. No secrets in GitHub/chat; no production activation.
+- All 17 A/C/P/V acceptance requirements remain **not fully qualified**. The next safe step is owner/admin completion of V-01 governance, while staging prerequisites are completed separately; do not enable unqualified capabilities.
 ---
 
 ## Architecture/core closure — C-01 final completion evidence (20 October 2026)
