@@ -68,3 +68,29 @@ def test_unterminated_typographic_quote_fails_closed_to_line_end(assignment, saf
     redacted, reasons = filter_sensitive(f"Header {assignment}\nPublic follow-up.")
     assert redacted == f"Header {safe_assignment}\nPublic follow-up."
     assert "secret_assignment" in reasons
+
+
+@pytest.mark.parametrize(
+    ("assignment", "expected"),
+    [
+        ("api_key=„multi word confidential phrase“", "api_key=[REDACTED]"),
+        ("password=«multi word confidential phrase»", "password=[REDACTED]"),
+    ],
+)
+def test_low_high_and_guillemet_quoted_secret_assignments_are_fully_redacted(assignment, expected):
+    redacted, reasons = filter_sensitive(f"Before {assignment}; after")
+    assert redacted == f"Before {expected}; after"
+    assert "secret_assignment" in reasons
+
+
+@pytest.mark.parametrize(
+    ("assignment", "expected"),
+    [
+        ("api_key=„unterminated private phrase", "api_key=[REDACTED]"),
+        ("client_secret=«unterminated private phrase", "client_secret=[REDACTED]"),
+    ],
+)
+def test_unterminated_low_high_and_guillemet_quotes_fail_closed(assignment, expected):
+    redacted, reasons = filter_sensitive(f"Before {assignment}\nPublic following line.")
+    assert redacted == f"Before {expected}\nPublic following line."
+    assert "secret_assignment" in reasons
