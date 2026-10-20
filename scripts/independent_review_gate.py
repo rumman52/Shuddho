@@ -117,6 +117,19 @@ def _get_json(url: str, token: str):
         raise ReviewGateError(f"GitHub review evidence unavailable (status={status})") from exc
 
 
+def _read_review_pages(base: str, token: str) -> list[dict]:
+    """Fetch a bounded, full PR review listing or fail closed on pagination."""
+    reviews = []
+    for page in range(1, MAX_PAGES + 1):
+        result = _get_json(f"{base}/reviews?per_page={PAGE_SIZE}&page={page}", token)
+        if not isinstance(result, list) or len(result) > PAGE_SIZE:
+            raise ReviewGateError("Malformed GitHub review page")
+        reviews.extend(result)
+        if len(result) < PAGE_SIZE:
+            return reviews
+    raise ReviewGateError("Review history exceeds bounded pagination limit")
+
+
 def validate_live_review(
     repository: str, number: int, expected_head_sha: str, token: str
 ) -> str:
@@ -131,21 +144,30 @@ def validate_live_review(
         raise ReviewGateError("Missing or invalid review-gate inputs")
     base = f"https://api.github.com/repos/{repository}/pulls/{number}"
     pull_request = _get_json(base, token)
-    reviews = []
-    for page in range(1, MAX_PAGES + 1):
-        result = _get_json(f"{base}/reviews?per_page={PAGE_SIZE}&page={page}", token)
-        if not isinstance(result, list) or len(result) > PAGE_SIZE:
-            raise ReviewGateError("Malformed GitHub review page")
-        reviews.extend(result)
-        if len(result) < PAGE_SIZE:
-            # Preserve the initial snapshot check, but do not accept it as
-            # current authority after one or more awaited review-page reads.
-            require_current_head_review(pull_request, reviews, expected_head_sha)
-            current_pull_request = _get_json(base, token)
-            return require_current_head_review(
-                current_pull_request, reviews, expected_head_sha
-            )
-    raise ReviewGateError("Review history exceeds bounded pagination limit")
+    reviews = _read_review_pages(base, token)
+    require_current_head_review(pull_request, reviews, expected_head_sha)
+
+    # PR state and review submissions are separate API reads, not an atomic
+    # snapshot. Reject stale PR evidence after review-page pagination.
+    current_pull_request = _get_json(base, token)
+    require_current_head_review(current_pull_request, reviews, expected_head_sha)
+
+    # A review can be dismissed or a change request submitted without the PR
+    # head changing. A final PR-only read cannot detect this. Fail closed if
+    # any review-page evidence changed while the gate was evaluating it.
+    confirmed_reviews = _read_review_pages(base, token)
+    if confirmed_reviews != reviews:
+        raise ReviewGateError("Review evidence changed during validation")
+    require_current_head_review(
+        current_pull_request, confirmed_reviews, expected_head_sha
+    )
+
+    # Recheck the PR one last time *after* the confirmation review-page reads;
+    # otherwise its head/author/state could change during the second fetch.
+    final_pull_request = _get_json(base, token)
+    return require_current_head_review(
+        final_pull_request, confirmed_reviews, expected_head_sha
+    )
 
 
 def main() -> None:
