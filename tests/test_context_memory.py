@@ -600,3 +600,31 @@ def test_retrieved_prior_task_labels_never_leak_secret_metadata(container):
     for label in planner_labels + public_labels:
         assert secret not in label
         assert "api_key=[REDACTED]" in label
+
+
+def test_invalidated_workspace_document_label_does_not_expose_secret(container):
+    """Expired source metadata is also emitted in API invalidation records."""
+    from services.coworker.models import Document
+
+    enable_pa04(container)
+    alice = owner(container, "p02-invalidated-label")
+    document = uploaded_text(container, alice)
+    run, _ = container.agent.create(
+        alice,
+        AgentRunCreate(
+            goal="Summarize the expired project document.",
+            document_ids=[document["id"]],
+            output_language="en",
+        ),
+        "p02-invalidated-run",
+    )
+    with container.repository.sessions.begin() as db:
+        db.get(Document, document["id"]).filename = 'project api_key="multi word private token".txt'
+        version = db.get(DocumentVersion, run["input_versions"][0])
+        version.expires_at = utcnow() - timedelta(seconds=1)
+
+    view = container.context.for_run(alice, run["id"])
+    assert view["invalidated"]
+    label = view["invalidated"][0]["label"]
+    assert "multi word private token" not in label
+    assert "api_key=[REDACTED]" in label
