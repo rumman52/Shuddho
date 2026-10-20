@@ -1,3 +1,13 @@
+## V-01 continuation — historical approval vs CI gate chronology (21 October 2026, Asia/Dhaka)
+
+- Baseline `main` `13360a9cd4e2d64fa9f2f2bf8c35befd4ca531ad` after #522; PR #522 **merged 2026-10-20 19:45:33 UTC**, no submitted independent human reviews, after code job success but before `coworker` cancellation and `ci-merge-gate` failure on exact-head [CI #39484713573](https://github.com/rumman52/Shuddho/actions/runs/39484713573). Both latter conclusions occurred **after merge**. Recorded in [#484](https://github.com/rumman52/Shuddho/issues/484#issuecomment-6300108322).
+- Next bounded bug: `scripts/v01_merge_evidence.py` could report no incident when the first effective independent current-head approval was submitted **after** the historical `ci-merge-gate` completed (yet before PR merge). This specific gate run could not have observed any of those later approvals.
+- Draft [PR #523](https://github.com/rumman52/Shuddho/pull/523). Tests-only commit `f3f6be69616a693ddd9947398d90e0d911598bb0`; real [RED #39487371765](https://github.com/rumman52/Shuddho/actions/runs/39487371765) `test-and-build` showed **3 intended failures, 1,263 passed, 71 skipped**, with unaffected positive control passing. Source fix `8631ebec491180aba9fa7d3a4ea3a72900cc43ab` binds effective approval times to the exact CI gate completion and flags `ci-merge-gate:completed_before_independent_approval` when no such approval existed by that time.
+- [Task contract](V01_APPROVAL_GATE_CHRONOLOGY_2026-10-21.md). **Final-head CI required**: inspect all three required jobs after documentation commit, do not infer the outcome from earlier RED, and do not merge without independent human review.
+- V-01 [#484](https://github.com/rumman52/Shuddho/issues/484) remains **OPEN/BLOCKED on native owner/admin protections and negative-control verification**; staging [#291](https://github.com/rumman52/Shuddho/issues/291) is separate. No deployments, payments, provider grants, secrets, policy changes or production activation.
+
+---
+
 ## V-01 continuation — independent review submission evidence (21 October 2026, Asia/Dhaka)
 
 - Refreshed main `d335fe98dcd277daa02011c0900ad957f62e7495` was the merge commit of PR #521. [Exact-head CI #39481714982](https://github.com/rumman52/Shuddho/actions/runs/39481714982): `test-and-build` passed at 19:16:21 UTC; PR #521 **merged at 19:26:14 UTC without submitted reviews**; `coworker` was cancelled at 19:27:28 UTC and `ci-merge-gate` failed at 19:27:36 UTC. Both were **post-merge** outcomes. V-01 native governance is still blocked [#484](https://github.com/rumman52/Shuddho/issues/484#issuecomment-6299558811).
