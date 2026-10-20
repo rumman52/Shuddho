@@ -1398,12 +1398,12 @@ class ActionRepository:
             row = db.scalar(select(ExternalAction).where(ExternalAction.id == action_id).with_for_update())
             if not row or row.state not in {"queued", "executing", "outcome_unknown"} or unstarted and row.state != "queued":
                 return
-            # After a provider attempt becomes uncertain, a subsequent
-            # failure alone does not establish that the external mutation
-            # failed. Preserve uncertainty until a confirmed provider receipt
-            # resolves it; the current reconciliation contract has no
-            # authenticated negative-outcome evidence.
-            if row.state == "outcome_unknown" and state == "failed":
+            # An unverified late failure or another inconclusive provider
+            # reconciliation cannot establish a new outcome. Keep the original
+            # error, finish time, checkpoint, audit, and transaction evidence
+            # stable until a confirmed provider receipt resolves uncertainty.
+            # No authenticated negative-outcome evidence contract exists.
+            if row.state == "outcome_unknown" and state != "succeeded":
                 return
             # A late confirmed response may resolve a previously uncertain
             # attempt. Unknown outcomes never overwrite confirmed receipts.
