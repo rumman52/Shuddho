@@ -581,7 +581,8 @@ def test_tampered_persisted_reconciliation_evidence_blocks_history_and_sync(
 
 @pytest.mark.parametrize(
     "tamper",
-    ["sequence_gap", "revision_mismatch", "event_digest", "missing_evidence"],
+    ["sequence_gap", "revision_mismatch", "event_digest", "missing_evidence",
+     "event_sequence_gap", "missing_initial_event", "missing_both_observation_rows"],
 )
 def test_tx05_saved_evidence_history_must_match_transaction_event_ledger(
     container,
@@ -635,6 +636,25 @@ def test_tx05_saved_evidence_history_must_match_transaction_event_ledger(
             evidence.transaction_revision += 9
         elif tamper == "event_digest":
             event.details = {**event.details, "evidence_sha256": "0" * 64}
+        elif tamper == "event_sequence_gap":
+            # Observation events use the GLOBAL transaction-event sequence,
+            # not the receipt-only sequence. SHA matching does not protect it.
+            event.sequence = 999
+        elif tamper == "missing_initial_event":
+            created_event = db.scalar(
+                select(TransactionEvent).where(
+                    TransactionEvent.transaction_id == transaction_id,
+                    TransactionEvent.owner_id == owner,
+                    TransactionEvent.event_type == "transaction_created",
+                )
+            )
+            assert created_event is not None
+            db.delete(created_event)
+        elif tamper == "missing_both_observation_rows":
+            # Removing both sides bypasses a pairwise count/digest comparison;
+            # a projected confirmed transaction must retain observed evidence.
+            db.delete(event)
+            db.delete(evidence)
         else:
             db.delete(evidence)
 

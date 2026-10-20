@@ -876,14 +876,35 @@ class TransactionRepository:
         Each new evidence row is committed alongside one observed event.
         Check both ledgers before projecting or exposing historical outcomes.
         """
-        events = db.scalars(
+        # The event sequence is global to this transaction, while evidence
+        # sequence is receipt-only. Validate the entire chain, including
+        # non-execution events: a skipped or rewritten event must not be able
+        # to validate merely by matching the remaining receipt digests.
+        all_events = db.scalars(
             select(TransactionEvent).where(
                 TransactionEvent.transaction_id == row.id,
                 TransactionEvent.owner_id == row.owner_id,
-                TransactionEvent.event_type == "transaction_execution_observed",
             ).order_by(TransactionEvent.sequence)
         ).all()
-        if len(events) != len(evidence):
+        if any(
+            event.sequence != expected_sequence
+            for expected_sequence, event in enumerate(all_events, start=1)
+        ):
+            raise CoworkerError(
+                "transaction_evidence_integrity_failed",
+                "Saved transaction reconciliation evidence failed integrity verification.",
+                409,
+            )
+        events = [
+            event for event in all_events
+            if event.event_type == "transaction_execution_observed"
+        ]
+        # A terminal provider-projected state may not silently lose both the
+        # observation event and its matching evidence row.
+        if (
+            len(events) != len(evidence)
+            or (row.state in {"confirmed", "failed", "outcome_unknown"} and not evidence)
+        ):
             raise CoworkerError(
                 "transaction_evidence_integrity_failed",
                 "Saved transaction reconciliation evidence failed integrity verification.",
