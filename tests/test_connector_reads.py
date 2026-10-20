@@ -456,7 +456,16 @@ def test_snapshot_read_keeps_authorization_locks_through_payload_query(
     assert observed_sessions
 
 
-def test_apply_sync_rechecks_current_scopes_before_persisting_provider_data(container):
+@pytest.mark.parametrize(
+    ("change", "expected_code"),
+    [
+        ("scope", "connector_scope_missing"),
+        ("capability", "connector_read_grant_invalid"),
+    ],
+)
+def test_apply_sync_rechecks_current_connection_authority_before_persisting_provider_data(
+    container, change, expected_code
+):
     enable_reads(container)
     owner = account(container)
     connection = connect_read(container, owner)
@@ -470,7 +479,10 @@ def test_apply_sync_rechecks_current_scopes_before_persisting_provider_data(cont
             Connection.owner_id == owner,
         ).with_for_update())
         assert current_connection is not None
-        current_connection.scopes = []
+        if change == "scope":
+            current_connection.scopes = []
+        else:
+            current_connection.capability = "calendar_read"
 
     with pytest.raises(CoworkerError) as rejected:
         repo.apply_sync(
@@ -480,14 +492,14 @@ def test_apply_sync_rechecks_current_scopes_before_persisting_provider_data(cont
             {
                 "cursor": "must-not-advance",
                 "changes": [{
-                    "resource_id": "arrived-after-scope-revocation",
+                    "resource_id": "arrived-after-authority-change",
                     "provider_version": "1",
                     "state": "active",
                     "payload": {"subject": "must not be persisted"},
                 }],
             },
         )
-    assert rejected.value.code == "connector_scope_missing"
+    assert rejected.value.code == expected_code
 
     with container.repository.sessions() as db:
         cursor = db.scalar(select(ConnectorCursor).where(
@@ -500,7 +512,7 @@ def test_apply_sync_rechecks_current_scopes_before_persisting_provider_data(cont
             ConnectorSnapshot.owner_id == owner,
             ConnectorSnapshot.grant_id == grant["id"],
             ConnectorSnapshot.provider_resource_id
-            == "arrived-after-scope-revocation",
+            == "arrived-after-authority-change",
         )) is None
 
 
