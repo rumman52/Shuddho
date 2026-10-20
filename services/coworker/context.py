@@ -202,14 +202,18 @@ class ContextService:
             nonlocal remaining
             if len(items) >= self.settings.max_agent_context_items or remaining <= 0:
                 return False
+            # Labels (filename, task instruction, connector subject/title) also
+            # enter planner context; excerpt redaction alone is insufficient.
+            safe_label, label_redactions = filter_sensitive(label)
             if is_stale(updated_at, now=now, max_age_seconds=max_age_seconds):
                 invalidated.append({
                     "source_id": source_id,
-                    "label": label,
+                    "label": safe_label,
                     "reason": "stale",
                 })
                 return False
             filtered, redactions = filter_sensitive(text)
+            redactions = sorted(set(redactions + label_redactions))
             excerpt_limit = min(self.settings.max_agent_context_item_bytes, remaining)
             excerpt = _snippet(filtered, run.goal, excerpt_limit)
             if not excerpt:
@@ -218,7 +222,7 @@ class ContextService:
             if fingerprint in seen_content:
                 invalidated.append({
                     "source_id": source_id,
-                    "label": label,
+                    "label": safe_label,
                     "reason": "duplicate",
                 })
                 return False
@@ -237,7 +241,7 @@ class ContextService:
             remaining -= used
             items.append({
                 "source_id": source_id,
-                "label": label,
+                "label": safe_label,
                 "excerpt": excerpt,
                 "sha256": sha256,
                 "relevance_score": score,
