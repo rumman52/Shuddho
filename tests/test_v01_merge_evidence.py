@@ -109,3 +109,42 @@ def test_rejects_workflow_evidence_from_a_different_pr_provenance(mutation):
     mutation(*parts)
     with pytest.raises(EvidenceError):
         inspect_premerge_evidence(*parts)
+
+
+def test_approval_submitted_after_ci_merge_gate_finished_is_not_gate_proof():
+    pr, run, jobs, reviews = evidence()
+    reviews[0]['submitted_at'] = '2026-10-20T18:35:00Z'
+    result = inspect_premerge_evidence(pr, run, jobs, reviews)
+    assert result['classification'] == 'observed_governance_incident'
+    assert 'ci-merge-gate:completed_before_independent_approval' in result['findings']
+
+
+def test_multiple_late_approvals_are_not_premature_gate_proof():
+    pr, run, jobs, reviews = evidence()
+    reviews[0]['submitted_at'] = '2026-10-20T18:35:00Z'
+    reviews.append({**reviews[0], 'id': 2, 'user': {
+        'login': 'different-maintainer', 'type': 'User'
+    }, 'submitted_at': '2026-10-20T18:38:00Z'})
+    assert 'ci-merge-gate:completed_before_independent_approval' in (
+        inspect_premerge_evidence(pr, run, jobs, reviews)['findings']
+    )
+
+
+def test_pre_gate_approval_remains_valid_with_another_late_approval():
+    pr, run, jobs, reviews = evidence()
+    reviews.append({**reviews[0], 'id': 2, 'user': {
+        'login': 'different-maintainer', 'type': 'User'
+    }, 'submitted_at': '2026-10-20T18:35:00Z'})
+    result = inspect_premerge_evidence(pr, run, jobs, reviews)
+    assert result['classification'] == 'no_incident_in_supplied_evidence'
+    assert 'ci-merge-gate:completed_before_independent_approval' not in result['findings']
+
+
+def test_late_reapproval_does_not_retroactively_qualify_old_gate():
+    pr, run, jobs, reviews = evidence()
+    reviews.append({**reviews[0], 'id': 2, 'state': 'DISMISSED',
+                    'submitted_at': '2026-10-20T18:25:00Z'})
+    reviews.append({**reviews[0], 'id': 3,
+                    'submitted_at': '2026-10-20T18:35:00Z'})
+    result = inspect_premerge_evidence(pr, run, jobs, reviews)
+    assert 'ci-merge-gate:completed_before_independent_approval' in result['findings']
