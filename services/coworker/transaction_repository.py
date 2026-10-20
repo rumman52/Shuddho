@@ -1265,6 +1265,11 @@ class TransactionRepository:
                         "The linked transaction evidence is no longer valid.",
                         409,
                     )
+                # Read-only provider reconciliation is still authority to
+                # query a connected service. Matching the saved digest field
+                # to the execution link is insufficient if saved terms or
+                # price have been altered without updating that digest.
+                verify_stored_terms_snapshot_integrity(terms)
                 reconcile_supported = (
                     action.state == "outcome_unknown"
                     and spec.reconcile_supported
