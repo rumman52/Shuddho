@@ -3,7 +3,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
-from threading import Event
+from threading import Event, get_ident
 from uuid import uuid4
 
 import pytest
@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 pytestmark = [pytest.mark.coworker_integration, pytest.mark.skipif(not os.getenv("SHUDDHO_TEST_POSTGRES_URL"), reason="Dedicated PostgreSQL test database required")]
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from services.coworker.auth import Principal
 from services.coworker.config import Settings
 from services.coworker.connector_reads import ConnectorReadRepository
@@ -173,8 +173,11 @@ def test_connected_snapshot_read_serializes_with_grant_revocation(
     authorization_held = Event()
     release_snapshot_read = Event()
     revoke_started = Event()
+    revoke_lock_attempted = Event()
+    revoke_thread_id = []
     original_validate = permissions.validate_read_grant_in_session
     original_revoke = reads.revoke
+    engine = repository.sessions.kw["bind"]
 
     def pause_after_validation(db, current_owner, current_grant, *, audience):
         result = original_validate(
@@ -186,27 +189,44 @@ def test_connected_snapshot_read_serializes_with_grant_revocation(
         return result
 
     def observed_revoke(current_owner, current_grant):
+        revoke_thread_id.append(get_ident())
         revoke_started.set()
         return original_revoke(current_owner, current_grant)
+
+    def observe_revoke_lock(
+        _connection, _cursor, statement, _parameters, _context, _executemany
+    ):
+        if (
+            revoke_thread_id
+            and get_ident() == revoke_thread_id[0]
+            and "cw_connector_read_grants" in statement
+            and "FOR UPDATE" in statement.upper()
+        ):
+            revoke_lock_attempted.set()
 
     monkeypatch.setattr(
         permissions, "validate_read_grant_in_session", pause_after_validation
     )
     monkeypatch.setattr(reads, "revoke", observed_revoke)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        read_future = pool.submit(reads.snapshots, owner_id, grant_id)
-        try:
-            assert authorization_held.wait(timeout=5)
-            revoke_future = pool.submit(reads.revoke, owner_id, grant_id)
-            assert revoke_started.wait(timeout=5)
-            # Revoke must wait on the grant lock held by the snapshot transaction.
-            with pytest.raises(TimeoutError):
-                revoke_future.result(timeout=0.2)
-        finally:
-            release_snapshot_read.set()
-        snapshots = read_future.result(timeout=5)
-        revoked = revoke_future.result(timeout=5)
+    event.listen(engine, "before_cursor_execute", observe_revoke_lock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            read_future = pool.submit(reads.snapshots, owner_id, grant_id)
+            try:
+                assert authorization_held.wait(timeout=5)
+                revoke_future = pool.submit(reads.revoke, owner_id, grant_id)
+                assert revoke_started.wait(timeout=5)
+                assert revoke_lock_attempted.wait(timeout=5)
+                # Revoke must wait on the grant lock held by the snapshot transaction.
+                with pytest.raises(TimeoutError):
+                    revoke_future.result(timeout=0.2)
+            finally:
+                release_snapshot_read.set()
+            snapshots = read_future.result(timeout=5)
+            revoked = revoke_future.result(timeout=5)
+    finally:
+        release_snapshot_read.set()
+        event.remove(engine, "before_cursor_execute", observe_revoke_lock)
 
     assert snapshots[0]["payload"] == {"subject": "private snapshot"}
     assert revoked["state"] == "revoked"
