@@ -118,3 +118,16 @@ def test_reviewer_comment_does_not_withdraw_previous_approval():
     assert require_current_head_review(
         pull(), [review(id=1), review(id=2, state="COMMENTED")], HEAD
     ) == "independent-maintainer"
+
+
+def test_ci_merge_gate_requires_review_and_rechecks_after_review_events():
+    from pathlib import Path
+
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "pull_request_review:" in workflow
+    assert "types: [submitted, dismissed]" in workflow
+    assert "pull-requests: read" in workflow
+    assert "Require independent current-head review" in workflow
+    assert "python -m scripts.independent_review_gate" in workflow
+    assert "github.event.pull_request.head.sha" in workflow
+    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
