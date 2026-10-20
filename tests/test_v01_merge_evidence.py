@@ -8,8 +8,8 @@ MERGE = '2026-10-20T18:42:34Z'
 
 
 def evidence(*, run_conclusion='success', gate='success', gate_end='2026-10-20T18:30:38Z', reviews=None):
-    pr = {'number': 519, 'merged_at': MERGE, 'head': {'sha': HEAD}, 'user': {'login': 'proposing-author'}}
-    run = {'head_sha': HEAD, 'status': 'completed', 'conclusion': run_conclusion, 'event': 'pull_request'}
+    pr = {'number': 519, 'merged_at': MERGE, 'head': {'sha': HEAD, 'ref': 'feature-safe', 'repo': {'id': 17}}, 'base': {'repo': {'id': 34}}, 'user': {'login': 'proposing-author'}}
+    run = {'head_sha': HEAD, 'head_branch': 'feature-safe', 'head_repository': {'id': 17}, 'repository': {'id': 34}, 'status': 'completed', 'conclusion': run_conclusion, 'event': 'pull_request'}
     jobs = [
         {'name': 'test-and-build', 'status': 'completed', 'conclusion': 'success', 'completed_at': '2026-10-20T18:05:33Z'},
         {'name': 'coworker', 'status': 'completed', 'conclusion': 'success', 'completed_at': '2026-10-20T18:30:27Z'},
@@ -90,3 +90,22 @@ def test_unrelated_workflow_event_is_not_premerge_evidence():
     run['event'] = 'push'
     with pytest.raises(EvidenceError):
         inspect_premerge_evidence(pr, run, jobs, reviews)
+
+
+@pytest.mark.parametrize('mutation', [
+    lambda p,r,j,v: r.update(head_branch='unrelated-feature'),
+    lambda p,r,j,v: r.update(head_repository={'id': 99}),
+    lambda p,r,j,v: r.update(repository={'id': 99}),
+    lambda p,r,j,v: r.pop('head_branch'),
+    lambda p,r,j,v: r.pop('head_repository'),
+    lambda p,r,j,v: r.pop('repository'),
+    lambda p,r,j,v: p['head'].pop('ref'),
+    lambda p,r,j,v: p['head'].pop('repo'),
+    lambda p,r,j,v: p['base'].pop('repo'),
+])
+def test_rejects_workflow_evidence_from_a_different_pr_provenance(mutation):
+    # A shared head SHA is insufficient proof of the branch or repository that ran CI.
+    parts = evidence()
+    mutation(*parts)
+    with pytest.raises(EvidenceError):
+        inspect_premerge_evidence(*parts)
