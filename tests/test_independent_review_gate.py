@@ -131,3 +131,10 @@ def test_ci_merge_gate_requires_review_and_rechecks_after_review_events():
     assert "python -m scripts.independent_review_gate" in workflow
     assert "github.event.pull_request.head.sha" in workflow
     assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
+
+
+def test_malformed_mixed_review_ids_fail_with_explicit_gate_error():
+    with pytest.raises(ReviewGateError, match="Malformed review"):
+        require_current_head_review(
+            pull(), [review(), {"id": "not-an-integer", "state": "APPROVED"}], HEAD
+        )
