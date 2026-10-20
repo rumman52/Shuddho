@@ -6,6 +6,7 @@ branch protection or GitHub's native required-review rules.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
 from urllib.error import HTTPError, URLError
@@ -45,8 +46,9 @@ def require_current_head_review(
     if head["sha"] != expected_head_sha:
         raise ReviewGateError("Pull request head changed since the workflow started")
 
-    # Validate before sorting: untrusted mixed-type IDs must fail closed
-    # as ReviewGateError rather than raising an uncontrolled TypeError.
+    # Validate before sorting: reject malformed/duplicate GitHub review IDs
+    # and undated actionable reviews instead of inferring approval authority.
+    seen_ids: set[int] = set()
     for item in reviews:
         if (
             not isinstance(item, dict)
@@ -57,6 +59,19 @@ def require_current_head_review(
             or item.get("state") not in REVIEW_STATES
         ):
             raise ReviewGateError("Malformed review data")
+        if item["id"] in seen_ids:
+            raise ReviewGateError("duplicate review ID")
+        seen_ids.add(item["id"])
+        if item["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
+            submitted = item.get("submitted_at")
+            if not isinstance(submitted, str):
+                raise ReviewGateError("Missing review submission timestamp")
+            try:
+                submitted_at = datetime.fromisoformat(submitted.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ReviewGateError("Malformed review submission timestamp") from exc
+            if submitted_at.tzinfo is None or submitted_at.utcoffset() is None:
+                raise ReviewGateError("Review submission timestamp lacks timezone")
 
     latest: dict[str, dict] = {}
     for item in sorted(reviews, key=lambda r: r["id"]):
