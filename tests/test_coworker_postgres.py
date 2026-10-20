@@ -129,6 +129,10 @@ def test_connected_snapshot_read_serializes_with_grant_revocation(
             token_ciphertext="sealed-test-credential",
             active=True,
         ))
+        # This test seeds a deliberately minimal graph without ORM relationships.
+        # Flush each parent before adding its FK-dependent child so correctness
+        # does not rely on incidental SQLAlchemy unit-of-work ordering.
+        db.flush()
         db.add(ConnectorReadGrant(
             id=grant_id,
             owner_id=owner_id,
@@ -146,6 +150,7 @@ def test_connected_snapshot_read_serializes_with_grant_revocation(
             state="active",
             expires_at=now + timedelta(hours=1),
         ))
+        db.flush()
         db.add(ConnectorCursor(
             grant_id=grant_id,
             owner_id=owner_id,
