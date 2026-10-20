@@ -11,7 +11,9 @@ JOBS = ('test-and-build', 'coworker', 'ci-merge-gate')
 
 def protection(**changes):
     p = {
-        'required_status_checks': {'strict': True, 'contexts': list(JOBS)},
+        'required_status_checks': {'strict': True, 'checks': [
+            {'context': job, 'app_id': 15368} for job in JOBS
+        ]},
         'required_pull_request_reviews': {
             'required_approving_review_count': 1,
             'dismiss_stale_reviews': True,
@@ -41,7 +43,7 @@ def ruleset(**changes):
                 'required_review_thread_resolution': True}},
             {'type': 'required_status_checks', 'parameters': {
                 'strict_required_status_checks_policy': True,
-                'required_status_checks': [{'context': x} for x in JOBS]}},
+                'required_status_checks': [{'context': x, 'integration_id': 15368} for x in JOBS]}},
             {'type': 'non_fast_forward'},
             {'type': 'deletion'},
         ],
@@ -104,7 +106,7 @@ def test_ruleset_disabled_bypassed_wrong_branch_or_missing_rule_is_blocked():
 
 
 def test_protection_checks_can_use_check_objects_without_contexts():
-    value = protection(required_status_checks={'strict': True, 'checks': [{'context': j, 'app_id': 123} for j in JOBS]})
+    value = protection(required_status_checks={'strict': True, 'checks': [{'context': j, 'app_id': 15368} for j in JOBS]})
     assert assess_native_policy(branch_protection=value)['classification'] == 'configuration_candidate'
 
 
@@ -137,3 +139,38 @@ def test_cli_candidate_is_nonzero_until_negative_controls(tmp_path):
     output = json.loads(proc.stdout)
     assert output['classification'] == 'configuration_candidate'
     assert output['enforcement_verified'] is False
+
+def test_legacy_contexts_alone_do_not_prove_trusted_ci_source():
+    value = protection(required_status_checks={'strict': True, 'contexts': list(JOBS)})
+    result = assess_native_policy(branch_protection=value)
+    assert result['classification'] == 'blocked'
+    assert 'required_check_source_unpinned:ci-merge-gate' in result['findings']
+
+
+def test_branch_check_requires_correct_first_party_app_id_on_every_job():
+    for app_id in (None, -1, 15369, True, '15368'):
+        checks = [{'context': name, 'app_id': 15368} for name in JOBS]
+        checks[1]['app_id'] = app_id
+        value = protection(required_status_checks={'strict': True, 'checks': checks})
+        report = assess_native_policy(branch_protection=value)
+        assert report['classification'] == 'blocked'
+        assert 'required_check_source_unpinned:coworker' in report['findings']
+
+
+def test_ruleset_check_requires_correct_first_party_integration_id():
+    for integration_id in (None, -1, 15369, False, '15368'):
+        rule = ruleset()
+        checks = rule['rules'][1]['parameters']['required_status_checks']
+        checks[0]['integration_id'] = integration_id
+        report = assess_native_policy(rulesets=[rule])
+        assert report['classification'] == 'blocked'
+        assert 'required_check_source_unpinned:test-and-build' in report['findings']
+
+
+def test_duplicate_check_with_untrusted_source_is_not_a_configuration_candidate():
+    checks = [{'context': name, 'app_id': 15368} for name in JOBS]
+    checks.append({'context': 'coworker', 'app_id': -1})
+    value = protection(required_status_checks={'strict': True, 'checks': checks})
+    report = assess_native_policy(branch_protection=value)
+    assert report['classification'] == 'blocked'
+    assert 'required_check_source_unpinned:coworker' in report['findings']
