@@ -1,7 +1,7 @@
 # Part 02 — Connected-read use-time authorization and atomic payload access
 
 **Date:** 20 October 2026 (Asia/Dhaka)  
-**Status:** Source fix merged in PR #498; PostgreSQL concurrency follow-up pending exact-head CI and independent review  
+**Status:** Source fix merged in PR #498; concurrency regression introduced in PR #499 failed due to fixture FK ordering; repair is in draft PR #500  
 **Scope:** A-01 trust boundaries, A-04 current permission enforcement, P-02 revocation
 
 ## Objective
@@ -48,9 +48,9 @@ The public `cursor` read also validated separately from fetching the cursor.
 
 ## Verification boundary
 
-- The source fix is merged in PR #498. The PostgreSQL concurrency test and updated evidence record are on follow-up branch `codex/part02-postgres-concurrency-evidence-20261020`.
+- The source fix is merged in PR #498. The concurrency regression was merged in PR #499 but its mandatory CI failed due to fixture ordering; the repair and evidence record are on draft PR #500, branch `codex/fix-postgres-concurrency-fixture-20261020`.
 - Focused test execution is not claimed from this connected GitHub editing session.
-- On PR #498's merge SHA, `test-and-build` passed while `coworker` was still in progress; no completed `ci-merge-gate` result was available at the latest observation. Follow-up exact-head checks remain pending.
+- PR #499's exact-head CI completed with `test-and-build: success`, `coworker: failure`, and `ci-merge-gate: failure`. The failing PostgreSQL fixture stopped later connected-read checks from running. PR #500's exact-head checks remain pending.
 - PR #498 has no submitted independent review. Independent review of the merged source and follow-up concurrency regression remains required.
 - Added a real-PostgreSQL CI regression that pauses after authorization, observes a concurrent revoke attempting its grant-row lock, and asserts the revoke waits until the snapshot transaction finishes. Exact-head CI is pending; protected staging and independent review remain required.
 - No staging, production qualification or capability activation is claimed.
