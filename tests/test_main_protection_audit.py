@@ -137,7 +137,7 @@ def test_bad_repo_identifiers_are_rejected_before_fetch(monkeypatch):
 
 def test_ci_main_push_audit_is_not_a_substitute_for_pr_gate():
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    job = workflow.split("\n  governance-audit:\n", 1)[1].split("\n  ", 1)[0]
+    job = workflow.split("\n  governance-audit:\n", 1)[1]
     assert "github.event_name == 'push'" in job
     assert "python -m scripts.main_protection_audit" in job
     assert "GITHUB_TOKEN: ${{ github.token }}" in job
