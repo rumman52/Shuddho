@@ -616,6 +616,7 @@ class TransactionRepository:
                     "Final transaction terms are not available yet.",
                     409,
                 )
+            verify_stored_terms_snapshot_integrity(terms)
             return self._terms_dto(terms)
 
     @staticmethod
@@ -698,6 +699,10 @@ class TransactionRepository:
                 if row.current_terms_revision is not None
                 else None
             )
+            # Human review must not display corrupted or silently mutated
+            # saved terms as if they were the immutable approved quote.
+            if terms is not None and terms.owner_id == owner:
+                verify_stored_terms_snapshot_integrity(terms)
             events = db.scalars(
                 select(TransactionEvent)
                 .where(

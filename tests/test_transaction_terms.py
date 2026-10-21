@@ -135,6 +135,36 @@ def test_terms_snapshot_is_immutable_hashed_and_owner_scoped(container):
         assert row.terms_sha256 == saved["terms"]["terms_sha256"]
 
 
+@pytest.mark.parametrize("tampered_field", ["terms", "price", "provider_quote_id"])
+def test_tx03_read_surfaces_fail_closed_on_tampered_stored_terms(container, tampered_field):
+    """A corrupted quote must not reach the human-facing review/read surface."""
+    enable_transactions(container)
+    owner = account(container, f"tx03-read-integrity-{tampered_field}")
+    transaction = create_transaction(container, owner, f"tx03-read-integrity-{tampered_field}")
+    saved = container.transactions.set_terms(owner, transaction["id"], 1, terms())
+    assert saved["terms"]["terms_sha256"]
+
+    with container.repository.sessions.begin() as db:
+        row = db.get(
+            TransactionTermsSnapshot,
+            (transaction["id"], saved["terms"]["revision"]),
+        )
+        assert row is not None
+        if tampered_field == "terms":
+            edited = [dict(term) for term in row.terms]
+            edited[0]["value"] = "Unauthorized replacement"
+            row.terms = edited
+        elif tampered_field == "price":
+            row.price = {**row.price, "total_minor": row.price["total_minor"] + 100}
+        else:
+            row.provider_quote_id = "different-provider-quote"
+
+    for read in (container.transactions.latest_terms, container.transactions.review_surface):
+        with pytest.raises(CoworkerError) as blocked:
+            read(owner, transaction["id"])
+        assert blocked.value.code == "transaction_terms_integrity_failed"
+
+
 def test_fresh_terms_survive_state_revisions_but_expired_quote_blocks_review(container):
     enable_transactions(container)
     owner = account(container, "tx03-fresh")
