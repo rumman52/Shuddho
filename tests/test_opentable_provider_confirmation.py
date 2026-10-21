@@ -143,3 +143,35 @@ def test_provider_can_explicitly_confirm_no_payment(monkeypatch):
     )
     assert receipt["status"] == "reservation_confirmed"
     assert receipt["payment_required"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("paymentRequired", True),
+        ("paymentRequired", "false"),
+        ("paymentRequired", None),
+        ("post_booking_required_action", {"kind": "creditCardRequired"}),
+        ("post_booking_required_action", ["creditCardRequired"]),
+        ("post_booking_required_action", {}),
+    ],
+)
+def test_booking_response_noncanonical_payment_or_next_action_is_uncertain(
+    monkeypatch, field, value
+):
+    """A successful POST with ambiguous payment metadata must never confirm."""
+    with pytest.raises(OpenTableFailure) as failure:
+        _execute_with_provider_reply(
+            monkeypatch, {**_valid_reply(), field: value}
+        )
+    assert failure.value.code == "provider_receipt_invalid"
+    # A reservation could already exist: never classify as safe-to-retry.
+    assert failure.value.definitive is False
+
+
+def test_booking_response_allows_explicit_no_payment_and_no_next_action(monkeypatch):
+    reply = {**_valid_reply(), "paymentRequired": False}
+    reply["post_booking_required_action"] = "None"
+    receipt = _execute_with_provider_reply(monkeypatch, reply)
+    assert receipt["status"] == "reservation_confirmed"
+    assert receipt["payment_required"] is False

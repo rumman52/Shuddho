@@ -391,6 +391,7 @@ class OpenTableActions:
                 confirmed_time = local_provider_time(str(value.get("date_time")))
             except (OpenTableFailure, ValueError, TypeError):
                 confirmed_time = None
+            post_booking_action = value.get("post_booking_required_action")
             if (
                 type(confirmation) is not int
                 or confirmation < 1
@@ -409,14 +410,15 @@ class OpenTableActions:
                 or type(value.get("party_size")) is not int
                 or value["party_size"] != payload["party_size"]
                 or confirmed_time != local_provider_time(payload["date_time"])
-                or value.get("post_booking_required_action") not in {None, "None"}
-                or value.get("payment") is not None
-                # Never report a no-payment booking if OpenTable explicitly
-                # signals payment is required, even without a payment object.
+                # Object/list provider JSON must not escape as a TypeError
+                # after a reservation may already have been created.
                 or (
-                    "payment_required" in value
-                    and value["payment_required"] is not False
+                    post_booking_action is not None
+                    and post_booking_action != "None"
                 )
+                # Apply the same no-payment boundary to availability and
+                # booking receipts, including camelCase provider flags.
+                or _explicit_payment_requirement(value)
             ):
                 # The provider may have created a reservation, so never invite
                 # a second booking attempt from an ambiguous success response.
