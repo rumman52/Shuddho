@@ -143,9 +143,14 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
             if selected_area is None:
                 continue
             attributes = selected_area.get("attributes")
+            # A specific requested seating attribute must be demonstrably
+            # offered by this exact dining area. Missing/malformed metadata
+            # cannot be treated as permission to reserve it.
             if (
-                isinstance(attributes, list)
-                and payload["reservation_attribute"] not in attributes
+                not isinstance(attributes, list)
+                or not attributes
+                or not all(isinstance(attribute, str) for attribute in attributes)
+                or payload["reservation_attribute"] not in attributes
             ):
                 continue
             if (
