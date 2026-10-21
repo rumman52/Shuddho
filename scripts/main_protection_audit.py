@@ -39,7 +39,9 @@ def _active_main_ruleset(rule: dict) -> bool:
     # are not accepted as sufficient evidence for production qualification.
     if not any(x in ("refs/heads/main", "~DEFAULT_BRANCH") for x in includes):
         return False
-    if any(x in ("refs/heads/main", "~DEFAULT_BRANCH") for x in excludes):
+    # Even a non-literal exclusion can be a branch-matching glob. Only an
+    # empty exclusion list proves main is not exempt from this ruleset.
+    if excludes:
         return False
     # Normal development accounts must not have a bypass on this rule.
     if rule.get("bypass_actors") != []:
@@ -82,12 +84,21 @@ def _has_required_rules(rule: dict) -> bool:
         required = p.get("required_status_checks")
         if not isinstance(required, list):
             return False
-        contexts = {
-            row.get("context")
-            for row in required
-            if isinstance(row, dict) and isinstance(row.get("context"), str)
-        }
-        return CHECKS.issubset(contexts)
+        # GitHub's required-status names alone do not authenticate a check
+        # publisher. Match the pinned first-party GitHub Actions app ID,
+        # including every duplicate entry for a required context.
+        for context in CHECKS:
+            matches = [
+                row for row in required
+                if isinstance(row, dict) and row.get("context") == context
+            ]
+            if not matches or any(
+                type(row.get("integration_id")) is not int
+                or row["integration_id"] != 15368
+                for row in matches
+            ):
+                return False
+        return True
 
     return any(valid_reviews(p) for p in reviews) and any(valid_checks(p) for p in checks)
 

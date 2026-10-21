@@ -45,7 +45,7 @@ def approved_ruleset() -> dict:
                 "parameters": {
                     "strict_required_status_checks_policy": True,
                     "required_status_checks": [
-                        {"context": name} for name in sorted(CHECKS)
+                        {"context": name, "integration_id": 15368} for name in sorted(CHECKS)
                     ],
                 },
             },
@@ -71,6 +71,8 @@ def test_missing_branch_protection_and_missing_rules_are_rejected():
         (lambda x: x.update(target="tag"), "ruleset"),
         (lambda x: x["conditions"]["ref_name"].update(include=["refs/heads/dev"]), "ruleset"),
         (lambda x: x["conditions"]["ref_name"].update(exclude=["refs/heads/main"]), "ruleset"),
+        (lambda x: x["conditions"]["ref_name"].update(exclude=["refs/heads/ma*"]), "ruleset"),
+        (lambda x: x["conditions"]["ref_name"].update(exclude=["refs/heads/other"]), "ruleset"),
         (lambda x: x.update(bypass_actors=[{"actor_id": 1, "actor_type": "RepositoryRole", "bypass_mode": "always"}]), "ruleset"),
         (lambda x: x["rules"][2]["parameters"].update(required_approving_review_count=0), "ruleset"),
         (lambda x: x["rules"][2]["parameters"].update(dismiss_stale_reviews_on_push=False), "ruleset"),
@@ -86,6 +88,23 @@ def test_incomplete_or_bypassable_ruleset_does_not_count(mutate, reason):
     rule = approved_ruleset()
     mutate(rule)
     with pytest.raises(GovernanceAuditError, match=reason):
+        audit_governance(protected_branch(), [rule])
+
+
+
+@pytest.mark.parametrize("source", [None, -1, True, "15368", 15369])
+def test_required_checks_must_be_pinned_to_trusted_github_actions_source(source):
+    rule = approved_ruleset()
+    rule["rules"][3]["parameters"]["required_status_checks"][0]["integration_id"] = source
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_duplicate_required_check_with_untrusted_source_must_fail():
+    rule = approved_ruleset()
+    checks = rule["rules"][3]["parameters"]["required_status_checks"]
+    checks.append({"context": "coworker", "integration_id": 98765})
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
         audit_governance(protected_branch(), [rule])
 
 
