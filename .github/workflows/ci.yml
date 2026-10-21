@@ -56,6 +56,11 @@ jobs:
         run: npm ci
       - name: Run JavaScript tests
         run: npm test
+      # Keep the real proxy safety regressions in the fast job as well as the
+      # mandatory coworker integration job: superseded long jobs must not hide
+      # a private-network CONNECT regression behind a green build.
+      - name: Test browser worker and public-IP CONNECT isolation
+        run: node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs
       - name: Build workspaces
         run: npm run build
       - name: Verify frontend rollout manifest
