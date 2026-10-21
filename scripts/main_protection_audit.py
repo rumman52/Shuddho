@@ -39,7 +39,9 @@ def _active_main_ruleset(rule: dict) -> bool:
     # are not accepted as sufficient evidence for production qualification.
     if not any(x in ("refs/heads/main", "~DEFAULT_BRANCH") for x in includes):
         return False
-    if any(x in ("refs/heads/main", "~DEFAULT_BRANCH") for x in excludes):
+    # Even a non-literal exclusion can be a branch-matching glob. Only an
+    # empty exclusion list proves main is not exempt from this ruleset.
+    if excludes:
         return False
     # Normal development accounts must not have a bypass on this rule.
     if rule.get("bypass_actors") != []:
