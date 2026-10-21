@@ -9,6 +9,16 @@
 
 ---
 
+## V-01 required-check source pinning — 21 October 2026 (Asia/Dhaka)
+
+- **Current baseline for this branch:** main `0c4b8a7d049aad4ff4657a5f101af55d05c792b5` (merged PR #525). PR #525 exact-head [CI #39493914888](https://github.com/rumman52/Shuddho/actions/runs/39493914888) concluded failure: test-and-build and coworker succeeded, ci-merge-gate failed. Main protection endpoint reports `protected=false`. V-01 issue [#484](https://github.com/rumman52/Shuddho/issues/484) remains open.
+- **Implementation branch:** `audit/v01-ci-check-source-pinning-20261021`; [task contract](V01_REQUIRED_CHECK_SOURCE_PIN_2026-10-21.md). The read-only native policy evaluator now requires explicit GitHub Actions App source (ID 15368) per required job, rejects arbitrary/unpinned/duplicated sources, and keeps 2=blocked or 3=configuration-candidate (never success 0).
+- **Tests/review:** Expanded native audit from 11 to **15 authored tests**. No local Python test execution, successful final-head CI, human approval or review sign-off is claimed at this checkpoint; retrieve exact-head CI after PR creation.
+- **Levels:** implemented as review-branch changes; repository-verified **pending**; staging-verified **not established**; production-qualified **NO**; activated **NO**. No settings, providers, deployments, release flags or privileges were changed.
+- **Next exact action:** obtain exact-head CI and independent final-head review, then authorized owner configures effective native protection and demonstrates live red/unreviewed/stale-head negative controls and green/reviewed positive control. Do not merge or close #484 based on a source-only diagnostic.
+
+---
+
 ## V-01 continuation — live review snapshot confirmation (21 October 2026, Asia/Dhaka)
 
 - Baseline main `e937dd974c04c725faca74fb5d6c3569f83c1b2c` (merged PR #523). [PR #523](https://github.com/rumman52/Shuddho/pull/523) **merged 2026-10-20 20:06:45 UTC** with **zero submitted reviews**. Exact-head [CI #39487739882](https://github.com/rumman52/Shuddho/actions/runs/39487739882): `test-and-build` success, `coworker` cancelled, `ci-merge-gate` failure. Native controls still BLOCKED [#484](https://github.com/rumman52/Shuddho/issues/484).
