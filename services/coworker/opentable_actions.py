@@ -117,10 +117,15 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
             continue
         if _explicit_payment_requirement(item):
             continue
-        policy = item.get("cancellationPolicy", item.get("cancellation_policy"))
-        # TX-06 deliberately excludes deposit/hold/fee-bearing inventory.
-        if policy is not None and policy != {}:
-            return None
+        # Both spellings can appear in a provider response. Check every
+        # supplied representation; a fee-bearing alias must not be hidden by
+        # a clear primary value. Only an explicitly clear policy is eligible.
+        if any(
+            item.get(key) not in (None, {})
+            for key in ("cancellationPolicy", "cancellation_policy")
+        ):
+            # A paid candidate does not rule out a later Standard free option.
+            continue
         dining = item.get("diningArea", item.get("dining_area"))
         requested_area = payload.get("dining_area_id")
         requested_environment = payload.get("environment")
