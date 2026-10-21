@@ -366,7 +366,18 @@ class OpenTableActions:
             except (OpenTableFailure, ValueError, TypeError):
                 confirmed_time = None
             if (
-                not isinstance(confirmation, int)
+                type(confirmation) is not int
+                or confirmation < 1
+                # These identity fields are optional in the booking response,
+                # but a returned value must never contradict the approved rid.
+                or any(
+                    key in value
+                    and (
+                        type(value[key]) is not int
+                        or value[key] != payload["restaurant_id"]
+                    )
+                    for key in ("rid", "restaurant_id")
+                )
                 or value.get("party_size") != payload["party_size"]
                 or confirmed_time != local_provider_time(payload["date_time"])
                 or value.get("post_booking_required_action") not in {None, "None"}
