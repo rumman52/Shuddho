@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 from uuid import uuid4
 
@@ -1178,6 +1178,15 @@ class TransactionRepository:
                 or confirmed_at_value is None
                 or confirmed_at_value.tzinfo is None
                 or confirmed_at_value.utcoffset() is None
+                # Reject chronologically impossible provider acceptances.
+                # Persisted action timestamps are server-written; five
+                # minutes permits minor clock skew but not fabricated days.
+                or action.started_at is None
+                or action.finished_at is None
+                or (
+                    confirmed_at_value < aware(action.started_at) - timedelta(minutes=5)
+                    or confirmed_at_value > aware(action.finished_at) + timedelta(minutes=5)
+                )
                 or (
                     link.action_kind == "restaurant_reservation_create"
                     and (
