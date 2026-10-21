@@ -276,3 +276,41 @@ def test_availability_accepts_dual_explicit_empty_policy_aliases(monkeypatch):
     item["cancellation_policy"] = None
     result = _availability(monkeypatch, reply)
     assert result["selection"]["payment_required"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("payment_required", True),
+        ("paymentRequired", "false"),
+        ("payment", {"deposit": 2500}),
+        ("cancellationPolicy", {"fee_minor": 2500}),
+        ("cancellation_policy", {"fee_minor": 2500}),
+    ],
+)
+def test_selected_dining_area_cannot_hide_payment_or_cancellation_fee(
+    monkeypatch, field, value
+):
+    """A no-payment review must not select fee-bearing dining-area inventory."""
+    reply = _provider_reply()
+    area = reply["times_available"][0]["availability_types"][0]["diningArea"][0]
+    area[field] = value
+    with pytest.raises(OpenTableFailure) as failure:
+        _availability(monkeypatch, reply)
+    assert failure.value.code == "reservation_not_available"
+    assert failure.value.definitive is True
+
+
+def test_selected_dining_area_accepts_explicit_no_payment_metadata(monkeypatch):
+    reply = _provider_reply()
+    area = reply["times_available"][0]["availability_types"][0]["diningArea"][0]
+    area.update({
+        "payment_required": False,
+        "paymentRequired": False,
+        "payment": None,
+        "cancellationPolicy": {},
+        "cancellation_policy": None,
+    })
+    selected = _availability(monkeypatch, reply)["selection"]
+    assert selected["dining_area_id"] == 55
+    assert selected["payment_required"] is False
