@@ -116,7 +116,11 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
                 (
                     entry
                     for entry in dining
-                    if isinstance(entry, dict) and entry.get("id") == requested_area
+                    if (
+                        isinstance(entry, dict)
+                        and type(entry.get("id")) is int
+                        and entry["id"] == requested_area
+                    )
                 ),
                 None,
             )
@@ -306,7 +310,14 @@ class OpenTableActions:
                 "reservation_availability_unavailable",
                 definitive=status in {400, 401, 403, 404},
             )
-        if value.get("rid") != rid or value.get("party_size") != payload["party_size"]:
+        # Float/string/bool provider IDs must not pass Python numeric equality.
+        # Availability is revalidated immediately before a booking mutation.
+        if (
+            type(value.get("rid")) is not int
+            or value["rid"] != rid
+            or type(value.get("party_size")) is not int
+            or value["party_size"] != payload["party_size"]
+        ):
             raise OpenTableFailure("provider_response_invalid", definitive=True)
         available = value.get("times_available")
         if not isinstance(available, list):
