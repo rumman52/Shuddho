@@ -26,7 +26,7 @@ Original `networkCheckMatchesTarget` checked hostname matching, address-list len
 
 ## Verification and release boundary
 
-- **Required:** final-head `test-and-build`, mandatory `coworker` (including `node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs`), and independent `ci-merge-gate`, with no skips for mandatory safety checks. Exact-head results are not implied by the local probe.
+- **Required:** final-head `test-and-build` now directly executes `node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs`, so a fast CI pass cannot hide a private-DNS CONNECT regression while a longer run is cancelled. Mandatory `coworker` continues executing the same real-proxy suite as well. `ci-merge-gate` and independent review remain separate. No skips for mandatory safety checks. Exact-head results are not implied by the local probe.
 - **Security:** no browser live egress, DNS rebinding, actual Chromium redirect chain, isolated-worker network namespace, private S3, synthetic identity, or production deployment was exercised. CW-09 **staging verification remains blocked** on operated infrastructure.
 - **Review:** independent code/security review required; validate CIDR deny list against broker `ipaddress.is_global` semantics and real network policies. A privileged broker failure or new address special use must still be considered.
 - **Governance:** V-01 [#484](https://github.com/rumman52/Shuddho/issues/484) requires effective protected main and negative controls. The new PR is draft and **must not be merged** until independently reviewed and fully checked. Staging [#291](https://github.com/rumman52/Shuddho/issues/291) remains separate.
