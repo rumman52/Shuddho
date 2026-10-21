@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -1160,6 +1161,20 @@ class TransactionRepository:
                 or not isinstance(receipt.get("status"), str)
                 or not receipt.get("status")
                 or (expected_status is not None and receipt.get("status") != expected_status)
+                # Gmail returns a provider-validated message ID for every
+                # accepted email. The durable reconciliation boundary must not
+                # treat a status-only or malformed receipt as confirmation.
+                or (
+                    link.action_kind == "negotiation_commitment_email"
+                    and link.provider == "google"
+                    and (
+                        not isinstance(receipt.get("provider_id"), str)
+                        or re.fullmatch(
+                            r"[a-zA-Z0-9_-]{1,200}",
+                            receipt["provider_id"],
+                        ) is None
+                    )
+                )
                 or confirmed_at_value is None
                 or confirmed_at_value.tzinfo is None
                 or confirmed_at_value.utcoffset() is None
