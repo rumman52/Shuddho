@@ -378,10 +378,19 @@ class OpenTableActions:
                     )
                     for key in ("rid", "restaurant_id")
                 )
-                or value.get("party_size") != payload["party_size"]
+                # JSON response numbers can be floats (2.0 == 2) and bools
+                # can act as ints. Neither is canonical booking party size.
+                or type(value.get("party_size")) is not int
+                or value["party_size"] != payload["party_size"]
                 or confirmed_time != local_provider_time(payload["date_time"])
                 or value.get("post_booking_required_action") not in {None, "None"}
                 or value.get("payment") is not None
+                # Never report a no-payment booking if OpenTable explicitly
+                # signals payment is required, even without a payment object.
+                or (
+                    "payment_required" in value
+                    and value["payment_required"] is not False
+                )
             ):
                 # The provider may have created a reservation, so never invite
                 # a second booking attempt from an ambiguous success response.

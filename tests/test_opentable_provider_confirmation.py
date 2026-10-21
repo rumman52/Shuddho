@@ -109,3 +109,37 @@ def test_matching_or_omitted_optional_provider_restaurant_id_is_accepted(
     assert receipt["status"] == "reservation_confirmed"
     assert receipt["confirmation_number"] == 741852
     assert receipt["restaurant_id"] == 123456
+
+
+@pytest.mark.parametrize(
+    "payment_required",
+    [True, 1, "false", None],
+)
+def test_provider_cannot_override_no_payment_reservation(
+    monkeypatch, payment_required
+):
+    """Explicit non-False payment flags must not become no-payment success."""
+    with pytest.raises(OpenTableFailure) as failure:
+        _execute_with_provider_reply(
+            monkeypatch, {**_valid_reply(), "payment_required": payment_required}
+        )
+    assert failure.value.code == "provider_receipt_invalid"
+    assert failure.value.definitive is False
+
+
+@pytest.mark.parametrize("party_size", [2.0, 2.00])
+def test_provider_party_size_must_be_canonical_integer(monkeypatch, party_size):
+    with pytest.raises(OpenTableFailure) as failure:
+        _execute_with_provider_reply(
+            monkeypatch, {**_valid_reply(), "party_size": party_size}
+        )
+    assert failure.value.code == "provider_receipt_invalid"
+    assert failure.value.definitive is False
+
+
+def test_provider_can_explicitly_confirm_no_payment(monkeypatch):
+    receipt = _execute_with_provider_reply(
+        monkeypatch, {**_valid_reply(), "payment_required": False}
+    )
+    assert receipt["status"] == "reservation_confirmed"
+    assert receipt["payment_required"] is False
