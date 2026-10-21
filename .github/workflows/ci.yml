@@ -337,3 +337,18 @@ jobs:
             --pull-request "$REVIEW_PR_NUMBER" \
             --head-sha "$REVIEW_HEAD_SHA"
 
+  # Informational post-merge tripwire. Native rulesets are still required to
+  # prevent an unsafe merge in the first place. Fail CI on unprotected main.
+  governance-audit:
+    name: governance-audit
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect active V-01 main governance
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python -m scripts.main_protection_audit --repository "${{ github.repository }}"
