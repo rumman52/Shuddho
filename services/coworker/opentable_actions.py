@@ -106,6 +106,9 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
             return None
     except (OpenTableFailure, ValueError, TypeError):
         return None
+    # A paid time slot must not be silently downgraded by a Standard type.
+    if _explicit_payment_requirement(value):
+        return None
     types = value.get("availability_types")
     if not isinstance(types, list):
         return None
