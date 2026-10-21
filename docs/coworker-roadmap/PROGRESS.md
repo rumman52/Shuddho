@@ -1,3 +1,14 @@
+## CW-09 — worker-side browser private DNS fence (21 October 2026, Asia/Dhaka)
+
+- Baseline main `0c4b8a7d049aad4ff4657a5f101af55d05c792b5`. Separate [draft PR #526](https://github.com/rumman52/Shuddho/pull/526) is still open/unmerged: its test-and-build and coworker succeeded but ci-merge-gate failed. V-01 governance [#484](https://github.com/rumman52/Shuddho/issues/484) remains BLOCKED; no native protection was configured.
+- Chosen **independent CW-09 source-level defect:** after broker DNS network-check, the real HTTPS CONNECT worker in `scripts/browser_pinned_proxy.mjs` enforced valid IP *syntax* but not public routability. A syntactically valid `127.0.0.1` returned from an erroneous broker response could reach TCP dialing.
+- Draft [PR #527](https://github.com/rumman52/Shuddho/pull/527). Test-only SHA `4431e5fa0d7136114353c075d2f7d12d6ed867b9` extends the actual real TCP proxy harness with 14 private/mapped/mixed-address DNS regressions. [Test-only workflow #39539992177](https://github.com/rumman52/Shuddho/actions/runs/39539992177) cancelled before coworker reached proxy tests; do **not** count that as a full observed red integration run. Local copied original predicate independently returned `true` for loopback and failed the intended rejection assertion.
+- Source fix SHA `1d4334f709bc8b5875889dcb63e6ae3d4b121ad9`: Node CIDR blocklists refuse IPv4 reserved/private and IPv6 not globally routable (plus transition/documentation ranges) before pinned dial. Reject an entire DNS answer if any item is disallowed. Local Node probe: 16 blocked and 4 allowed classifications. [Task contract](CW09_WORKER_SIDE_DNS_EGRESS_FENCE_2026-10-21.md).
+- **Levels:** Implemented on feature branch; exact-final-head mandatory coworker and full CI **pending**; operated staging, production qualification and activation **not proven**. No provider credentials, network permission, schema, flags, external mutations or deployments changed.
+- **Next:** inspect exact doc-inclusive PR-head `test-and-build` / `coworker` real proxy step / `ci-merge-gate`, obtain independent human review, keep draft/unmerged until native main governance and staging dependencies proven.
+
+---
+
 ## V-01 required-check source pinning — 21 October 2026 (Asia/Dhaka)
 
 - **Current baseline for this branch:** main `0c4b8a7d049aad4ff4657a5f101af55d05c792b5` (merged PR #525). PR #525 exact-head [CI #39493914888](https://github.com/rumman52/Shuddho/actions/runs/39493914888) concluded failure: test-and-build and coworker succeeded, ci-merge-gate failed. Main protection endpoint reports `protected=false`. V-01 issue [#484](https://github.com/rumman52/Shuddho/issues/484) remains open.

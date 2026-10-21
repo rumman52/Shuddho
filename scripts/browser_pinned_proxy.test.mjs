@@ -223,6 +223,22 @@ test("real CONNECT fails closed on malformed or mismatched broker DNS results", 
     ["empty resolved address list", { hostname: "example.com", resolved_ips: [] }],
     ["non-array address list", { hostname: "example.com", resolved_ips: "93.184.216.34" }],
     ["invalid IP literal", { hostname: "example.com", resolved_ips: ["localhost"] }],
+    // Defense-in-depth: a malformed or compromised broker check must never
+    // allow private, metadata, loopback or IPv4-mapped IPv6 destinations.
+    ["IPv4 loopback", { hostname: "example.com", resolved_ips: ["127.0.0.1"] }],
+    ["RFC1918 10/8", { hostname: "example.com", resolved_ips: ["10.21.0.8"] }],
+    ["RFC1918 172.16/12", { hostname: "example.com", resolved_ips: ["172.20.1.3"] }],
+    ["RFC1918 192.168/16", { hostname: "example.com", resolved_ips: ["192.168.1.1"] }],
+    ["metadata link-local", { hostname: "example.com", resolved_ips: ["169.254.169.254"] }],
+    ["shared CGNAT", { hostname: "example.com", resolved_ips: ["100.64.0.1"] }],
+    ["network testing", { hostname: "example.com", resolved_ips: ["198.18.1.1"] }],
+    ["IPv4 multicast", { hostname: "example.com", resolved_ips: ["224.0.0.1"] }],
+    ["IPv6 loopback", { hostname: "example.com", resolved_ips: ["::1"] }],
+    ["IPv6 unique local", { hostname: "example.com", resolved_ips: ["fd00::10"] }],
+    ["IPv6 link-local", { hostname: "example.com", resolved_ips: ["fe80::1"] }],
+    ["IPv6 multicast", { hostname: "example.com", resolved_ips: ["ff02::1"] }],
+    ["IPv4-mapped loopback", { hostname: "example.com", resolved_ips: ["::ffff:127.0.0.1"] }],
+    ["mixed public/private answer", { hostname: "example.com", resolved_ips: ["93.184.216.34", "10.0.0.2"] }],
     ["too many resolved addresses", { hostname: "example.com", resolved_ips: Array(17).fill("93.184.216.34") }],
   ];
 
