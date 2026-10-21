@@ -19,7 +19,7 @@ from test_transaction_terms import terms
 
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
-from services.coworker.models import TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionTermsSnapshot, utcnow
+from services.coworker.models import ExternalAction, TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionTermsSnapshot, utcnow
 from services.coworker.transaction_repository import TransactionDraft
 
 
@@ -285,6 +285,47 @@ def test_local_sync_projects_action_state_and_dedupes_receipt_evidence(container
         if item["event_type"] == "transaction_execution_observed"
     ]
     assert len(observed) == 4
+
+
+def test_tx05_confirmed_receipt_is_final_on_sync_replay(container):
+    """A changed saved ExternalAction receipt must not append another success."""
+    enable_transactions(container)
+    owner = account(container, "tx05-confirmed-finality")
+    confirmed = reviewed_transaction(container, owner, "tx05-confirmed-finality")
+    action, _link = bound_action(container, owner, confirmed, "tx05-confirmed-finality-action")
+    transaction_id = confirmed["review_binding"]["transaction_id"]
+
+    approved = container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    original = {
+        "provider": "google",
+        "status": "accepted_by_gmail",
+        "provider_id": "original-confirmation",
+        "confirmed_at": utcnow().isoformat(),
+    }
+    container.actions.repo.finish(action["id"], "succeeded", receipt=original)
+    first = container.transactions.sync_external_action(owner, transaction_id)
+    assert first["transaction"]["state"] == "confirmed"
+    assert first["evidence"]["receipt"] == original
+
+    with container.repository.sessions.begin() as db:
+        stored = db.get(ExternalAction, action["id"])
+        assert stored is not None
+        stored.receipt = {**original, "provider_id": "unexpected-replacement"}
+
+    with pytest.raises(CoworkerError) as conflict:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert conflict.value.code == "transaction_evidence_integrity_failed"
+    with container.repository.sessions() as db:
+        rows = db.scalars(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        ).all()
+    assert len(rows) == 1
+    assert rows[0].receipt == original
+    assert container.transactions.get(owner, transaction_id)["state"] == "confirmed"
 
 
 def test_outcome_unknown_never_retries_and_late_receipt_can_confirm(container):

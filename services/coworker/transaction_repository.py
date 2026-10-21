@@ -1205,6 +1205,21 @@ class TransactionRepository:
         if existing is not None:
             self._verify_execution_evidence(existing, link)
             return existing, False
+        # A successful observation cannot be superseded by altered
+        # provider receipts or other action result metadata.
+        if action.state == "succeeded" and db.scalar(
+            select(TransactionReconciliationEvidence.id).where(
+                TransactionReconciliationEvidence.transaction_id == row.id,
+                TransactionReconciliationEvidence.owner_id == row.owner_id,
+                TransactionReconciliationEvidence.external_action_id == action.id,
+                TransactionReconciliationEvidence.action_state == "succeeded",
+            )
+        ) is not None:
+            raise CoworkerError(
+                "transaction_evidence_integrity_failed",
+                "A confirmed provider receipt cannot change after reconciliation.",
+                409,
+            )
         sequence = int(
             db.scalar(
                 select(func.coalesce(func.max(TransactionReconciliationEvidence.sequence), 0)).where(
