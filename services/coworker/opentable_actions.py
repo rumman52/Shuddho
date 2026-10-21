@@ -89,6 +89,17 @@ def reservation_receipt_matches_approved_preview(receipt: dict, payload: dict) -
         return False
 
 
+def _explicit_payment_requirement(value: dict) -> bool:
+    """Fail closed when provider inventory contradicts no-payment booking."""
+    return (
+        any(
+            key in value and value[key] is not False
+            for key in ("payment_required", "paymentRequired")
+        )
+        or value.get("payment") is not None
+    )
+
+
 def _standard_slot(value: dict, payload: dict) -> dict | None:
     try:
         if local_provider_time(str(value.get("time"))) != local_provider_time(payload["date_time"], require_offset=True):
@@ -100,6 +111,8 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
         return None
     for item in types:
         if not isinstance(item, dict) or str(item.get("type", "")).casefold() != "standard":
+            continue
+        if _explicit_payment_requirement(item):
             continue
         policy = item.get("cancellationPolicy", item.get("cancellation_policy"))
         # TX-06 deliberately excludes deposit/hold/fee-bearing inventory.
@@ -319,6 +332,8 @@ class OpenTableActions:
             or value["party_size"] != payload["party_size"]
         ):
             raise OpenTableFailure("provider_response_invalid", definitive=True)
+        if _explicit_payment_requirement(value):
+            raise OpenTableFailure("reservation_payment_required", definitive=True)
         available = value.get("times_available")
         if not isinstance(available, list):
             raise OpenTableFailure("provider_response_invalid", definitive=True)
