@@ -174,8 +174,6 @@ def test_availability_accepts_explicit_free_time_slot(monkeypatch):
     assert result["selection"]["availability_type"] == "Standard"
     assert result["selection"]["payment_required"] is False
 
-
-
 @pytest.mark.parametrize(
     "attributes",
     [
@@ -193,7 +191,8 @@ def test_availability_rejects_unverified_dining_area_attributes(
 ):
     """A chosen dining area must explicitly support the approved seating."""
     reply = _provider_reply()
-    reply["times_available"][0]["availability_types"][0]["diningArea"][0]["attributes"] = attributes
+    area = reply["times_available"][0]["availability_types"][0]["diningArea"][0]
+    area["attributes"] = attributes
     with pytest.raises(OpenTableFailure) as failure:
         _availability(monkeypatch, reply)
     assert failure.value.code == "reservation_not_available"
@@ -212,7 +211,23 @@ def test_availability_rejects_missing_dining_area_attributes(monkeypatch):
 
 def test_availability_accepts_explicit_matching_dining_area_attribute(monkeypatch):
     reply = _provider_reply()
-    reply["times_available"][0]["availability_types"][0]["diningArea"][0]["attributes"] = ["bar", "default"]
+    area = reply["times_available"][0]["availability_types"][0]["diningArea"][0]
+    area["attributes"] = ["bar", "default"]
     result = _availability(monkeypatch, reply)
     assert result["selection"]["dining_area_id"] == 55
     assert result["selection"]["reservation_attribute"] == "default"
+
+
+def test_availability_cannot_borrow_seating_proof_from_another_area(monkeypatch):
+    reply = _provider_reply()
+    areas = reply["times_available"][0]["availability_types"][0]["diningArea"]
+    areas[0]["attributes"] = ["bar"]
+    areas.append({
+        "id": 56,
+        "environment": "Indoor",
+        "attributes": ["default"],
+    })
+    with pytest.raises(OpenTableFailure) as failure:
+        _availability(monkeypatch, reply)
+    assert failure.value.code == "reservation_not_available"
+    assert failure.value.definitive is True
