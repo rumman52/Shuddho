@@ -82,12 +82,21 @@ def _has_required_rules(rule: dict) -> bool:
         required = p.get("required_status_checks")
         if not isinstance(required, list):
             return False
-        contexts = {
-            row.get("context")
-            for row in required
-            if isinstance(row, dict) and isinstance(row.get("context"), str)
-        }
-        return CHECKS.issubset(contexts)
+        # GitHub's required-status names alone do not authenticate a check
+        # publisher. Match the pinned first-party GitHub Actions app ID,
+        # including every duplicate entry for a required context.
+        for context in CHECKS:
+            matches = [
+                row for row in required
+                if isinstance(row, dict) and row.get("context") == context
+            ]
+            if not matches or any(
+                type(row.get("integration_id")) is not int
+                or row["integration_id"] != 15368
+                for row in matches
+            ):
+                return False
+        return True
 
     return any(valid_reviews(p) for p in reviews) and any(valid_checks(p) for p in checks)
 
