@@ -102,3 +102,43 @@ def test_availability_accepts_exact_integer_provider_values(monkeypatch):
     assert result["selection"]["party_size"] == 2
     assert result["selection"]["dining_area_id"] == 55
     assert result["selection"]["payment_required"] is False
+
+
+@pytest.mark.parametrize(
+    ("scope", "field", "value", "expected_code"),
+    [
+        ("response", "payment_required", True, "reservation_payment_required"),
+        ("response", "paymentRequired", 1, "reservation_payment_required"),
+        ("response", "payment_required", "false", "reservation_payment_required"),
+        ("response", "payment", {}, "reservation_payment_required"),
+        ("slot", "payment_required", True, "reservation_not_available"),
+        ("slot", "paymentRequired", "false", "reservation_not_available"),
+        ("slot", "payment", {"deposit": 100}, "reservation_not_available"),
+    ],
+)
+def test_availability_rejects_explicit_payment_requirements(
+    monkeypatch, scope, field, value, expected_code
+):
+    """Paid inventory must not be transformed into a no-payment selection."""
+    response = _provider_reply()
+    target = (
+        response
+        if scope == "response"
+        else response["times_available"][0]["availability_types"][0]
+    )
+    target[field] = value
+    with pytest.raises(OpenTableFailure) as failure:
+        _availability(monkeypatch, response)
+    assert failure.value.code == expected_code
+    assert failure.value.definitive is True
+
+
+def test_availability_accepts_explicitly_no_payment_inventory(monkeypatch):
+    response = _provider_reply()
+    response["payment_required"] = False
+    response["payment"] = None
+    slot = response["times_available"][0]["availability_types"][0]
+    slot["paymentRequired"] = False
+    slot["payment"] = None
+    result = _availability(monkeypatch, response)
+    assert result["selection"]["payment_required"] is False
