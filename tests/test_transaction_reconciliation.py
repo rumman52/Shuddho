@@ -469,6 +469,50 @@ def test_tx05_gmail_receipt_requires_provider_message_id(container, case, provid
 
 
 
+@pytest.mark.parametrize(
+    ("scenario", "skew"),
+    [
+        ("before-execution", timedelta(days=-1)),
+        ("after-execution", timedelta(days=1)),
+    ],
+)
+def test_tx05_receipt_confirmation_time_must_fit_execution_window(
+    container, scenario, skew,
+):
+    """An impossible receipt timestamp never confirms a transaction."""
+    enable_transactions(container)
+    key = f"tx05-receipt-clock-{scenario}"
+    owner = account(container, key)
+    reviewed = reviewed_transaction(container, owner, key)
+    action, _link = bound_action(container, owner, reviewed, key + "-action")
+    transaction_id = reviewed["review_binding"]["transaction_id"]
+
+    approved = container.actions.repo.approve(
+        owner, action["id"], action["preview_hash"]
+    )
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    receipt = {
+        "provider": "google",
+        "status": "accepted_by_gmail",
+        "provider_id": "message-clock-check",
+        "confirmed_at": (utcnow() + skew).isoformat(),
+    }
+    container.actions.repo.finish(action["id"], "succeeded", receipt=receipt)
+
+    with pytest.raises(CoworkerError) as invalid:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert invalid.value.code == "transaction_receipt_invalid"
+    assert container.transactions.get(owner, transaction_id)["state"] == "awaiting_approval"
+    with container.repository.sessions() as db:
+        recorded = db.scalars(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        ).all()
+    assert recorded == []
+
+
 @pytest.mark.parametrize("tampered_field", ["terms", "price"])
 def test_sync_rejects_tampered_persisted_terms_before_receipt_projection(
     container,
