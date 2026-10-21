@@ -50,6 +50,45 @@ def local_provider_time(value: str, *, require_offset: bool = False) -> str:
     return parsed.replace(tzinfo=None).isoformat(timespec="minutes")
 
 
+def reservation_receipt_matches_approved_preview(receipt: dict, payload: dict) -> bool:
+    """Ensure a confirmed booking matches the immutable reviewed reservation.
+
+    OpenTable returns local restaurant date_time without an offset, whereas
+    the approved payload has an offset. Compare both at local minute precision
+    using the adapter's established normalization, never as UTC instants.
+    """
+    if not isinstance(receipt, dict) or not isinstance(payload, dict):
+        return False
+    compared_fields = (
+        "restaurant_id", "restaurant_name", "time_zone", "party_size",
+        "reservation_attribute", "dining_area_id", "environment",
+    )
+    if any(
+        field not in receipt or field not in payload
+        or receipt[field] != payload[field]
+        for field in compared_fields
+    ):
+        return False
+    if (
+        type(receipt["restaurant_id"]) is not int
+        or type(receipt["party_size"]) is not int
+        or type(payload["restaurant_id"]) is not int
+        or type(payload["party_size"]) is not int
+    ):
+        return False
+    received_time = receipt.get("date_time")
+    approved_time = payload.get("date_time")
+    if not isinstance(received_time, str) or not isinstance(approved_time, str):
+        return False
+    try:
+        return (
+            local_provider_time(received_time)
+            == local_provider_time(approved_time, require_offset=True)
+        )
+    except (OpenTableFailure, ValueError, TypeError):
+        return False
+
+
 def _standard_slot(value: dict, payload: dict) -> dict | None:
     try:
         if local_provider_time(str(value.get("time"))) != local_provider_time(payload["date_time"], require_offset=True):

@@ -28,6 +28,7 @@ from .models import (
     Workspace,
     utcnow,
 )
+from .opentable_actions import reservation_receipt_matches_approved_preview
 from .repository import aware, iso, not_found
 from .transaction_integrity import (
     canonical_terms_payload,
@@ -1190,7 +1191,10 @@ class TransactionRepository:
                 or (
                     link.action_kind == "restaurant_reservation_create"
                     and (
-                        receipt.get("payment_required") is not False
+                        not reservation_receipt_matches_approved_preview(
+                            receipt, action.preview.get("payload")
+                        )
+                        or receipt.get("payment_required") is not False
                         or not isinstance(receipt.get("confirmation_number"), int)
                         or isinstance(receipt.get("confirmation_number"), bool)
                         or receipt.get("confirmation_number") < 1
