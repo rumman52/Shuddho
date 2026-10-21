@@ -422,13 +422,20 @@ def test_invalid_success_receipt_fails_closed_without_confirming_transaction(con
 
 
 @pytest.mark.parametrize(
-    "provider_id",
-    [None, "", " ", "mail/invalid", 42, "x" * 201],
+    ("case", "provider_id"),
+    [
+        ("missing", None),
+        ("empty", ""),
+        ("whitespace", " "),
+        ("invalid-characters", "mail/invalid"),
+        ("non-string", 42),
+        ("overlong", "x" * 201),
+    ],
 )
-def test_tx05_gmail_receipt_requires_provider_message_id(container, provider_id):
+def test_tx05_gmail_receipt_requires_provider_message_id(container, case, provider_id):
     """A Gmail acceptance label without a valid provider ID is not proof."""
     enable_transactions(container)
-    key = f"tx05-gmail-receipt-{repr(provider_id)}"
+    key = f"tx05-gmail-receipt-{case}"
     owner = account(container, key)
     reviewed = reviewed_transaction(container, owner, key)
     action, _link = bound_action(container, owner, reviewed, key + "-action")
