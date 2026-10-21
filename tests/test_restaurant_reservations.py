@@ -20,7 +20,7 @@ from test_coworker import account, container
 from services.coworker.action_registry import action_spec, stable_digest
 from services.coworker.action_schemas import ActionPrepare
 from services.coworker.errors import CoworkerError
-from services.coworker.models import RestaurantReservationIntent, utcnow
+from services.coworker.models import ExternalAction, RestaurantReservationIntent, TransactionReconciliationEvidence, utcnow
 from services.coworker.permission_gateway import PermissionGateway
 from services.coworker.credential_broker import CredentialBroker
 from services.coworker.opentable_actions import (
@@ -443,6 +443,54 @@ def test_review_prepare_approve_then_worker_books_exactly_once(container):
     )
     assert projected["transaction"]["state"] == "confirmed"
     assert projected["evidence"]["receipt"]["confirmation_number"] == simulated.confirmation_number
+
+
+@pytest.mark.parametrize(
+    ("field", "tampered_value"),
+    [
+        ("restaurant_id", RID + 1),
+        ("restaurant_name", "Another Bistro"),
+        ("party_size", 3),
+        ("date_time", "2040-01-01T19:00:00"),
+        ("time_zone", "America/New_York"),
+        ("reservation_attribute", "outdoor"),
+        ("dining_area_id", 56),
+        ("environment", "Outdoor"),
+    ],
+)
+def test_tx05_opentable_receipt_cannot_confirm_changed_booking_details(
+    container, field, tampered_value,
+):
+    """A valid-looking persisted receipt cannot confirm different approved terms."""
+    simulated = enable_restaurants(container)
+    key = "tx05-reservation-receipt-" + field
+    owner = account(container, key)
+    surface, _ = asyncio.run(create_review(container, owner, key=key))
+    action = prepare_bound_action(container, owner, surface)["action"]
+    container.actions.repo.approve(owner, action["id"], action["preview_hash"])
+    asyncio.run(container.actions.execute(action["id"]))
+    assert len(simulated.bookings) == 1
+    assert container.actions.repo.get(owner, action["id"])["state"] == "succeeded"
+
+    with container.repository.sessions.begin() as db:
+        stored = db.get(ExternalAction, action["id"])
+        assert stored is not None and isinstance(stored.receipt, dict)
+        stored.receipt = {**stored.receipt, field: tampered_value}
+
+    transaction_id = surface["transaction"]["id"]
+    with pytest.raises(CoworkerError) as invalid:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert invalid.value.code == "transaction_receipt_invalid"
+    assert container.transactions.get(owner, transaction_id)["state"] == "awaiting_approval"
+    with container.repository.sessions() as db:
+        evidence = db.scalars(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        ).all()
+    assert evidence == []
+    assert len(simulated.bookings) == 1
 
 
 def test_fresh_availability_drift_stops_booking_before_post(container):
