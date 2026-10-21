@@ -147,6 +147,13 @@ def _standard_slot(value: dict, payload: dict) -> dict | None:
             )
             if selected_area is None:
                 continue
+            # A selected dining area's own fee requirements are authoritative,
+            # even when its enclosing Standard slot appears free.
+            if _explicit_payment_requirement(selected_area) or any(
+                selected_area.get(key) not in (None, {})
+                for key in ("cancellationPolicy", "cancellation_policy")
+            ):
+                continue
             attributes = selected_area.get("attributes")
             # A specific requested seating attribute must be demonstrably
             # offered by this exact dining area. Missing/malformed metadata
