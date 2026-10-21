@@ -231,3 +231,48 @@ def test_availability_cannot_borrow_seating_proof_from_another_area(monkeypatch)
         _availability(monkeypatch, reply)
     assert failure.value.code == "reservation_not_available"
     assert failure.value.definitive is True
+
+
+@pytest.mark.parametrize(
+    ("camel_policy", "snake_policy"),
+    [
+        (None, {"fee_minor": 2500}),
+        ({}, {"fee_minor": 2500}),
+    ],
+)
+def test_availability_rejects_conflicting_policy_aliases(
+    monkeypatch, camel_policy, snake_policy
+):
+    """Neither provider policy representation may hide a fee-bearing policy."""
+    reply = _provider_reply()
+    item = reply["times_available"][0]["availability_types"][0]
+    item["cancellationPolicy"] = camel_policy
+    item["cancellation_policy"] = snake_policy
+    with pytest.raises(OpenTableFailure) as failure:
+        _availability(monkeypatch, reply)
+    assert failure.value.code == "reservation_not_available"
+    assert failure.value.definitive is True
+
+
+def test_availability_checks_next_standard_type_after_paid_policy(monkeypatch):
+    """Paid first choice cannot mask a later verified no-payment option."""
+    from copy import deepcopy
+
+    reply = _provider_reply()
+    choices = reply["times_available"][0]["availability_types"]
+    free_choice = deepcopy(choices[0])
+    choices[0]["cancellationPolicy"] = {"fee_minor": 1500}
+    choices.append(free_choice)
+    result = _availability(monkeypatch, reply)
+    assert result["selection"]["availability_type"] == "Standard"
+    assert result["selection"]["payment_required"] is False
+    assert result["selection"]["dining_area_id"] == 55
+
+
+def test_availability_accepts_dual_explicit_empty_policy_aliases(monkeypatch):
+    reply = _provider_reply()
+    item = reply["times_available"][0]["availability_types"][0]
+    item["cancellationPolicy"] = {}
+    item["cancellation_policy"] = None
+    result = _availability(monkeypatch, reply)
+    assert result["selection"]["payment_required"] is False
