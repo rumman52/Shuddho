@@ -142,3 +142,34 @@ def test_availability_accepts_explicitly_no_payment_inventory(monkeypatch):
     slot["payment"] = None
     result = _availability(monkeypatch, response)
     assert result["selection"]["payment_required"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "required"),
+    [
+        ("payment_required", True),
+        ("paymentRequired", "false"),
+        ("payment", {"deposit": 25}),
+    ],
+)
+def test_availability_rejects_paid_time_slot_before_selecting_standard_type(
+    monkeypatch, field, required
+):
+    """A slot-level payment signal must not be erased by a Standard type."""
+    reply = _provider_reply()
+    reply["times_available"][0][field] = required
+    with pytest.raises(OpenTableFailure) as failure:
+        _availability(monkeypatch, reply)
+    assert failure.value.code == "reservation_not_available"
+    assert failure.value.definitive is True
+
+
+def test_availability_accepts_explicit_free_time_slot(monkeypatch):
+    reply = _provider_reply()
+    slot = reply["times_available"][0]
+    slot["payment_required"] = False
+    slot["paymentRequired"] = False
+    slot["payment"] = None
+    result = _availability(monkeypatch, reply)
+    assert result["selection"]["availability_type"] == "Standard"
+    assert result["selection"]["payment_required"] is False
