@@ -3,7 +3,8 @@
 // production never accepts these values from browser content or user input.
 import http from "node:http";
 import net, { isIP } from "node:net";
- 
+import { performance } from "node:perf_hooks";
+
 // A broker-validated DNS response is not a substitute for worker-side network
 // isolation. The proxy must reject reserved/private addresses before dialing,
 // even if a stale or malformed network-check response accidentally returned one.
@@ -77,7 +78,20 @@ export async function createPinnedProxy(state, { validateHost, dial = net.connec
     // pause()/destroy() must terminate even sockets which have not yet
     // authorized an upstream connection; otherwise they escape cleanup.
     sockets.add(clientSocket);
-    clientSocket.once("close", () => sockets.delete(clientSocket));
+    let upstream;
+    // Socket inactivity timeouts start only after authorization. Bound the
+    // entire handshake, including DNS/broker wait, with one independent timer.
+    // Destroying the client also makes a late authorization fail the claim check.
+    const handshakeExpiresAt = performance.now() + navigationTimeoutMs;
+    const handshakeDeadline = setTimeout(() => {
+      clientSocket.destroy();
+      upstream?.destroy();
+    }, navigationTimeoutMs);
+    clientSocket.once("close", () => {
+      clearTimeout(handshakeDeadline);
+      sockets.delete(clientSocket);
+      upstream?.destroy();
+    });
     let target;
     try {
       const claim = {
@@ -97,23 +111,24 @@ export async function createPinnedProxy(state, { validateHost, dial = net.connec
       }
       // The client may disconnect while DNS/API authorization is suspended.
       // Refuse any outbound TCP dial after that disconnect.
-      if (!browserProxyClaimValid(state, claim) || clientSocket.destroyed) {
+      if (!browserProxyClaimValid(state, claim) || clientSocket.destroyed || performance.now() >= handshakeExpiresAt) {
         throw new Error("browser_claim_expired");
       }
       state.evidence[checked.hostname] = checked.resolved_ips;
       const pinnedIp = checked.resolved_ips[0];
-      const upstream = dial({ host: pinnedIp, port: 443 });
+      upstream = dial({ host: pinnedIp, port: 443 });
       sockets.add(upstream);
       upstream.setTimeout(navigationTimeoutMs);
 
       upstream.once("connect", () => {
         // Revocation can also occur while the TCP connection is pending.
         // Never acknowledge the CONNECT or attach pipes for stale claims.
-        if (!browserProxyClaimValid(state, claim) || clientSocket.destroyed) {
+        if (!browserProxyClaimValid(state, claim) || clientSocket.destroyed || performance.now() >= handshakeExpiresAt) {
           upstream.destroy();
           clientSocket.destroy();
           return;
         }
+        clearTimeout(handshakeDeadline);
         clientSocket.write("HTTP/1.1 200 Connection Established\r\nProxy-Agent: shuddho-browser-worker\r\n\r\n");
         if (head?.length) upstream.write(head);
         clientSocket.pipe(upstream);
@@ -124,7 +139,10 @@ export async function createPinnedProxy(state, { validateHost, dial = net.connec
       upstream.once("error", () => clientSocket.destroy());
       clientSocket.once("error", () => upstream.destroy());
     } catch {
-      clientSocket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      clearTimeout(handshakeDeadline);
+      if (!clientSocket.destroyed) {
+        clientSocket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      }
       clientSocket.destroy();
     }
   });

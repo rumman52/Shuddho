@@ -39,6 +39,168 @@ async function stopProxy(proxy, clients = []) {
   await new Promise((resolve) => proxy.server.close(resolve));
 }
 
+function closedWithin(socket, timeoutMs) {
+  return new Promise((resolve) => {
+    const onClose = () => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => {
+      socket.off("close", onClose);
+      resolve(false);
+    }, timeoutMs);
+    socket.once("close", onClose);
+  });
+}
+
+// Exercise timer ordering after a busy event loop: expiry must be checked at
+// the side-effect boundary, even if its timer callback has not run yet.
+function elapseWithoutTimers(milliseconds) {
+  const until = performance.now() + milliseconds;
+  while (performance.now() < until) { /* Deliberately hold timer callbacks. */ }
+}
+
+test("real CONNECT rejects elapsed authorization before the timeout callback runs", { timeout: 3000 }, async () => {
+  const started = deferred();
+  const network = deferred();
+  const state = activeState();
+  let dials = 0;
+  const proxy = await createPinnedProxy(state, {
+    validateHost: async () => { started.resolve(); return network.promise; },
+    dial: () => { dials += 1; throw new Error("authorization arrived after its deadline"); },
+    navigationTimeoutMs: 40,
+  });
+  let client;
+  try {
+    client = await openConnect(proxy);
+    await started.promise;
+    elapseWithoutTimers(80);
+    network.resolve(CHECKED);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(dials, 0, "elapsed authorization must not beat an overdue timer");
+    assert.deepEqual(state.evidence, {});
+  } finally {
+    await stopProxy(proxy, client ? [client] : []);
+    network.resolve(CHECKED);
+  }
+});
+
+test("real CONNECT rejects elapsed TCP readiness before the timeout callback runs", { timeout: 3000 }, async () => {
+  const dialing = deferred();
+  let upstream;
+  const proxy = await createPinnedProxy(activeState(), {
+    validateHost: async () => CHECKED,
+    dial: () => {
+      upstream = new net.Socket();
+      dialing.resolve();
+      return upstream;
+    },
+    navigationTimeoutMs: 40,
+  });
+  let client;
+  try {
+    client = await openConnect(proxy);
+    await dialing.promise;
+    const closed = closedWithin(client, 600);
+    elapseWithoutTimers(80);
+    upstream.emit("connect"); // Readiness can precede its overdue timeout callback.
+    assert.equal(upstream.destroyed, true, "late TCP readiness must not acknowledge CONNECT");
+    assert.equal(await closed, true);
+    assert.ok(!client.received.includes("200 Connection Established"));
+  } finally {
+    await stopProxy(proxy, client ? [client] : []);
+  }
+});
+
+test("real CONNECT expires stalled authorization and rejects its late result", { timeout: 3000 }, async () => {
+  const started = deferred();
+  const network = deferred();
+  const state = activeState();
+  let dials = 0;
+  const proxy = await createPinnedProxy(state, {
+    validateHost: async () => { started.resolve(); return network.promise; },
+    dial: () => { dials += 1; throw new Error("expired authorization must not dial"); },
+    navigationTimeoutMs: 40,
+  });
+  let client;
+  try {
+    client = await openConnect(proxy);
+    const closed = closedWithin(client, 600);
+    await started.promise;
+    assert.equal(await closed, true, "broker wait must have a CONNECT deadline");
+    network.resolve(CHECKED);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(dials, 0, "expired authorization must not open a socket");
+    assert.deepEqual(state.evidence, {});
+    assert.ok(!client.received.includes("200 Connection Established"));
+  } finally {
+    await stopProxy(proxy, client ? [client] : []);
+    network.resolve(CHECKED);
+  }
+});
+
+test("real CONNECT shares one deadline across authorization and upstream handshake", { timeout: 3000 }, async () => {
+  const started = deferred();
+  const network = deferred();
+  const dialing = deferred();
+  let upstream;
+  const proxy = await createPinnedProxy(activeState(), {
+    validateHost: async () => { started.resolve(); return network.promise; },
+    dial: ({ host, port }) => {
+      assert.equal(host, "93.184.216.34");
+      assert.equal(port, 443);
+      upstream = new net.Socket(); // A TCP connect that has not completed.
+      dialing.resolve();
+      return upstream;
+    },
+    navigationTimeoutMs: 300,
+  });
+  let client;
+  try {
+    client = await openConnect(proxy);
+    await started.promise;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    network.resolve(CHECKED);
+    await dialing.promise;
+    const closed = closedWithin(client, 200);
+    assert.equal(await closed, true, "pre-connect wait must share the handshake deadline");
+    assert.equal(upstream.destroyed, true);
+    upstream.emit("connect"); // A late TCP event must not acknowledge the tunnel.
+    assert.ok(!client.received.includes("200 Connection Established"));
+  } finally {
+    await stopProxy(proxy, client ? [client] : []);
+    network.resolve(CHECKED);
+  }
+});
+
+test("real CONNECT clears the handshake deadline for an active authorized tunnel", { timeout: 3000 }, async () => {
+  const upstream = net.createServer((socket) => {
+    socket.resume(); // Observe peer FIN while the server sends keepalives.
+    const pulse = setInterval(() => socket.write("keepalive"), 10);
+    socket.once("close", () => clearInterval(pulse));
+    socket.on("error", () => {});
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  const address = upstream.address();
+  const proxy = await createPinnedProxy(activeState(), {
+    validateHost: async () => CHECKED,
+    dial: ({ host, port }) => {
+      assert.equal(host, "93.184.216.34");
+      assert.equal(port, 443);
+      return net.connect({ host: "127.0.0.1", port: address.port });
+    },
+    navigationTimeoutMs: 100,
+  });
+  let client;
+  try {
+    client = await openConnect(proxy);
+    await new Promise((resolve) => setTimeout(resolve, 240));
+    assert.ok(client.received.includes("200 Connection Established"));
+    assert.ok(client.received.includes("keepalive"));
+    assert.equal(client.destroyed, false, "handshake timer must not close an active tunnel");
+  } finally {
+    await stopProxy(proxy, client ? [client] : []);
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
 test("real CONNECT cannot dial after command is revoked during broker network check", { timeout: 4000 }, async () => {
   const started = deferred();
   const network = deferred();
