@@ -420,6 +420,55 @@ def test_invalid_success_receipt_fails_closed_without_confirming_transaction(con
 
 
 
+
+@pytest.mark.parametrize(
+    ("case", "provider_id"),
+    [
+        ("missing", None),
+        ("empty", ""),
+        ("whitespace", " "),
+        ("invalid-characters", "mail/invalid"),
+        ("non-string", 42),
+        ("overlong", "x" * 201),
+    ],
+)
+def test_tx05_gmail_receipt_requires_provider_message_id(container, case, provider_id):
+    """A Gmail acceptance label without a valid provider ID is not proof."""
+    enable_transactions(container)
+    key = f"tx05-gmail-receipt-{case}"
+    owner = account(container, key)
+    reviewed = reviewed_transaction(container, owner, key)
+    action, _link = bound_action(container, owner, reviewed, key + "-action")
+    transaction_id = reviewed["review_binding"]["transaction_id"]
+
+    approved = container.actions.repo.approve(
+        owner, action["id"], action["preview_hash"]
+    )
+    assert container.actions.repo.claim_execution(approved["id"]) is not None
+    receipt = {
+        "provider": "google",
+        "status": "accepted_by_gmail",
+        "confirmed_at": utcnow().isoformat(),
+    }
+    if provider_id is not None:
+        receipt["provider_id"] = provider_id
+    container.actions.repo.finish(action["id"], "succeeded", receipt=receipt)
+
+    with pytest.raises(CoworkerError) as invalid:
+        container.transactions.sync_external_action(owner, transaction_id)
+    assert invalid.value.code == "transaction_receipt_invalid"
+    assert container.transactions.get(owner, transaction_id)["state"] == "awaiting_approval"
+    with container.repository.sessions() as db:
+        evidence_count = db.scalars(
+            select(TransactionReconciliationEvidence).where(
+                TransactionReconciliationEvidence.transaction_id == transaction_id,
+                TransactionReconciliationEvidence.owner_id == owner,
+            )
+        ).all()
+    assert evidence_count == []
+
+
+
 @pytest.mark.parametrize("tampered_field", ["terms", "price"])
 def test_sync_rejects_tampered_persisted_terms_before_receipt_projection(
     container,
