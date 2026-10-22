@@ -423,6 +423,28 @@ def validate_transaction_authority(
     return value
 
 
+def _verified_https_origin(base_url: str) -> str:
+    """Reject ambiguous or plaintext destinations before adding a bearer token."""
+    error = "Production verifier API base URL must be an HTTPS origin without credentials, path, query or fragment."
+    if not isinstance(base_url, str) or not base_url or base_url != base_url.strip():
+        raise TransactionCapabilityActivationError(error)
+    try:
+        origin = httpx.URL(base_url)
+    except (ValueError, TypeError):
+        raise TransactionCapabilityActivationError(error) from None
+    if (
+        origin.scheme != "https"
+        or not origin.host
+        or origin.username
+        or origin.password
+        or origin.path != "/"
+        or origin.query
+        or origin.fragment
+    ):
+        raise TransactionCapabilityActivationError(error)
+    return str(origin)
+
+
 def fetch_json(
     base_url: str,
     path: str,
@@ -430,8 +452,9 @@ def fetch_json(
     token: str,
     timeout_seconds: int,
 ) -> dict:
+    verified_origin = _verified_https_origin(base_url)
     with httpx.Client(
-        base_url=base_url.rstrip("/"),
+        base_url=verified_origin,
         timeout=timeout_seconds,
         follow_redirects=False,
     ) as client:
