@@ -50,6 +50,38 @@ def local_provider_time(value: str, *, require_offset: bool = False) -> str:
     return parsed.replace(tzinfo=None).isoformat(timespec="minutes")
 
 
+
+def provider_time_matches_approved(provider_value: object, approved_value: object) -> bool:
+    """Match the approved restaurant-local minute without discarding evidence.
+
+    OpenTable may return a naive restaurant-local timestamp. An explicit
+    provider offset, when supplied, must also identify the approved instant.
+    Never truncate nonzero seconds or silently discard a contradictory offset.
+    """
+    if not isinstance(provider_value, str) or not isinstance(approved_value, str):
+        return False
+    try:
+        provider_time = datetime.fromisoformat(provider_value)
+        approved_time = datetime.fromisoformat(approved_value)
+        if approved_time.tzinfo is None or approved_time.utcoffset() is None:
+            return False
+        if (
+            provider_time.second != 0
+            or provider_time.microsecond != 0
+            or approved_time.second != 0
+            or approved_time.microsecond != 0
+        ):
+            return False
+        if provider_time.replace(tzinfo=None) != approved_time.replace(tzinfo=None):
+            return False
+        return (
+            provider_time.utcoffset() is None
+            or provider_time == approved_time
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def reservation_receipt_matches_approved_preview(receipt: dict, payload: dict) -> bool:
     """Ensure a confirmed booking matches the immutable reviewed reservation.
 
@@ -80,13 +112,7 @@ def reservation_receipt_matches_approved_preview(receipt: dict, payload: dict) -
     approved_time = payload.get("date_time")
     if not isinstance(received_time, str) or not isinstance(approved_time, str):
         return False
-    try:
-        return (
-            local_provider_time(received_time)
-            == local_provider_time(approved_time, require_offset=True)
-        )
-    except (OpenTableFailure, ValueError, TypeError):
-        return False
+    return provider_time_matches_approved(received_time, approved_time)
 
 
 def _explicit_payment_requirement(value: dict) -> bool:
@@ -101,10 +127,7 @@ def _explicit_payment_requirement(value: dict) -> bool:
 
 
 def _standard_slot(value: dict, payload: dict) -> dict | None:
-    try:
-        if local_provider_time(str(value.get("time"))) != local_provider_time(payload["date_time"], require_offset=True):
-            return None
-    except (OpenTableFailure, ValueError, TypeError):
+    if not provider_time_matches_approved(value.get("time"), payload["date_time"]):
         return None
     # A paid time slot must not be silently downgraded by a Standard type.
     if _explicit_payment_requirement(value):
@@ -407,10 +430,6 @@ class OpenTableActions:
         )
         if status in {200, 201}:
             confirmation = value.get("confirmation_number")
-            try:
-                confirmed_time = local_provider_time(str(value.get("date_time")))
-            except (OpenTableFailure, ValueError, TypeError):
-                confirmed_time = None
             post_booking_action = value.get("post_booking_required_action")
             if (
                 type(confirmation) is not int
@@ -429,7 +448,9 @@ class OpenTableActions:
                 # can act as ints. Neither is canonical booking party size.
                 or type(value.get("party_size")) is not int
                 or value["party_size"] != payload["party_size"]
-                or confirmed_time != local_provider_time(payload["date_time"])
+                or not provider_time_matches_approved(
+                    value.get("date_time"), payload["date_time"]
+                )
                 # Object/list provider JSON must not escape as a TypeError
                 # after a reservation may already have been created.
                 or (
