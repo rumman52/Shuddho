@@ -52,3 +52,21 @@ def test_receipt_rejects_modified_booking_detail(field, wrong):
 )
 def test_receipt_rejects_noncanonical_values(receipt, payload):
     assert not reservation_receipt_matches_approved_preview(receipt, payload)
+
+
+@pytest.mark.parametrize("provider_time", [
+    "2026-12-01T19:00:59",
+    "2026-12-01T19:00:00.250000",
+    "2026-12-01T19:00:00+05:00",
+    "2026-12-01T19:00:00Z",
+])
+def test_receipt_rejects_provider_time_not_exactly_approved(provider_time):
+    assert not reservation_receipt_matches_approved_preview(
+        {**RECEIPT, "date_time": provider_time}, APPROVED
+    )
+
+
+def test_receipt_accepts_matching_offset_aware_provider_time():
+    assert reservation_receipt_matches_approved_preview(
+        {**RECEIPT, "date_time": "2026-12-01T19:00:00+06:00"}, APPROVED
+    )
