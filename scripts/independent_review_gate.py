@@ -10,7 +10,7 @@ from datetime import datetime
 import json
 import os
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class ReviewGateError(ValueError):
@@ -111,6 +111,13 @@ def require_current_head_review(
     return sorted(approved, key=str.casefold)[0]
 
 
+class _NoCredentialRedirect(HTTPRedirectHandler):
+    """Reject all 30x rather than replay a GitHub bearer token."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _get_json(url: str, token: str):
     request = Request(
         url,
@@ -122,7 +129,9 @@ def _get_json(url: str, token: str):
         },
     )
     try:
-        with urlopen(request, timeout=20) as response:
+        # urllib's default 30x handler forwards Authorization to redirects.
+        # Do not follow even same-origin redirects when auditing GitHub.
+        with build_opener(_NoCredentialRedirect()).open(request, timeout=20) as response:
             return json.load(response)
     except (HTTPError, URLError, ValueError, OSError) as exc:
         status = getattr(exc, "code", "unavailable")
