@@ -349,6 +349,17 @@ def validate_transaction_authority(
             "Transaction authority manifest must be schema v2."
         )
     spec = CAPABILITIES[capability]
+    # The endpoint reports every transaction flag, not just the selected one.
+    # Reject any runtime capability that exceeds the approved rollout scope.
+    reviewed_capabilities = rollout.get("capabilities")
+    if not isinstance(reviewed_capabilities, dict) or any(
+        type(reviewed_capabilities.get(name)) is not bool
+        or value.get(specification["flag"]) is not reviewed_capabilities[name]
+        for name, specification in CAPABILITIES.items()
+    ):
+        raise TransactionCapabilityActivationError(
+            "Runtime transaction authority flags do not match reviewed capability scope."
+        )
     if (
         value.get("source_revision") != deployment["source_revision"]
         or value.get("personal_transactions_enabled") is not True
