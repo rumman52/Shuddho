@@ -92,9 +92,32 @@ def parse_time(value: object, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _reject_duplicate_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json(value: str):
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _strict_json_loads(raw: str | bytes):
+    # Release artifacts and live authority responses must have one meaning
+    # across all JSON decoders, reviewers and providers.
+    return json.loads(
+        raw,
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_constant=_reject_nonfinite_json,
+    )
+
+
 def load_json(path: Path, label: str) -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = _strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise TransactionCapabilityActivationError(
             f"Could not read {label}: {type(exc).__name__}."
@@ -393,7 +416,7 @@ def fetch_json(
             f"Runtime evidence endpoint {path} returned HTTP {response.status_code}."
         )
     try:
-        value = response.json()
+        value = _strict_json_loads(response.content)
     except ValueError:
         raise TransactionCapabilityActivationError(
             f"Runtime evidence endpoint {path} did not return JSON."
