@@ -49,6 +49,8 @@ def require_current_head_review(
     # Validate before sorting: reject malformed/duplicate GitHub review IDs
     # and undated actionable reviews instead of inferring approval authority.
     seen_ids: set[int] = set()
+    submitted_times: dict[int, datetime] = {}
+    states_at_submission: dict[tuple[str, datetime], str] = {}
     for item in reviews:
         if (
             not isinstance(item, dict)
@@ -72,11 +74,21 @@ def require_current_head_review(
                 raise ReviewGateError("Malformed review submission timestamp") from exc
             if submitted_at.tzinfo is None or submitted_at.utcoffset() is None:
                 raise ReviewGateError("Review submission timestamp lacks timezone")
+            submitted_times[item["id"]] = submitted_at
+            # Review IDs are assigned at creation, but a pending review can
+            # be submitted later. A same-instant contradictory submission
+            # has no provable last state, so deny rather than guess by ID.
+            key = (item["user"]["login"].casefold(), submitted_at)
+            prior = states_at_submission.get(key)
+            if prior is not None and prior != item["state"]:
+                raise ReviewGateError("ambiguous same timestamp review states")
+            states_at_submission[key] = item["state"]
 
     latest: dict[str, dict] = {}
-    for item in sorted(reviews, key=lambda r: r["id"]):
-        if item["state"] in {"PENDING", "COMMENTED"}:
-            continue
+    # Determine the last submitted actionable review, not the last created
+    # review. GitHub review IDs cannot establish submission chronology.
+    actionable = (item for item in reviews if item["state"] not in {"PENDING", "COMMENTED"})
+    for item in sorted(actionable, key=lambda r: (submitted_times[r["id"]], r["id"])):
         latest[item["user"]["login"].casefold()] = item
 
     approved: list[str] = []

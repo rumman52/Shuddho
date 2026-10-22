@@ -91,11 +91,13 @@ def test_open_change_request_by_other_maintainer_blocks_an_approval():
 
 
 def test_later_current_head_approval_replaces_change_request():
+    later = review(id=2, state="APPROVED")
+    later["submitted_at"] = "2026-10-20T18:20:01Z"
     assert require_current_head_review(
         pull(),
         [
             review(id=1, state="CHANGES_REQUESTED"),
-            review(id=2, state="APPROVED"),
+            later,
         ],
         HEAD,
     ) == "independent-maintainer"
