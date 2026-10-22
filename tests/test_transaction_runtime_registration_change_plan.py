@@ -167,3 +167,63 @@ def test_tx26_rejects_already_registered_operation(monkeypatch):
 
     with pytest.raises(tx26.TransactionRuntimeRegistrationPlanError):
         tx26.compile_runtime_registration_change_plan(value, now=now)
+
+
+@pytest.mark.parametrize(
+    "unsafe_origin",
+    [
+        "https://",
+        "https://user:secret@checkout.merchantx.example",
+        "https://checkout.merchantx.example?next=confirm",
+        "https://checkout.merchantx.example#approval",
+        "https://checkout.merchantx.example\\\\@redirect.example",
+        "https://checkout.merchantx.example:invalid",
+        "https://checkout.merchantx.example:99999",
+        "https://checkout.merchantx.example%0a.attacker.example",
+        "https://checkout.merchantx.example:443@redirect.example",
+        "https://checkout.merchantx.example ",
+        "https://127.0.0.1",
+        "https://[::1]",
+        "https://CHECKOUT.MERCHANTX.EXAMPLE",
+        "https://checkout.merchantx.example.",
+        "https://-checkout.merchantx.example",
+    ],
+)
+@pytest.mark.parametrize(
+    "factory,field",
+    [
+        (shopping_review, "checkout_origin"),
+        (travel_review, "booking_origin"),
+    ],
+)
+def test_tx26_rejects_noncanonical_reviewed_https_origin(factory, field, unsafe_origin):
+    now = utcnow()
+    review = factory(now)
+    review[field] = unsafe_origin
+    unsigned = dict(review)
+    unsigned.pop("runtime_registration_review_sha256")
+    review["runtime_registration_review_sha256"] = stable_digest(unsigned)
+
+    with pytest.raises(tx26.TransactionRuntimeRegistrationPlanError, match="HTTPS origin"):
+        tx26.compile_runtime_registration_change_plan(review, now=now)
+
+
+@pytest.mark.parametrize(
+    "factory,field,valid_origin",
+    [
+        (shopping_review, "checkout_origin", "https://checkout.merchantx.example:443"),
+        (travel_review, "booking_origin", "https://booking.travelco.example:8443"),
+    ],
+)
+def test_tx26_accepts_canonical_reviewed_https_origin_with_port(factory, field, valid_origin):
+    now = utcnow()
+    review = factory(now)
+    review[field] = valid_origin
+    unsigned = dict(review)
+    unsigned.pop("runtime_registration_review_sha256")
+    review["runtime_registration_review_sha256"] = stable_digest(unsigned)
+
+    result = tx26.compile_runtime_registration_change_plan(review, now=now)
+
+    assert result["reviewed_origin"] == valid_origin
+    assert result["automatic_apply"] is False
