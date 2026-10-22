@@ -862,6 +862,9 @@ class TransactionRepository:
             or evidence.preview_hash != link.preview_hash
             or evidence.receipt_sha256 != receipt_sha256
             or not isinstance(evidence.evidence_sha256, str)
+            # hmac.compare_digest on Unicode raises TypeError for non-ASCII
+            # database corruption; report the same controlled integrity error.
+            or not evidence.evidence_sha256.isascii()
             or not hmac.compare_digest(evidence.evidence_sha256, expected_evidence_sha256)
         ):
             raise CoworkerError(
