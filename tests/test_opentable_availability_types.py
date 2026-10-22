@@ -314,3 +314,24 @@ def test_selected_dining_area_accepts_explicit_no_payment_metadata(monkeypatch):
     selected = _availability(monkeypatch, reply)["selection"]
     assert selected["dining_area_id"] == 55
     assert selected["payment_required"] is False
+
+
+@pytest.mark.parametrize("provider_time", [
+    "2026-12-01T19:00:59",
+    "2026-12-01T19:00:00+05:00",
+    "2026-12-01T19:00:00.250",
+])
+def test_availability_rejects_non_exact_or_conflicting_provider_time(monkeypatch, provider_time):
+    reply = _provider_reply()
+    reply["times_available"][0]["time"] = provider_time
+    with pytest.raises(OpenTableFailure) as failure:
+        _availability(monkeypatch, reply)
+    assert failure.value.code == "reservation_not_available"
+    assert failure.value.definitive is True
+
+
+def test_availability_accepts_exact_matching_aware_time(monkeypatch):
+    reply = _provider_reply()
+    reply["times_available"][0]["time"] = "2026-12-01T19:00:00+06:00"
+    selection = _availability(monkeypatch, reply)["selection"]
+    assert selection["date_time"] == "2026-12-01T19:00"
