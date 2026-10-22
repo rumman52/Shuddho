@@ -312,6 +312,23 @@ def validate_operator_status(
     return generated
 
 
+def _same_json_value_and_type(actual: object, expected: object) -> bool:
+    """Compare parsed JSON without Python bool/int or int/float coercion."""
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(
+            _same_json_value_and_type(actual[key], expected[key])
+            for key in expected
+        )
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _same_json_value_and_type(left, right)
+            for left, right in zip(actual, expected)
+        )
+    return actual == expected
+
+
 def validate_runtime_manifest(value: dict, *, deployment: dict, rollout: dict) -> dict:
     expected_keys = {
         "schema_version",
@@ -321,14 +338,20 @@ def validate_runtime_manifest(value: dict, *, deployment: dict, rollout: dict) -
         "action_providers",
         "cohort",
     }
-    if set(value) != expected_keys or value.get("schema_version") != 1:
+    if (
+        set(value) != expected_keys
+        or type(value.get("schema_version")) is not int
+        or value["schema_version"] != 1
+    ):
         raise TransactionCapabilityActivationError(
             "Runtime manifest has an unexpected schema."
         )
     if (
         value.get("source_revision") != deployment["source_revision"]
         or value.get("environment") != rollout["environment"]
-        or value.get("capabilities") != rollout["capabilities"]
+        or not _same_json_value_and_type(
+            value.get("capabilities"), rollout["capabilities"]
+        )
         or not isinstance(value.get("action_providers"), list)
         or sorted(value["action_providers"]) != rollout["action_providers"]
     ):
@@ -340,7 +363,8 @@ def validate_runtime_manifest(value: dict, *, deployment: dict, rollout: dict) -
         not isinstance(cohort, dict)
         or set(cohort) != {"enforced", "configured_members", "max_users"}
         or cohort.get("enforced") is not True
-        or cohort.get("max_users") != rollout["cohort_max_users"]
+        or type(cohort.get("max_users")) is not int
+        or cohort["max_users"] != rollout["cohort_max_users"]
         or not isinstance(cohort.get("configured_members"), int)
         or isinstance(cohort.get("configured_members"), bool)
         or not 1 <= cohort["configured_members"] <= cohort["max_users"]
@@ -367,7 +391,11 @@ def validate_transaction_authority(
         "travel_booking_enabled",
         "operations",
     }
-    if set(value) != expected_keys or value.get("schema_version") != 2:
+    if (
+        set(value) != expected_keys
+        or type(value.get("schema_version")) is not int
+        or value["schema_version"] != 2
+    ):
         raise TransactionCapabilityActivationError(
             "Transaction authority manifest must be schema v2."
         )
