@@ -11,7 +11,7 @@ import json
 import os
 import re
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 CHECKS = frozenset({"test-and-build", "coworker", "ci-merge-gate"})
@@ -118,6 +118,13 @@ def audit_governance(branch: dict, rulesets: list[dict]) -> int:
     raise GovernanceAuditError("no enforceable main ruleset matching the V-01 minimum policy")
 
 
+class _NoCredentialRedirect(HTTPRedirectHandler):
+    """Reject all 30x rather than replay a GitHub bearer token."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _get_json(url: str, token: str):
     request = Request(
         url,
@@ -129,7 +136,9 @@ def _get_json(url: str, token: str):
         },
     )
     try:
-        with urlopen(request, timeout=20) as response:
+        # urllib's default 30x handler forwards Authorization to redirects.
+        # Do not follow even same-origin redirects when auditing GitHub.
+        with build_opener(_NoCredentialRedirect()).open(request, timeout=20) as response:
             return json.load(response)
     except (HTTPError, URLError, ValueError, OSError) as exc:
         code = getattr(exc, "code", "unavailable")
