@@ -175,3 +175,26 @@ def test_booking_response_allows_explicit_no_payment_and_no_next_action(monkeypa
     receipt = _execute_with_provider_reply(monkeypatch, reply)
     assert receipt["status"] == "reservation_confirmed"
     assert receipt["payment_required"] is False
+
+
+@pytest.mark.parametrize("provider_time", [
+    "2026-12-01T19:00:59",
+    "2026-12-01T19:00:00+05:00",
+    "2026-12-01T19:00:00.900",
+])
+def test_booking_receipt_rejects_truncated_or_wrong_offset_time(monkeypatch, provider_time):
+    with pytest.raises(OpenTableFailure) as failure:
+        _execute_with_provider_reply(
+            monkeypatch, {**_valid_reply(), "date_time": provider_time}
+        )
+    assert failure.value.code == "provider_receipt_invalid"
+    # Booking POST may have succeeded; never imply a second attempt is safe.
+    assert failure.value.definitive is False
+
+
+def test_booking_receipt_accepts_exact_matching_aware_time(monkeypatch):
+    receipt = _execute_with_provider_reply(
+        monkeypatch,
+        {**_valid_reply(), "date_time": "2026-12-01T19:00:00+06:00"},
+    )
+    assert receipt["status"] == "reservation_confirmed"
