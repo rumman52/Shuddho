@@ -25,7 +25,7 @@ import os
 from pathlib import Path
 import re
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REQUIRED_JOBS = frozenset({'test-and-build', 'coworker', 'ci-merge-gate'})
 REPO_PATTERN = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
@@ -174,6 +174,13 @@ def assess_native_policy(*, branch_protection: object = None, rulesets: object =
     }
 
 
+class _NoCredentialRedirect(HTTPRedirectHandler):
+    """Fail closed on all 30x responses; never replay the GitHub bearer."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _fetch_json(url: str, token: str) -> object:
     req = Request(url, headers={
         'Authorization': f'Bearer {token}',
@@ -181,7 +188,10 @@ def _fetch_json(url: str, token: str) -> object:
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'shuddho-v01-native-policy-readonly',
     })
-    with urlopen(req, timeout=20) as response:
+    # urllib's default redirect handler forwards Authorization unchanged even
+    # when a 301/302 points to a different host. Keep each request on its
+    # original GitHub origin instead; HTTPError is a blocked audit result.
+    with build_opener(_NoCredentialRedirect()).open(req, timeout=20) as response:
         return json.load(response)
 
 
