@@ -638,7 +638,7 @@ def test_execution_surface_rejects_stale_digest_and_disables_reconciliation_look
 
 @pytest.mark.parametrize(
     "tampered_field",
-    ["receipt", "receipt_sha256", "evidence_sha256", "provider", "preview_hash"],
+    ["receipt", "receipt_sha256", "evidence_sha256", "evidence_sha256_unicode", "provider", "preview_hash"],
 )
 def test_tampered_persisted_reconciliation_evidence_blocks_history_and_sync(
     container,
@@ -688,6 +688,10 @@ def test_tampered_persisted_reconciliation_evidence_blocks_history_and_sync(
             saved.receipt_sha256 = "0" * 64
         elif tampered_field == "evidence_sha256":
             saved.evidence_sha256 = "0" * 64
+        elif tampered_field == "evidence_sha256_unicode":
+            # Non-ASCII SQL text must fail closed as a domain integrity error,
+            # never escape from hmac.compare_digest as an unhandled TypeError.
+            saved.evidence_sha256 = "é" * 64
         elif tampered_field == "provider":
             saved.provider = "microsoft"
         else:
