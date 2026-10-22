@@ -11,7 +11,7 @@ import json
 import os
 import re
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 REQUIRED_JOBS = ("test-and-build", "coworker", "ci-merge-gate")
@@ -171,12 +171,21 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
     }
 
 
+class _NoCredentialRedirect(HTTPRedirectHandler):
+    """Reject 30x responses instead of forwarding GitHub credentials."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _get_json(url: str, token: str):
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "shuddho-v01-readonly-audit"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        with urlopen(Request(url, headers=headers), timeout=20) as response:
+        # urllib's default redirect handler copies Authorization to the target
+        # host. Never follow a redirect while collecting governance evidence.
+        with build_opener(_NoCredentialRedirect()).open(Request(url, headers=headers), timeout=20) as response:
             return json.load(response)
     except (HTTPError, URLError, OSError, ValueError) as exc:
         raise EvidenceError("GitHub evidence read failed") from exc
