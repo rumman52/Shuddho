@@ -115,8 +115,8 @@ def _provider(value: object) -> str:
 
 
 _DNS_ORIGIN_HOST = re.compile(
-    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
-    r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\\Z"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
 )
 
 
