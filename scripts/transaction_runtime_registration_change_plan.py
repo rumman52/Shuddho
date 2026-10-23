@@ -114,6 +114,33 @@ def _provider(value: object) -> str:
     return value
 
 
+_DNS_ORIGIN_HOST = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
+)
+
+
+def _canonical_https_origin(value: object) -> str:
+    """Require an unambiguous HTTPS DNS authority with an optional valid port.
+
+    No URL userinfo, path, query, fragment, raw IP, or control characters.
+    This checks origin syntax, NOT DNS resolution or provider authorization.
+    """
+    error = "Runtime-registration review origin must be a clean HTTPS origin."
+    if not isinstance(value, str) or not value.startswith("https://"):
+        raise TransactionRuntimeRegistrationPlanError(error)
+    authority = value[len("https://"):]
+    hostname, colon, port = authority.partition(":")
+    if len(hostname) > 253 or _DNS_ORIGIN_HOST.fullmatch(hostname) is None:
+        raise TransactionRuntimeRegistrationPlanError(error)
+    if colon and (
+        re.fullmatch(r"[1-9][0-9]{0,4}", port) is None
+        or int(port) > 65535
+    ):
+        raise TransactionRuntimeRegistrationPlanError(error)
+    return value
+
+
 def _review_type(value: dict) -> tuple[str, set[str]]:
     operation = value.get("operation")
     if isinstance(operation, str) and operation.endswith(f":{SHOPPING_KIND}"):
@@ -188,14 +215,7 @@ def _validate_review(
                 "Travel runtime review traveler fields are not canonical."
             )
 
-    if (
-        not isinstance(origin, str)
-        or not origin.startswith("https://")
-        or "/" in origin[len("https://"):]
-    ):
-        raise TransactionRuntimeRegistrationPlanError(
-            "Runtime-registration review origin must be a clean HTTPS origin."
-        )
+    _canonical_https_origin(origin)
 
     if any(
         value[field] is not False
