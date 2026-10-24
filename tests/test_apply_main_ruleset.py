@@ -130,7 +130,7 @@ def test_apply_posts_once_then_verifies_detail_and_branch(monkeypatch):
         if method == "GET" and url.endswith("/branches/main"):
             return {"name": "main", "protected": len([x for x in calls if x[0] == "POST"]) == 1}
         if method == "GET" and "/rulesets?" in url:
-            return []
+            return [created] if any(call[0] == "POST" for call in calls) else []
         if method == "POST" and url.endswith("/rulesets"):
             assert payload == candidate()
             return {"id": 321, "name": candidate()["name"]}
@@ -159,7 +159,7 @@ def test_failed_readback_does_not_report_success_or_attempt_rollback(monkeypatch
         if method == "GET" and url.endswith("/branches/main"):
             return {"name": "main", "protected": len([x for x in calls if x[0] == "POST"]) == 1}
         if method == "GET" and "/rulesets?" in url:
-            return []
+            return [bad] if any(call[0] == "POST" for call in calls) else []
         if method == "POST":
             return {"id": 321}
         if method == "GET" and url.endswith("/rulesets/321"):
