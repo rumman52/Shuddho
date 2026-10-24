@@ -185,6 +185,34 @@ def _is_compliant_existing(rule: object) -> bool:
     )
 
 
+def _verify_applied_state(
+    root: str,
+    token: str,
+    *,
+    expected_id: int | None = None,
+    expected_name: str | None = None,
+) -> dict:
+    """Read back the unique effective main policy after a potentially mutating POST."""
+    listed = _request_json("GET", root + "/rulesets?includes_parents=true&per_page=100", token)
+    main_rulesets = _list_main_target_rulesets(root, token, listed)
+    if len(main_rulesets) != 1:
+        raise ApplyMainRulesetError("effective main ruleset list is missing or ambiguous")
+    readback = main_rulesets[0]
+    ruleset_id = readback.get("id")
+    if expected_id is not None and ruleset_id != expected_id:
+        raise ApplyMainRulesetError("read-back ruleset id differs from the created id")
+    if expected_name is not None and readback.get("name") != expected_name:
+        raise ApplyMainRulesetError("read-back ruleset name differs from the requested policy")
+    branch_after = _request_json("GET", root + "/branches/main", token)
+    try:
+        matched_id = audit_governance(branch_after, [readback])
+    except GovernanceAuditError as exc:
+        raise ApplyMainRulesetError(f"main branch or ruleset did not pass the read-only audit: {exc}") from exc
+    if matched_id != ruleset_id or not _is_compliant_existing(readback):
+        raise ApplyMainRulesetError("read-back policy does not satisfy the V-01 contract")
+    return readback
+
+
 def apply_main_ruleset(
     repository: str,
     token: str,
@@ -255,25 +283,54 @@ def apply_main_ruleset(
             "required_next": "review this plan; use --apply and --confirm-repository only with an authorized administrator token",
         }
 
-    created = _request_json("POST", root + "/rulesets", token, candidate)
+    try:
+        created = _request_json("POST", root + "/rulesets", token, candidate)
+    except ApplyMainRulesetError as post_error:
+        # POST has no idempotency key. The server may have committed even if
+        # its response was lost, so reconcile by reading state before telling
+        # the operator anything that could trigger a duplicate create.
+        try:
+            recovered = _verify_applied_state(root, token, expected_name=candidate["name"])
+        except ApplyMainRulesetError as verify_error:
+            raise ApplyMainRulesetError(
+                f"ruleset POST outcome is uncertain ({post_error}); read-back did not prove success "
+                f"({verify_error}); do not retry blindly, inspect repository settings first"
+            ) from post_error
+        return {
+            "status": "post_response_uncertain_but_readback_verified",
+            "ruleset_id": recovered["id"],
+            "configuration_readback_verified": True,
+            "merge_enforcement_verified": False,
+            "qualified": False,
+            "recovered_after_uncertain_post": True,
+            "required_next": "administrator-run negative and positive merge-control tests; preserve rule id and observation time",
+        }
+
     ruleset_id = created.get("id") if isinstance(created, dict) else None
     if type(ruleset_id) is not int or ruleset_id < 1:
-        raise ApplyMainRulesetError("GitHub did not return a valid ruleset id; inspect repository settings before retrying")
+        try:
+            recovered = _verify_applied_state(root, token, expected_name=candidate["name"])
+        except ApplyMainRulesetError as verify_error:
+            raise ApplyMainRulesetError(
+                f"ruleset POST returned no valid id; outcome is uncertain ({verify_error}); "
+                "do not retry blindly, inspect repository settings first"
+            ) from verify_error
+        return {
+            "status": "post_response_uncertain_but_readback_verified",
+            "ruleset_id": recovered["id"],
+            "configuration_readback_verified": True,
+            "merge_enforcement_verified": False,
+            "qualified": False,
+            "recovered_after_uncertain_post": True,
+            "required_next": "administrator-run negative and positive merge-control tests; preserve rule id and observation time",
+        }
+
     try:
-        listing_after = _request_json("GET", root + "/rulesets?includes_parents=true&per_page=100", token)
-        main_after = _list_main_target_rulesets(root, token, listing_after)
-        if len(main_after) != 1 or main_after[0].get("id") != ruleset_id:
-            raise ApplyMainRulesetError("post-creation main ruleset set changed or includes another active ruleset")
-        readback = main_after[0]
-        branch_after = _request_json("GET", root + "/branches/main", token)
-        if not isinstance(readback, dict) or readback.get("id") != ruleset_id or readback.get("name") != candidate["name"]:
-            raise ApplyMainRulesetError("created ruleset identity does not match the requested policy")
-        matched_id = audit_governance(branch_after, [readback])
-        if matched_id != ruleset_id or not _is_compliant_existing(readback):
-            raise ApplyMainRulesetError("created ruleset failed the V-01 read-back contract")
-    except (ApplyMainRulesetError, GovernanceAuditError) as exc:
+        readback = _verify_applied_state(root, token, expected_id=ruleset_id, expected_name=candidate["name"])
+    except ApplyMainRulesetError as exc:
         raise ApplyMainRulesetError(
-            f"ruleset {ruleset_id} was created but read-back verification failed: {exc}; do not retry blindly, inspect it first"
+            f"ruleset {ruleset_id} was created but read-back verification failed: {exc}; "
+            "do not retry blindly, inspect it first"
         ) from exc
 
     return {
