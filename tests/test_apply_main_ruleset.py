@@ -179,6 +179,35 @@ def test_apply_posts_once_then_verifies_detail_and_branch(monkeypatch):
     assert calls[-1][0] == "GET" and calls[-1][1].endswith("/branches/main")
 
 
+
+def test_uncertain_post_response_is_reconciled_before_operator_can_retry(monkeypatch):
+    calls = []
+    state = {"created": False}
+    created = detail()
+
+    def fake(method, url, token, payload=None):
+        calls.append((method, url, payload))
+        if method == "GET" and url.endswith("/branches/main"):
+            return {"name": "main", "protected": state["created"]}
+        if method == "GET" and "/rulesets?" in url:
+            return [created] if state["created"] else []
+        if method == "POST" and url.endswith("/rulesets"):
+            state["created"] = True  # Server committed, but response was lost.
+            raise ApplyMainRulesetError("GitHub ruleset API unavailable (status=unavailable)")
+        if method == "GET" and url.endswith("/rulesets/321"):
+            return created
+        raise AssertionError(f"unexpected API request: {method} {url}")
+
+    monkeypatch.setattr("scripts.apply_main_ruleset._request_json", fake)
+    result = apply_main_ruleset(REPO, "admin-token", candidate(), apply=True, confirm_repository=REPO)
+
+    assert result["status"] == "post_response_uncertain_but_readback_verified"
+    assert result["ruleset_id"] == 321
+    assert result["configuration_readback_verified"] is True
+    assert result["merge_enforcement_verified"] is False
+    assert [method for method, _, _ in calls].count("POST") == 1
+
+
 def test_failed_readback_does_not_report_success_or_attempt_rollback(monkeypatch):
     calls = []
     bad = detail()
