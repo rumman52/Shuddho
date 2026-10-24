@@ -107,7 +107,12 @@ test("after a lost goal-admission response retry recovers one existing run", asy
 test("uncertain run of an old goal never reuses the key for another goal", async () => {
   await mounted(async (tree, data) => {
     await runNow(tree);
-    await act(async () => { button(tree.root, "Review the second project").props.onClick(); });
+    await act(async () => {
+      const choice = tree.root.findAllByType("button").find(item =>
+        item.findAllByType("strong").some(label => label.children.includes("Review the second project")));
+      assert.ok(choice);
+      choice.props.onClick();
+    });
     await runNow(tree);
     assert.deepEqual(data.requests.map(item => item.id), ["goal-one", "goal-two"]);
     assert.notEqual(data.requests[0].key, data.requests[1].key);
