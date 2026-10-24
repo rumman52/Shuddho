@@ -11,7 +11,6 @@ import fnmatch
 import json
 import os
 from pathlib import Path
-import re
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -46,7 +45,11 @@ def _request_json(method: str, url: str, token: str, payload: dict | None = None
     if method not in {"GET", "POST"}:
         raise ApplyMainRulesetError("unsupported GitHub API method")
     parsed = urlsplit(url)
-    trusted_github = parsed.scheme == "https" and parsed.hostname == "api.github.com" and parsed.port in (None, 443)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ApplyMainRulesetError("GitHub API URL has an invalid port") from exc
+    trusted_github = parsed.scheme == "https" and parsed.hostname == "api.github.com" and port in (None, 443)
     loopback_test = (
         parsed.scheme == "http"
         and parsed.hostname in {"127.0.0.1", "localhost"}
@@ -103,7 +106,8 @@ def _validate_candidate(policy: object) -> dict:
     ):
         raise ApplyMainRulesetError("candidate policy does not satisfy V-01 required checks, independent review, and no-bypass rules")
     check_rules = [rule for rule in rules if rule.get("type") == "required_status_checks"]
-    if len(check_rules) != 1 or check_rules[0].get("parameters", {}).get("do_not_enforce_on_create") is not False:
+    check_parameters = check_rules[0].get("parameters") if len(check_rules) == 1 else None
+    if not isinstance(check_parameters, dict) or check_parameters.get("do_not_enforce_on_create") is not False:
         raise ApplyMainRulesetError("candidate policy must enforce required checks on newly created refs")
     return policy
 
@@ -131,6 +135,8 @@ def _could_target_main(rule: object) -> bool:
         return True
     if not any(_pattern_matches_main(item) for item in includes):
         return False
+    if any(not isinstance(item, str) for item in excludes):
+        return True
     if any(_pattern_matches_main(item) for item in excludes):
         return False
     return True
@@ -146,12 +152,13 @@ def _is_compliant_existing(rule: object) -> bool:
     if len(types) != len(set(types)):
         return False
     check_rules = [item for item in rules if item.get("type") == "required_status_checks"]
+    check_parameters = check_rules[0].get("parameters") if len(check_rules) == 1 else None
     return (
         _active_main_ruleset(rule)
         and _has_required_rules(rule)
         and rule.get("bypass_actors") == []
-        and len(check_rules) == 1
-        and check_rules[0].get("parameters", {}).get("do_not_enforce_on_create") is False
+        and isinstance(check_parameters, dict)
+        and check_parameters.get("do_not_enforce_on_create") is False
     )
 
 
@@ -243,6 +250,12 @@ def apply_main_ruleset(
     if type(ruleset_id) is not int or ruleset_id < 1:
         raise ApplyMainRulesetError("GitHub did not return a valid ruleset id; inspect repository settings before retrying")
     try:
+        listing_after = _request_json("GET", root + "/rulesets?includes_parents=true&per_page=100", token)
+        if not isinstance(listing_after, list) or len(listing_after) >= 100:
+            raise ApplyMainRulesetError("post-creation ruleset listing is invalid or possibly truncated")
+        main_after = [item for item in listing_after if _could_target_main(item)]
+        if len(main_after) != 1 or not isinstance(main_after[0], dict) or main_after[0].get("id") != ruleset_id:
+            raise ApplyMainRulesetError("post-creation main ruleset set changed or includes another active ruleset")
         readback = _request_json("GET", root + f"/rulesets/{ruleset_id}", token)
         branch_after = _request_json("GET", root + "/branches/main", token)
         if not isinstance(readback, dict) or readback.get("id") != ruleset_id or readback.get("name") != candidate["name"]:
