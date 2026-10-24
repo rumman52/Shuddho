@@ -148,3 +148,48 @@ def test_late_reapproval_does_not_retroactively_qualify_old_gate():
                     'submitted_at': '2026-10-20T18:35:00Z'})
     result = inspect_premerge_evidence(pr, run, jobs, reviews)
     assert 'ci-merge-gate:completed_before_independent_approval' in result['findings']
+
+
+def test_later_submitted_change_request_with_lower_id_revokes_approval():
+    # Pending reviews may be created early (low ID) but submitted later.
+    pr, run, jobs, reviews = evidence()
+    reviews[0]['id'] = 50
+    reviews.append({**reviews[0], 'id': 40, 'state': 'CHANGES_REQUESTED',
+                    'submitted_at': '2026-10-20T18:25:00Z'})
+    findings = inspect_premerge_evidence(pr, run, jobs, reviews)['findings']
+    assert 'outstanding_independent_changes_requested' in findings
+    assert 'no_independent_current_head_approval' in findings
+
+
+def test_later_submitted_reapproval_with_lower_id_restores_pre_gate_approval():
+    pr, run, jobs, reviews = evidence()
+    reviews[0].update(id=50, state='CHANGES_REQUESTED',
+                      submitted_at='2026-10-20T18:15:00Z')
+    reviews.append({**reviews[0], 'id': 40, 'state': 'APPROVED',
+                    'submitted_at': '2026-10-20T18:20:00Z'})
+    assert inspect_premerge_evidence(pr, run, jobs, reviews)['findings'] == []
+
+
+def test_later_submitted_old_head_approval_with_lower_id_invalidates_old_decision():
+    pr, run, jobs, reviews = evidence()
+    reviews[0]['id'] = 50
+    reviews.append({**reviews[0], 'id': 40, 'commit_id': 'b' * 40,
+                    'submitted_at': '2026-10-20T18:25:00Z'})
+    assert 'no_independent_current_head_approval' in (
+        inspect_premerge_evidence(pr, run, jobs, reviews)['findings']
+    )
+
+
+def test_same_instant_opposed_actionable_review_states_are_ambiguous():
+    pr, run, jobs, reviews = evidence()
+    reviews[0]['id'] = 50
+    reviews.append({**reviews[0], 'id': 40, 'state': 'CHANGES_REQUESTED'})
+    with pytest.raises(EvidenceError, match='ambiguous'):
+        inspect_premerge_evidence(pr, run, jobs, reviews)
+
+
+def test_post_merge_change_request_does_not_rewrite_historical_approval():
+    pr, run, jobs, reviews = evidence()
+    reviews.append({**reviews[0], 'id': 40, 'state': 'CHANGES_REQUESTED',
+                    'submitted_at': '2026-10-20T18:50:00Z'})
+    assert inspect_premerge_evidence(pr, run, jobs, reviews)['findings'] == []

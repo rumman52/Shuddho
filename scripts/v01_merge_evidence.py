@@ -116,6 +116,8 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
     if not isinstance(author_login, str) or not author_login:
         raise EvidenceError("invalid author")
     latest = {}
+    latest_submitted = {}
+    submitted_states = {}
     seen_ids = set()
     for review in reviews:
         if not isinstance(review, dict) or type(review.get("id")) is not int or review["id"] in seen_ids:
@@ -127,12 +129,24 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
         if review.get("state") not in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED", "COMMENTED", "PENDING"}:
             raise EvidenceError("invalid review state")
         if review["state"] in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
-            if _when(review.get("submitted_at")) > merged_at:
-                continue
-        if review["state"] not in {"COMMENTED", "PENDING"}:
+            submitted = _when(review.get("submitted_at"))
             key = user["login"].casefold()
-            if key not in latest or latest[key]["id"] < review["id"]:
+            # A pending review can have an older ID but be submitted after a
+            # newer-created review. Reconstruct the last *submitted* decision.
+            # Conflicting decisions at the same timestamp cannot be ordered
+            # reliably using creation IDs, so reject ambiguous evidence.
+            instant = (key, submitted)
+            decision = (review["state"], review.get("commit_id"))
+            prior = submitted_states.get(instant)
+            if prior is not None and prior != decision:
+                raise EvidenceError("ambiguous same-timestamp review decisions")
+            submitted_states[instant] = decision
+            if submitted > merged_at:
+                continue
+            if (key not in latest or
+                (submitted, review["id"]) > (latest_submitted[key], latest[key]["id"])):
                 latest[key] = review
+                latest_submitted[key] = submitted
 
     approvers = []
     approval_times = []
