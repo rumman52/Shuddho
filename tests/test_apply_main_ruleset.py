@@ -208,6 +208,47 @@ def test_uncertain_post_response_is_reconciled_before_operator_can_retry(monkeyp
     assert [method for method, _, _ in calls].count("POST") == 1
 
 
+
+def test_uncertain_post_without_readback_fails_closed_and_never_reposts(monkeypatch):
+    calls = []
+
+    def fake(method, url, token, payload=None):
+        calls.append((method, url, payload))
+        if method == "GET" and url.endswith("/branches/main"):
+            return {"name": "main", "protected": False}
+        if method == "GET" and "/rulesets?" in url:
+            return []
+        if method == "POST" and url.endswith("/rulesets"):
+            raise ApplyMainRulesetError("GitHub ruleset API unavailable (status=unavailable)")
+        raise AssertionError(f"unexpected API request: {method} {url}")
+
+    monkeypatch.setattr("scripts.apply_main_ruleset._request_json", fake)
+    with pytest.raises(ApplyMainRulesetError, match="outcome is uncertain.*do not retry blindly"):
+        apply_main_ruleset(REPO, "admin-token", candidate(), apply=True, confirm_repository=REPO)
+    assert [method for method, _, _ in calls].count("POST") == 1
+
+
+def test_same_name_inactive_ruleset_is_not_silently_duplicated(monkeypatch):
+    inactive = {
+        "id": 88, "name": candidate()["name"], "target": "branch",
+        "enforcement": "disabled", "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
+    }
+    calls = []
+
+    def fake(method, url, token, payload=None):
+        calls.append((method, url, payload))
+        if url.endswith("/branches/main"):
+            return {"name": "main", "protected": False}
+        if "/rulesets?" in url:
+            return [inactive]
+        raise AssertionError(f"unexpected API request: {method} {url}")
+
+    monkeypatch.setattr("scripts.apply_main_ruleset._request_json", fake)
+    with pytest.raises(ApplyMainRulesetError, match="desired name exists"):
+        apply_main_ruleset(REPO, "admin-token", candidate(), apply=True, confirm_repository=REPO)
+    assert all(method != "POST" for method, _, _ in calls)
+
+
 def test_failed_readback_does_not_report_success_or_attempt_rollback(monkeypatch):
     calls = []
     bad = detail()
