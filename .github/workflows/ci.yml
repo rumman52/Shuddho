@@ -309,6 +309,7 @@ jobs:
     needs:
       - test-and-build
       - coworker
+      - governance-audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -316,14 +317,37 @@ jobs:
         env:
           TEST_AND_BUILD_RESULT: ${{ needs.test-and-build.result }}
           COWORKER_RESULT: ${{ needs.coworker.result }}
+          GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}
+          CI_EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "test-and-build=$TEST_AND_BUILD_RESULT"
           echo "coworker=$COWORKER_RESULT"
+          echo "governance-audit=$GOVERNANCE_AUDIT_RESULT"
           if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ]; then
             echo "CI merge gate failed: every required upstream job must succeed."
             exit 1
           fi
-          echo "CI merge gate passed."
+          case "$CI_EVENT_NAME" in
+            push)
+              if [ "$GOVERNANCE_AUDIT_RESULT" != "success" ]; then
+                echo "CI merge gate failed: main governance must be confirmed on push."
+                exit 1
+              fi
+              ;;
+            pull_request|pull_request_review)
+              # The read-only audit is push-only. Never give PR code an admin
+              # credential to inspect hidden ruleset bypass settings.
+              if [ "$GOVERNANCE_AUDIT_RESULT" != "skipped" ] && [ "$GOVERNANCE_AUDIT_RESULT" != "success" ]; then
+                echo "CI merge gate failed: unexpected governance audit result."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "CI merge gate failed: unsupported workflow event."
+              exit 1
+              ;;
+          esac
+          echo "Required upstream checks passed; PR review is checked separately."
       - name: Require independent current-head review
         if: github.event_name != 'push'
         env:
@@ -337,8 +361,8 @@ jobs:
             --pull-request "$REVIEW_PR_NUMBER" \
             --head-sha "$REVIEW_HEAD_SHA"
 
-  # Informational post-merge tripwire. Native rulesets are still required to
-  # prevent an unsafe merge in the first place. Fail CI on unprotected main.
+  # Required post-merge tripwire: its failure also fails ci-merge-gate on push.
+  # Native rulesets must prevent unsafe merges; this audit cannot undo a merge.
   governance-audit:
     name: governance-audit
     if: github.event_name == 'push'

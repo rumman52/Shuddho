@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import json
+import os
+import subprocess
+import textwrap
 
 import pytest
 
@@ -154,11 +158,96 @@ def test_bad_repo_identifiers_are_rejected_before_fetch(monkeypatch):
             inspect_repository(name, "ci-token")
 
 
-def test_ci_main_push_audit_is_not_a_substitute_for_pr_gate():
+def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  governance-audit:\n", 1)[1]
     assert "github.event_name == 'push'" in job
     assert "python -m scripts.main_protection_audit" in job
     assert "GITHUB_TOKEN: ${{ github.token }}" in job
     assert "continue-on-error" not in job
-    assert "ci-merge-gate:" in workflow
+    gate = workflow.split("\n  ci-merge-gate:\n", 1)[1].split("\n  governance-audit:\n", 1)[0]
+    assert "    if: always()" in gate
+    needs = gate.split("    needs:\n", 1)[1].split("    runs-on:", 1)[0]
+    assert "      - governance-audit\n" in needs
+    assert "GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}" in gate
+    assert "continue-on-error" not in gate
+    assert "python -m scripts.independent_review_gate" in gate
+
+
+def _run_ci_result_gate(results: dict[str, str]) -> subprocess.CompletedProcess:
+    """Execute the actual workflow shell, not a reimplementation of its policy."""
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Require complete CI success\n", 1)[1]
+    body = step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
+    return subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", textwrap.dedent(body)],
+        env={**os.environ, "CI_EVENT_NAME": "push", **results}, text=True, capture_output=True, timeout=5,
+    )
+
+
+@pytest.mark.parametrize("upstream", ["TEST_AND_BUILD_RESULT", "COWORKER_RESULT", "GOVERNANCE_AUDIT_RESULT"])
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_merge_gate_rejects_any_unsuccessful_required_job(upstream, result):
+    results = {
+        "TEST_AND_BUILD_RESULT": "success",
+        "COWORKER_RESULT": "success",
+        "GOVERNANCE_AUDIT_RESULT": "success",
+    }
+    results[upstream] = result
+    completed = _run_ci_result_gate(results)
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+
+
+def test_merge_gate_accepts_all_required_jobs_succeeding():
+    completed = _run_ci_result_gate({
+        "TEST_AND_BUILD_RESULT": "success",
+        "COWORKER_RESULT": "success",
+        "GOVERNANCE_AUDIT_RESULT": "success",
+    })
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_review"])
+def test_pr_gate_preserves_expected_audit_skip_before_independent_review(event):
+    completed = _run_ci_result_gate({
+        "CI_EVENT_NAME": event,
+        "TEST_AND_BUILD_RESULT": "success",
+        "COWORKER_RESULT": "success",
+        "GOVERNANCE_AUDIT_RESULT": "skipped",
+    })
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_review"])
+@pytest.mark.parametrize("result", ["failure", "cancelled", ""])
+def test_pr_gate_does_not_hide_unexpected_audit_result(event, result):
+    completed = _run_ci_result_gate({
+        "CI_EVENT_NAME": event,
+        "TEST_AND_BUILD_RESULT": "success",
+        "COWORKER_RESULT": "success",
+        "GOVERNANCE_AUDIT_RESULT": result,
+    })
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize("event", ["", "workflow_dispatch", "pull_request_target"])
+def test_merge_gate_rejects_unreviewed_event_types(event):
+    completed = _run_ci_result_gate({
+        "CI_EVENT_NAME": event,
+        "TEST_AND_BUILD_RESULT": "success",
+        "COWORKER_RESULT": "success",
+        "GOVERNANCE_AUDIT_RESULT": "skipped",
+    })
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+
+
+def test_operator_ruleset_template_satisfies_both_configuration_auditors():
+    from scripts.v01_native_protection_audit import assess_native_policy
+
+    candidate = json.loads(Path("infra/github/main-ruleset.json").read_text(encoding="utf-8"))
+    # GitHub assigns this field on creation; this is fixture identity only.
+    candidate["id"] = 123
+    assert audit_governance(protected_branch(), [candidate]) == 123
+    result = assess_native_policy(rulesets=[candidate])
+    assert result["classification"] == "configuration_candidate"
+    assert result["enforcement_verified"] is False
