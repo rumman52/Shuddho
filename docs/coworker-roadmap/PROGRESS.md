@@ -1,3 +1,12 @@
+## A-02 / P-01 goal-run admission replay — 24 October 2026
+
+- Baseline `main` `d1621e5e320bce44ce4e5f5c3c773df39412fdc1`, merged #558. Separate draft #559 covers Agent-form identity, not this goal-run path.
+- Defect: `GoalWorkspace.runNow()` minted a fresh random key on every click, so an admitted-but-lost HTTP response could create a second durable Agent run on retry. The UI now binds retry to owner-visible goal ID/revision/language, changes identity when target changes, rotates only upon confirmed admission (before refresh), and blocks reentrant in-flight calls.
+- Four integrated React tests exercise exact same-key uncertain replay, two legitimate starts, different goal after uncertain response, and confirmed run with failed follow-up refresh. Test module and runner registration preceded source fix; no observed RED execution claimed.
+- [Bounded task contract](A02_P01_GOAL_RUN_ADMISSION_REPLAY_2026-10-24.md). Implementation on independent review branch; final-head web tests/build, full required CI and human review **pending at publication**. No staging duplicate-effect witness, PostgreSQL/Temporal operated recovery, native main protection, production qualification or activation established. Retain all 17 A/C/P/V requirements as not fully qualified.
+
+---
+
 ## V-01 required governance aggregate — 24 October 2026 (Asia/Dhaka)
 
 - Base main: `ddb58a308b9cd28de791c911bc1338f12d7bed5c`; no open PRs at selection. Main [CI #39954055394](https://github.com/rumman52/Shuddho/actions/runs/39954055394) passed code/coworker and aggregate jobs while governance failed; native main protection was false and rulesets empty.
