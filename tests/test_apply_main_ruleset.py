@@ -121,6 +121,36 @@ def test_existing_verified_ruleset_is_idempotent_and_never_posts(monkeypatch):
     assert all(method != "POST" for method, _, _ in calls)
 
 
+
+def test_unrelated_active_ruleset_is_resolved_by_detail_before_it_blocks_main(monkeypatch):
+    # The list endpoint can omit conditions/rules; the detail endpoint is authoritative.
+    summary = {"id": 77, "name": "dev-only policy", "target": "branch", "enforcement": "active"}
+    dev_detail = {
+        **summary,
+        "conditions": {"ref_name": {"include": ["refs/heads/dev"], "exclude": []}},
+        "bypass_actors": [],
+        "rules": [],
+    }
+    calls = []
+
+    def fake(method, url, token, payload=None):
+        calls.append((method, url, payload))
+        if url.endswith("/branches/main"):
+            return {"name": "main", "protected": False}
+        if "/rulesets?" in url:
+            return [summary]
+        if url.endswith("/rulesets/77"):
+            return dev_detail
+        raise AssertionError(f"unexpected API request: {method} {url}")
+
+    monkeypatch.setattr("scripts.apply_main_ruleset._request_json", fake)
+    result = apply_main_ruleset(REPO, "fake-token", candidate(), apply=False)
+
+    assert result["status"] == "dry_run"
+    assert result["would_create"] is True
+    assert ("GET", "https://api.github.com/repos/rumman52/Shuddho/rulesets/77", None) in calls
+
+
 def test_apply_posts_once_then_verifies_detail_and_branch(monkeypatch):
     calls = []
     created = detail()
