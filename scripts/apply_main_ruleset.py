@@ -142,6 +142,29 @@ def _could_target_main(rule: object) -> bool:
     return True
 
 
+def _list_main_target_rulesets(root: str, token: str, listed: object) -> list[dict]:
+    """Resolve list summaries to detail before deciding whether they target main."""
+    if not isinstance(listed, list) or len(listed) >= 100:
+        raise ApplyMainRulesetError("ruleset listing is invalid or possibly truncated")
+    details = []
+    for item in listed:
+        if not isinstance(item, dict):
+            raise ApplyMainRulesetError("ruleset listing contains a malformed entry")
+        # List responses may omit conditions. Treat unknown scope conservatively,
+        # then use the detail response as the source of truth for applicability.
+        if not _could_target_main(item):
+            continue
+        ruleset_id = item.get("id")
+        if type(ruleset_id) is not int or ruleset_id < 1:
+            raise ApplyMainRulesetError("an active ruleset may target main but has no valid identifier")
+        detail = _request_json("GET", root + f"/rulesets/{ruleset_id}", token)
+        if not isinstance(detail, dict) or detail.get("id") != ruleset_id:
+            raise ApplyMainRulesetError(f"ruleset {ruleset_id} detail could not be verified")
+        if _could_target_main(detail):
+            details.append(detail)
+    return details
+
+
 def _is_compliant_existing(rule: object) -> bool:
     if not isinstance(rule, dict):
         return False
@@ -186,23 +209,10 @@ def apply_main_ruleset(
     listed = _request_json("GET", root + "/rulesets?includes_parents=true&per_page=100", token)
     if not isinstance(listed, list) or len(listed) >= 100:
         raise ApplyMainRulesetError("ruleset listing is invalid or possibly truncated")
-
-    main_rulesets = []
-    same_name = []
-    for item in listed:
-        if not isinstance(item, dict):
-            raise ApplyMainRulesetError("ruleset listing contains a malformed entry")
-        if item.get("name") == candidate["name"]:
-            same_name.append(item)
-        if not _could_target_main(item):
-            continue
-        ruleset_id = item.get("id")
-        if type(ruleset_id) is not int or ruleset_id < 1:
-            raise ApplyMainRulesetError("an active ruleset may target main but has no valid identifier")
-        detail = _request_json("GET", root + f"/rulesets/{ruleset_id}", token)
-        if not isinstance(detail, dict) or detail.get("id") != ruleset_id:
-            raise ApplyMainRulesetError(f"ruleset {ruleset_id} detail could not be verified")
-        main_rulesets.append(detail)
+    same_name = [item for item in listed if isinstance(item, dict) and item.get("name") == candidate["name"]]
+    if any(not isinstance(item, dict) for item in listed):
+        raise ApplyMainRulesetError("ruleset listing contains a malformed entry")
+    main_rulesets = _list_main_target_rulesets(root, token, listed)
 
     if len(main_rulesets) > 1:
         raise ApplyMainRulesetError("multiple active rulesets may target main; manual policy reconciliation is required")
@@ -251,12 +261,10 @@ def apply_main_ruleset(
         raise ApplyMainRulesetError("GitHub did not return a valid ruleset id; inspect repository settings before retrying")
     try:
         listing_after = _request_json("GET", root + "/rulesets?includes_parents=true&per_page=100", token)
-        if not isinstance(listing_after, list) or len(listing_after) >= 100:
-            raise ApplyMainRulesetError("post-creation ruleset listing is invalid or possibly truncated")
-        main_after = [item for item in listing_after if _could_target_main(item)]
-        if len(main_after) != 1 or not isinstance(main_after[0], dict) or main_after[0].get("id") != ruleset_id:
+        main_after = _list_main_target_rulesets(root, token, listing_after)
+        if len(main_after) != 1 or main_after[0].get("id") != ruleset_id:
             raise ApplyMainRulesetError("post-creation main ruleset set changed or includes another active ruleset")
-        readback = _request_json("GET", root + f"/rulesets/{ruleset_id}", token)
+        readback = main_after[0]
         branch_after = _request_json("GET", root + "/branches/main", token)
         if not isinstance(readback, dict) or readback.get("id") != ruleset_id or readback.get("name") != candidate["name"]:
             raise ApplyMainRulesetError("created ruleset identity does not match the requested policy")
