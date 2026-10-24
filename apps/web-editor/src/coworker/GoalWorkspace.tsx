@@ -25,6 +25,10 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const createKey = useRef("");
+  // A retry after an uncertain response must recover the original admission.
+  // A later intentional run, or a different goal revision, must have a new key.
+  const runRequest = useRef<{ fingerprint: string; key: string } | null>(null);
+  const runInFlight = useRef(false);
 
   const current = goals.find(goal => goal.id === selected) ?? null;
 
@@ -95,14 +99,26 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
   }
 
   async function runNow() {
-    if (!current || busy) return;
+    if (!current || current.state !== "active" || busy || runInFlight.current) return;
+    const goalId = current.id;
+    const goalRevision = current.revision;
+    const language = "en";
+    const fingerprint = JSON.stringify([goalId, goalRevision, language]);
+    if (runRequest.current?.fingerprint !== fingerprint)
+      runRequest.current = { fingerprint, key: crypto.randomUUID() };
+    const requestKey = runRequest.current.key;
+    // Synchronous fence against a second click before React commits busy state.
+    runInFlight.current = true;
     setBusy("run"); setError(""); setNotice("");
     try {
-      const run = await client.runGoal(current.id, current.revision, "en", crypto.randomUUID());
-      replaceGoal(await client.goal(current.id));
+      const run = await client.runGoal(goalId, goalRevision, language, requestKey);
+      // Admission is now confirmed. Even if the follow-up goal refresh fails,
+      // the next intentional click must not replay this accepted request.
+      if (runRequest.current?.key === requestKey) runRequest.current = null;
+      replaceGoal(await client.goal(goalId));
       setNotice(`Bounded run ${run.id.slice(0, 8)} started from goal revision ${run.persistent_goal_revision}. You can inspect it in Agent.`);
     } catch (error) { setError(errorMessage(error)); }
-    finally { setBusy(""); }
+    finally { runInFlight.current = false; setBusy(""); }
   }
 
   async function setSuggestionsEnabled(next: boolean) {
