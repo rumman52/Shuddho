@@ -170,6 +170,7 @@ export default function AgentWorkspace({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy || !enabled || goal.trim().length < 3) return;
     const input = {
       goal,
       document_ids: selectedDocs,
@@ -182,8 +183,12 @@ export default function AgentWorkspace({
     if (submission.current?.fingerprint !== fingerprint) {
       submission.current = { fingerprint, key: crypto.randomUUID() };
     }
+    const requestKey = submission.current.key;
     await perform("create", async () => {
-      const next = await client.createAgentRun(input, submission.current!.key);
+      const next = await client.createAgentRun(input, requestKey);
+      // An uncertain/lost response must replay the original key, but once the
+      // server confirms admission, a deliberate identical goal is a new run.
+      if (submission.current?.key === requestKey) submission.current = undefined;
       setRun(next);
       setRuns(previous => [next, ...previous.filter(item => item.id !== next.id)]);
     });

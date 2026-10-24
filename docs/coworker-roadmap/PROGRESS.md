@@ -1,9 +1,18 @@
 ## A-02 / P-01 goal-run admission replay — 24 October 2026
 
-- Baseline `main` `d1621e5e320bce44ce4e5f5c3c773df39412fdc1`, merged #558. Separate draft #559 covers Agent-form identity, not this goal-run path.
+- Baseline `main` `d1621e5e320bce44ce4e5f5c3c773df39412fdc1`, merged #558. PR #559 is now merged into main; it covers Agent-form identity, not this goal-run path.
 - Defect: `GoalWorkspace.runNow()` minted a fresh random key on every click, so an admitted-but-lost HTTP response could create a second durable Agent run on retry. The UI now binds retry to owner-visible goal ID/revision/language, changes identity when target changes, rotates only upon confirmed admission (before refresh), and blocks reentrant in-flight calls.
 - Four integrated React tests exercise exact same-key uncertain replay, two legitimate starts, different goal after uncertain response, and confirmed run with failed follow-up refresh. Test module and runner registration preceded source fix; no observed RED execution claimed.
 - [Bounded task contract](A02_P01_GOAL_RUN_ADMISSION_REPLAY_2026-10-24.md). Implementation on independent review branch; final-head web tests/build, full required CI and human review **pending at publication**. No staging duplicate-effect witness, PostgreSQL/Temporal operated recovery, native main protection, production qualification or activation established. Retain all 17 A/C/P/V requirements as not fully qualified.
+
+---
+
+## P-01 / C-01 Agent submission identity — 24 October 2026
+
+- Base main `a14dee4870af05954936b88882e40f6db2374aab`. New dedicated review branch `fix/p01-agent-run-submission-identity-20261024`; earlier draft #558 is independent and remains unmerged.
+- Concrete defect: after successful bounded-Agent admission the form retained its idempotency key, so an explicit identical run request returned the existing run. The fix rotates the key **only after confirmed success**, preserving same-key recovery following a lost response and changed-payload rebinding. The submit guard also rejects in-flight/disabled/invalid synthetic submissions before changing identity.
+- Regression coverage: [`agentSubmissionIdentity.test.tsx`](../../apps/web-editor/src/coworker/agentSubmissionIdentity.test.tsx) exercises repeated accepted goals, accepted-but-lost response replay/fresh next click, and edited uncertain input; registered with the existing web test runner. Tests committed first, but no observed failing-first run is claimed.
+- [Task contract](P01_AGENT_SUBMISSION_IDENTITY_2026-10-24.md). Implementation on review branch; exact-head web tests/build and required repository CI pending, independent review pending. No claim of staging qualification, production readiness, or activation. Native V-01 main protection remains blocked on administrator action. All 17 A/C/P/V formal acceptance requirements remain not fully qualified.
 
 ---
 
