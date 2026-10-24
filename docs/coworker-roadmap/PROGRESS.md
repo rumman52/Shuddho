@@ -1,3 +1,16 @@
+## V-01 required governance aggregate — 24 October 2026 (Asia/Dhaka)
+
+- Base main: `ddb58a308b9cd28de791c911bc1338f12d7bed5c`; no open PRs at selection. Main [CI #39954055394](https://github.com/rumman52/Shuddho/actions/runs/39954055394) passed code/coworker and aggregate jobs while governance failed; native main protection was false and rulesets empty.
+- Branch: `fix/v01-required-governance-gate-20261024`. The aggregate job now waits for governance and rejects failed/cancelled/skipped/missing audit results on main push. PR/review events retain the intentional read-only audit skip and independent-current-head review. Unsupported events and unexpected audit failures are denied. No elevated PR permissions.
+- Added an unapplied native ruleset payload and administrator verification runbook, plus a complete Code Editor implementation/verification prompt. [Task and operator runbook](V01_REQUIRED_GOVERNANCE_GATE_2026-10-24.md); [Codex prompt](CODEX_COMPLETION_PROMPT.md).
+- Test-first: **15 failures, 38 passes** before the workflow/configuration change. Focused governance/review/redirect suite: **149 passed, zero skips**. Full lightweight Python suite: **1,529 passed, 71 skipped, 6 warnings**; the skipped optional integration coverage is not claimed as verified. Release-contract checker passed. `git diff --check` passed.
+- Independent AI review of the code/configuration/handoff found no Critical, Important or Minor findings and independently reran the focused suite: **149 passed, zero skips**. This is not human approval or live governance evidence.
+- Native protection is **not applied** by these files. The read-only token may lack visibility of ruleset bypass actors even after configuration; missing visibility remains a failure, not proof of no bypass. A trusted administrator evidence path and real negative/positive merge controls remain required.
+- Levels: implemented on review branch; exact-final-head remote CI and independent human approval pending; staging/production/activation not established. All 17 acceptance rows retain their outstanding qualification gates. No provider transaction, deployment, paid provisioning, flag change or merge performed.
+- Next: inspect the final PR-head code/integration jobs and review; apply and verify the concrete native policy through authorized admin tooling; refresh staging prerequisites (#291), then close evidence gaps rather than reimplementing existing Runtime v3/browser/code/skill foundations.
+
+---
+
 ## CW-09 CONNECT handshake deadline — 21 October 2026 (Asia/Dhaka)
 
 - Refreshed baseline: main `94fd180e895c3fd90e760874ac8ff83cf11c1e78` after PR #526. PR #527 private-IP defense is a separate open change; its exact-head `test-and-build` succeeded and `coworker` was still running at task selection. Do not infer complete CI or human review from this partial state.
