@@ -1,3 +1,14 @@
+## P-01 connected read-context grant recovery — 24 October 2026 (Asia/Dhaka)
+
+- **Current base:** main `c3472f76ca2725fd8928abd59cdce57dc524422e`, merge of #560; repository main has no enforced native required checks/review ruleset at source selection (V-01 issue #484).
+- **Work branch and draft review:** `fix/p01-connected-grant-admission-recovery-20261024` / [PR #561](https://github.com/rumman52/Shuddho/pull/561). **Not merged, deployed, staged or activated** at this checkpoint.
+- **P-01/C-01 scoped defect:** Agent UI loses a confirmed connector read-grant if first sync fails, and an accepted-but-lost grant creation response is retried with a fresh key *and* expiry. The patch retains the exact pending identity per connection, blocks same-tick duplicate grant admissions, displays/selects confirmed grants before first sync, and preserves manual Sync/revocation.
+- **Test-first regression coverage:** four new React tests in `connectorGrantAdmission.test.tsx`, included in the shared web test registry. Tests-before-fix commits `f58c078b` and `4b49bbd`; source fix `29fc7ff9`; [contract](P01_CONNECTOR_READ_GRANT_ADMISSION_RECOVERY_2026-10-24.md). Test-only CI was cancelled by subsequent branch pushes before Node tests completed; no observed red run is claimed.
+- **Verification level:** implementation exists in a draft branch; exact final-head `test-and-build`, `coworker` and `ci-merge-gate` must be observed and independent review obtained. Staging, production qualification and activation remain **not established**. Owner-only native merge controls and external staging/provider prerequisites remain separately open.
+- **Next action:** check final PR #561 head CI, review test outcomes, fix any failures; do not merge without formal review and passing final-head gates.
+
+---
+
 ## A-02 / P-01 goal-run admission replay — 24 October 2026
 
 - Baseline `main` `d1621e5e320bce44ce4e5f5c3c773df39412fdc1`, merged #558. PR #559 is now merged into main; it covers Agent-form identity, not this goal-run path.
