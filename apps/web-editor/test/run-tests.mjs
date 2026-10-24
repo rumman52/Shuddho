@@ -9,6 +9,7 @@ const tests = [
   "src/coworker/client.test.ts",
   "src/coworker/refreshOrder.test.ts",
   "src/coworker/conversationIdentity.test.tsx",
+  "src/coworker/agentSubmissionIdentity.test.tsx",
   "src/coworker/pushNavigation.test.ts",
   "src/coworker/actions.test.ts",
   "src/lib/api.test.ts",

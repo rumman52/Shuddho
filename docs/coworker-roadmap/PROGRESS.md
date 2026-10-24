@@ -1,3 +1,12 @@
+## P-01 / C-01 Agent submission identity — 24 October 2026
+
+- Base main `a14dee4870af05954936b88882e40f6db2374aab`. New dedicated review branch `fix/p01-agent-run-submission-identity-20261024`; earlier draft #558 is independent and remains unmerged.
+- Concrete defect: after successful bounded-Agent admission the form retained its idempotency key, so an explicit identical run request returned the existing run. The fix rotates the key **only after confirmed success**, preserving same-key recovery following a lost response and changed-payload rebinding. The submit guard also rejects in-flight/disabled/invalid synthetic submissions before changing identity.
+- Regression coverage: [`agentSubmissionIdentity.test.tsx`](../../apps/web-editor/src/coworker/agentSubmissionIdentity.test.tsx) exercises repeated accepted goals, accepted-but-lost response replay/fresh next click, and edited uncertain input; registered with the existing web test runner. Tests committed first, but no observed failing-first run is claimed.
+- [Task contract](P01_AGENT_SUBMISSION_IDENTITY_2026-10-24.md). Implementation on review branch; exact-head web tests/build and required repository CI pending, independent review pending. No claim of staging qualification, production readiness, or activation. Native V-01 main protection remains blocked on administrator action. All 17 A/C/P/V formal acceptance requirements remain not fully qualified.
+
+---
+
 ## V-01 required governance aggregate — 24 October 2026 (Asia/Dhaka)
 
 - Base main: `ddb58a308b9cd28de791c911bc1338f12d7bed5c`; no open PRs at selection. Main [CI #39954055394](https://github.com/rumman52/Shuddho/actions/runs/39954055394) passed code/coworker and aggregate jobs while governance failed; native main protection was false and rulesets empty.
