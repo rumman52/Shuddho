@@ -23,7 +23,7 @@ The connected GitHub integration used for this task has read-only ruleset inspec
 - Refuses to create or replace rulesets when existing or ambiguous protection may target main, when legacy protection is already reported, or when current state cannot be verified.
 - Rejects HTTP redirects for credential-bearing API calls.
 - After creation, re-lists active rulesets, checks the unique ruleset targeting main, reads back the exact detail, and checks the branch's protection state.
-- Does not automatically update, delete, roll back, or retry a potentially successful creation. If read-back fails after creation, it reports the ruleset ID and tells the operator to inspect before retrying.
+- Does not automatically update, delete, roll back, or repeat a potentially successful creation. If the POST response is lost or malformed, it re-reads the effective main ruleset state before reporting success; if it cannot prove the outcome, it tells the operator not to retry blindly. If read-back fails after a returned ID, it reports that ID and requires manual inspection.
 - Always reports `merge_enforcement_verified: false` and `qualified: false`. Configuration read-back is not a negative-control test.
 
 ## Use by an authorized repository administrator
