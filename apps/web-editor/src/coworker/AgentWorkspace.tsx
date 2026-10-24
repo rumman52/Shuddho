@@ -87,6 +87,10 @@ export default function AgentWorkspace({
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const submission = useRef<{ fingerprint: string; key: string }>();
+  // A lost grant-admission response must reuse both the request key AND the
+  // absolute expiry: the backend idempotency binding includes the payload.
+  const pendingReadAuthorizations = useRef(new Map<string, { key: string; expiresAt: string }>());
+  const readAuthorizationInFlight = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -195,17 +199,35 @@ export default function AgentWorkspace({
   }
 
   async function authorizeRead(connection: ConnectedAccount) {
-    await perform("read-authorize:" + connection.id, async () => {
-      const expiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-      const grant = await client.createConnectorReadGrant(
-        connection.id,
-        expiry,
-        crypto.randomUUID(),
-      );
-      await client.syncConnectorReadGrant(grant.id, true);
-      setReadGrants(previous => [grant, ...previous.filter(item => item.id !== grant.id)]);
-      setSelectedReadGrants(previous => previous.includes(grant.id) ? previous : [...previous, grant.id]);
-    });
+    // React's busy state is not a synchronous lock against same-tick clicks.
+    if (busy || readAuthorizationInFlight.current) return;
+    readAuthorizationInFlight.current = true;
+    try {
+      await perform("read-authorize:" + connection.id, async () => {
+        let admission = pendingReadAuthorizations.current.get(connection.id);
+        if (!admission) {
+          admission = {
+            key: crypto.randomUUID(),
+            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          };
+          pendingReadAuthorizations.current.set(connection.id, admission);
+        }
+        const grant = await client.createConnectorReadGrant(
+          connection.id,
+          admission.expiresAt,
+          admission.key,
+        );
+        // Admission is confirmed. A failed downstream sync is NOT an
+        // uncertain grant creation; expose this grant and let Sync retry it.
+        if (pendingReadAuthorizations.current.get(connection.id) === admission)
+          pendingReadAuthorizations.current.delete(connection.id);
+        setReadGrants(previous => [grant, ...previous.filter(item => item.id !== grant.id)]);
+        setSelectedReadGrants(previous => previous.includes(grant.id) ? previous : [...previous, grant.id]);
+        await client.syncConnectorReadGrant(grant.id, true);
+      });
+    } finally {
+      readAuthorizationInFlight.current = false;
+    }
   }
 
   async function syncRead(grant: ConnectorReadGrant) {
