@@ -65,6 +65,10 @@ External/provider content is data, never permission. The planner cannot add tool
 
 Scheduled wake-ups reuse the existing stable occurrence identity. Connected-event wake-ups reuse stable provider-event occurrence identity plus exact synchronized snapshot evidence. Existing accepting/buffered recovery, worker restart behavior, notification outbox and quiet hours are reused.
 
+### Deadline occurrence recovery update — 25 October 2026
+
+Issue [#566](https://github.com/rumman52/Shuddho/issues/566) and PR [#568](https://github.com/rumman52/Shuddho/pull/568) add bounded recovery for existing deadline occurrences after transient `active_agent_limit` rejection or process loss. Recovery resumes only `accepting` occurrences, reuses the same occurrence/AgentRun idempotency identity, terminalizes stale or ineligible targets, and prevents duplicate start notifications. This is a repository implementation result, not PA-10 qualification: merged-main `test-and-build` and `coworker` jobs passed, but the governance audit and overall merge gate failed because native main protection is not confirmed; controlled staging remains blocked by the missing Render worker and inactive Supabase staging project.
+
 ## Qualification boundary
 
 Repository tests verify reviewed tool scope, rejection of consequential tools, scheduled occurrence dedupe, connected-event exact snapshot scope, no ExternalAction authority and completion-notice dedupe.
