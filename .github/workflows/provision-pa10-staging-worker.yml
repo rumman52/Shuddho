@@ -60,6 +60,15 @@ jobs:
             exit 1
           fi
 
+      - name: Require Render access before provisioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${RENDER_API_KEY:-}" ]]; then
+            echo "::error::BLOCKED_EXTERNAL — RENDER_API_KEY REQUIRED"
+            exit 1
+          fi
+
       - name: Install pinned Render CLI
         shell: bash
         run: |
