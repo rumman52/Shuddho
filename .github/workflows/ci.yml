@@ -109,6 +109,21 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+
+      - name: Qualify A-03 legacy Temporal history replay without skips
+        env:
+          SHUDDHO_TEMPORAL_HISTORY_ARTIFACT_DIR: /tmp/a03-temporal-history-replay
+        run: |
+          uv run --extra coworker pytest tests/test_temporal_history_replay.py -q -rs --junitxml=/tmp/a03-temporal-history-replay.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/a03-temporal-history-replay.xml --required-module tests.test_temporal_history_replay
+      - name: Keep A-03 Temporal history replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a03-temporal-history-replay-evidence
+          path: |
+            /tmp/a03-temporal-history-replay/
+            /tmp/a03-temporal-history-replay.xml
       - name: Qualify sandbox worker lifetime and cleanup without skips
         run: |
           uv run --extra coworker pytest tests/test_sandbox_worker_lifecycle.py -q -rs --junitxml=/tmp/sandbox-lifecycle.xml
