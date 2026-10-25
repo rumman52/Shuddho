@@ -1036,7 +1036,57 @@ class AutomationRepository:
                 snapshot_ids.extend(selected)
         return used_grants, snapshot_ids
 
-    def handle_connector_event(self, event: dict) -> None:
+    def _record_occurrence_admission_error(
+        self,
+        occurrence_id: str,
+        error: CoworkerError,
+    ) -> dict:
+        """Persist retryable capacity pressure without losing the occurrence."""
+        retryable = error.code == "active_agent_limit" and error.status_code == 429
+        with self.sessions.begin() as db:
+            occurrence = db.scalar(
+                select(AutomationOccurrence)
+                .where(AutomationOccurrence.id == occurrence_id)
+                .with_for_update()
+            )
+            if occurrence is None:
+                return {
+                    "occurrence_id": occurrence_id,
+                    "run_id": None,
+                    "state": "blocked",
+                    "reason": error.code,
+                    "replayed": False,
+                }
+            if occurrence.run_id is not None:
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": occurrence.run_id,
+                    "state": occurrence.state,
+                    "reason": occurrence.reason,
+                    "replayed": True,
+                }
+            if occurrence.state not in {"accepting", "buffered"}:
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": None,
+                    "state": occurrence.state,
+                    "reason": occurrence.reason or error.code,
+                    "replayed": True,
+                }
+
+            state = "accepting" if retryable else "blocked"
+            occurrence.state = state
+            occurrence.reason = error.code[:80]
+            occurrence.updated_at = utcnow()
+            return {
+                "occurrence_id": occurrence.id,
+                "run_id": None,
+                "state": state,
+                "reason": error.code,
+                "replayed": False,
+            }
+
+    def handle_connector_event(self, event: dict) -> None
         """Wake bounded runs for explicitly configured connected-event automations.
 
         The connector event is already authenticated, persisted, deduplicated and
@@ -1288,14 +1338,7 @@ class AutomationRepository:
                 derived_goal=run_profile in {"email", "proactive"},
             )
         except CoworkerError as error:
-            with self.sessions.begin() as db:
-                occurrence = db.scalar(select(AutomationOccurrence).where(
-                    AutomationOccurrence.automation_id == automation_id,
-                    AutomationOccurrence.occurrence_key == key,
-                ).with_for_update())
-                if occurrence is not None:
-                    occurrence.state = "blocked"; occurrence.reason = error.code[:80]; occurrence.updated_at = utcnow()
-            return {"occurrence_id": occurrence.id if occurrence else None, "run_id": None, "state": "blocked", "reason": error.code, "replayed": False}
+            return self._record_occurrence_admission_error(previous.id, error)
 
         with self.sessions.begin() as db:
             occurrence = db.scalar(select(AutomationOccurrence).where(
@@ -1571,22 +1614,7 @@ class AutomationRepository:
                 derived_goal=True,
             )
         except CoworkerError as error:
-            with self.sessions.begin() as db:
-                occurrence = db.scalar(select(AutomationOccurrence).where(
-                    AutomationOccurrence.automation_id == automation_id,
-                    AutomationOccurrence.occurrence_key == key,
-                ).with_for_update())
-                if occurrence is not None:
-                    occurrence.state = "blocked"
-                    occurrence.reason = error.code[:80]
-                    occurrence.updated_at = utcnow()
-            return {
-                "occurrence_id": occurrence.id if occurrence else None,
-                "run_id": None,
-                "state": "blocked",
-                "reason": error.code,
-                "replayed": False,
-            }
+            return self._record_occurrence_admission_error(previous.id, error)
 
         with self.sessions.begin() as db:
             occurrence = db.scalar(select(AutomationOccurrence).where(
@@ -1776,19 +1804,7 @@ class AutomationRepository:
                 derived_goal=True,
             )
         except CoworkerError as error:
-            with self.sessions.begin() as db:
-                occurrence = db.get(AutomationOccurrence, occurrence_id)
-                if occurrence is not None:
-                    occurrence.state = "blocked"
-                    occurrence.reason = error.code[:80]
-                    occurrence.updated_at = utcnow()
-            return {
-                "occurrence_id": occurrence_id,
-                "run_id": None,
-                "state": "blocked",
-                "reason": error.code,
-                "replayed": False,
-            }
+            return self._record_occurrence_admission_error(occurrence_id, error)
 
         with self.sessions.begin() as db:
             occurrence = db.get(AutomationOccurrence, occurrence_id)
@@ -2129,14 +2145,7 @@ class AutomationRepository:
                 derived_goal=run_profile == "proactive",
             )
         except CoworkerError as error:
-            with self.sessions.begin() as db:
-                occurrence = db.scalar(select(AutomationOccurrence).where(
-                    AutomationOccurrence.automation_id == automation_id,
-                    AutomationOccurrence.occurrence_key == self.occurrence_key(owner, automation_id, revision, due_at),
-                ).with_for_update())
-                if occurrence is not None:
-                    occurrence.state = "blocked"; occurrence.reason = error.code[:80]; occurrence.updated_at = utcnow()
-            return {"occurrence_id": occurrence.id if occurrence else None, "run_id": None, "state": "blocked", "reason": error.code, "replayed": False}
+            return self._record_occurrence_admission_error(previous.id, error)
 
         with self.sessions.begin() as db:
             occurrence = db.scalar(select(AutomationOccurrence).where(

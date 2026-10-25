@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax.
 
-**Goal:** Do not permanently lose a scheduled automation occurrence when AgentRun admission is rejected by the transient per-owner active-run limit.
+**Goal:** Do not permanently lose an automation occurrence when AgentRun admission is rejected by the transient per-owner active-run limit.
 
 **Architecture:** Keep the existing durable AutomationOccurrence ledger and stable idempotency key. A narrow retryable active_agent_limit rejection must leave the occurrence in the existing reclaimable accepting state with a safe reason and refreshed lease timestamp; permanent admission failures remain blocked. The existing worker reclaimer retries stale accepting occurrences after 30 seconds, and the catch-up window remains authoritative.
 
@@ -29,8 +29,8 @@
 
 ## Tasks
 
-- [ ] Add a regression to tests/test_automations.py that injects one CoworkerError(active_agent_limit, ..., 429) from agent.create, verifies no run is created and the occurrence remains reclaimable, then allows the next call to succeed with the same occurrence identity.
-- [ ] Open a draft PR and observe the focused regression fail against current main before changing production code.
+- [x] Add a regression to tests/test_automations.py that injects one CoworkerError(active_agent_limit, ..., 429) from agent.create, verifies no run is created and the occurrence remains reclaimable, then allows the next call to succeed with the same occurrence identity.
+- [x] Open draft PR #565 and observe the focused regression fail against current main before changing production code (run #40180986534, head e4874d432d484dc765b135fda180090b0f66ea47; actual state was `blocked`, expected `accepting`).
 - [ ] Implement the narrow retryable-error branch in AutomationRepository.accept_occurrence; preserve permanent-error behavior.
 - [ ] Re-run the exact-head coworker suite and all required CI jobs; verify zero skips in the targeted mandatory module.
 - [ ] Read the final diff and document remaining staging/release blockers. Do not merge or deploy.

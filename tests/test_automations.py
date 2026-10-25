@@ -501,6 +501,51 @@ def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
         assert len(notices) == 1
 
 
+
+def test_permanent_agent_admission_error_remains_blocked(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    goal, automation = create_goal_and_automation(client, headers())
+    due_at = utcnow().replace(microsecond=0)
+
+    agent = automation_container.automations.agent
+    attempts = 0
+
+    def reject_permanently(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise CoworkerError(
+            "goal_run_budget",
+            "This goal reached its configured bounded-run budget.",
+            409,
+        )
+
+    monkeypatch.setattr(agent, "create", reject_permanently)
+
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at
+    )
+    assert first["state"] == "blocked"
+    assert first["reason"] == "goal_run_budget"
+
+    replay = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at
+    )
+    assert replay["state"] == "blocked"
+    assert replay["replayed"] is True
+    assert attempts == 1
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        assert occurrence is not None and occurrence.state == "blocked"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
+
+
 def test_notification_service_is_first_class_and_automation_keeps_compatibility(
     automation_client,
     automation_container,
