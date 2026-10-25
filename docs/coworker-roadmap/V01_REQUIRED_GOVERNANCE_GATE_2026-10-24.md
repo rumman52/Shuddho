@@ -104,3 +104,17 @@ Sources:
 Implemented on the review branch; native policy unapplied; independent human
 approval pending. V-01 remains open until actual policy and controls are verified.
 The broader 17 A/C/P/V requirements, staging and production remain unqualified.
+
+
+## Current status — 25 October 2026 (Asia/Dhaka)
+
+This section supersedes the earlier draft-PR status above.
+
+- PR #562 is merged into main at da7b7b66903be1ff5d29ec474fe8af2511d83701. The operator and reviewed policy template are already present; do not repeat their implementation.
+- The latest observed main run is [CI #40169838677](https://github.com/rumman52/Shuddho/actions/runs/40169838677): test-and-build passed, governance-audit failed with “main branch protection is not confirmed”, and coworker was still running at last observation.
+- Direct read-only GitHub API inspection returned protected=false, required-check enforcement off, and no applicable repository/parent rulesets. Native enforcement therefore remains unverified and the governance audit correctly fails closed.
+- The connected GitHub integration has no ruleset-write action. An authorized owner/admin must run the existing operator from a secure local environment, inspect its dry-run output, apply only after policy review, and then prove negative/positive merge controls. Do not place an admin token in PR-controlled CI or chat.
+- The production Render API previously reported commit-triggered auto-deploy while this revision's governance gate failed. That service setting is outside this operator and must be separately changed and verified by an authorized owner.
+- The separate staging blocker remains tracked in [issue #291](https://github.com/rumman52/Shuddho/issues/291). This issue cannot be closed by source-level operator implementation.
+
+Current V-01 state: **operator implemented; native policy not applied; negative/positive controls not run; release governance remains open**.
