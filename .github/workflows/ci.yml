@@ -109,6 +109,16 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      - name: Qualify PA-10 transient capacity admission retry without skips
+        run: |
+          uv run --extra coworker pytest tests/test_automations.py::test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable -q -rs --junitxml=/tmp/pa10-capacity-admission.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/pa10-capacity-admission.xml --required-module tests.test_automations
+      - name: Keep PA-10 capacity admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pa10-capacity-admission-evidence
+          path: /tmp/pa10-capacity-admission.xml
 
       - name: Qualify A-03 legacy Temporal history replay without skips
         env:
