@@ -154,6 +154,9 @@ class WorkerProvisioningTests(unittest.TestCase):
         result = self.run_step("Validate staging prerequisites")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('"status": "passed"', result.stdout)
+        self.assertNotIn(self.env["SHUDDHO_COWORKER_DATABASE_URL"], result.stdout + result.stderr)
+        self.assertNotIn("test-only-temporal", result.stdout + result.stderr)
+        self.assertNotIn("test-only-secret", result.stdout + result.stderr)
         self.assertFalse((self.root / "calls").exists())
 
     def test_create_and_repair_target_worker(self):
@@ -215,6 +218,11 @@ class WorkerProvisioningTests(unittest.TestCase):
         )
         preflight_step = workflow.split("      - name: Validate staging prerequisites\n", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}", preflight_step)
+
+    def test_read_only_preflight_is_restricted_to_main(self):
+        workflow = PREFLIGHT_WORKFLOW.read_text()
+        self.assertIn('GITHUB_REPOSITORY}" != "rumman52/Shuddho"', workflow)
+        self.assertIn('GITHUB_REF_NAME}" != "main"', workflow)
 
     def test_read_only_preflight_checks_database_without_provisioning(self):
         workflow = PREFLIGHT_WORKFLOW.read_text()
