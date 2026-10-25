@@ -9,20 +9,21 @@ permissions:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    environment: pa10-staging
     timeout-minutes: 10
     env:
-      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_API_KEY: ${{ secrets.PA10_RENDER_API_KEY }}
       RENDER_WORKSPACE_ID: tea-d6ok4okhg0os73erkdv0
       RENDER_CLI_DISABLE_ANALYTICS: "1"
       SHUDDHO_COWORKER_ENV: staging
       SHUDDHO_AUTH_ISSUER: https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1
       SHUDDHO_AUTH_AUDIENCE: authenticated
-      SHUDDHO_TEMPORAL_ADDRESS: ${{ secrets.SHUDDHO_TEMPORAL_ADDRESS }}
-      SHUDDHO_TEMPORAL_NAMESPACE: ${{ secrets.SHUDDHO_TEMPORAL_NAMESPACE }}
-      SHUDDHO_TEMPORAL_API_KEY: ${{ secrets.SHUDDHO_TEMPORAL_API_KEY }}
-      SHUDDHO_STAGING_S3_ACCESS_KEY_ID: ${{ secrets.SHUDDHO_STAGING_S3_ACCESS_KEY_ID }}
-      SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY: ${{ secrets.SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY }}
-      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      SHUDDHO_TEMPORAL_ADDRESS: ${{ secrets.PA10_TEMPORAL_ADDRESS }}
+      SHUDDHO_TEMPORAL_NAMESPACE: ${{ secrets.PA10_TEMPORAL_NAMESPACE }}
+      SHUDDHO_TEMPORAL_API_KEY: ${{ secrets.PA10_TEMPORAL_API_KEY }}
+      SHUDDHO_STAGING_S3_ACCESS_KEY_ID: ${{ secrets.PA10_STAGING_S3_ACCESS_KEY_ID }}
+      SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY: ${{ secrets.PA10_STAGING_S3_SECRET_ACCESS_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.PA10_DEEPSEEK_API_KEY }}
       SHUDDHO_TEMPORAL_TLS: "true"
       SHUDDHO_TEMPORAL_TASK_QUEUE: shuddho-documents-v1
       SHUDDHO_COWORKER_STORAGE: s3
