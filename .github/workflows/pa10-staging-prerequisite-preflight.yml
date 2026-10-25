@@ -34,6 +34,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Guard staging-only execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REPOSITORY}" != "rumman52/Shuddho" ]]; then
+            echo "::error::This workflow is restricted to rumman52/Shuddho."
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
+            echo "::error::PA-10 staging preflight must run from main."
+            exit 1
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
