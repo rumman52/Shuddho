@@ -1,11 +1,43 @@
-## P-01 connected read-context grant recovery — 24 October 2026 (Asia/Dhaka)
+## Current release-readiness handoff — 25 October 2026 (Asia/Dhaka)
+
+- **Current main:** da7b7b66903be1ff5d29ec474fe8af2511d83701 (PR #562 merge). No open PRs were returned by the latest repository query.
+- **Current CI snapshot:** [run #40169838677](https://github.com/rumman52/Shuddho/actions/runs/40169838677) is on this exact SHA. test-and-build passed; governance-audit failed because native main protection was not confirmed; coworker remained in progress at last observation. Refresh before the next task and do not label this revision fully CI-verified.
+- **V-01 root cause:** live GitHub branch API says protected=false, required-check enforcement is off, and applicable rulesets are empty. PR #562 already merged the safe ruleset operator/template. Do not create another operator or weaken CI. Native policy application and behavioral negative/positive merge controls require an authorized repository administrator; the connected integration has no ruleset-write capability.
+- **Production release-control blocker:** the connected Render production API previously showed commit-triggered auto-deploy and had deployed the current main revision before governance/coworker CI finished. The service setting is external to this repository; source-only changes cannot claim to stop it. An owner must change and verify the deployment policy before expanded coworker rollout.
+- **Staging blocker:** issue [#291](https://github.com/rumman52/Shuddho/issues/291) remains open. The existing infra/render.staging.yaml already defines the worker; the connected Render inventory did not. The remaining tasks are operator-side Blueprint sync/provisioning, secure Temporal/S3 credentials, synthetic identity/provider/device setup, and a frozen exact-release evidence run.
+- **Previously stale status corrected:** PR #561 is merged. The historical P-01 checkpoint below is retained as history and explicitly superseded; do not repeat its old “not merged” next action.
+- **Next exact action:** authorized admin runs the existing operator from a secure local environment, beginning with dry-run:
+  ~~~bash
+  python -m scripts.apply_main_ruleset --repository rumman52/Shuddho
+  ~~~
+  Apply only after reviewing the plan and existing stricter policies:
+  ~~~bash
+  python -m scripts.apply_main_ruleset --repository rumman52/Shuddho --apply --confirm-repository rumman52/Shuddho
+  ~~~
+  Then capture effective ruleset read-back and negative/positive merge-control evidence. Do not store or paste the admin token in the repository, chat, or PR CI.
+
+### Current evidence levels
+
+| Gate | Current state | What closes it |
+| --- | --- | --- |
+| V-01 operator source | Implemented and merged in #562 | No repeat implementation needed |
+| V-01 native merge enforcement | **BLOCKED_EXTERNAL / UNVERIFIED** | Admin-applied effective policy plus behavioral negative/positive controls |
+| Main CI | **INCOMPLETE at last observation** | Final run conclusion on the exact SHA |
+| Production auto-deploy control | **BLOCKED_EXTERNAL / UNVERIFIED** | Owner-authorized Render setting change and failed-candidate deployment proof |
+| Controlled staging | **BLOCKED_EXTERNAL** | Persistent worker, required secrets/provider prerequisites, matching API/worker identity and frozen evidence |
+| A/C/P/V acceptance | **NOT FULLY QUALIFIED** | Row-by-row repository, staging and operational evidence |
+| Production activation | **NOT AUTHORIZED / NOT ESTABLISHED** | Explicit scope authorization after all relevant qualification gates pass |
+
+---
+
+## Historical checkpoint — P-01 connected read-context grant recovery — 24 October 2026 (superseded 25 October)
 
 - **Current base:** main `c3472f76ca2725fd8928abd59cdce57dc524422e`, merge of #560; repository main has no enforced native required checks/review ruleset at source selection (V-01 issue #484).
-- **Work branch and draft review:** `fix/p01-connected-grant-admission-recovery-20261024` / [PR #561](https://github.com/rumman52/Shuddho/pull/561). **Not merged, deployed, staged or activated** at this checkpoint.
+- **Historical state at publication:** `fix/p01-connected-grant-admission-recovery-20261024` / [PR #561](https://github.com/rumman52/Shuddho/pull/561) was unmerged at that time. PR #561 subsequently merged into main on 24 October; do not resume or recreate that branch. See the current release-blocker checkpoint above.
 - **P-01/C-01 scoped defect:** Agent UI loses a confirmed connector read-grant if first sync fails, and an accepted-but-lost grant creation response is retried with a fresh key *and* expiry. The patch retains the exact pending identity per connection, blocks same-tick duplicate grant admissions, displays/selects confirmed grants before first sync, and preserves manual Sync/revocation.
 - **Test-first regression coverage:** four new React tests in `connectorGrantAdmission.test.tsx`, included in the shared web test registry. Tests-before-fix commits `f58c078b` and `4b49bbd`; source fix `29fc7ff9`; [contract](P01_CONNECTOR_READ_GRANT_ADMISSION_RECOVERY_2026-10-24.md). Test-only CI was cancelled by subsequent branch pushes before Node tests completed; no observed red run is claimed.
 - **Verification level:** implementation exists in a draft branch; exact final-head `test-and-build`, `coworker` and `ci-merge-gate` must be observed and independent review obtained. Staging, production qualification and activation remain **not established**. Owner-only native merge controls and external staging/provider prerequisites remain separately open.
-- **Next action:** check final PR #561 head CI, review test outcomes, fix any failures; do not merge without formal review and passing final-head gates.
+- **Historical next action at publication:** inspect PR #561 final-head CI and review before merge. This is superseded by the confirmed merge; current work is the V-01 native-policy and staging blockers recorded at the top of this file.
 
 ---
 
