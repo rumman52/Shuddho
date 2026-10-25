@@ -11,6 +11,7 @@ import unittest
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/provision-pa10-staging-worker.yml"
+PREFLIGHT_WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/pa10-staging-prerequisite-preflight.yml"
 SHA = "a" * 40
 OWNER = "tea-d6ok4okhg0os73erkdv0"
 
@@ -198,6 +199,27 @@ class WorkerProvisioningTests(unittest.TestCase):
         for value in ("`shuddho-worker-staging`", "`srv-test123`", f"`{SHA}`", "`shuddho-documents-v1`", "NOT VERIFIED"):
             self.assertIn(value, summary)
 
+
+    def test_provisioning_preflight_runs_after_database_resolution(self):
+        workflow = WORKFLOW.read_text()
+        self.assertLess(
+            workflow.index("      - name: Resolve private Render Postgres URL"),
+            workflow.index("      - name: Validate staging prerequisites"),
+        )
+        preflight_step = workflow.split("      - name: Validate staging prerequisites\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}", preflight_step)
+
+    def test_read_only_preflight_checks_database_without_provisioning(self):
+        workflow = PREFLIGHT_WORKFLOW.read_text()
+        self.assertLess(
+            workflow.index("      - name: Resolve private Render Postgres URL"),
+            workflow.index("      - name: Validate staging prerequisites without provisioning"),
+        )
+        preflight_step = workflow.split("      - name: Validate staging prerequisites without provisioning\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}", preflight_step)
+        self.assertIn("render pg get shuddho-staging-db", workflow)
+        self.assertNotIn("render services create", workflow)
+        self.assertNotIn("render services update", workflow)
 
 if __name__ == "__main__":
     unittest.main()
