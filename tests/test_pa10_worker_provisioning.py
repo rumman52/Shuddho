@@ -98,7 +98,7 @@ class WorkerProvisioningTests(unittest.TestCase):
         return subprocess.run(["bash", "-c", shell_step(name)], env=self.env | env,
                               capture_output=True, text=True, timeout=10)
 
-    def test_missing_secrets_fail_without_printing_values(self):
+    def test_missing_required_inputs_fail_without_printing_values(self):
         for key in (
             "RENDER_API_KEY",
             "SHUDDHO_TEMPORAL_ADDRESS",
