@@ -1,20 +1,13 @@
-## Current release-readiness handoff — 25 October 2026 (Asia/Dhaka)
+## Current release-readiness handoff — 25 October 2026 (Asia/Dhaka; refreshed after PR #565)
 
-- **Current main:** da7b7b66903be1ff5d29ec474fe8af2511d83701 (PR #562 merge). No open PRs were returned by the latest repository query.
-- **Current CI snapshot:** [run #40169838677](https://github.com/rumman52/Shuddho/actions/runs/40169838677) is on this exact SHA. test-and-build passed; governance-audit failed because native main protection was not confirmed; coworker remained in progress at last observation. Refresh before the next task and do not label this revision fully CI-verified.
-- **V-01 root cause:** live GitHub branch API says protected=false, required-check enforcement is off, and applicable rulesets are empty. PR #562 already merged the safe ruleset operator/template. Do not create another operator or weaken CI. Native policy application and behavioral negative/positive merge controls require an authorized repository administrator; the connected integration has no ruleset-write capability.
-- **Production release-control blocker:** the connected Render production API previously showed commit-triggered auto-deploy and had deployed the current main revision before governance/coworker CI finished. The service setting is external to this repository; source-only changes cannot claim to stop it. An owner must change and verify the deployment policy before expanded coworker rollout.
-- **Staging blocker:** issue [#291](https://github.com/rumman52/Shuddho/issues/291) remains open. The existing infra/render.staging.yaml already defines the worker; the connected Render inventory did not. The remaining tasks are operator-side Blueprint sync/provisioning, secure Temporal/S3 credentials, synthetic identity/provider/device setup, and a frozen exact-release evidence run.
-- **Previously stale status corrected:** PR #561 is merged. The historical P-01 checkpoint below is retained as history and explicitly superseded; do not repeat its old “not merged” next action.
-- **Next exact action:** authorized admin runs the existing operator from a secure local environment, beginning with dry-run:
-  ~~~bash
-  python -m scripts.apply_main_ruleset --repository rumman52/Shuddho
-  ~~~
-  Apply only after reviewing the plan and existing stricter policies:
-  ~~~bash
-  python -m scripts.apply_main_ruleset --repository rumman52/Shuddho --apply --confirm-repository rumman52/Shuddho
-  ~~~
-  Then capture effective ruleset read-back and negative/positive merge-control evidence. Do not store or paste the admin token in the repository, chat, or PR CI.
+- **Current main:** `f9e8203aadc6484ebe53527d5c61ef26a9a8c32d`, merge of [PR #565](https://github.com/rumman52/Shuddho/pull/565), “fix(pa10): retry scheduled occurrences after transient run-capacity rejection.” PR head was `85090c36ce70e335ead3df1b20c6b559f0f3ce4c`; merge commit is `f9e8203aadc6484ebe53527d5c61ef26a9a8c32d`.
+- **PR #565 verification at last observation:** [run #40182430895](https://github.com/rumman52/Shuddho/actions/runs/40182430895) had `test-and-build` **success**, `coworker` **in progress** at “Qualify CW-11 trusted skill registry and staging collector without skips,” and `governance-audit` **skipped** as expected for a PR event. The PR was merged at 09:52:18 UTC while the coworker job was still running. The submitted-review list was empty. Do not claim that this merge had completed exact-head CI or independent review before merging; refresh the run before describing its eventual conclusion.
+- **Post-merge verification:** no exact-SHA main-push CI result for `f9e8203aadc6484ebe53527d5c61ef26a9a8c32d` was verified in this inspection. The most recent main-push run directly inspected, [#40169838677](https://github.com/rumman52/Shuddho/actions/runs/40169838677), ran on the prior main SHA `da7b7b66903be1ff5d29ec474fe8af2511d83701`: `test-and-build` and `coworker` subsequently completed **success**, while `governance-audit` and `ci-merge-gate` failed because native main protection was not confirmed. Passing jobs on that prior SHA do not qualify `f9e8203aadc6484ebe53527d5c61ef26a9a8c32d`.
+- **V-01 native governance:** no newer evidence of applied and behaviorally verified main protection was found. The existing main-protection audit correctly fails closed; do not weaken it or build another operator. PR #562 already added the operator and reviewed policy template. An authorized repository administrator must run the existing operator from a secure environment, inspect the proposed policy, apply it only after approval, then capture effective-policy read-back and negative/positive merge-control evidence. The connected GitHub tools do not expose ruleset-write authority.
+- **Production deployment control:** the connected Render inventory currently reports production API `shuddho-api` (`srv-d6oki2v5r7bs73e7isfg`) with `autoDeploy=yes` and `autoDeployTrigger=commit`. This can deploy a commit independently of the complete release gate. The service configuration was not changed here. An authorized owner must apply and verify a fail-closed deployment policy before expanded coworker rollout; generic CI integration behavior alone is insufficient.
+- **Controlled staging:** Render currently lists `shuddho-api-staging` (`srv-dav98otg1s2s73cod4gg`) but no `shuddho-worker-staging`. The API service remains on an October 2 configuration (build command `pip install uv && uv sync --extra coworker`, empty health-check path). [Issue #291](https://github.com/rumman52/Shuddho/issues/291) remains open. `infra/render.staging.yaml` already defines the worker; do not rewrite the Blueprint as a substitute for operator-side Blueprint sync/provisioning. Required Temporal and Supabase S3 credentials must be entered through secure dashboards, not chat or Git.
+- **Open PRs:** the latest repository query returned none. This does not imply the merged code is reviewed or production-qualified.
+- **Next exact actions, in dependency order:** (1) authorized GitHub administrator applies the existing main-ruleset operator and proves unsafe merges are blocked and a fully reviewed green PR is eligible; (2) authorized Render owner applies and verifies a fail-closed production deployment policy; (3) staging operator syncs the existing Blueprint, provisions the persistent worker, completes secure provider/storage credentials and confirms API/worker identity; (4) freeze one exact staging revision and collect required A/C/P, PA-10 and transaction evidence. Continue independent source/test work, but do not claim full production readiness or activate expanded capabilities while these gates remain open.
 
 ### Current evidence levels
 
@@ -22,8 +15,9 @@
 | --- | --- | --- |
 | V-01 operator source | Implemented and merged in #562 | No repeat implementation needed |
 | V-01 native merge enforcement | **BLOCKED_EXTERNAL / UNVERIFIED** | Admin-applied effective policy plus behavioral negative/positive controls |
-| Main CI | **INCOMPLETE at last observation** | Final run conclusion on the exact SHA |
-| Production auto-deploy control | **BLOCKED_EXTERNAL / UNVERIFIED** | Owner-authorized Render setting change and failed-candidate deployment proof |
+| Current-main CI | **UNVERIFIED for `f9e8203aadc6484ebe53527d5c61ef26a9a8c32d`** | Exact-SHA main-push run with all required jobs completed; governance must pass |
+| PR #565 review/CI timing | **MERGED WITHOUT RECORDED SUBMITTED REVIEW; coworker was in progress at last observation** | Refresh exact-head run for eventual result; record that pre-merge review/enforcement was not established |
+| Production auto-deploy control | **BLOCKED_EXTERNAL / UNVERIFIED** | Owner-authorized deployment-policy change and failed-candidate deployment proof |
 | Controlled staging | **BLOCKED_EXTERNAL** | Persistent worker, required secrets/provider prerequisites, matching API/worker identity and frozen evidence |
 | A/C/P/V acceptance | **NOT FULLY QUALIFIED** | Row-by-row repository, staging and operational evidence |
 | Production activation | **NOT AUTHORIZED / NOT ESTABLISHED** | Explicit scope authorization after all relevant qualification gates pass |
