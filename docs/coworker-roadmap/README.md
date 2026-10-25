@@ -1,19 +1,25 @@
-## Current source-revalidation checkpoint — 18 October 2026 (Asia/Dhaka)
+## Current release-blocker checkpoint — 25 October 2026 (Asia/Dhaka)
 
-- Refreshed main: `9e52756e4de52d95cc69879ce7cdbb3a390c0ac7`; #461 is merged, not open. No open PRs existed at task selection. Main CI [#39147097140](https://github.com/rumman52/Shuddho/actions/runs/39147097140) was still running when this checkpoint was written; its `test-and-build` job passed. The earlier #461 code/test head passed all three required jobs in #39141823326. No formal independent review submission was recorded for #461.
-- Work branch: `codex/c01-late-planner-source-revalidation-20261018`. [Task contract](C01_LATE_PLANNER_SOURCE_REVALIDATION_2026-10-18.md). Fresh Runtime v3 decisions now revalidate the original conversation's selected source pins after inference, before saving model output/checkpoints. Already-committed decisions retain idempotent replay; direct/legacy run semantics remain unchanged.
-- Reproduction: six source-invalidated cases failed before the guard; unchanged-source control passed. Focused conversation/context/cancellation regressions: **41 passed, 92 deselected**, zero skips. The mandatory JUnit gate passed. Full local pytest and exact-head required CI remain pending at publication; consult this branch's PR checks for the final revision. These numbers are a focused selection, not a repository-wide total.
+- **Current main:** da7b7b66903be1ff5d29ec474fe8af2511d83701, merge of PR #562. The connected GitHub API currently reports main as protected=false, required-check enforcement off, and no repository/parent rulesets. Refresh before relying on this snapshot.
+- **Latest observed main CI:** [run #40169838677](https://github.com/rumman52/Shuddho/actions/runs/40169838677) on this exact SHA: test-and-build passed, governance-audit failed with “main branch protection is not confirmed”, and coworker was still running at the last check. This revision is **not fully CI-verified**.
+- **Do not repeat the operator implementation:** PR #562 already merged scripts/apply_main_ruleset.py, its tests, and the reviewed policy infra/github/main-ruleset.json. The source-level gate is behaving fail-closed; the missing step is actual owner/admin configuration and behavioral proof. The connected GitHub integration can read rulesets but cannot write them.
+- **Required V-01 operator action:** in a secure local admin environment, inspect existing repository/organization policy, then apply the reviewed rule only if it does not weaken stricter policy:
+  ~~~bash
+  python -m scripts.apply_main_ruleset --repository rumman52/Shuddho
+  python -m scripts.apply_main_ruleset --repository rumman52/Shuddho --apply --confirm-repository rumman52/Shuddho
+  ~~~
+  Supply an appropriately scoped GITHUB_TOKEN through the secure local environment, never in chat or PR-controlled CI. Then read back the effective policy and prove pending/red checks, missing/stale approval and unresolved threads block merge, with a reviewed green PR eligible. Configuration read-back alone is not enforcement proof.
+- **Production deployment control remains external:** the connected Render service previously reported commit-triggered auto-deploy and a live deploy while this revision's governance check failed and coworker CI was unfinished. A source validator cannot stop a manually configured Render trigger. The owner must prevent commit-only production deployment until a fail-closed release gate is effective, then verify the actual service setting and a blocked-candidate control.
+- **Staging is also externally blocked:** infra/render.staging.yaml already declares shuddho-worker-staging with auto-deploy off, but the connected Render workspace did not contain that worker. Issue [#291](https://github.com/rumman52/Shuddho/issues/291) records the remaining worker, Temporal/S3 credentials, synthetic identity and provider/device prerequisites. Sync the existing reviewed Blueprint; do not recreate its code or substitute a web/cron service.
+- **Readiness boundary:** operator code merged ≠ native protection applied ≠ staging frozen ≠ production qualified ≠ capability activated. Keep V-01 and the 17 A/C/P/V acceptance rows open until their actual evidence exists.
 
-| Part | Evidence-supported status | Remaining gates |
+| Priority | Next action | Completion evidence |
 | --- | --- | --- |
-| Architecture A-01..04 | Existing state/trust foundations and repository recovery contracts; this slice adds no store, orchestrator or schema | Mixed-version operated recovery/rollback, staging boundary review |
-| Core C-01..06 | #461 grounded adapter handoff is merged; late selected-source response guard locally verified in this branch | Final-head CI/review; real browser/sandbox isolation; CW-11 staged drain; live provider/model qualification |
-| Context/experience P-01..03 | Existing owned conversations and explicit selected context; delayed invalidation regression added | Four operated study/work/separation/recovery scenarios and UI reconnect evidence |
-| Verification V-01..04 | Focused regression evidence only for this branch | Full mandatory final-head CI, protected staging, human security/quality review and separately authorized production rollout |
+| 1 | Owner/admin applies the existing ruleset operator | Effective ruleset read-back plus negative/positive merge-control evidence |
+| 2 | Owner/admin removes unsafe commit-only production deployment behavior | Actual Render setting read-back and proof an unqualified candidate cannot deploy |
+| 3 | Provision/sync the existing staging worker and complete authorized secrets | Matching API/worker SHA, migrations, Temporal polling, private storage and owner-isolation checks |
+| 4 | Freeze one reviewed staging release, then continue core/automation/transaction qualification | Fresh version-bound scenario evidence; no synthetic evidence relabelled as live |
 
-Separate read-only agent review found no Critical/Important issues; this is not human security certification. Minor observation: the no-memory-proposal assertion is only incidental because the synthetic response proposes no memory. End-to-end Temporal failure-state persistence and PostgreSQL invalidation races remain outside this regression.
-
-The full Architecture/Core Agent workstream remains **INCOMPLETE**. No staging, production qualification or activation is established. The guard observes invalidation committed before its source check; it does not claim serializable source-deletion locking or recall of data already submitted to inference. Historical checkpoints below are retained and superseded by this entry.
 
 ---
 
