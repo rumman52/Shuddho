@@ -31,6 +31,10 @@ def test_validate_passes_without_optional_model_secret():
     assert result["status"] == "passed"
     assert result["checks"]["DEEPSEEK_API_KEY"] == "not_configured_optional"
     assert result["checks"]["temporal_task_queue"] == "shuddho-documents-v1"
+    assert result["checks"]["environment"] == "staging"
+    assert result["checks"]["database_url"] == "valid_postgresql_url"
+    assert result["checks"]["auth_issuer"] == "valid_https_endpoint"
+    assert result["checks"]["auth_audience"] == "authenticated"
 
 
 @pytest.mark.parametrize(
