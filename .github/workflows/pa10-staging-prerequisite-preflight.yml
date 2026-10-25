@@ -124,10 +124,10 @@ jobs:
             echo "### PA-10 staging prerequisite preflight"
             echo ""
             echo "- Required GitHub Actions secrets: present"
-            echo "- Environment marker: `staging`"
+            printf '%s\\n' '- Environment marker: `staging`'
             echo "- PostgreSQL URL: valid shape (connection not tested)"
             echo "- Managed-auth issuer: valid HTTPS shape (provider reachability not tested)"
-            echo "- Auth audience: `authenticated`"
+            printf '%s\\n' '- Auth audience: `authenticated`'
             echo "- Temporal address shape: valid host:port"
             echo "- Temporal TLS: required"
             printf '%s\n' '- Task queue: `shuddho-documents-v1`'
