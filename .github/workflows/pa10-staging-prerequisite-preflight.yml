@@ -12,6 +12,10 @@ jobs:
     timeout-minutes: 10
     env:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_WORKSPACE_ID: tea-d6ok4okhg0os73erkdv0
+      SHUDDHO_COWORKER_ENV: staging
+      SHUDDHO_AUTH_ISSUER: https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1
+      SHUDDHO_AUTH_AUDIENCE: authenticated
       SHUDDHO_TEMPORAL_ADDRESS: ${{ secrets.SHUDDHO_TEMPORAL_ADDRESS }}
       SHUDDHO_TEMPORAL_NAMESPACE: ${{ secrets.SHUDDHO_TEMPORAL_NAMESPACE }}
       SHUDDHO_TEMPORAL_API_KEY: ${{ secrets.SHUDDHO_TEMPORAL_API_KEY }}
@@ -34,8 +38,66 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Require Render access before preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${RENDER_API_KEY:-}" ]]; then
+            echo "::error::BLOCKED_EXTERNAL — RENDER_API_KEY REQUIRED"
+            exit 1
+          fi
+
+      - name: Install pinned Render CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="2.28.0"
+          asset="cli_${version}_linux_amd64.zip"
+          base="https://github.com/render-oss/cli/releases/download/v${version}"
+          cli_dir="$(mktemp -d "${RUNNER_TEMP}/render-cli.XXXXXX")"
+          trap 'rm -rf "${cli_dir}"' EXIT
+          cd "${cli_dir}"
+          curl -fsSLO "${base}/${asset}"
+          curl -fsSLO "${base}/cli_${version}_SHA256SUMS"
+          grep "  ${asset}$" "cli_${version}_SHA256SUMS" | sha256sum -c -
+          unzip -q "${asset}"
+          sudo install -m 0755 "cli_v${version}" /usr/local/bin/render
+          render --version
+
+      - name: Select reviewed Render workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          render workspace set "${RENDER_WORKSPACE_ID}" --output text
+
+      - name: Validate reviewed staging Blueprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          render blueprints validate infra/render.staging.yaml --workspace "${RENDER_WORKSPACE_ID}" --output text
+
+      - name: Resolve private Render Postgres URL
+        id: postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_json="$(render pg get shuddho-staging-db --include-sensitive-connection-info --output json)"
+          db_url="$(jq -r '.data.connectionInfo.internalConnectionString // empty' <<<"${pg_json}")"
+          if [[ -z "${db_url}" || "${db_url}" != postgres*://* ]]; then
+            echo "::error::Could not resolve the private shuddho-staging-db connection string."
+            exit 1
+          fi
+          echo "::add-mask::${db_url}"
+          {
+            echo "database_url<<EOF"
+            echo "${db_url}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Validate staging prerequisites without provisioning
         shell: bash
+        env:
+          SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}
         run: |
           set -euo pipefail
           python scripts/staging_prerequisite_preflight.py --output "${RUNNER_TEMP}/pa10-staging-preflight.json"
@@ -48,6 +110,10 @@ jobs:
             echo "### PA-10 staging prerequisite preflight"
             echo ""
             echo "- Required GitHub Actions secrets: present"
+            echo "- Environment marker: `staging`"
+            echo "- PostgreSQL URL: valid shape (connection not tested)"
+            echo "- Managed-auth issuer: valid HTTPS shape (provider reachability not tested)"
+            echo "- Auth audience: `authenticated`"
             echo "- Temporal address shape: valid host:port"
             echo "- Temporal TLS: required"
             printf '%s\n' '- Task queue: `shuddho-documents-v1`'
