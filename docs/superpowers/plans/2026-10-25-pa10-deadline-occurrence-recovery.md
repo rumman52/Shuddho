@@ -1,58 +1,35 @@
-# PA-10 deadline occurrence recovery Implementation Plan
+# PA-10 deadline occurrence recovery — implementation and verification record
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Issue:** [#566](https://github.com/rumman52/Shuddho/issues/566)  
+**PR:** [#568](https://github.com/rumman52/Shuddho/pull/568)  
+**Current main:** `79d4e59a69350b3af9d7404102e285fd606fb04d`  
+**PR head:** `3778511b9fb1e6415820280ff27cb5bf94a64ffd`
 
-**Goal:** Make deadline automation occurrences safely recoverable after transient admission failures and worker restarts without allowing stale or ineligible work to start.
+## Goal and architecture
 
-**Architecture:** Reuse the existing durable `AutomationOccurrence` ledger, stable deadline key, and shared narrow admission-error recorder. Find an existing pending occurrence before any early return that could strand it; only re-enter an `accepting` occurrence, revalidate current authority and goal state, and enforce the automation's catch-up window against current time. Terminal states remain terminal.
+Make deadline automation occurrences safely recoverable after transient admission failures and worker restarts without allowing stale or ineligible work to start. Reuse the durable `AutomationOccurrence` ledger, stable deadline key, shared narrow admission-error recorder, and AgentRun idempotency boundary. No schema migration or provider/credential change was made.
 
-**Tech Stack:** Python 3.11, pytest, SQLAlchemy, FastAPI, existing AgentRun idempotency boundary.
+## Implementation completed
 
-**Spec:** GitHub issue #566 and `docs/PA10_GOAL_DRIVEN_PROACTIVITY.md`.
+- Resolve a pending occurrence before eligibility/target early returns can strand it in `accepting`.
+- Retry only an existing `accepting` occurrence; accepted/blocked/skipped/buffered states remain terminal.
+- Treat only `active_agent_limit` with HTTP 429 as retryable; other admission errors remain terminal.
+- Revalidate automation revision/state/expiry, goal state/revision, deadline target, authority and bounded catch-up before admission.
+- Reuse the original occurrence identity and deterministic AgentRun idempotency key, including recovery after AgentRun creation but before occurrence/notification commit.
+- Preserve temporary overlap deferral rather than terminalizing work solely because another run is active.
 
-## Global Constraints
+## Regression coverage and verification
 
-- Do not create a second occurrence, AgentRun, or start notification for the same deadline occurrence.
-- Resume only an existing `accepting` occurrence; preserve accepted, blocked, skipped, and buffered states.
-- Only `active_agent_limit` with HTTP 429 is retryable; other admission errors remain terminal.
-- Revalidate the kill switch, automation revision/state/expiry, goal state/revision, deadline target, and catch-up window before admission.
-- No schema migration, provider/credential change, deployment setting change, or production activation.
+- Eight deadline-recovery regression tests cover transient capacity failure across a fresh Container, permanent admission failure, expired catch-up, target removal, goal revision change/pause, automation pause, duplicate run/notification prevention, and process loss after AgentRun creation.
+- The focused mandatory deadline-recovery CI gate passed with the JUnit/no-skips check.
+- Exact PR-head [run #40192139821](https://github.com/rumman52/Shuddho/actions/runs/40192139821) completed `test-and-build=success` and `coworker=success`. The full “Test accounts, real exports, PostgreSQL races, and Temporal recovery” step passed.
+- The same run's `ci-merge-gate` failed at **Require independent current-head review**. PR #568 had zero submitted reviews.
+- PR #568 merged at **16:08:07 UTC** while a later exact-head run [#40210212873](https://github.com/rumman52/Shuddho/actions/runs/40210212873) was still running the full coworker integration step. Merged-main run [#40210229328](https://github.com/rumman52/Shuddho/actions/runs/40210229328) has `test-and-build=success`, `governance-audit=failure`, and `coworker=in_progress` at this refresh. Recheck that run before claiming final merged-main verification.
 
-## Review Focus
+## Post-merge review and release disposition
 
-- A pending occurrence is terminalized if its automation, goal, authority, or target is no longer eligible.
-- A retry uses the original occurrence identity and remains inside the configured catch-up window.
-- Worker restart after transient capacity rejection creates exactly one AgentRun and one start notification.
-- Replaying accepted/blocked/skipped occurrences does not reopen them.
-- No action is admitted when the catch-up window has expired.
+The implementation was merged without the independent-review/native-protection gate required by this plan. This is recorded in [V-01 issue #484](https://github.com/rumman52/Shuddho/issues/484); do not represent this plan as having satisfied pre-merge review.
 
----
+Render automatically deployed merge commit `79d4e59a69350b3af9d7404102e285fd606fb04d` to production deploy `dep-dbf2iqdg1s2s739ss2j0`, which Render reports LIVE. No deployment setting was changed as part of the implementation. Error/5xx logs were empty in the inspected window, but HTTP request/latency metrics were empty and no HTTP health-check path is configured, so end-to-end health remains unverified.
 
-## Tasks
-
-### Task 1: Regression tests and focused CI gate
-
-**Files:**
-- Modify: `tests/test_automations.py`
-- Modify: `.github/workflows/ci.yml`
-
-- [ ] Add tests for transient `active_agent_limit` recovery across a fresh Container instance, duplicate-run/notification prevention, expired catch-up, target removal, goal revision change, and pause.
-- [ ] Add a focused mandatory CI step that runs the deadline recovery tests with JUnit output and rejects skips/failures/errors through `scripts.mandatory_test_gate`.
-- [ ] Open a draft PR and verify the new regression tests fail against the current implementation for the expected reasons.
-
-### Task 2: Implement safe deadline recovery
-
-**Files:**
-- Modify: `services/coworker/automation_repository.py`
-
-- [ ] Locate the existing pending occurrence before validation/target early returns can strand it.
-- [ ] Revalidate current automation/goal eligibility and the catch-up window; terminalize pending rows with a safe reason when they are no longer eligible.
-- [ ] Re-enter only an `accepting` occurrence; reuse the deterministic deadline idempotency key and `_record_occurrence_admission_error`.
-- [ ] Preserve terminal-state replay behavior and one-run/one-notification semantics.
-
-### Task 3: Verify and hand off
-
-- [ ] Confirm the focused red-green cycle on the PR head.
-- [ ] Run the complete coworker suite and all available required CI jobs; verify the mandatory tests have zero skips.
-- [ ] Review the complete diff for authority expansion, duplicate admission, and stale catch-up bypasses.
-- [ ] Leave the PR unmerged pending independent review and repository-native merge protection. Do not deploy or change production settings.
+**PA-10 deadline occurrence recovery is implemented and merged; full PA-10 controlled-staging qualification and production readiness remain incomplete.** Native merge enforcement, fail-closed production deployment control, the persistent staging worker, active Supabase staging, required secrets/provider/device prerequisites, and frozen staging evidence remain external blockers. No production activation is authorized.
