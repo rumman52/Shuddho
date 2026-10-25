@@ -1666,13 +1666,14 @@ class AutomationRepository:
     ) -> dict:
         """Idempotently admit one bounded deadline recovery run and reclaim safely."""
         scan_at = aware(scan_at).astimezone(timezone.utc)
-        admitted_at = aware(utcnow()).astimezone(timezone.utc)
         with self.sessions.begin() as db:
             automation = db.scalar(select(Automation).where(
                 Automation.id == automation_id,
             ).with_for_update())
             if automation is None:
                 raise CoworkerError("automation_missing", "The Deadline Coworker automation no longer exists.", 404)
+
+            admitted_at = aware(utcnow()).astimezone(timezone.utc)
 
             # The reclaimer re-enters with the original due_at. Resolve that row
             # before any eligibility/target early return can strand it in accepting.
@@ -1832,9 +1833,6 @@ class AutomationRepository:
                 active_query = active_query.where(AutomationOccurrence.id != occurrence.id)
             active_run = db.scalar(active_query.limit(1))
             if active_run is not None:
-                terminal = terminalize_pending("skipped", "overlap")
-                if terminal is not None:
-                    return terminal
                 return {"state": "no_action", "reason": "overlap", "run_id": None}
 
             if occurrence is None:
