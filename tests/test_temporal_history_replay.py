@@ -23,7 +23,7 @@ pytestmark = [
     ),
 ]
 
-from temporalio import workflow
+from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.testing import WorkflowEnvironment
@@ -73,11 +73,13 @@ class LegacyWorkServicesWorkflow:
             )
 
 
+@activity.defn
 async def shuddho_work_phase_v1(value: dict) -> None:
     if value["task_id"].endswith("-failure") and value["phase"] == "draft":
         raise ApplicationError("synthetic legacy activity failure", type="legacy_phase_failure")
 
 
+@activity.defn
 async def shuddho_document_failed_v1(_value: dict) -> None:
     return None
 
