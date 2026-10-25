@@ -120,6 +120,17 @@ jobs:
           name: pa10-capacity-admission-evidence
           path: /tmp/pa10-capacity-admission.xml
 
+      - name: Qualify PA-10 deadline occurrence recovery without skips
+        run: |
+          uv run --extra coworker pytest tests/test_automations.py -k "deadline_occurrence_" -q -rs --junitxml=/tmp/pa10-deadline-recovery.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/pa10-deadline-recovery.xml --required-module tests.test_automations
+      - name: Keep PA-10 deadline recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pa10-deadline-recovery-evidence
+          path: /tmp/pa10-deadline-recovery.xml
+
       - name: Qualify A-03 legacy Temporal history replay without skips
         env:
           SHUDDHO_TEMPORAL_HISTORY_ARTIFACT_DIR: /tmp/a03-temporal-history-replay
