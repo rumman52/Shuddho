@@ -33,6 +33,7 @@ from services.coworker.workflow import (
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_HISTORY_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_HISTORY_BYTES = 256 * 1024 * 1024
 MAX_HISTORIES = 500
 _SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -84,6 +85,7 @@ def _load_manifest(manifest_path: str | Path) -> tuple[str, list[dict]]:
     root = resolved_manifest.parent.resolve(strict=True)
     seen_case_ids: set[str] = set()
     seen_workflow_ids: set[str] = set()
+    total_history_bytes = 0
     prepared: list[dict] = []
 
     for entry in entries:
@@ -127,7 +129,24 @@ def _load_manifest(manifest_path: str | Path) -> tuple[str, list[dict]]:
             history_size = history_path.stat().st_size
             if history_size > MAX_HISTORY_BYTES:
                 raise ReplayManifestError("history exceeds the size limit")
-            raw_history = history_path.read_bytes()
+
+            remaining_total_bytes = MAX_TOTAL_HISTORY_BYTES - total_history_bytes
+            if history_size > remaining_total_bytes:
+                raise ReplayManifestError("total history size exceeds the size limit")
+
+            # Bound the actual read as well as the stat check to avoid an oversized
+            # replacement/growth between stat() and read_bytes().
+            with history_path.open("rb") as history_file:
+                raw_history = history_file.read(
+                    min(MAX_HISTORY_BYTES, remaining_total_bytes) + 1
+                )
+            if len(raw_history) > MAX_HISTORY_BYTES:
+                raise ReplayManifestError("history exceeds the size limit")
+            if len(raw_history) > remaining_total_bytes:
+                raise ReplayManifestError("total history size exceeds the size limit")
+            if len(raw_history) != history_size:
+                raise ReplayManifestError("history changed while reading")
+            total_history_bytes += len(raw_history)
         except ReplayManifestError:
             raise
         except OSError:
