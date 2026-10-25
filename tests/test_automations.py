@@ -427,6 +427,80 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
     assert read.status_code == 200 and read.json()["state"] == "read"
 
 
+
+def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation = create_goal_and_automation(client, auth)
+    due_at = utcnow().replace(microsecond=0)
+
+    agent = automation_container.automations.agent
+    original_create = agent.create
+    attempts = 0
+
+    def reject_once_for_capacity(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise CoworkerError(
+                "active_agent_limit",
+                "The owner has reached the active run limit.",
+                429,
+            )
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(agent, "create", reject_once_for_capacity)
+
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at
+    )
+    assert first["state"] == "accepting"
+    assert first["reason"] == "active_agent_limit"
+    assert first["run_id"] is None
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        assert occurrence is not None
+        assert occurrence.state == "accepting"
+        assert occurrence.reason == "active_agent_limit"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
+
+    second = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at
+    )
+    assert second["state"] == "accepted"
+    assert second["occurrence_id"] == first["occurrence_id"]
+    assert second["run_id"]
+    assert attempts == 2
+
+    with automation_container.repository.sessions() as db:
+        occurrences = db.scalars(
+            select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation["id"]
+            )
+        ).all()
+        runs = db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all()
+        notices = db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+                Notification.kind == "automation_started",
+            )
+        ).all()
+        assert len(occurrences) == 1
+        assert occurrences[0].run_id == second["run_id"]
+        assert len(runs) == 1
+        assert runs[0].id == second["run_id"]
+        assert len(notices) == 1
+
+
 def test_notification_service_is_first_class_and_automation_keeps_compatibility(
     automation_client,
     automation_container,
