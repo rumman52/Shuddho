@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 
 EXPECTED_BUCKET = "shuddho-coworker-staging"
 EXPECTED_TASK_QUEUE = "shuddho-documents-v1"
+EXPECTED_ENVIRONMENT = "staging"
+EXPECTED_AUTH_AUDIENCE = "authenticated"
+POSTGRES_SCHEMES = {"postgres", "postgresql", "postgresql+psycopg"}
 REQUIRED_SECRETS = (
     "RENDER_API_KEY",
     "SHUDDHO_TEMPORAL_ADDRESS",
@@ -52,6 +55,10 @@ def _validate_temporal_address(value: str) -> None:
 
 def _validate_https_endpoint(value: str, name: str) -> None:
     parsed = urlparse(value.strip())
+    try:
+        port = parsed.port
+    except ValueError:
+        raise PreflightFailure(f"{name} must use a valid port.") from None
     if (
         parsed.scheme != "https"
         or not parsed.netloc
@@ -59,15 +66,45 @@ def _validate_https_endpoint(value: str, name: str) -> None:
         or parsed.password
         or parsed.query
         or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
     ):
         raise PreflightFailure(
             f"{name} must be an HTTPS endpoint without credentials, query or fragment."
         )
 
 
+def _validate_postgresql_url(value: str) -> None:
+    try:
+        parsed = urlparse(value.strip())
+        port = parsed.port
+    except ValueError:
+        raise PreflightFailure(
+            "SHUDDHO_COWORKER_DATABASE_URL must be a valid PostgreSQL connection URL."
+        ) from None
+    if (
+        parsed.scheme not in POSTGRES_SCHEMES
+        or not parsed.hostname
+        or not parsed.path.strip("/")
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise PreflightFailure(
+            "SHUDDHO_COWORKER_DATABASE_URL must be a PostgreSQL URL with a host and database."
+        )
+
+
 def validate(env: dict[str, str]) -> dict:
     for name in REQUIRED_SECRETS:
         _require_present(env, name)
+
+    environment = env.get("SHUDDHO_COWORKER_ENV", "").strip()
+    if environment != EXPECTED_ENVIRONMENT:
+        raise PreflightFailure("SHUDDHO_COWORKER_ENV must be staging.")
+
+    _validate_postgresql_url(env.get("SHUDDHO_COWORKER_DATABASE_URL", ""))
+    _validate_https_endpoint(env.get("SHUDDHO_AUTH_ISSUER", ""), "SHUDDHO_AUTH_ISSUER")
+    audience = env.get("SHUDDHO_AUTH_AUDIENCE", "").strip()
+    if audience != EXPECTED_AUTH_AUDIENCE:
+        raise PreflightFailure("SHUDDHO_AUTH_AUDIENCE must be authenticated.")
 
     _validate_temporal_address(env["SHUDDHO_TEMPORAL_ADDRESS"])
 
@@ -108,6 +145,10 @@ def validate(env: dict[str, str]) -> dict:
         "status": "passed",
         "checks": {
             **{name: "present" for name in REQUIRED_SECRETS},
+            "environment": EXPECTED_ENVIRONMENT,
+            "database_url": "valid_postgresql_url",
+            "auth_issuer": "valid_https_endpoint",
+            "auth_audience": EXPECTED_AUTH_AUDIENCE,
             "DEEPSEEK_API_KEY": (
                 "present_optional"
                 if env.get("DEEPSEEK_API_KEY", "").strip()
