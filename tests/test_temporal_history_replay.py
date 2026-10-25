@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 from datetime import timedelta
 from pathlib import Path
 
@@ -130,6 +131,13 @@ def test_frozen_legacy_success_and_handled_failure_histories_replay(tmp_path):
                 ),
                 encoding="utf-8",
             )
+            artifact_dir_value = os.getenv("SHUDDHO_TEMPORAL_HISTORY_ARTIFACT_DIR")
+            if artifact_dir_value:
+                artifact_dir = Path(artifact_dir_value)
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                for entry in entries:
+                    shutil.copyfile(tmp_path / entry["path"], artifact_dir / entry["path"])
+                shutil.copyfile(manifest_path, artifact_dir / "manifest.json")
             result = await replay_manifest(manifest_path)
             assert result["status"] == "passed"
             assert result["source_revision"] == LEGACY_SOURCE_REVISION
