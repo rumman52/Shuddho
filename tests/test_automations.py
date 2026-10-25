@@ -1655,6 +1655,111 @@ def test_deadline_occurrence_retries_transient_capacity_after_worker_restart_onc
         restarted.repository.sessions.kw["bind"].dispose()
 
 
+
+def test_deadline_occurrence_reuses_run_after_occurrence_commit_loss(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, scan_at = _create_deadline_automation(client, auth, automation_container)
+
+    notifications = automation_container.automations.notifications
+    original_enqueue = notifications.enqueue_pending
+    enqueue_calls = 0
+
+    def simulate_process_loss(*args, **kwargs):
+        nonlocal enqueue_calls
+        enqueue_calls += 1
+        if enqueue_calls == 1:
+            raise RuntimeError("simulated process loss after AgentRun creation")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(notifications, "enqueue_pending", simulate_process_loss)
+    with pytest.raises(RuntimeError, match="simulated process loss"):
+        automation_container.automations.accept_occurrence(
+            automation["id"], automation["revision"], scan_at
+        )
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.scalars(
+            select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation["id"]
+            )
+        ).one()
+        assert occurrence.state == "accepting"
+        assert occurrence.run_id is None
+        occurrence_id = occurrence.id
+        runs = db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all()
+        assert len(runs) == 1
+        original_run_id = runs[0].id
+        assert db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+                Notification.kind == "automation_started",
+            )
+        ).all() == []
+
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AutomationOccurrence, occurrence_id).updated_at = (
+            utcnow() - timedelta(seconds=31)
+        )
+
+    restarted = Container.create(automation_container.settings)
+    try:
+        _enable_briefings(restarted)
+        retry_calls = 0
+        retry_agent = restarted.automations.agent
+        original_retry_create = retry_agent.create
+
+        def count_idempotent_retry(*args, **kwargs):
+            nonlocal retry_calls
+            retry_calls += 1
+            return original_retry_create(*args, **kwargs)
+
+        monkeypatch.setattr(retry_agent, "create", count_idempotent_retry)
+        claimed = restarted.automations.claim_buffered_occurrences()
+        assert len(claimed) == 1
+        retry_scan_at = datetime.fromisoformat(
+            claimed[0]["due_at"].replace("Z", "+00:00")
+        )
+        recovered = restarted.automations.accept_occurrence(
+            claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+        )
+        assert recovered["state"] == "accepted"
+        assert recovered["occurrence_id"] == occurrence_id
+        assert recovered["run_id"] == original_run_id
+        assert retry_calls == 1
+
+        with restarted.repository.sessions() as db:
+            occurrences = db.scalars(
+                select(AutomationOccurrence).where(
+                    AutomationOccurrence.automation_id == automation["id"]
+                )
+            ).all()
+            runs = db.scalars(
+                select(AgentRun).where(AgentRun.goal_id == goal["id"])
+            ).all()
+            notices = db.scalars(
+                select(Notification).where(
+                    Notification.automation_id == automation["id"],
+                    Notification.kind == "automation_started",
+                )
+            ).all()
+            assert len(occurrences) == 1
+            assert occurrences[0].id == occurrence_id
+            assert occurrences[0].state == "accepted"
+            assert occurrences[0].run_id == original_run_id
+            assert len(runs) == 1
+            assert len(notices) == 1
+            assert notices[0].occurrence_id == occurrence_id
+    finally:
+        restarted.repository.sessions.kw["bind"].dispose()
+
+
 def test_deadline_occurrence_permanent_admission_error_stays_terminal(
     automation_client,
     automation_container,
