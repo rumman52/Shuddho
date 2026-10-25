@@ -8,6 +8,10 @@ from scripts import staging_prerequisite_preflight as preflight
 def valid_env() -> dict[str, str]:
     return {
         "RENDER_API_KEY": "render-secret",
+        "SHUDDHO_COWORKER_ENV": "staging",
+        "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://db.example.test:5432/shuddho_staging",
+        "SHUDDHO_AUTH_ISSUER": "https://auth.example.test/auth/v1",
+        "SHUDDHO_AUTH_AUDIENCE": "authenticated",
         "SHUDDHO_TEMPORAL_ADDRESS": "example.tmprl.cloud:7233",
         "SHUDDHO_TEMPORAL_NAMESPACE": "shuddho-staging",
         "SHUDDHO_TEMPORAL_API_KEY": "temporal-secret",
@@ -27,6 +31,10 @@ def test_validate_passes_without_optional_model_secret():
     assert result["status"] == "passed"
     assert result["checks"]["DEEPSEEK_API_KEY"] == "not_configured_optional"
     assert result["checks"]["temporal_task_queue"] == "shuddho-documents-v1"
+    assert result["checks"]["environment"] == "staging"
+    assert result["checks"]["database_url"] == "valid_postgresql_url"
+    assert result["checks"]["auth_issuer"] == "valid_https_endpoint"
+    assert result["checks"]["auth_audience"] == "authenticated"
 
 
 @pytest.mark.parametrize(
@@ -43,6 +51,42 @@ def test_validate_passes_without_optional_model_secret():
 def test_validate_reports_exact_missing_required_secret(name):
     env = valid_env()
     env[name] = ""
+    with pytest.raises(preflight.PreflightFailure, match=name):
+        preflight.validate(env)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "SHUDDHO_COWORKER_ENV",
+        "SHUDDHO_COWORKER_DATABASE_URL",
+        "SHUDDHO_AUTH_ISSUER",
+        "SHUDDHO_AUTH_AUDIENCE",
+    ],
+)
+def test_validate_requires_staging_database_and_managed_auth_configuration(name):
+    env = valid_env()
+    env[name] = ""
+    with pytest.raises(preflight.PreflightFailure, match=name):
+        preflight.validate(env)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SHUDDHO_COWORKER_ENV", "production"),
+        ("SHUDDHO_COWORKER_DATABASE_URL", "https://db.example.test/shuddho"),
+        ("SHUDDHO_COWORKER_DATABASE_URL", "postgresql://db.example.test/"),
+        ("SHUDDHO_COWORKER_DATABASE_URL", "postgresql://db.example.test:70000/shuddho_staging"),
+        ("SHUDDHO_AUTH_ISSUER", "http://auth.example.test/auth/v1"),
+        ("SHUDDHO_AUTH_ISSUER", "https://user:pass@auth.example.test/auth/v1"),
+        ("SHUDDHO_AUTH_ISSUER", "https://auth.example.test/auth/v1?token=x"),
+        ("SHUDDHO_AUTH_AUDIENCE", "public"),
+    ],
+)
+def test_validate_rejects_invalid_staging_database_and_auth_configuration(name, value):
+    env = valid_env()
+    env[name] = value
     with pytest.raises(preflight.PreflightFailure, match=name):
         preflight.validate(env)
 

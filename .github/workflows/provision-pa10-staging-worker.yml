@@ -25,6 +25,9 @@ jobs:
       RENDER_WORKSPACE: tea-d6ok4okhg0os73erkdv0
       RENDER_WORKSPACE_ID: tea-d6ok4okhg0os73erkdv0
       RENDER_CLI_DISABLE_ANALYTICS: "1"
+      SHUDDHO_COWORKER_ENV: staging
+      SHUDDHO_AUTH_ISSUER: https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1
+      SHUDDHO_AUTH_AUDIENCE: authenticated
       SHUDDHO_TEMPORAL_ADDRESS: ${{ secrets.SHUDDHO_TEMPORAL_ADDRESS }}
       SHUDDHO_TEMPORAL_NAMESPACE: ${{ secrets.SHUDDHO_TEMPORAL_NAMESPACE }}
       SHUDDHO_TEMPORAL_API_KEY: ${{ secrets.SHUDDHO_TEMPORAL_API_KEY }}
@@ -57,11 +60,14 @@ jobs:
             exit 1
           fi
 
-      - name: Validate staging prerequisites
+      - name: Require Render access before provisioning
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/staging_prerequisite_preflight.py
+          if [[ -z "${RENDER_API_KEY:-}" ]]; then
+            echo "::error::BLOCKED_EXTERNAL — RENDER_API_KEY REQUIRED"
+            exit 1
+          fi
 
       - name: Install pinned Render CLI
         shell: bash
@@ -110,6 +116,14 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Validate staging prerequisites
+        shell: bash
+        env:
+          SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}
+        run: |
+          set -euo pipefail
+          python3 scripts/staging_prerequisite_preflight.py
+
       - name: Create or repair shuddho-worker-staging
         id: worker
         shell: bash
@@ -150,7 +164,7 @@ jobs:
           )
 
           if [[ -z "${worker_id}" ]]; then
-            created="$(render services create               --type background_worker               --region oregon               "${common_args[@]}"               --env-var "SHUDDHO_COWORKER_ENV=staging"               --env-var "SHUDDHO_COWORKER_DATABASE_URL=${SHUDDHO_COWORKER_DATABASE_URL}"               --env-var "SHUDDHO_AUTH_ISSUER=https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1"               --env-var "SHUDDHO_AUTH_AUDIENCE=authenticated"               --env-var "SHUDDHO_COWORKER_STORAGE=s3"               --env-var "SHUDDHO_COWORKER_BUCKET=shuddho-coworker-staging"               --env-var "SHUDDHO_COWORKER_S3_ENDPOINT=https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3"               --env-var "AWS_DEFAULT_REGION=us-west-1"               --env-var "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"               --env-var "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"               --env-var "SHUDDHO_TEMPORAL_ADDRESS=${SHUDDHO_TEMPORAL_ADDRESS}"               --env-var "SHUDDHO_TEMPORAL_NAMESPACE=${SHUDDHO_TEMPORAL_NAMESPACE}"               --env-var "SHUDDHO_TEMPORAL_API_KEY=${SHUDDHO_TEMPORAL_API_KEY}"               --env-var "SHUDDHO_TEMPORAL_TLS=true"               --env-var "SHUDDHO_TEMPORAL_TASK_QUEUE=shuddho-documents-v1"               --env-var "SHUDDHO_WORK_SERVICES_ENABLED=false"               --env-var "SHUDDHO_ARTIFACT_SERVICES_ENABLED=false"               --env-var "SHUDDHO_AGENT_RUNTIME_ENABLED=false"               --env-var "SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false"               --env-var "SHUDDHO_PERSONAL_GOALS_ENABLED=false"               --env-var "SHUDDHO_AUTOMATIONS_ENABLED=false"               --env-var "SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=false"               --env-var "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false"               --env-var "SHUDDHO_ACTIONS_ENABLED=false"               --env-var "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false"               --env-var "SHUDDHO_CONNECTOR_READS_ENABLED=false"               --env-var "SHUDDHO_BROWSER_PUSH_ENABLED=false"               --env-var "SHUDDHO_BROWSER_ENABLED=false"               --env-var "SHUDDHO_CODE_EXECUTION_ENABLED=false"               --env-var "SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED=false"               --env-var "SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false"               --env-var "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false"               --env-var "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"               --env-var "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"               --env-var "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false"               --env-var "SHUDDHO_COWORKER_COHORT_ENFORCED=false"               --env-var "SHUDDHO_MICROSOFT_ACTIONS_ENABLED=false"               --env-var "SHUDDHO_LOG_RAW_TEXT=false"               --output json               --confirm)"
+            created="$(render services create               --type background_worker               --region oregon               "${common_args[@]}"               --env-var "SHUDDHO_COWORKER_ENV=${SHUDDHO_COWORKER_ENV}"               --env-var "SHUDDHO_COWORKER_DATABASE_URL=${SHUDDHO_COWORKER_DATABASE_URL}"               --env-var "SHUDDHO_AUTH_ISSUER=${SHUDDHO_AUTH_ISSUER}"               --env-var "SHUDDHO_AUTH_AUDIENCE=${SHUDDHO_AUTH_AUDIENCE}"               --env-var "SHUDDHO_COWORKER_STORAGE=s3"               --env-var "SHUDDHO_COWORKER_BUCKET=shuddho-coworker-staging"               --env-var "SHUDDHO_COWORKER_S3_ENDPOINT=https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3"               --env-var "AWS_DEFAULT_REGION=us-west-1"               --env-var "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"               --env-var "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"               --env-var "SHUDDHO_TEMPORAL_ADDRESS=${SHUDDHO_TEMPORAL_ADDRESS}"               --env-var "SHUDDHO_TEMPORAL_NAMESPACE=${SHUDDHO_TEMPORAL_NAMESPACE}"               --env-var "SHUDDHO_TEMPORAL_API_KEY=${SHUDDHO_TEMPORAL_API_KEY}"               --env-var "SHUDDHO_TEMPORAL_TLS=true"               --env-var "SHUDDHO_TEMPORAL_TASK_QUEUE=shuddho-documents-v1"               --env-var "SHUDDHO_WORK_SERVICES_ENABLED=false"               --env-var "SHUDDHO_ARTIFACT_SERVICES_ENABLED=false"               --env-var "SHUDDHO_AGENT_RUNTIME_ENABLED=false"               --env-var "SHUDDHO_AGENT_RUNTIME_V3_ENABLED=false"               --env-var "SHUDDHO_PERSONAL_GOALS_ENABLED=false"               --env-var "SHUDDHO_AUTOMATIONS_ENABLED=false"               --env-var "SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=false"               --env-var "SHUDDHO_CONTEXT_RETRIEVAL_ENABLED=false"               --env-var "SHUDDHO_ACTIONS_ENABLED=false"               --env-var "SHUDDHO_CONNECTOR_TRUST_BOUNDARY_ENABLED=false"               --env-var "SHUDDHO_CONNECTOR_READS_ENABLED=false"               --env-var "SHUDDHO_BROWSER_PUSH_ENABLED=false"               --env-var "SHUDDHO_BROWSER_ENABLED=false"               --env-var "SHUDDHO_CODE_EXECUTION_ENABLED=false"               --env-var "SHUDDHO_AGENT_SANDBOX_TOOL_ENABLED=false"               --env-var "SHUDDHO_PERSONAL_TRANSACTIONS_ENABLED=false"               --env-var "SHUDDHO_AGENT_ACTION_SELECTION_ENABLED=false"               --env-var "SHUDDHO_AGENT_ACTION_PROPOSALS_ENABLED=false"               --env-var "SHUDDHO_AGENT_LINKEDIN_PROPOSALS_ENABLED=false"               --env-var "SHUDDHO_ACTION_SOCIAL_PUBLISHING_ENABLED=false"               --env-var "SHUDDHO_COWORKER_COHORT_ENFORCED=false"               --env-var "SHUDDHO_MICROSOFT_ACTIONS_ENABLED=false"               --env-var "SHUDDHO_LOG_RAW_TEXT=false"               --output json               --confirm)"
             worker_id="$(jq -er --arg owner "${RENDER_WORKSPACE_ID}" '
               select(.name == "shuddho-worker-staging" and .type == "background_worker"
                 and .ownerId == $owner and .repo == "https://github.com/rumman52/Shuddho"
@@ -184,10 +198,10 @@ jobs:
             curl --fail --silent --show-error               --request PUT               --url "https://api.render.com/v1/services/${WORKER_ID}/env-vars/${key}"               --header "Authorization: Bearer ${RENDER_API_KEY}"               --header "Content-Type: application/json"               --data "$(jq -cn --arg value "${value}" '{value:$value}')"               >/dev/null
           }
 
-          set_env SHUDDHO_COWORKER_ENV staging
+          set_env SHUDDHO_COWORKER_ENV "${SHUDDHO_COWORKER_ENV}"
           set_env SHUDDHO_COWORKER_DATABASE_URL "${SHUDDHO_COWORKER_DATABASE_URL}"
-          set_env SHUDDHO_AUTH_ISSUER https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1
-          set_env SHUDDHO_AUTH_AUDIENCE authenticated
+          set_env SHUDDHO_AUTH_ISSUER "${SHUDDHO_AUTH_ISSUER}"
+          set_env SHUDDHO_AUTH_AUDIENCE "${SHUDDHO_AUTH_AUDIENCE}"
           set_env SHUDDHO_COWORKER_STORAGE s3
           set_env SHUDDHO_COWORKER_BUCKET shuddho-coworker-staging
           set_env SHUDDHO_COWORKER_S3_ENDPOINT https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3

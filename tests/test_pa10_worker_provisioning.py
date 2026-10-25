@@ -11,6 +11,7 @@ import unittest
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/provision-pa10-staging-worker.yml"
+PREFLIGHT_WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/pa10-staging-prerequisite-preflight.yml"
 SHA = "a" * 40
 OWNER = "tea-d6ok4okhg0os73erkdv0"
 
@@ -48,7 +49,11 @@ class WorkerProvisioningTests(unittest.TestCase):
             "RUNNER_TEMP": str(self.root),
             "GITHUB_REPOSITORY": "rumman52/Shuddho", "GITHUB_REF_NAME": "main",
             "GITHUB_SHA": SHA, "RENDER_WORKSPACE_ID": OWNER,
-            "RENDER_API_KEY": "test-only-render", "SHUDDHO_TEMPORAL_ADDRESS": "example:7233",
+            "RENDER_API_KEY": "test-only-render",
+            "SHUDDHO_COWORKER_ENV": "staging",
+            "SHUDDHO_AUTH_ISSUER": "https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1",
+            "SHUDDHO_AUTH_AUDIENCE": "authenticated",
+            "SHUDDHO_TEMPORAL_ADDRESS": "example:7233",
             "SHUDDHO_TEMPORAL_NAMESPACE": "test-only", "SHUDDHO_TEMPORAL_API_KEY": "test-only-temporal",
             "SHUDDHO_STAGING_S3_ACCESS_KEY_ID": "test-only-access",
             "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY": "test-only-secret",
@@ -59,7 +64,7 @@ class WorkerProvisioningTests(unittest.TestCase):
             "SHUDDHO_COWORKER_BUCKET": "shuddho-coworker-staging",
             "SHUDDHO_COWORKER_S3_ENDPOINT": "https://storage.example.test/storage/v1/s3",
             "AWS_DEFAULT_REGION": "us-west-1",
-            "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://test-only",
+            "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://test-only-host:5432/shuddho_staging",
             "WORKER_ID": "srv-test123",
             "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
@@ -94,7 +99,7 @@ class WorkerProvisioningTests(unittest.TestCase):
         return subprocess.run(["bash", "-c", shell_step(name)], env=self.env | env,
                               capture_output=True, text=True, timeout=10)
 
-    def test_missing_secrets_fail_without_printing_values(self):
+    def test_missing_required_inputs_fail_without_printing_values(self):
         for key in (
             "RENDER_API_KEY",
             "SHUDDHO_TEMPORAL_ADDRESS",
@@ -102,12 +107,23 @@ class WorkerProvisioningTests(unittest.TestCase):
             "SHUDDHO_TEMPORAL_API_KEY",
             "SHUDDHO_STAGING_S3_ACCESS_KEY_ID",
             "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY",
+            "SHUDDHO_COWORKER_ENV",
+            "SHUDDHO_COWORKER_DATABASE_URL",
+            "SHUDDHO_AUTH_ISSUER",
+            "SHUDDHO_AUTH_AUDIENCE",
         ):
             with self.subTest(key=key):
                 result = self.run_step("Validate staging prerequisites", **{key: ""})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(key, result.stdout)
                 self.assertNotIn("test-only-secret", result.stdout + result.stderr)
+        self.assertFalse((self.root / "calls").exists())
+
+    def test_render_access_guard_rejects_missing_key(self):
+        result = self.run_step("Require Render access before provisioning", RENDER_API_KEY="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("RENDER_API_KEY REQUIRED", result.stdout)
+        self.assertNotIn("test-only-render", result.stdout + result.stderr)
         self.assertFalse((self.root / "calls").exists())
 
     def test_guard_rejects_wrong_repository_and_branch(self):
@@ -138,6 +154,9 @@ class WorkerProvisioningTests(unittest.TestCase):
         result = self.run_step("Validate staging prerequisites")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('"status": "passed"', result.stdout)
+        self.assertNotIn(self.env["SHUDDHO_COWORKER_DATABASE_URL"], result.stdout + result.stderr)
+        self.assertNotIn("test-only-temporal", result.stdout + result.stderr)
+        self.assertNotIn("test-only-secret", result.stdout + result.stderr)
         self.assertFalse((self.root / "calls").exists())
 
     def test_create_and_repair_target_worker(self):
@@ -190,6 +209,32 @@ class WorkerProvisioningTests(unittest.TestCase):
         for value in ("`shuddho-worker-staging`", "`srv-test123`", f"`{SHA}`", "`shuddho-documents-v1`", "NOT VERIFIED"):
             self.assertIn(value, summary)
 
+
+    def test_provisioning_preflight_runs_after_database_resolution(self):
+        workflow = WORKFLOW.read_text()
+        self.assertLess(
+            workflow.index("      - name: Resolve private Render Postgres URL"),
+            workflow.index("      - name: Validate staging prerequisites"),
+        )
+        preflight_step = workflow.split("      - name: Validate staging prerequisites\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}", preflight_step)
+
+    def test_read_only_preflight_is_restricted_to_main(self):
+        workflow = PREFLIGHT_WORKFLOW.read_text()
+        self.assertIn('GITHUB_REPOSITORY}" != "rumman52/Shuddho"', workflow)
+        self.assertIn('GITHUB_REF_NAME}" != "main"', workflow)
+
+    def test_read_only_preflight_checks_database_without_provisioning(self):
+        workflow = PREFLIGHT_WORKFLOW.read_text()
+        self.assertLess(
+            workflow.index("      - name: Resolve private Render Postgres URL"),
+            workflow.index("      - name: Validate staging prerequisites without provisioning"),
+        )
+        preflight_step = workflow.split("      - name: Validate staging prerequisites without provisioning\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}", preflight_step)
+        self.assertIn("render pg get shuddho-staging-db", workflow)
+        self.assertNotIn("render services create", workflow)
+        self.assertNotIn("render services update", workflow)
 
 if __name__ == "__main__":
     unittest.main()
