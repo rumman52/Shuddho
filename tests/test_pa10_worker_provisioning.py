@@ -119,6 +119,13 @@ class WorkerProvisioningTests(unittest.TestCase):
                 self.assertNotIn("test-only-secret", result.stdout + result.stderr)
         self.assertFalse((self.root / "calls").exists())
 
+    def test_render_access_guard_rejects_missing_key(self):
+        result = self.run_step("Require Render access before provisioning", RENDER_API_KEY="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("RENDER_API_KEY REQUIRED", result.stdout)
+        self.assertNotIn("test-only-render", result.stdout + result.stderr)
+        self.assertFalse((self.root / "calls").exists())
+
     def test_guard_rejects_wrong_repository_and_branch(self):
         for values in (
             {"GITHUB_REPOSITORY": "other/repo"},
