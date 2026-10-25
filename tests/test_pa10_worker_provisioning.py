@@ -48,7 +48,11 @@ class WorkerProvisioningTests(unittest.TestCase):
             "RUNNER_TEMP": str(self.root),
             "GITHUB_REPOSITORY": "rumman52/Shuddho", "GITHUB_REF_NAME": "main",
             "GITHUB_SHA": SHA, "RENDER_WORKSPACE_ID": OWNER,
-            "RENDER_API_KEY": "test-only-render", "SHUDDHO_TEMPORAL_ADDRESS": "example:7233",
+            "RENDER_API_KEY": "test-only-render",
+            "SHUDDHO_COWORKER_ENV": "staging",
+            "SHUDDHO_AUTH_ISSUER": "https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1",
+            "SHUDDHO_AUTH_AUDIENCE": "authenticated",
+            "SHUDDHO_TEMPORAL_ADDRESS": "example:7233",
             "SHUDDHO_TEMPORAL_NAMESPACE": "test-only", "SHUDDHO_TEMPORAL_API_KEY": "test-only-temporal",
             "SHUDDHO_STAGING_S3_ACCESS_KEY_ID": "test-only-access",
             "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY": "test-only-secret",
@@ -59,7 +63,7 @@ class WorkerProvisioningTests(unittest.TestCase):
             "SHUDDHO_COWORKER_BUCKET": "shuddho-coworker-staging",
             "SHUDDHO_COWORKER_S3_ENDPOINT": "https://storage.example.test/storage/v1/s3",
             "AWS_DEFAULT_REGION": "us-west-1",
-            "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://test-only",
+            "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://test-only-host:5432/shuddho_staging",
             "WORKER_ID": "srv-test123",
             "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
@@ -102,6 +106,10 @@ class WorkerProvisioningTests(unittest.TestCase):
             "SHUDDHO_TEMPORAL_API_KEY",
             "SHUDDHO_STAGING_S3_ACCESS_KEY_ID",
             "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY",
+            "SHUDDHO_COWORKER_ENV",
+            "SHUDDHO_COWORKER_DATABASE_URL",
+            "SHUDDHO_AUTH_ISSUER",
+            "SHUDDHO_AUTH_AUDIENCE",
         ):
             with self.subTest(key=key):
                 result = self.run_step("Validate staging prerequisites", **{key: ""})
