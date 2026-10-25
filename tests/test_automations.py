@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -470,8 +470,21 @@ def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
             select(AgentRun).where(AgentRun.goal_id == goal["id"])
         ).all() == []
 
+    with automation_container.repository.sessions.begin() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        occurrence.updated_at = utcnow() - timedelta(seconds=31)
+
+    reclaimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(reclaimed) == 1
+    assert reclaimed[0]["automation_id"] == automation["id"]
+    assert reclaimed[0]["revision"] == automation["revision"]
+    retry_due_at = datetime.fromisoformat(
+        reclaimed[0]["due_at"].replace("Z", "+00:00")
+    )
+    assert retry_due_at == due_at
+
     second = automation_container.automations.accept_occurrence(
-        automation["id"], automation["revision"], due_at
+        reclaimed[0]["automation_id"], reclaimed[0]["revision"], retry_due_at
     )
     assert second["state"] == "accepted"
     assert second["occurrence_id"] == first["occurrence_id"]

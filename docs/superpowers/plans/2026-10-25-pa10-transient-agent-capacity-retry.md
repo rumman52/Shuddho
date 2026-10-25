@@ -21,7 +21,7 @@
 ## Review Focus
 
 - Transient capacity rejection leaves an occurrence reclaimable rather than permanently blocked.
-- A later retry reuses the same occurrence identity and produces exactly one AgentRun and one start notification.
+- The real worker reclaimer picks up a stale accepting occurrence after the lease and a later retry reuses the same occurrence identity, producing exactly one AgentRun and one start notification.
 - Permanent admission errors remain blocked.
 - Retry does not bypass catch-up expiry or current goal/automation checks.
 
