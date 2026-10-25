@@ -427,7 +427,6 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
     assert read.status_code == 200 and read.json()["state"] == "read"
 
 
-
 def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
     automation_client,
     automation_container,
@@ -499,7 +498,6 @@ def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
         assert len(runs) == 1
         assert runs[0].id == second["run_id"]
         assert len(notices) == 1
-
 
 
 def test_permanent_agent_admission_error_remains_blocked(

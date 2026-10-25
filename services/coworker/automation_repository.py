@@ -1086,7 +1086,7 @@ class AutomationRepository:
                 "replayed": False,
             }
 
-    def handle_connector_event(self, event: dict) -> None
+    def handle_connector_event(self, event: dict) -> None:
         """Wake bounded runs for explicitly configured connected-event automations.
 
         The connector event is already authenticated, persisted, deduplicated and
