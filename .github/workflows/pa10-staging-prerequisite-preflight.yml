@@ -13,6 +13,7 @@ jobs:
     env:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_WORKSPACE_ID: tea-d6ok4okhg0os73erkdv0
+      RENDER_CLI_DISABLE_ANALYTICS: "1"
       SHUDDHO_COWORKER_ENV: staging
       SHUDDHO_AUTH_ISSUER: https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1
       SHUDDHO_AUTH_AUDIENCE: authenticated
