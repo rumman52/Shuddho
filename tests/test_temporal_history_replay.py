@@ -31,6 +31,7 @@ from temporalio.worker import Worker
 
 from services.coworker.workflow import WorkServicesWorkflow
 from scripts.temporal_history_replay import ReplayManifestError, replay_manifest
+from scripts import temporal_history_replay as replay_runner
 
 
 LEGACY_SOURCE_REVISION = "b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d"
@@ -150,6 +151,38 @@ def test_frozen_legacy_success_and_handled_failure_histories_replay(tmp_path):
             assert all(row["status"] == "replayed" for row in result["results"])
 
     asyncio.run(scenario())
+
+
+def test_manifest_rejects_aggregate_history_bytes_over_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(replay_runner, "MAX_TOTAL_HISTORY_BYTES", 9, raising=False)
+
+    class FakeWorkflowHistory:
+        @staticmethod
+        def from_json(workflow_id, raw_json):
+            return {"workflow_id": workflow_id, "raw_json": raw_json}
+
+    monkeypatch.setattr(replay_runner, "WorkflowHistory", FakeWorkflowHistory)
+
+    entries = []
+    for case_id, content in (("history-one", b"12345"), ("history-two", b"67890")):
+        history_path = tmp_path / f"{case_id}.json"
+        history_path.write_bytes(content)
+        entries.append(_manifest_entry(case_id, f"a03-{case_id}", history_path))
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source_revision": LEGACY_SOURCE_REVISION,
+                "histories": entries,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReplayManifestError, match="total history size"):
+        replay_runner._load_manifest(manifest_path)
 
 
 def test_replay_manifest_rejects_unknown_workflow_type(tmp_path):
