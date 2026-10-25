@@ -1804,7 +1804,21 @@ class AutomationRepository:
                 derived_goal=True,
             )
         except CoworkerError as error:
-            return self._record_occurrence_admission_error(occurrence_id, error)
+            # Deadline replay currently recomputes the target from the original scan time.
+            # Keep this terminal until its accepting-state replay and catch-up checks are fixed.
+            with self.sessions.begin() as db:
+                occurrence = db.get(AutomationOccurrence, occurrence_id)
+                if occurrence is not None:
+                    occurrence.state = "blocked"
+                    occurrence.reason = error.code[:80]
+                    occurrence.updated_at = utcnow()
+            return {
+                "occurrence_id": occurrence_id,
+                "run_id": None,
+                "state": "blocked",
+                "reason": error.code,
+                "replayed": False,
+            }
 
         with self.sessions.begin() as db:
             occurrence = db.get(AutomationOccurrence, occurrence_id)
