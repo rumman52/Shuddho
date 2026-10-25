@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -425,6 +425,136 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
 
     read = client.post(f'/api/v1/notifications/{notification_ids[0]}/read', headers=auth)
     assert read.status_code == 200 and read.json()["state"] == "read"
+
+
+def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation = create_goal_and_automation(client, auth)
+    due_at = utcnow().replace(microsecond=0)
+
+    agent = automation_container.automations.agent
+    original_create = agent.create
+    attempts = 0
+
+    def reject_once_for_capacity(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise CoworkerError(
+                "active_agent_limit",
+                "The owner has reached the active run limit.",
+                429,
+            )
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(agent, "create", reject_once_for_capacity)
+
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at
+    )
+    assert first["state"] == "accepting"
+    assert first["reason"] == "active_agent_limit"
+    assert first["run_id"] is None
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        assert occurrence is not None
+        assert occurrence.state == "accepting"
+        assert occurrence.reason == "active_agent_limit"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
+
+    with automation_container.repository.sessions.begin() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        occurrence.updated_at = utcnow() - timedelta(seconds=31)
+
+    reclaimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(reclaimed) == 1
+    assert reclaimed[0]["automation_id"] == automation["id"]
+    assert reclaimed[0]["revision"] == automation["revision"]
+    retry_due_at = datetime.fromisoformat(
+        reclaimed[0]["due_at"].replace("Z", "+00:00")
+    )
+    assert retry_due_at == due_at
+
+    second = automation_container.automations.accept_occurrence(
+        reclaimed[0]["automation_id"], reclaimed[0]["revision"], retry_due_at
+    )
+    assert second["state"] == "accepted"
+    assert second["occurrence_id"] == first["occurrence_id"]
+    assert second["run_id"]
+    assert attempts == 2
+
+    with automation_container.repository.sessions() as db:
+        occurrences = db.scalars(
+            select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation["id"]
+            )
+        ).all()
+        runs = db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all()
+        notices = db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+                Notification.kind == "automation_started",
+            )
+        ).all()
+        assert len(occurrences) == 1
+        assert occurrences[0].run_id == second["run_id"]
+        assert len(runs) == 1
+        assert runs[0].id == second["run_id"]
+        assert len(notices) == 1
+
+
+def test_permanent_agent_admission_error_remains_blocked(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    goal, automation = create_goal_and_automation(client, headers())
+    due_at = utcnow().replace(microsecond=0)
+
+    agent = automation_container.automations.agent
+    attempts = 0
+
+    def reject_permanently(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise CoworkerError(
+            "goal_run_budget",
+            "This goal reached its configured bounded-run budget.",
+            409,
+        )
+
+    monkeypatch.setattr(agent, "create", reject_permanently)
+
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at
+    )
+    assert first["state"] == "blocked"
+    assert first["reason"] == "goal_run_budget"
+
+    replay = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at
+    )
+    assert replay["state"] == "blocked"
+    assert replay["replayed"] is True
+    assert attempts == 1
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        assert occurrence is not None and occurrence.state == "blocked"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
 
 
 def test_notification_service_is_first_class_and_automation_keeps_compatibility(
