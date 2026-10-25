@@ -4,6 +4,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -1479,6 +1480,496 @@ def test_meeting_coworker_migration_adds_exact_source_recovery_fields(
         }
     assert "connector_snapshot_ids" in run_columns
     assert {"trigger_snapshot_id", "trigger_start_at"} <= occurrence_columns
+
+
+
+def _create_deadline_automation(
+    client,
+    auth,
+    container,
+    *,
+    deadline_delta=timedelta(hours=20),
+    catchup_window_seconds=3600,
+):
+    _enable_briefings(container)
+    now = utcnow().replace(microsecond=0)
+    body = goal_payload()
+    body["deadline_at"] = (now + deadline_delta).isoformat()
+    goal_response = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "deadline-recovery-goal"},
+        json=body,
+    )
+    assert goal_response.status_code == 201
+    goal = goal_response.json()
+    automation_body = automation_payload(goal)
+    automation_body["run_profile"] = "deadline"
+    automation_body["catchup_window_seconds"] = catchup_window_seconds
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "deadline-recovery-automation"},
+        json=automation_body,
+    )
+    assert response.status_code == 201, response.text
+    return goal, response.json(), now
+
+
+def _insert_pending_deadline_occurrence(container, automation, goal, scan_at):
+    with container.repository.sessions.begin() as db:
+        automation_row = db.get(Automation, automation["id"])
+        goal_row = db.get(PersonalGoal, goal["id"])
+        target = container.automations._deadline_target(goal_row, scan_at)
+        assert target is not None
+        key = container.automations.deadline_occurrence_key(
+            automation_row.owner_id,
+            automation_row.id,
+            automation_row.revision,
+            goal_row.revision,
+            target,
+        )
+        occurrence = AutomationOccurrence(
+            id=str(uuid4()),
+            owner_id=automation_row.owner_id,
+            automation_id=automation_row.id,
+            automation_revision=automation_row.revision,
+            occurrence_key=key,
+            due_at=scan_at,
+            state="accepting",
+            reason=None,
+            created_at=scan_at,
+            updated_at=utcnow() - timedelta(seconds=31),
+        )
+        db.add(occurrence)
+        db.flush()
+        return occurrence.id
+
+
+def test_deadline_occurrence_retries_transient_capacity_after_worker_restart_once(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, scan_at = _create_deadline_automation(client, auth, automation_container)
+
+    agent = automation_container.automations.agent
+    attempts = 0
+
+    def reject_for_capacity(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise CoworkerError(
+            "active_agent_limit",
+            "The owner has reached the active run limit.",
+            429,
+        )
+
+    monkeypatch.setattr(agent, "create", reject_for_capacity)
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], scan_at
+    )
+    assert first["state"] == "accepting"
+    assert first["reason"] == "active_agent_limit"
+    assert first["run_id"] is None
+    assert attempts == 1
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        assert occurrence is not None
+        assert occurrence.state == "accepting"
+        assert occurrence.reason == "active_agent_limit"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
+        assert db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+                Notification.kind == "automation_started",
+            )
+        ).all() == []
+
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AutomationOccurrence, first["occurrence_id"]).updated_at = (
+            utcnow() - timedelta(seconds=31)
+        )
+
+    restarted = Container.create(automation_container.settings)
+    try:
+        _enable_briefings(restarted)
+        retry_attempts = 0
+        retry_agent = restarted.automations.agent
+        original_retry_create = retry_agent.create
+
+        def count_retry(*args, **kwargs):
+            nonlocal retry_attempts
+            retry_attempts += 1
+            return original_retry_create(*args, **kwargs)
+
+        monkeypatch.setattr(retry_agent, "create", count_retry)
+        claimed = restarted.automations.claim_buffered_occurrences()
+        assert len(claimed) == 1
+        assert claimed[0]["automation_id"] == automation["id"]
+        retry_scan_at = datetime.fromisoformat(
+            claimed[0]["due_at"].replace("Z", "+00:00")
+        )
+        second = restarted.automations.accept_occurrence(
+            claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+        )
+        assert second["state"] == "accepted"
+        assert second["occurrence_id"] == first["occurrence_id"]
+        assert second["run_id"]
+        assert retry_attempts == 1
+
+        replay = restarted.automations.accept_occurrence(
+            automation["id"], automation["revision"], retry_scan_at
+        )
+        assert replay["state"] == "accepted"
+        assert replay["replayed"] is True
+        assert replay["run_id"] == second["run_id"]
+        assert retry_attempts == 1
+
+        with restarted.repository.sessions() as db:
+            occurrences = db.scalars(
+                select(AutomationOccurrence).where(
+                    AutomationOccurrence.automation_id == automation["id"]
+                )
+            ).all()
+            runs = db.scalars(
+                select(AgentRun).where(AgentRun.goal_id == goal["id"])
+            ).all()
+            notices = db.scalars(
+                select(Notification).where(
+                    Notification.automation_id == automation["id"],
+                    Notification.kind == "automation_started",
+                )
+            ).all()
+            assert len(occurrences) == 1
+            assert occurrences[0].id == first["occurrence_id"]
+            assert occurrences[0].state == "accepted"
+            assert occurrences[0].run_id == second["run_id"]
+            assert len(runs) == 1
+            assert len(notices) == 1
+            assert notices[0].occurrence_id == first["occurrence_id"]
+    finally:
+        restarted.repository.sessions.kw["bind"].dispose()
+
+
+
+def test_deadline_occurrence_reuses_run_after_occurrence_commit_loss(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, scan_at = _create_deadline_automation(client, auth, automation_container)
+
+    notifications = automation_container.automations.notifications
+    original_enqueue = notifications.enqueue_pending
+    enqueue_calls = 0
+
+    def simulate_process_loss(*args, **kwargs):
+        nonlocal enqueue_calls
+        enqueue_calls += 1
+        if enqueue_calls == 1:
+            raise RuntimeError("simulated process loss after AgentRun creation")
+        return original_enqueue(*args, **kwargs)
+
+    monkeypatch.setattr(notifications, "enqueue_pending", simulate_process_loss)
+    with pytest.raises(RuntimeError, match="simulated process loss"):
+        automation_container.automations.accept_occurrence(
+            automation["id"], automation["revision"], scan_at
+        )
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.scalars(
+            select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation["id"]
+            )
+        ).one()
+        assert occurrence.state == "accepting"
+        assert occurrence.run_id is None
+        occurrence_id = occurrence.id
+        runs = db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all()
+        assert len(runs) == 1
+        original_run_id = runs[0].id
+        assert db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+                Notification.kind == "automation_started",
+            )
+        ).all() == []
+
+    with automation_container.repository.sessions.begin() as db:
+        db.get(AutomationOccurrence, occurrence_id).updated_at = (
+            utcnow() - timedelta(seconds=31)
+        )
+
+    restarted = Container.create(automation_container.settings)
+    try:
+        _enable_briefings(restarted)
+        retry_calls = 0
+        retry_agent = restarted.automations.agent
+        original_retry_create = retry_agent.create
+
+        def count_idempotent_retry(*args, **kwargs):
+            nonlocal retry_calls
+            retry_calls += 1
+            return original_retry_create(*args, **kwargs)
+
+        monkeypatch.setattr(retry_agent, "create", count_idempotent_retry)
+        claimed = restarted.automations.claim_buffered_occurrences()
+        assert len(claimed) == 1
+        retry_scan_at = datetime.fromisoformat(
+            claimed[0]["due_at"].replace("Z", "+00:00")
+        )
+        recovered = restarted.automations.accept_occurrence(
+            claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+        )
+        assert recovered["state"] == "accepted"
+        assert recovered["occurrence_id"] == occurrence_id
+        assert recovered["run_id"] == original_run_id
+        assert retry_calls == 1
+
+        with restarted.repository.sessions() as db:
+            occurrences = db.scalars(
+                select(AutomationOccurrence).where(
+                    AutomationOccurrence.automation_id == automation["id"]
+                )
+            ).all()
+            runs = db.scalars(
+                select(AgentRun).where(AgentRun.goal_id == goal["id"])
+            ).all()
+            notices = db.scalars(
+                select(Notification).where(
+                    Notification.automation_id == automation["id"],
+                    Notification.kind == "automation_started",
+                )
+            ).all()
+            assert len(occurrences) == 1
+            assert occurrences[0].id == occurrence_id
+            assert occurrences[0].state == "accepted"
+            assert occurrences[0].run_id == original_run_id
+            assert len(runs) == 1
+            assert len(notices) == 1
+            assert notices[0].occurrence_id == occurrence_id
+    finally:
+        restarted.repository.sessions.kw["bind"].dispose()
+
+
+def test_deadline_occurrence_permanent_admission_error_stays_terminal(
+    automation_client,
+    automation_container,
+    monkeypatch,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, scan_at = _create_deadline_automation(client, auth, automation_container)
+    attempts = 0
+
+    def reject_permanently(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise CoworkerError("agent_unavailable", "Agent admission is unavailable.", 503)
+
+    monkeypatch.setattr(automation_container.automations.agent, "create", reject_permanently)
+    first = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], scan_at
+    )
+    second = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], scan_at
+    )
+    assert first["state"] == "blocked"
+    assert first["reason"] == "agent_unavailable"
+    assert second["state"] == "blocked"
+    assert second["replayed"] is True
+    assert attempts == 1
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, first["occurrence_id"])
+        assert occurrence.state == "blocked"
+        assert occurrence.reason == "agent_unavailable"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
+        assert db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+                Notification.kind == "automation_started",
+            )
+        ).all() == []
+
+
+def test_deadline_occurrence_expired_catchup_is_skipped(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, now = _create_deadline_automation(
+        client, auth, automation_container, catchup_window_seconds=60
+    )
+    scan_at = now - timedelta(seconds=120)
+    occurrence_id = _insert_pending_deadline_occurrence(
+        automation_container, automation, goal, scan_at
+    )
+
+    claimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(claimed) == 1
+    retry_scan_at = datetime.fromisoformat(claimed[0]["due_at"].replace("Z", "+00:00"))
+    result = automation_container.automations.accept_occurrence(
+        claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+    )
+    assert result["occurrence_id"] == occurrence_id
+    assert result["state"] == "skipped"
+    assert result["reason"] == "catchup_window"
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, occurrence_id)
+        assert occurrence.state == "skipped"
+        assert occurrence.reason == "catchup_window"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
+        assert db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+                Notification.kind == "automation_started",
+            )
+        ).all() == []
+
+
+def test_deadline_occurrence_target_outside_window_terminalizes_pending(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, now = _create_deadline_automation(client, auth, automation_container)
+    scan_at = now - timedelta(seconds=40)
+    occurrence_id = _insert_pending_deadline_occurrence(
+        automation_container, automation, goal, scan_at
+    )
+
+    # Exercise a legacy/inconsistent persisted target that no longer qualifies
+    # without a goal revision bump; normal API edits also change the revision.
+    with automation_container.repository.sessions.begin() as db:
+        db.get(PersonalGoal, goal["id"]).deadline_at = now + timedelta(days=30)
+
+    claimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(claimed) == 1
+    retry_scan_at = datetime.fromisoformat(claimed[0]["due_at"].replace("Z", "+00:00"))
+    result = automation_container.automations.accept_occurrence(
+        claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+    )
+    assert result["occurrence_id"] == occurrence_id
+    assert result["state"] == "skipped"
+    assert result["reason"] == "deadline_not_in_window"
+
+    with automation_container.repository.sessions() as db:
+        occurrence = db.get(AutomationOccurrence, occurrence_id)
+        assert occurrence.state == "skipped"
+        assert occurrence.reason == "deadline_not_in_window"
+        assert db.scalars(
+            select(AgentRun).where(AgentRun.goal_id == goal["id"])
+        ).all() == []
+
+
+def test_deadline_occurrence_goal_revision_change_terminalizes_pending(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, now = _create_deadline_automation(client, auth, automation_container)
+    scan_at = now - timedelta(seconds=40)
+    occurrence_id = _insert_pending_deadline_occurrence(
+        automation_container, automation, goal, scan_at
+    )
+
+    updated = client.patch(
+        f"/api/v1/goals/{goal['id']}",
+        headers=auth,
+        json={
+            "expected_revision": goal["revision"],
+            "objective": "The goal changed after the deadline occurrence was accepted.",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["revision"] == goal["revision"] + 1
+
+    claimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(claimed) == 1
+    retry_scan_at = datetime.fromisoformat(claimed[0]["due_at"].replace("Z", "+00:00"))
+    result = automation_container.automations.accept_occurrence(
+        claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+    )
+    assert result["occurrence_id"] == occurrence_id
+    assert result["state"] == "skipped"
+    assert result["reason"] == "goal_changed"
+
+
+def test_deadline_occurrence_goal_pause_terminalizes_pending(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, now = _create_deadline_automation(client, auth, automation_container)
+    scan_at = now - timedelta(seconds=40)
+    occurrence_id = _insert_pending_deadline_occurrence(
+        automation_container, automation, goal, scan_at
+    )
+
+    paused = client.post(
+        f"/api/v1/goals/{goal['id']}/pause",
+        headers=auth,
+        json={"expected_revision": goal["revision"]},
+    )
+    assert paused.status_code == 200
+
+    claimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(claimed) == 1
+    retry_scan_at = datetime.fromisoformat(claimed[0]["due_at"].replace("Z", "+00:00"))
+    result = automation_container.automations.accept_occurrence(
+        claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+    )
+    assert result["occurrence_id"] == occurrence_id
+    assert result["state"] == "skipped"
+    assert result["reason"] == "goal_not_active"
+
+
+def test_deadline_occurrence_automation_pause_terminalizes_pending(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, automation, now = _create_deadline_automation(client, auth, automation_container)
+    scan_at = now - timedelta(seconds=40)
+    occurrence_id = _insert_pending_deadline_occurrence(
+        automation_container, automation, goal, scan_at
+    )
+
+    paused = client.post(
+        f"/api/v1/automations/{automation['id']}/pause",
+        headers=auth,
+        json={"expected_revision": automation["revision"]},
+    )
+    assert paused.status_code == 200
+
+    claimed = automation_container.automations.claim_buffered_occurrences()
+    assert len(claimed) == 1
+    retry_scan_at = datetime.fromisoformat(claimed[0]["due_at"].replace("Z", "+00:00"))
+    result = automation_container.automations.accept_occurrence(
+        claimed[0]["automation_id"], claimed[0]["revision"], retry_scan_at
+    )
+    assert result["occurrence_id"] == occurrence_id
+    assert result["state"] == "skipped"
+    assert result["reason"] == "stale_revision"
 
 
 def test_deadline_coworker_runs_once_per_meaningful_urgency_band(

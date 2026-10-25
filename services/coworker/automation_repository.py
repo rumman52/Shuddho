@@ -1664,6 +1664,7 @@ class AutomationRepository:
         revision: int,
         scan_at: datetime,
     ) -> dict:
+        """Idempotently admit one bounded deadline recovery run and reclaim safely."""
         scan_at = aware(scan_at).astimezone(timezone.utc)
         with self.sessions.begin() as db:
             automation = db.scalar(select(Automation).where(
@@ -1671,6 +1672,46 @@ class AutomationRepository:
             ).with_for_update())
             if automation is None:
                 raise CoworkerError("automation_missing", "The Deadline Coworker automation no longer exists.", 404)
+
+            admitted_at = aware(utcnow()).astimezone(timezone.utc)
+
+            # The reclaimer re-enters with the original due_at. Resolve that row
+            # before any eligibility/target early return can strand it in accepting.
+            occurrence = db.scalar(select(AutomationOccurrence).where(
+                AutomationOccurrence.automation_id == automation.id,
+                AutomationOccurrence.automation_revision == revision,
+                AutomationOccurrence.due_at == scan_at,
+            ).with_for_update())
+            if occurrence is not None and (
+                occurrence.run_id is not None
+                or occurrence.state in {"accepted", "blocked", "skipped", "buffered"}
+            ):
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": occurrence.run_id,
+                    "state": occurrence.state,
+                    "reason": occurrence.reason,
+                    "replayed": True,
+                }
+
+            def terminalize_pending(state: str, reason: str) -> dict | None:
+                if (
+                    occurrence is None
+                    or occurrence.state != "accepting"
+                    or occurrence.run_id is not None
+                ):
+                    return None
+                occurrence.state = state
+                occurrence.reason = reason[:80]
+                occurrence.updated_at = admitted_at
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": None,
+                    "state": state,
+                    "reason": reason,
+                    "replayed": True,
+                }
+
             goal = db.scalar(select(PersonalGoal).where(
                 PersonalGoal.id == automation.goal_id,
                 PersonalGoal.owner_id == automation.owner_id,
@@ -1685,7 +1726,11 @@ class AutomationRepository:
                     goal,
                 )
             except CoworkerError as error:
+                terminal = terminalize_pending("blocked", error.code)
+                if terminal is not None:
+                    return terminal
                 return {"state": "blocked", "reason": error.code, "run_id": None}
+
             reason = None
             if not self.settings.automations_enabled:
                 reason = "kill_switch"
@@ -1693,7 +1738,7 @@ class AutomationRepository:
                 reason = "stale_revision"
             elif automation.state != "active":
                 reason = "not_active"
-            elif automation.expires_at is not None and aware(automation.expires_at) <= scan_at:
+            elif automation.expires_at is not None and aware(automation.expires_at) <= admitted_at:
                 reason = "expired"
             elif goal is None:
                 reason = "goal_missing"
@@ -1701,11 +1746,21 @@ class AutomationRepository:
                 reason = "goal_not_active"
             elif goal.revision != automation.goal_revision:
                 reason = "goal_changed"
+            elif admitted_at - (aware(occurrence.due_at) if occurrence is not None else scan_at) > timedelta(
+                seconds=automation.catchup_window_seconds
+            ):
+                reason = "catchup_window"
             if reason:
+                terminal = terminalize_pending("skipped", reason)
+                if terminal is not None:
+                    return terminal
                 return {"state": "suppressed", "reason": reason, "run_id": None}
 
             target = self._deadline_target(goal, scan_at)
             if target is None:
+                terminal = terminalize_pending("skipped", "deadline_not_in_window")
+                if terminal is not None:
+                    return terminal
                 return {"state": "no_action", "reason": "deadline_not_in_window", "run_id": None}
 
             key = self.deadline_occurrence_key(
@@ -1715,42 +1770,91 @@ class AutomationRepository:
                 goal.revision,
                 target,
             )
-            previous = db.scalar(select(AutomationOccurrence).where(
-                AutomationOccurrence.automation_id == automation.id,
-                AutomationOccurrence.occurrence_key == key,
-            ))
-            if previous is not None:
+            if occurrence is not None and occurrence.occurrence_key != key:
+                terminal = terminalize_pending("skipped", "deadline_target_changed")
+                if terminal is not None:
+                    return terminal
                 return {
-                    "occurrence_id": previous.id,
-                    "run_id": previous.run_id,
-                    "state": previous.state,
-                    "reason": previous.reason,
+                    "occurrence_id": occurrence.id,
+                    "run_id": occurrence.run_id,
+                    "state": occurrence.state,
+                    "reason": occurrence.reason,
                     "replayed": True,
                 }
 
-            active_run = db.scalar(select(AgentRun.id).join(
+            if occurrence is None:
+                occurrence = db.scalar(select(AutomationOccurrence).where(
+                    AutomationOccurrence.automation_id == automation.id,
+                    AutomationOccurrence.occurrence_key == key,
+                ).with_for_update())
+            if occurrence is not None and (
+                occurrence.run_id is not None
+                or occurrence.state in {"accepted", "blocked", "skipped", "buffered"}
+            ):
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": occurrence.run_id,
+                    "state": occurrence.state,
+                    "reason": occurrence.reason,
+                    "replayed": True,
+                }
+            if occurrence is not None and occurrence.state != "accepting":
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": occurrence.run_id,
+                    "state": occurrence.state,
+                    "reason": occurrence.reason,
+                    "replayed": True,
+                }
+            if occurrence is not None and admitted_at - aware(occurrence.due_at) > timedelta(
+                seconds=automation.catchup_window_seconds
+            ):
+                terminal = terminalize_pending("skipped", "catchup_window")
+                if terminal is not None:
+                    return terminal
+                occurrence.state = "skipped"
+                occurrence.reason = "catchup_window"
+                occurrence.updated_at = admitted_at
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": None,
+                    "state": "skipped",
+                    "reason": "catchup_window",
+                    "replayed": True,
+                }
+
+            active_query = select(AgentRun.id).join(
                 AutomationOccurrence, AutomationOccurrence.run_id == AgentRun.id,
             ).where(
                 AutomationOccurrence.automation_id == automation.id,
                 AgentRun.state.not_in({"completed", "failed", "cancelled"}),
-            ).limit(1))
+            )
+            if occurrence is not None:
+                active_query = active_query.where(AutomationOccurrence.id != occurrence.id)
+            active_run = db.scalar(active_query.limit(1))
             if active_run is not None:
                 return {"state": "no_action", "reason": "overlap", "run_id": None}
 
-            occurrence = AutomationOccurrence(
-                id=str(uuid4()),
-                owner_id=automation.owner_id,
-                automation_id=automation.id,
-                automation_revision=revision,
-                occurrence_key=key,
-                due_at=scan_at,
-                state="accepting",
-                reason=None,
-                created_at=utcnow(),
-                updated_at=utcnow(),
-            )
-            db.add(occurrence)
-            db.flush()
+            if occurrence is None:
+                occurrence = AutomationOccurrence(
+                    id=str(uuid4()),
+                    owner_id=automation.owner_id,
+                    automation_id=automation.id,
+                    automation_revision=revision,
+                    occurrence_key=key,
+                    due_at=scan_at,
+                    state="accepting",
+                    reason=None,
+                    created_at=admitted_at,
+                    updated_at=admitted_at,
+                )
+                db.add(occurrence)
+                db.flush()
+            else:
+                # Refresh the short accepting lease before crossing the AgentRun
+                # admission boundary; a process loss remains reclaimable.
+                occurrence.reason = None
+                occurrence.updated_at = admitted_at
 
             milestones = [
                 {
@@ -1784,6 +1888,7 @@ class AutomationRepository:
             quiet_hours = automation.quiet_hours
             document_ids = self._goal_document_ids(goal)
             occurrence_id = occurrence.id
+            key = occurrence.occurrence_key
 
         idempotency_key = f"automation-deadline:{automation_id}:{revision}:{key[:40]}"
         try:
@@ -1804,31 +1909,32 @@ class AutomationRepository:
                 derived_goal=True,
             )
         except CoworkerError as error:
-            # Deadline replay currently recomputes the target from the original scan time.
-            # Keep this terminal until its accepting-state replay and catch-up checks are fixed.
-            with self.sessions.begin() as db:
-                occurrence = db.get(AutomationOccurrence, occurrence_id)
-                if occurrence is not None:
-                    occurrence.state = "blocked"
-                    occurrence.reason = error.code[:80]
-                    occurrence.updated_at = utcnow()
-            return {
-                "occurrence_id": occurrence_id,
-                "run_id": None,
-                "state": "blocked",
-                "reason": error.code,
-                "replayed": False,
-            }
+            return self._record_occurrence_admission_error(occurrence_id, error)
 
         with self.sessions.begin() as db:
-            occurrence = db.get(AutomationOccurrence, occurrence_id)
+            occurrence = db.scalar(select(AutomationOccurrence).where(
+                AutomationOccurrence.id == occurrence_id,
+            ).with_for_update())
             if occurrence is None:
-                raise CoworkerError("automation_occurrence_lost", "Deadline occurrence state was unavailable.", 503)
+                raise CoworkerError(
+                    "automation_occurrence_lost",
+                    "Deadline occurrence state was unavailable.",
+                    503,
+                )
+            if occurrence.run_id is not None or occurrence.state != "accepting":
+                return {
+                    "occurrence_id": occurrence.id,
+                    "run_id": occurrence.run_id,
+                    "state": occurrence.state,
+                    "reason": occurrence.reason,
+                    "replayed": True,
+                }
             occurrence.run_id = run["id"]
             occurrence.state = "accepted"
+            occurrence.reason = None
             occurrence.updated_at = utcnow()
             visible_at = self.notifications.visible_at_after_quiet_hours(
-                scan_at, timezone_name, quiet_hours,
+                admitted_at, timezone_name, quiet_hours,
             )
             self.notifications.enqueue_pending(
                 db,
