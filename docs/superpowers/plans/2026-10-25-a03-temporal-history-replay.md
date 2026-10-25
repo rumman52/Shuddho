@@ -10,11 +10,11 @@ Build a fail-closed, code-owned replay runner for version-bound Temporal history
 
 ## Tasks
 
-1. Add the test and mandatory CI invocation first. Confirm the first exact-head CI fails because the replay runner does not exist, rather than weakening or skipping the test.
+1. Add the test and mandatory CI invocation before the runner. The test-only run was canceled by subsequent branch updates before it reached the new step, so no missing-module red is claimed. The first executed focused run exposed a fixture error: Temporal Worker rejected the legacy activity stubs because they lacked @activity.defn. Explicit decorators were added; rerun focused and full CI.
 2. Implement scripts/temporal_history_replay.py with a fixed workflow registry, strict manifest validation, relative-path containment, a bounded history size, SHA-256 verification, Temporal WorkflowHistory parsing and Replayer execution. Never print raw history or exception messages.
 3. Test success and handled-activity-failure history, unknown workflow type, path traversal, and checksum mismatch. The test fixture must use a fixed legacy workflow definition and current production workflow for replay.
 4. Run the mandatory replay test in the coworker CI job and preserve JUnit evidence. The mandatory test gate must reject missing collection, skips, and failures.
-5. Review the final branch diff and exact-head CI. Update PROGRESS.md only with the observed results and explicitly retain the remaining external A-03 gates.
+5. Review the final branch diff and exact-head CI. The focused replay step passed at source head f4840b2c1b3293facc2d560b5459458f4e2ce645 in run 40176606296; that run's full coworker job was still in progress at the last observation. Update PROGRESS.md with this exact evidence and retain the remaining external A-03 gates.
 
 ## Acceptance
 
