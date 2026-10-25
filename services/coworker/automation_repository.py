@@ -1745,7 +1745,7 @@ class AutomationRepository:
                 reason = "goal_not_active"
             elif goal.revision != automation.goal_revision:
                 reason = "goal_changed"
-            elif admitted_at - (occurrence.due_at if occurrence is not None else scan_at) > timedelta(
+            elif admitted_at - (aware(occurrence.due_at) if occurrence is not None else scan_at) > timedelta(
                 seconds=automation.catchup_window_seconds
             ):
                 reason = "catchup_window"
