@@ -126,6 +126,31 @@ class WorkerProvisioningTests(unittest.TestCase):
         self.assertNotIn("test-only-render", result.stdout + result.stderr)
         self.assertFalse((self.root / "calls").exists())
 
+    def test_pa10_workflows_require_protected_environment_secrets(self):
+        legacy_secret_names = (
+            "RENDER_API_KEY",
+            "SHUDDHO_TEMPORAL_ADDRESS",
+            "SHUDDHO_TEMPORAL_NAMESPACE",
+            "SHUDDHO_TEMPORAL_API_KEY",
+            "SHUDDHO_STAGING_S3_ACCESS_KEY_ID",
+            "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY",
+            "DEEPSEEK_API_KEY",
+        )
+        for workflow_path in (WORKFLOW, PREFLIGHT_WORKFLOW):
+            with self.subTest(workflow=workflow_path.name):
+                workflow = workflow_path.read_text()
+                self.assertIn("environment: pa10-staging", workflow)
+                self.assertIn("secrets.PA10_RENDER_API_KEY", workflow)
+                for name in legacy_secret_names:
+                    self.assertNotIn(f"secrets.{name}", workflow)
+                secret_refs = [
+                    line.split("secrets.", 1)[1].split("}", 1)[0]
+                    for line in workflow.splitlines()
+                    if "secrets." in line
+                ]
+                self.assertTrue(secret_refs)
+                self.assertTrue(all(name.startswith("PA10_") for name in secret_refs), secret_refs)
+
     def test_guard_rejects_wrong_repository_and_branch(self):
         for values in (
             {"GITHUB_REPOSITORY": "other/repo"},
