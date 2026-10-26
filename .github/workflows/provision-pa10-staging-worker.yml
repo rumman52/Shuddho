@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   provision:
-    if: ${{ inputs.confirm == 'PROVISION' }}
+    if: ${{ inputs.confirm == 'PROVISION' && github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: pa10-staging
     timeout-minutes: 30
