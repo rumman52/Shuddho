@@ -208,6 +208,7 @@ jobs:
               and .autoDeployTrigger == "off"
               and .serviceDetails.region == "oregon"
               and .serviceDetails.plan == "0.5c-512mb"
+              and .serviceDetails.maxShutdownDelaySeconds == 120
               and .serviceDetails.envSpecificDetails.buildCommand == "pip install uv && uv sync --frozen --no-dev --extra coworker"
               and .serviceDetails.envSpecificDetails.startCommand == "uv run --extra coworker python -m services.coworker.worker"
             else
