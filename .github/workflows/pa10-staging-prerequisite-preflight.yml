@@ -8,6 +8,7 @@ permissions:
 
 jobs:
   preflight:
+    if: ${{ github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: pa10-staging
     timeout-minutes: 10
