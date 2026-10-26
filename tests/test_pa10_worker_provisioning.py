@@ -230,6 +230,54 @@ class WorkerProvisioningTests(unittest.TestCase):
             result = self.run_step("Create or repair shuddho-worker-staging", FAKE_CREATED=json.dumps(value))
             self.assertNotEqual(result.returncode, 0)
 
+    def test_reconciled_worker_config_must_match_reviewed_plan(self):
+        reviewed = worker(
+            branch="main",
+            autoDeploy="no",
+            autoDeployTrigger="off",
+            serviceDetails={
+                "region": "oregon",
+                "plan": "0.5c-512mb",
+                "envSpecificDetails": {
+                    "buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker",
+                    "startCommand": "uv run --extra coworker python -m services.coworker.worker",
+                },
+            },
+        )
+        valid = self.run_step(
+            "Verify reconciled staging worker configuration",
+            FAKE_SERVICES=json.dumps([{"service": reviewed}]),
+        )
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+
+        for change in (
+            {"autoDeployTrigger": "commit"},
+            {"branch": "feature"},
+            {"serviceDetails": reviewed["serviceDetails"] | {"plan": "1c-2g"}},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"startCommand": "python unsafe_worker.py"}
+            }},
+        ):
+            with self.subTest(change=change):
+                result = self.run_step(
+                    "Verify reconciled staging worker configuration",
+                    FAKE_SERVICES=json.dumps([{"service": reviewed | change}]),
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("does not match", result.stderr + result.stdout)
+
+    def test_worker_verification_precedes_secret_reconciliation_and_deploy(self):
+        workflow = WORKFLOW.read_text()
+        self.assertLess(
+            workflow.index("      - name: Verify reconciled staging worker configuration"),
+            workflow.index("      - name: Reconcile reviewed worker environment"),
+        )
+        self.assertLess(
+            workflow.index("      - name: Verify reconciled staging worker configuration"),
+            workflow.index("      - name: Deploy exact main revision and require migration success"),
+        )
+
     def test_exact_live_deploy_passes(self):
         result = self.run_step("Deploy exact main revision and require migration success")
         self.assertEqual(result.returncode, 0, result.stderr)
