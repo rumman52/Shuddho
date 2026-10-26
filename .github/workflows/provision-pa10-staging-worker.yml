@@ -185,6 +185,39 @@ jobs:
           fi
           echo "worker_id=${worker_id}" >> "${GITHUB_OUTPUT}"
 
+      - name: Verify reconciled staging worker configuration
+        shell: bash
+        env:
+          WORKER_ID: ${{ steps.worker.outputs.worker_id }}
+        run: |
+          set -euo pipefail
+          # Read back Render's service inventory, not the response from an
+          # earlier create/update request, before reconciling credentials.
+          services_json="$(render services --output json)"
+          matching="$(jq -c --arg id "${WORKER_ID}" '
+            [.. | objects | select(.id? == $id)] | unique_by(.id)
+          ' <<<"${services_json}")"
+          if ! jq -e --arg owner "${RENDER_WORKSPACE_ID}" '
+            if length == 1 then
+              .[0] |
+              .name == "shuddho-worker-staging"
+              and .type == "background_worker"
+              and .ownerId == $owner
+              and .repo == "https://github.com/rumman52/Shuddho"
+              and .branch == "main"
+              and .autoDeployTrigger == "off"
+              and .serviceDetails.region == "oregon"
+              and .serviceDetails.plan == "0.5c-512mb"
+              and .serviceDetails.envSpecificDetails.buildCommand == "pip install uv && uv sync --frozen --no-dev --extra coworker"
+              and .serviceDetails.envSpecificDetails.startCommand == "uv run --extra coworker python -m services.coworker.worker"
+            else
+              false
+            end
+          ' <<<"${matching}" >/dev/null; then
+            echo "::error::Staging worker configuration does not match the reviewed source, region, plan, auto-deploy or commands."
+            exit 1
+          fi
+
       - name: Reconcile reviewed worker environment
         shell: bash
         env:
