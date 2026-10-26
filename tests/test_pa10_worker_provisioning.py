@@ -238,6 +238,7 @@ class WorkerProvisioningTests(unittest.TestCase):
             serviceDetails={
                 "region": "oregon",
                 "plan": "0.5c-512mb",
+                "maxShutdownDelaySeconds": 120,
                 "envSpecificDetails": {
                     "buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker",
                     "startCommand": "uv run --extra coworker python -m services.coworker.worker",
@@ -254,6 +255,8 @@ class WorkerProvisioningTests(unittest.TestCase):
             {"autoDeployTrigger": "commit"},
             {"branch": "feature"},
             {"serviceDetails": reviewed["serviceDetails"] | {"plan": "1c-2g"}},
+            {"serviceDetails": reviewed["serviceDetails"] | {"maxShutdownDelaySeconds": 30}},
+            {"serviceDetails": reviewed["serviceDetails"] | {"maxShutdownDelaySeconds": None}},
             {"serviceDetails": reviewed["serviceDetails"] | {
                 "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
                     {"startCommand": "python unsafe_worker.py"}
