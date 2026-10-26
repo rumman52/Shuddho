@@ -151,6 +151,25 @@ class WorkerProvisioningTests(unittest.TestCase):
                 self.assertTrue(secret_refs)
                 self.assertTrue(all(name.startswith("PA10_") for name in secret_refs), secret_refs)
 
+    def test_pa10_secret_jobs_gate_repository_and_ref_at_job_level(self):
+        cases = (
+            (PREFLIGHT_WORKFLOW, "preflight", False),
+            (WORKFLOW, "provision", True),
+        )
+        for workflow_path, job_name, requires_confirmation in cases:
+            with self.subTest(workflow=workflow_path.name):
+                lines = workflow_path.read_text().splitlines()
+                job_index = lines.index(f"  {job_name}:")
+                condition = lines[job_index + 1]
+                self.assertTrue(
+                    condition.startswith("    if:"),
+                    f"{job_name} must be skipped at job level before environment secrets are exposed",
+                )
+                self.assertIn("github.repository == 'rumman52/Shuddho'", condition)
+                self.assertIn("github.ref == 'refs/heads/main'", condition)
+                if requires_confirmation:
+                    self.assertIn("inputs.confirm == 'PROVISION'", condition)
+
     def test_guard_rejects_wrong_repository_and_branch(self):
         for values in (
             {"GITHUB_REPOSITORY": "other/repo"},
