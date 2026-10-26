@@ -69,6 +69,7 @@ class WorkerProvisioningTests(unittest.TestCase):
             "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
             "RENDER_CALLS": str(self.root / "calls"),
+            "RENDER_CREATE_ARGV": str(self.root / "create-argv"),
             "FAKE_SERVICES": "[]", "FAKE_CREATED": json.dumps(worker()),
             "FAKE_DEPLOY": json.dumps({"id": "dep-test123", "status": "live", "commit": {"id": SHA}}),
         }
@@ -82,6 +83,8 @@ class WorkerProvisioningTests(unittest.TestCase):
             if args[:2] == ['services', '--output']:
                 print(os.environ['FAKE_SERVICES'])
             elif args[:2] == ['services', 'create']:
+                with open(os.environ['RENDER_CREATE_ARGV'], 'w') as argv_file:
+                    json.dump(args, argv_file)
                 print(os.environ['FAKE_CREATED'])
             elif args[:2] == ['services', 'update']:
                 print('{}')
@@ -209,6 +212,39 @@ class WorkerProvisioningTests(unittest.TestCase):
                 result = self.run_step("Create or repair shuddho-worker-staging", FAKE_SERVICES=json.dumps(services))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("worker_id=srv-test123", (self.root / "output").read_text())
+
+    def test_new_worker_credentials_wait_for_verified_configuration(self):
+        result = self.run_step("Create or repair shuddho-worker-staging")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = json.loads((self.root / "create-argv").read_text())
+        # The new worker has not passed its independent service readback yet.
+        # No DB URL or provider key may be sent during its creation.
+        forbidden = (
+            "SHUDDHO_COWORKER_DATABASE_URL=",
+            "AWS_ACCESS_KEY_ID=",
+            "AWS_SECRET_ACCESS_KEY=",
+            "SHUDDHO_TEMPORAL_API_KEY=",
+        )
+        env_vars = [argv[index + 1] for index, value in enumerate(argv[:-1])
+                    if value == "--env-var"]
+        for value in env_vars:
+            self.assertFalse(value.startswith(forbidden), value.partition("=")[0])
+        for secret in ("test-only-secret", "test-only-access", "test-only-temporal",
+                       self.env["SHUDDHO_COWORKER_DATABASE_URL"]):
+            self.assertNotIn(secret, json.dumps(argv))
+        # Creating without credentials must still start with high-authority
+        # capabilities explicitly inert, not rely on service defaults.
+        self.assertIn("SHUDDHO_WORK_SERVICES_ENABLED=false", env_vars)
+        self.assertIn("SHUDDHO_AGENT_RUNTIME_ENABLED=false", env_vars)
+        workflow = WORKFLOW.read_text()
+        self.assertLess(
+            workflow.index("      - name: Verify reconciled staging worker configuration"),
+            workflow.index("      - name: Reconcile reviewed worker environment"),
+        )
+        reconciliation = shell_step("Reconcile reviewed worker environment")
+        for key in ("SHUDDHO_COWORKER_DATABASE_URL", "AWS_ACCESS_KEY_ID",
+                    "AWS_SECRET_ACCESS_KEY", "SHUDDHO_TEMPORAL_API_KEY"):
+            self.assertIn(f"set_env {key} ", reconciliation)
 
     def test_ambiguous_and_unrelated_workers_are_not_mutated(self):
         cases = [[worker(), worker(id="srv-second")]]
