@@ -278,6 +278,7 @@ class WorkerProvisioningTests(unittest.TestCase):
                 "envSpecificDetails": {
                     "buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker",
                     "startCommand": "uv run --extra coworker python -m services.coworker.worker",
+                    "preDeployCommand": "uv run --extra coworker python -m services.coworker.migrate",
                 },
             },
         )
@@ -293,6 +294,17 @@ class WorkerProvisioningTests(unittest.TestCase):
             {"serviceDetails": reviewed["serviceDetails"] | {"plan": "1c-2g"}},
             {"serviceDetails": reviewed["serviceDetails"] | {"maxShutdownDelaySeconds": 30}},
             {"serviceDetails": reviewed["serviceDetails"] | {"maxShutdownDelaySeconds": None}},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"preDeployCommand": "python -m unreviewed.migration"}
+            }},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": {
+                    key: value
+                    for key, value in reviewed["serviceDetails"]["envSpecificDetails"].items()
+                    if key != "preDeployCommand"
+                }
+            }},
             {"serviceDetails": reviewed["serviceDetails"] | {
                 "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
                     {"startCommand": "python unsafe_worker.py"}
