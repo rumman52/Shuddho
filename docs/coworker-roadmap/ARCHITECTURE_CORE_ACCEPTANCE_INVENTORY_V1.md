@@ -1,3 +1,11 @@
+## Current acceptance refresh — 27 October 2026 (Asia/Dhaka)
+
+The canonical current source/CI, environment and blocker evidence is the top [PROGRESS handoff](PROGRESS.md). Main is `b9bd701b86709a74a3aae195f8ec1a834ecc31b9`, after owner merge of PR #582 without submitted reviews. Current-main application/build passed, governance failed, and coworker was still running at refresh. PR #582's code jobs passed but its independent-human-review gate failed. The separate continuation branch `test/pa10-database-resolution-execution-20261027` verifies the actual database-resolution shell before sensitive-info access and changes no production behavior.
+
+All **17 A/C/P/V rows remain not fully qualified**. Remaining requirements concern enforced governance, matching persistent staging infrastructure, real provider/security/recovery scenarios, human quality and operations evidence, and separately authorized release. Missing worker and the staging database expiry on **31 October 2026 at 23:11:33 Asia/Dhaka** are current blockers. Historical source tasks below must not be reimplemented solely because their older handoffs say pending.
+
+---
+
 ## Refreshed 25 October 2026 — post-PR #568 and deployment verification
 
 - **Current main:** `79d4e59a69350b3af9d7404102e285fd606fb04d`, merge of [PR #568](https://github.com/rumman52/Shuddho/pull/568).
