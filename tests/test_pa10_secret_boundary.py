@@ -97,13 +97,19 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                     target.index("- name: Revalidate current protected main before provider access"),
                     target.index("- name: Require Render access before"),
                 )
-                for marker in (
+                self.assertIn(
                     "- name: Revalidate current protected main before provider access",
-                    "- name: Revalidate current main immediately before "
-                    + ("paid worker mutation" if paid else "provider access"),
-                ):
-                    self.assertIn(marker, target)
+                    target,
+                )
                 if paid:
+                    self.assertIn(
+                        "- name: Revalidate current main immediately before paid worker mutation",
+                        target,
+                    )
+                    self.assertIn(
+                        "- name: Revalidate current main immediately before worker deployment",
+                        target,
+                    )
                     self.assertLess(
                         target.index("- name: Revalidate current main immediately before paid worker mutation"),
                         target.index("- name: Create or repair shuddho-worker-staging"),
