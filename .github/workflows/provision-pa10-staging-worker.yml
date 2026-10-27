@@ -9,6 +9,7 @@ on:
         default: "NO"
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: pa10-staging-worker-provision
@@ -61,6 +62,15 @@ jobs:
             exit 1
           fi
 
+      - name: Require protected exact-head CI before staging worker provisioning
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.pa10_source_gate \
+            --repository "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}"
       - name: Require Render access before provisioning
         shell: bash
         run: |
