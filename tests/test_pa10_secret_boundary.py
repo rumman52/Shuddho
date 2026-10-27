@@ -119,6 +119,42 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                         target.index("- name: Deploy exact main revision and require migration success"),
                     )
 
+    def test_database_expiry_gate_runs_before_connection_string_use(self):
+        for path, privileged, paid in WORKFLOWS:
+            with self.subTest(workflow=path.name):
+                workflow = path.read_text()
+                metadata_command = (
+                    'pg_metadata="$(render pg get shuddho-staging-db --output json)"'
+                )
+                sensitive_command = (
+                    'pg_json="$(render pg get shuddho-staging-db --include-sensitive-connection-info --output json)"'
+                )
+                self.assertIn(
+                    metadata_command,
+                    workflow,
+                    "expiry must be checked using a non-sensitive metadata request first",
+                )
+                self.assertIn(
+                    sensitive_command,
+                    workflow,
+                    "sensitive connection info must be requested only after expiry admission",
+                )
+                metadata = workflow.index(metadata_command)
+                expiry_gate = workflow.index("python3 -m scripts.pa10_database_expiry_gate")
+                sensitive = workflow.index(sensitive_command)
+                connection_string = workflow.index("internalConnectionString")
+                self.assertLess(metadata, expiry_gate)
+                self.assertLess(expiry_gate, sensitive)
+                self.assertLess(sensitive, connection_string)
+                self.assertIn(".data.plan // empty", workflow)
+                self.assertIn(".data.expiresAt // empty", workflow)
+                self.assertIn("--minimum-remaining-days 7", workflow)
+                if paid:
+                    self.assertLess(
+                        expiry_gate,
+                        workflow.index("- name: Create or repair shuddho-worker-staging"),
+                    )
+
     def test_source_gate_has_no_elevated_job_token_permissions(self):
         for path, _, _ in WORKFLOWS:
             with self.subTest(workflow=path.name):
