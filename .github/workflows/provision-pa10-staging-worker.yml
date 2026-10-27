@@ -212,6 +212,7 @@ jobs:
               and .serviceDetails.maxShutdownDelaySeconds == 120
               and .serviceDetails.envSpecificDetails.buildCommand == "pip install uv && uv sync --frozen --no-dev --extra coworker"
               and .serviceDetails.envSpecificDetails.startCommand == "uv run --extra coworker python -m services.coworker.worker"
+              and .serviceDetails.envSpecificDetails.preDeployCommand == "uv run --extra coworker python -m services.coworker.migrate"
             else
               false
             end
