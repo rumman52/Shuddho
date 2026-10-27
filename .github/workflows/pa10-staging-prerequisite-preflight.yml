@@ -7,9 +7,31 @@ permissions:
   contents: read
 
 jobs:
-  preflight:
+  source_gate:
     if: ${{ github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout candidate without persisted GitHub credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify protected exact-head CI before staging credentials
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.pa10_source_gate \
+            --repository "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}"
+  preflight:
+    if: ${{ needs.source_gate.result == 'success' && github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    needs: source_gate
     environment: pa10-staging
     timeout-minutes: 10
     env:
