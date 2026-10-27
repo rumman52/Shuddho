@@ -42,3 +42,41 @@ uv run pytest tests/test_api_deployment_smoke.py -q
 ```
 
 The unit tests use `httpx.MockTransport` and make no live network calls. A deliberately disabled source-revision comparison is detected by the mismatch regression, confirming the test is capable of failing if this critical check is removed.
+
+## Node API diagnostic — read-only by default
+
+The legacy operator script `scripts/test-production-api.mjs` is **GET-only by default**.
+Running it normally makes exactly two unauthenticated requests (`/health`, `/version`) to
+the pinned production Shuddho host. The only alternative allowed host is the pinned
+Shuddho staging host. It rejects redirect responses, invalid health/revision payloads,
+unexpected hosts, HTTP failures and network errors. No response body is printed.
+
+```bash
+node scripts/test-production-api.mjs
+SHUDDHO_PRODUCTION_API_URL=https://shuddho-api-staging.onrender.com node scripts/test-production-api.mjs
+node scripts/test-production-api.mjs --inspect-components
+```
+
+The optional `--inspect-components` adds read-only GET requests to `/health/deep` and
+`/api/llm/debug`. It does not run analysis.
+
+**Synthetic analysis is a separate explicit operator decision.**
+`--allow-synthetic-analysis` adds a synthetic Bengali analysis POST with
+`includeLLM=false`. It is not part of ordinary smoke checks.
+
+`--allow-provider-inference` is rejected unless **both**
+`--allow-synthetic-analysis` and the operator-controlled environment setting
+`SHUDDHO_PROVIDER_SMOKE_AUTHORIZED=YES` are present. This option can incur provider
+costs and must only be run with the appropriate approval and privacy controls.
+Do not enable either POST mode in routine CI, previews or routine liveness checks.
+No real user content is required. All modes report `release_qualified=false`.
+
+The Node probe checks that the returned Git commit is a full well-formed SHA but
+does not compare it to an intended deployment revision. Use the pinned Python
+exact-SHA tool documented above for source provenance.
+
+```bash
+node --test scripts/test-production-api.test.mjs
+```
+
+The test suite mocks every fetch and sends no network traffic.
