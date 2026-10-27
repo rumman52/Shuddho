@@ -55,6 +55,17 @@ class DatabaseExpiryGateTests(unittest.TestCase):
                 "starter", "2026-10-30T11:16:00Z", now=NOW
             )
 
+    def test_unknown_or_custom_plan_fails_closed(self):
+        for plan, expiry in (
+            ("future-free-alias", None),
+            ("custom", None),
+            ("future-plan", "2026-11-10T11:16:00Z"),
+        ):
+            with self.subTest(plan=plan, expiry=expiry), self.assertRaisesRegex(
+                DatabaseExpiryGateError, "plan"
+            ):
+                check_database_lifecycle(plan, expiry, now=NOW)
+
     def test_malformed_or_timezone_naive_expiry_fails_closed(self):
         for value in ("not-a-date", "2026-10-30T11:16:00", "2026-02-30T00:00:00Z"):
             with self.subTest(value=value), self.assertRaises(DatabaseExpiryGateError):
