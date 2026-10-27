@@ -69,6 +69,8 @@ jobs:
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Guard staging-only execution
         shell: bash
@@ -83,6 +85,15 @@ jobs:
             exit 1
           fi
 
+      - name: Revalidate current protected main before provider access
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.pa10_main_head_guard \
+            --repository "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}"
       - name: Require Render access before provisioning
         shell: bash
         run: |
@@ -147,6 +158,15 @@ jobs:
           set -euo pipefail
           python3 scripts/staging_prerequisite_preflight.py
 
+      - name: Revalidate current main immediately before paid worker mutation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.pa10_main_head_guard \
+            --repository "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}"
       - name: Create or repair shuddho-worker-staging
         id: worker
         shell: bash
@@ -281,6 +301,15 @@ jobs:
             set_env "${key}" false
           done
 
+      - name: Revalidate current main immediately before worker deployment
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.pa10_main_head_guard \
+            --repository "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}"
       - name: Deploy exact main revision and require migration success
         shell: bash
         env:

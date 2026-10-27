@@ -77,6 +77,48 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                 else:
                     self.assertNotIn("render services create", target)
 
+    def test_main_is_rechecked_after_approval_and_before_provider_side_effects(self):
+        for path, privileged, paid in WORKFLOWS:
+            with self.subTest(workflow=path.name):
+                _, jobs = job_parts(path.read_text())
+                source = jobs["source_gate"]
+                target = jobs[privileged]
+                self.assertNotIn("pa10_main_head_guard", source)
+                self.assertIn("persist-credentials: false", target)
+                self.assertEqual(
+                    target.count("python3 -m scripts.pa10_main_head_guard"),
+                    3 if paid else 1,
+                )
+                self.assertLess(
+                    target.index("- name: Guard staging-only execution"),
+                    target.index("- name: Revalidate current protected main before provider access"),
+                )
+                self.assertLess(
+                    target.index("- name: Revalidate current protected main before provider access"),
+                    target.index("- name: Require Render access before"),
+                )
+                self.assertIn(
+                    "- name: Revalidate current protected main before provider access",
+                    target,
+                )
+                if paid:
+                    self.assertIn(
+                        "- name: Revalidate current main immediately before paid worker mutation",
+                        target,
+                    )
+                    self.assertIn(
+                        "- name: Revalidate current main immediately before worker deployment",
+                        target,
+                    )
+                    self.assertLess(
+                        target.index("- name: Revalidate current main immediately before paid worker mutation"),
+                        target.index("- name: Create or repair shuddho-worker-staging"),
+                    )
+                    self.assertLess(
+                        target.index("- name: Revalidate current main immediately before worker deployment"),
+                        target.index("- name: Deploy exact main revision and require migration success"),
+                    )
+
     def test_source_gate_has_no_elevated_job_token_permissions(self):
         for path, _, _ in WORKFLOWS:
             with self.subTest(workflow=path.name):
