@@ -57,6 +57,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Guard staging-only execution
         shell: bash
@@ -76,6 +78,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Revalidate current protected main before provider access
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.pa10_main_head_guard \
+            --repository "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}"
       - name: Require Render access before preflight
         shell: bash
         run: |
