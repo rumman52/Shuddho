@@ -8,7 +8,7 @@ The connected Render workspace reports `shuddho-staging-db` on the `free` plan, 
 
 `scripts/pa10_database_expiry_gate.py` is a pure, read-only gate for Render metadata. It fails closed if the plan is missing, a free plan has no inspectable expiry, the expiry is malformed or timezone-naive, the database is already expired, or expiry is within seven days. A paid plan without an expiry timestamp passes the lifecycle gate; a present timestamp is still checked. It prints only non-secret lifecycle evidence.
 
-Both `pa10-staging-prerequisite-preflight.yml` and `provision-pa10-staging-worker.yml` call this gate immediately after retrieving Render database metadata and before extracting/using the private connection string. The intent is to stop preflight or paid-worker mutation when the backing database is too close to expiry to safely finish acceptance.
+Both `pa10-staging-prerequisite-preflight.yml` and `provision-pa10-staging-worker.yml` first request only non-sensitive database metadata, call this gate, and request `--include-sensitive-connection-info` only after the gate passes. Static workflow tests enforce this order. The intent is to stop preflight or paid-worker mutation when the backing database is too close to expiry to safely finish acceptance without unnecessarily retrieving the private connection string.
 
 ## Limitations and owner action
 
