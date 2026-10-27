@@ -44,10 +44,16 @@ class DatabaseExpiryGateTests(unittest.TestCase):
             ):
                 check_database_lifecycle("free", value, now=NOW)
 
-    def test_paid_database_without_expiry_is_allowed(self):
-        result = check_database_lifecycle("starter", None, now=NOW)
-        self.assertEqual(result["status"], "no_expiry")
-        self.assertIsNone(result["expires_at"])
+    def test_recognized_non_expiring_plans_without_expiry_are_allowed(self):
+        for plan in (
+            "starter", "standard", "pro_plus", "basic_1gb",
+            "0.5c-1g", "accelerated_16gb",
+        ):
+            with self.subTest(plan=plan):
+                result = check_database_lifecycle(plan, None, now=NOW)
+                self.assertEqual(result["status"], "no_expiry")
+                self.assertEqual(result["plan"], plan)
+                self.assertIsNone(result["expires_at"])
 
     def test_present_expiry_is_checked_regardless_of_plan_name(self):
         with self.assertRaisesRegex(DatabaseExpiryGateError, "safety window"):
