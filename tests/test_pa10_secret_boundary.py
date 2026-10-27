@@ -119,6 +119,26 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                         target.index("- name: Deploy exact main revision and require migration success"),
                     )
 
+    def test_database_expiry_gate_runs_before_connection_string_use(self):
+        for path, privileged, paid in WORKFLOWS:
+            with self.subTest(workflow=path.name):
+                workflow = path.read_text()
+                metadata = workflow.index(
+                    'pg_json="$(render pg get shuddho-staging-db --include-sensitive-connection-info --output json)"'
+                )
+                expiry_gate = workflow.index("python3 -m scripts.pa10_database_expiry_gate")
+                connection_string = workflow.index("internalConnectionString")
+                self.assertLess(metadata, expiry_gate)
+                self.assertLess(expiry_gate, connection_string)
+                self.assertIn(".data.plan // empty", workflow)
+                self.assertIn(".data.expiresAt // empty", workflow)
+                self.assertIn("--minimum-remaining-days 7", workflow)
+                if paid:
+                    self.assertLess(
+                        expiry_gate,
+                        workflow.index("- name: Create or repair shuddho-worker-staging"),
+                    )
+
     def test_source_gate_has_no_elevated_job_token_permissions(self):
         for path, _, _ in WORKFLOWS:
             with self.subTest(workflow=path.name):
