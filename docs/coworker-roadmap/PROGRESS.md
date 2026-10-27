@@ -1,3 +1,12 @@
+## Latest continuation — 27 October 2026: post-approval main-head revalidation
+
+- **Verified baseline:** [PR #580](https://github.com/rumman52/Shuddho/pull/580) merged 10:53:44 UTC without independent submitted review. Main at `e8c465ad1a84419cfbd360be7c4d7d2078339b44`; `protected=false`, required checks off, rulesets `[]`. PR-head `test-and-build=success` while coworker still in progress at last inspection. New-main CI #40492004572 pending/in progress, not production qualified.
+- **New bounded proposal:** branch `fix/pa10-main-head-revalidation-before-provider-20261027` adds `scripts/pa10_main_head_guard.py`, unit negative tests, workflow-order regression tests and a read-only current-main recheck **after** protected staging environment approval, before Render access, before worker mutation, and before worker deployment. Keeps no-secret pre-admission gate from #580. [Implementation contract](PA10_MAIN_ADVANCE_REVALIDATION_2026-10-27.md).
+- **External status:** Supabase `shuddho-staging` reported `ACTIVE_HEALTHY`, security advisor 0 lints, zero public tables; this is not functional provider qualification. Vercel project `shuddho-web-editor` returned `READY` production-target deployment, which is not release authorization or runtime smoke-test evidence. Linear/ProductOS had no Shuddho project tracked in connected accounts. The PA-10 Render database expiry risk (31 October 2026) still needs owner action. No production settings, paid compute, secrets, or provider resources changed.
+- **Controls:** source-level checks cannot enforce GitHub's merge UI. Owner/admin must apply and negative-test V-01 [issue #484](https://github.com/rumman52/Shuddho/issues/484), protect staging environment, authorize paid compute and database continuity [PA-10 #291](https://github.com/rumman52/Shuddho/issues/291), verify exact-release provider isolation, and gate production deployment. Do not merge unreviewed or incomplete-CI changes. **Overall production qualification INCOMPLETE**.
+
+---
+
 ## Source/secret boundary follow-up — 27 October 2026 (Asia/Dhaka)
 
 - **Main baseline:** `c54e745a25029f61d468a14369747fda502e3e58`, merge of [PR #579](https://github.com/rumman52/Shuddho/pull/579) at 10:39:03 UTC. Independent submitted reviews for #579: `[]`. Native `main` reported `protected=false`; rulesets `[]`. Its new-main CI [#40490125092](https://github.com/rumman52/Shuddho/actions/runs/40490125092) observed `governance-audit=failure` while code/coworker jobs were in progress. No production qualification inferred.
