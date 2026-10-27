@@ -17,7 +17,7 @@
     "dev:web": "npm run dev --workspace @shuddho/web",
     "dev:api": "npm run dev --workspace @shuddho/api",
     "build": "npm run build --workspace @shuddho/shared && npm run build --workspace @shuddho/config --if-present && npm run build --workspace @shuddho/observability --if-present && npm run build --workspace @shuddho/nlp && npm run build --workspaces --if-present",
-    "test": "npm run build --workspace @shuddho/shared && npm run test --workspaces --if-present",
+    "test": "node --test scripts/test-production-api.test.mjs && npm run build --workspace @shuddho/shared && npm run test --workspaces --if-present",
     "build:web-editor": "npm run build --workspace @shuddho/web-editor",
     "build:extension": "npm run build --workspace apps/chrome-extension",
     "dev:web-editor": "npm run dev --workspace @shuddho/web-editor",
