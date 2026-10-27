@@ -130,13 +130,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pg_json="$(render pg get shuddho-staging-db --include-sensitive-connection-info --output json)"
-          plan="$(jq -r '.data.plan // empty' <<<"${pg_json}")"
-          expires_at="$(jq -r '.data.expiresAt // empty' <<<"${pg_json}")"
+          pg_metadata="$(render pg get shuddho-staging-db --output json)"
+          plan="$(jq -r '.data.plan // empty' <<<"${pg_metadata}")"
+          expires_at="$(jq -r '.data.expiresAt // empty' <<<"${pg_metadata}")"
           python3 -m scripts.pa10_database_expiry_gate \
             --plan "${plan}" \
             --expires-at "${expires_at}" \
             --minimum-remaining-days 7
+          # Request the private connection string only after lifecycle admission passes.
+          pg_json="$(render pg get shuddho-staging-db --include-sensitive-connection-info --output json)"
           db_url="$(jq -r '.data.connectionInfo.internalConnectionString // empty' <<<"${pg_json}")"
           if [[ -z "${db_url}" || "${db_url}" != postgres*://* ]]; then
             echo "::error::Could not resolve the private shuddho-staging-db connection string."
