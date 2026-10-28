@@ -15,7 +15,7 @@ uv run python -m scripts.api_deployment_smoke --environment staging --expected-s
 uv run python -m scripts.api_deployment_smoke --environment production --expected-sha <full-40-character-production-deployment-sha>
 ```
 
-By default, the check accepts **liveness with degraded optional local analysis**, but records the analysis state in a non-sensitive summary. Only when a specifically approved release contract requires loaded local analysis, add `--require-analysis-ready`:
+By default, the check accepts **liveness with degraded optional local analysis**, but records a non-sensitive analysis state. It reports `ready` only when `/health` supplies `analysis_profile=full_local` and no degradation reasons; known partial profiles or reported degradation yield `degraded`, while a missing/unrecognized profile yields `unverified`. No profile is inferred from an empty degradation list. Only when a specifically approved release contract requires loaded local analysis, add `--require-analysis-ready` (this fails closed for both `degraded` and `unverified`):
 
 ```bash
 uv run python -m scripts.api_deployment_smoke --environment staging --expected-sha <full-40-character-staging-deployment-sha> --require-analysis-ready
