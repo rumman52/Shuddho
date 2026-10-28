@@ -82,6 +82,9 @@ class ApiDeploymentSmokeTests(unittest.TestCase):
         for profile, expected_status in (
             (None, "unverified"),
             ("unknown", "unverified"),
+            ([], "unverified"),
+            ({}, "unverified"),
+            (42, "unverified"),
             ("backend_without_detector", "degraded"),
             ("backend_without_corrector", "degraded"),
             ("backend_rules_and_spell_only", "degraded"),
