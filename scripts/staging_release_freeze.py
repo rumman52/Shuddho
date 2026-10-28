@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 from datetime import datetime, timezone
@@ -145,7 +146,38 @@ def env(name: str) -> str:
 
 def clean_origin(value: str) -> str:
     clean = value.rstrip("/")
-    parsed = urlparse(clean)
+    try:
+        parsed = urlparse(clean)
+        hostname = parsed.hostname or ""
+        port = parsed.port  # Force validation of malformed/out-of-range ports.
+    except ValueError:
+        raise StagingReleaseFreezeError(
+            "SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin."
+        ) from None
+
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        is_ip_address = False
+    else:
+        is_ip_address = True
+
+    labels = hostname.split(".")
+    public_dns_name = (
+        hostname.isascii()
+        and len(hostname) <= 253
+        and len(labels) >= 2
+        and all(
+            1 <= len(label) <= 63
+            and label[0].isalnum()
+            and label[-1].isalnum()
+            and all(char.isascii() and (char.isalnum() or char == "-") for char in label)
+            for label in labels
+        )
+    )
+    internal_dns_name = hostname.endswith(
+        (".localhost", ".local", ".internal", ".home.arpa")
+    )
     if (
         parsed.scheme != "https"
         or not parsed.netloc
@@ -154,6 +186,10 @@ def clean_origin(value: str) -> str:
         or parsed.password
         or parsed.query
         or parsed.fragment
+        or is_ip_address
+        or not public_dns_name
+        or internal_dns_name
+        or port == 0
     ):
         raise StagingReleaseFreezeError(
             "SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin."
