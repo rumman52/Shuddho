@@ -145,6 +145,12 @@ def env(name: str) -> str:
 
 
 def clean_origin(value: str) -> str:
+    # urlparse silently strips CR/LF/TAB and leading C0 bytes; reject them
+    # before parsing so a bearer-token destination is never normalized silently.
+    if not isinstance(value, str) or any(ord(char) <= 0x20 or ord(char) == 0x7F for char in value):
+        raise StagingReleaseFreezeError(
+            "SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin."
+        )
     clean = value.rstrip("/")
     try:
         parsed = urlparse(clean)
@@ -578,6 +584,8 @@ def main() -> None:
             base_url=base_url,
             timeout=20,
             follow_redirects=False,
+            # Never inherit proxy or alternate CA roots when sending a staging bearer token.
+            trust_env=False,
             headers={"Authorization": "Bearer " + token},
         ) as client:
             runtime = json_object(
