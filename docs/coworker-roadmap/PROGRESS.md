@@ -1,3 +1,11 @@
+## Core Agent evidence ledger — 28 October 2026 (Asia/Dhaka)
+
+- **New source of truth for P0/P1 disposition:** [CORE_AGENT_COMPLETION_LEDGER.md](CORE_AGENT_COMPLETION_LEDGER.md), drafted from main `ec4276d982d4efe89743f09afca0db762be3f05b`. Exact-main [CI #40736158784](https://github.com/rumman52/Shuddho/actions/runs/40736158784): code jobs `test-and-build` and `coworker` passed; `governance-audit` and `ci-merge-gate` failed. Main `protected=false`, GitHub rulesets list `[]`, PR #589 has zero submitted reviews. This is **not** release-qualified.
+- **Owner blockers:** [#484](https://github.com/rumman52/Shuddho/issues/484) main governance; [#291](https://github.com/rumman52/Shuddho/issues/291) persistent worker/Temporal/S3, and the **last-reported** staging database expiry 31 Oct 2026 at 23:11:33 Dhaka; [#583](https://github.com/rumman52/Shuddho/issues/583) production API readiness; [#584](https://github.com/rumman52/Shuddho/issues/584) telemetry/privacy approval. Render workspace confirmation and Vercel deployment-access blockers prevent current operated validation. No production activation, paid provisioning or privileged mutation performed.
+- **This change:** documentation-only review branch; check draft PR final-head checks and obtain independent review before considering merge. No tests were executed locally for this documentation update.
+
+---
+
 ## Active review-only continuation — 28 October 2026 (Asia/Dhaka)
 
 - **Refreshed source:** current `main` at audit is `bfcf85c1e1990093520ca4b03551424524b9b3d2`, merge of [PR #588](https://github.com/rumman52/Shuddho/pull/588). Exact-head [CI #40556423509](https://github.com/rumman52/Shuddho/actions/runs/40556423509) completed: `test-and-build=success`, `coworker=success`, `governance-audit=failure`, `ci-merge-gate=failure`. Native `main` reports `protected=false`; rulesets list returned `[]`. The two successful code jobs are not independent approval or release clearance.
