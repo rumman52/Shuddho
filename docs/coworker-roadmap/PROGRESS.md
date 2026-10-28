@@ -1,3 +1,14 @@
+## Review-only source fix — 29 October 2026: staging prerequisite HTTPS preflight
+
+- Starting `main`: `141d1f0f16655dcb4037cb32fafbae374aab42e1`. The final main CI [#40750231571](https://github.com/rumman52/Shuddho/actions/runs/40750231571) reports `test-and-build=success`, `coworker=success`, `governance-audit=failure` and `ci-merge-gate=failure`; `main.protected=false` and active rulesets are empty. **Not release qualified.**
+- This draft branch `fix/pa10-preflight-https-raw-host-20261029` fixes a distinct `staging_prerequisite_preflight.py` HTTPS URL-shape gap (CR/LF/TAB stripping and local/IP destination admission), separate from draft [#593](https://github.com/rumman52/Shuddho/pull/593). See [task contract](PA10_PREFLIGHT_ENDPOINT_SECURITY_2026-10-29.md).
+- Local isolated TDD reproduction: 28 rejected cases incorrectly passed before; after change 36 parameterized tests passed with zero skips, and `compileall` passed. The isolated mirror is not a full repo test run. **Repository CI, independent review, merge and staging verification pending.**
+- Read-only live Render audit: `shuddho-staging-db` available, free tier, expiration `2026-10-31T17:11:33.79468Z`; no verified restore artifact; external SQL denied by current empty allowlist. Staging worker absent; staging API on 2 October SHA, config differs from reviewed Blueprint. Production `shuddho-api` auto-deploys unqualified main and reports degraded detector/corrector. Posted verified owner handoffs to [#291](https://github.com/rumman52/Shuddho/issues/291) and [#484](https://github.com/rumman52/Shuddho/issues/484).
+- **Evidence levels:** source proposed; repo verification pending; staging blocked; production qualification incomplete; activation prohibited. No paid provisioning, database/network writes, secret access, provider calls, merges or production changes.
+- **Next:** exact PR-head CI + independent review; owner to protect/restore-test staging DB before expiry and enforce native branch + promotion controls.
+
+---
+
 ## Core Agent evidence ledger — 28 October 2026 (Asia/Dhaka)
 
 - **New source of truth for P0/P1 disposition:** [CORE_AGENT_COMPLETION_LEDGER.md](CORE_AGENT_COMPLETION_LEDGER.md), drafted from main `ec4276d982d4efe89743f09afca0db762be3f05b`. Exact-main [CI #40736158784](https://github.com/rumman52/Shuddho/actions/runs/40736158784): code jobs `test-and-build` and `coworker` passed; `governance-audit` and `ci-merge-gate` failed. Main `protected=false`, GitHub rulesets list `[]`, PR #589 has zero submitted reviews. This is **not** release-qualified.
