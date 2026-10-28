@@ -1,3 +1,12 @@
+## Active review-only continuation — 28 October 2026 (Asia/Dhaka)
+
+- **Refreshed source:** current `main` at audit is `bfcf85c1e1990093520ca4b03551424524b9b3d2`, merge of [PR #588](https://github.com/rumman52/Shuddho/pull/588). Exact-head [CI #40556423509](https://github.com/rumman52/Shuddho/actions/runs/40556423509) completed: `test-and-build=success`, `coworker=success`, `governance-audit=failure`, `ci-merge-gate=failure`. Native `main` reports `protected=false`; rulesets list returned `[]`. The two successful code jobs are not independent approval or release clearance.
+- **New bounded implementation:** review branch `fix/api-smoke-analysis-profile-guard-20261028` makes the optional strict read-only API smoke gate require a reported `full_local` analysis profile and zero degraded reasons, rejecting missing/unknown profiles. No production endpoint or source configuration was changed. Regression tests and task contract: [API_SMOKE_ANALYSIS_PROFILE_GUARD_2026-10-28.md](API_SMOKE_ANALYSIS_PROFILE_GUARD_2026-10-28.md). The branch requires exact-final-head CI and independent review before merge; PR is draft until verified.
+- **External blockers unchanged:** [V-01 #484](https://github.com/rumman52/Shuddho/issues/484) requires admin-enforced review/CI controls; [PA-10 #291](https://github.com/rumman52/Shuddho/issues/291) requires Render staging worker, protected secrets and database continuity before the last-reported 31 October 2026 expiry; [API #583](https://github.com/rumman52/Shuddho/issues/583) requires a production readiness policy and live smoke evidence; [PostHog #584](https://github.com/rumman52/Shuddho/issues/584) requires telemetry/privacy approval. Vercel deployment inspection returned 403 and no live API HTTP check was verified in this continuation.
+- **Evidence levels:** proposed source change only; new final-head CI/review PENDING, staging proof NOT PERFORMED, production qualification INCOMPLETE, activation NOT AUTHORIZED. A passing smoke test does not close release gates.
+
+---
+
 ## Current release-readiness handoff — 27 October 2026 (Asia/Dhaka)
 
 This section supersedes earlier pending-source and deployment statements below. Current main is `f26425ca799e3a666082fcb40ff45d89c99de467`, merged from PR [#585](https://github.com/rumman52/Shuddho/pull/585) at 15:56:33 UTC. PR #585 has zero submitted reviews; do not treat its merge as independent review or release approval.
