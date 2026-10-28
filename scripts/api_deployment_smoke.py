@@ -75,8 +75,24 @@ def check_api_deployment(
                 not isinstance(reason, str) or not reason for reason in reasons
             ):
                 raise ApiSmokeError("/health returned invalid degraded-reasons metadata")
-            if require_analysis_ready and reasons:
-                raise ApiSmokeError("analysis components are degraded")
+            # The absence of a degradation reason is not evidence that the
+            # optional checkpoint-backed engines are loaded. A strict operator
+            # check requires the actual full-local profile reported by the API.
+            analysis_profile = health.get("analysis_profile")
+            degraded_profiles = {
+                "backend_without_detector",
+                "backend_without_corrector",
+                "backend_rules_and_spell_only",
+                "frontend_local_fallback",
+            }
+            if reasons or analysis_profile in degraded_profiles:
+                analysis_status = "degraded"
+            elif analysis_profile == "full_local":
+                analysis_status = "ready"
+            else:
+                analysis_status = "unverified"
+            if require_analysis_ready and analysis_status != "ready":
+                raise ApiSmokeError("analysis components are degraded or unverified")
 
             version = _json_object(client.get("/version", headers={"Accept": "application/json"}), "/version")
             actual = version.get("commit")
@@ -93,7 +109,7 @@ def check_api_deployment(
         "environment": environment,
         "source_revision": expected_sha.lower(),
         "scope": "liveness_and_revision_only",
-        "analysis_status": "degraded" if reasons else "ready",
+        "analysis_status": analysis_status,
         "release_qualified": False,
     }
 
