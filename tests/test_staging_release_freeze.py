@@ -294,9 +294,9 @@ def test_release_verifier_accepts_public_tls_dns_origin():
 
 
 @pytest.mark.parametrize("unsafe_origin", [
-    "https://stage.example.test\\n",
-    "https://sta\\tge.example.test",
-    "https://stage.example.test\\r",
+    "https://stage.example.test\n",
+    "https://sta\tge.example.test",
+    "https://stage.example.test\r",
 ])
 def test_release_verifier_rejects_control_characters_in_origin(unsafe_origin):
     # urlparse strips CR, LF, and TAB, otherwise normalizing attacker-controlled input.
