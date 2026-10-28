@@ -68,3 +68,9 @@ Use `scripts/staging_release_freeze.py` and the actual [release contract](../../
 - No API or worker deployments, production flag changes, paid resources, external transactions, provider-side tests, independent reviews, or staging backups were performed.
 - Documentation change only. **No local test process was executed as part of preparing this record.** A PR's CI, review and final-head status must be checked separately after it is opened.
 - Reconcile these rows against future exact SHA + operated evidence; do **not** copy historical estimates forward or mark blocked items complete.
+
+## Follow-up checkpoint — 2026-10-29 (P0-04 source guard only)
+
+- [Draft PR #591](https://github.com/rumman52/Shuddho/pull/591) proposes a small fail-closed PA-10 staging-release contract patch at `ed134d11e27a6828b62e22b2193f672d083884f0`. Source inspection reproduced: JSON boolean/floating schema values matched integer version 1; non-staging environments were admitted if their names were not literally `prod` or `production`; unhashable provider entries raised uncaught `TypeError`.
+- The PR changes only `scripts/staging_release_freeze.py` and `tests/test_staging_release_freeze.py`, with 17 parameterized negative-control cases. [Exact-head CI](https://github.com/rumman52/Shuddho/actions/runs/40742466404) was **in progress** at this checkpoint; full tests, independent review, staging operation and merge remain unverified.
+- **P0-04 remains BLOCKED_EXTERNAL** because this offline validator improvement does not install a worker, match live API/worker release identities, inspect credentials, prove backup/recovery or authorize staging/production promotion.
