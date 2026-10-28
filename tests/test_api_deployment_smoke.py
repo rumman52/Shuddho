@@ -21,7 +21,8 @@ def response_for(request: httpx.Request, *, health=None, version=None):
     assert request.url.scheme == "https"
     if request.url.path == "/health":
         return httpx.Response(200, json=health if health is not None else {
-            "ok": True, "service": "shuddho-api", "status": "ok", "degraded_reasons": []
+            "ok": True, "service": "shuddho-api", "status": "ok",
+            "degraded_reasons": [], "analysis_profile": "full_local"
         })
     if request.url.path == "/version":
         return httpx.Response(200, json=version if version is not None else {
@@ -76,6 +77,43 @@ class ApiDeploymentSmokeTests(unittest.TestCase):
         self.assertFalse(result["release_qualified"])
         with self.assertRaisesRegex(ApiSmokeError, "analysis components are degraded"):
             check_api_deployment("production", SHA, require_analysis_ready=True, transport=transport)
+
+    def test_strict_analysis_readiness_requires_verified_full_local_profile(self):
+        for profile, expected_status in (
+            (None, "unverified"),
+            ("unknown", "unverified"),
+            ("backend_without_detector", "degraded"),
+            ("backend_without_corrector", "degraded"),
+            ("backend_rules_and_spell_only", "degraded"),
+            ("frontend_local_fallback", "degraded"),
+        ):
+            with self.subTest(profile=profile):
+                health = {
+                    "ok": True,
+                    "service": "shuddho-api",
+                    "status": "ok",
+                    "degraded_reasons": [],
+                }
+                if profile is not None:
+                    health["analysis_profile"] = profile
+                transport = httpx.MockTransport(lambda r: response_for(r, health=health))
+                result = check_api_deployment("staging", SHA, transport=transport)
+                self.assertEqual(result["analysis_status"], expected_status)
+                self.assertFalse(result["release_qualified"])
+                with self.assertRaisesRegex(ApiSmokeError, "degraded or unverified"):
+                    check_api_deployment(
+                        "staging", SHA, require_analysis_ready=True, transport=transport
+                    )
+
+    def test_strict_analysis_readiness_accepts_confirmed_full_local_profile(self):
+        result = check_api_deployment(
+            "staging",
+            SHA,
+            require_analysis_ready=True,
+            transport=httpx.MockTransport(response_for),
+        )
+        self.assertEqual(result["analysis_status"], "ready")
+        self.assertFalse(result["release_qualified"])
 
     def test_invalid_degraded_reasons_shape_is_not_accepted(self):
         for reasons in (None, "none", [None], ["", 7]):
