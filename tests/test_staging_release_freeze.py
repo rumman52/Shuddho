@@ -195,3 +195,36 @@ def test_verify_rejects_capability_and_cohort_drift(tmp_path):
     observed["cohort"]["configured_members"] = 0
     with pytest.raises(freeze.StagingReleaseFreezeError, match="synthetic member"):
         freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("schema", [True, False, 1.0, "1"])
+def test_rollout_rejects_non_integer_schema_version(schema):
+    candidate = rollout()
+    candidate["schema_version"] = schema
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="schema_version"):
+        freeze.validate_rollout(candidate)
+
+
+@pytest.mark.parametrize("schema", [True, False, 1.0, "1"])
+def test_runtime_rejects_non_integer_schema_version(tmp_path, schema):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["schema_version"] = schema
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="schema_version"):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("environment", ["preview", "development", "production-preview", "test"])
+def test_pa10_freeze_rejects_non_staging_environment(environment):
+    candidate = rollout()
+    candidate["environment"] = environment
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="staging environment"):
+        freeze.validate_rollout(candidate)
+
+
+@pytest.mark.parametrize("invalid", [{}, ["google"], 42, None, True])
+def test_pa10_freeze_rejects_malformed_provider_entries_without_crashing(invalid):
+    candidate = rollout()
+    candidate["action_providers"] = ["google", "microsoft", invalid]
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="action_providers"):
+        freeze.validate_rollout(candidate)
