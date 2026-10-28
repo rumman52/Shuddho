@@ -267,6 +267,27 @@ def test_runtime_rejects_boolean_cohort_user_limit(tmp_path):
         freeze.verify_runtime(state, observed)
 
 
+def test_verify_rejects_legacy_unenforced_prepared_cohort(tmp_path):
+    state = prepared(tmp_path)
+    # Older prepare commands admitted this state; equality with the runtime
+    # must not turn an unenforced, empty cohort into frozen release evidence.
+    state["declared_cohort"]["enforced"] = False
+    observed = runtime(state)
+    observed["cohort"]["configured_members"] = 0
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("limit", [True, 1.0, 0, 26])
+def test_verify_rejects_invalid_prepared_cohort_limit(tmp_path, limit):
+    state = prepared(tmp_path)
+    state["declared_cohort"]["max_users"] = limit
+    observed = runtime(state)
+    observed["cohort"].update(max_users=int(limit), configured_members=1)
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.verify_runtime(state, observed)
+
+
 @pytest.mark.parametrize("unsafe_origin", [
     "https://localhost",
     "https://localhost:443",
@@ -291,6 +312,14 @@ def test_release_verifier_rejects_private_or_malformed_token_destinations(unsafe
 
 def test_release_verifier_accepts_public_tls_dns_origin():
     assert freeze.clean_origin("https://api-staging.onrender.com") == "https://api-staging.onrender.com"
+
+
+@pytest.mark.parametrize("host", [
+    "127.1", "127.0.1", "0177.0.0.1", "0x7f.0.0.1", "0x7f.1", "127.0x1",
+])
+def test_release_verifier_rejects_legacy_ipv4_forms(host):
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="HTTPS origin"):
+        freeze.clean_origin("https://" + host)
 
 
 @pytest.mark.parametrize("unsafe_origin", [

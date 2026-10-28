@@ -1,3 +1,73 @@
+## Current continuation — 29 October 2026: PR #593 conflict resolution and review fixes
+
+This checkpoint supersedes the pending-source claims below. Main at inspection is
+`93ff94f0e60723652d2a1b523bf91198ebe3bd74` (merged #595). Existing draft
+[#593](https://github.com/rumman52/Shuddho/pull/593) remains the bounded release-freeze
+hardening workstream; no replacement PR or main merge is required for this continuation.
+
+- **Task contract:** reconcile #593 with current main, preserve both progress histories
+  and #595's prerequisite checks, then verify strict staging identity, manifest types,
+  cohort enforcement and credential destination validation. No schema, capability,
+  deployment, provider registration or authority change.
+- **Review fixes:** alternative numeric IPv4 spellings (`127.1`, octal and hexadecimal
+  components) are rejected by both HTTPS validators. Verification independently requires
+  enforced synthetic cohorts and an exact integer limit in 1..25, including saved states
+  produced by the earlier permissive prepare command.
+- **Observed regressions:** #593's original regression file against main's original
+  freeze module: 32 failed / 19 passed. Added numeric-address cases before the fix:
+  12 failed / 6 passed. Added legacy-cohort cases before the fix: 4 failed / 1 passed.
+  These are local, network-free reproductions, not operated staging evidence.
+- **Final local validation:** release-freeze, prerequisite, endpoint, release-contract
+  and `test_pa10_*.py` suites: **229 passed, zero skips**. Full lightweight `pytest -q`:
+  **1713 passed, 72 collection skips, six Pydantic serialization warnings**. Optional
+  coworker dependencies/services are absent from that lightweight environment; its skips
+  do not qualify the mandatory PostgreSQL/Temporal/browser suites. Release contract,
+  Python compilation and `git diff --check` passed. Dependency manifests match main.
+- **Code review:** a separate read-only agent reproduced two Important findings above;
+  both were fixed test-first. Re-review found no remaining scoped findings and independently
+  checked numeric origins, valid DNS controls, legacy states and a valid frozen result.
+  This is agent code review, **not independent human approval**.
+- **Current main CI:** [#40765226807](https://github.com/rumman52/Shuddho/actions/runs/40765226807)
+  had `test-and-build=success`, `governance-audit=failure`, `coworker=in_progress` at
+  inspection. Native main protection remains false and rulesets empty. New PR-head CI
+  must be inspected after publication; no final-head remote success is claimed here.
+- **External disposition:** Supabase staging is healthy; PostHog project 675660 still
+  reports no ingested events; Linear has no Shuddho issues and ProductOS no project.
+  Vercel deployment listing returns 403, with no authenticated CLI available. Render
+  workspace selection received no answer, so no fresh service/database check occurred.
+  The last-reported database expiry remains **31 October 2026, 23:11:33 Asia/Dhaka**;
+  a restorable backup and retention decision remain unverified.
+- **Next:** inspect final #593 code CI, obtain independent human approval and resolve
+  native governance [#484](https://github.com/rumman52/Shuddho/issues/484); the Render
+  owner selects `Rumman`, secures database continuity and completes staging worker/
+  Temporal/S3 prerequisites [#291](https://github.com/rumman52/Shuddho/issues/291).
+  API readiness #583, privacy/telemetry #584 and operated provider/recovery acceptance
+  remain open. All 17 architecture/core acceptance rows remain not fully qualified.
+
+**Levels:** implemented and locally verified; final PR-head CI pending; staging blocked;
+production qualification incomplete; activation not authorized. Keep this PR draft.
+
+---
+
+## Review-only source fix — 29 October 2026: staging prerequisite HTTPS preflight
+
+- Starting `main`: `141d1f0f16655dcb4037cb32fafbae374aab42e1`. The final main CI [#40750231571](https://github.com/rumman52/Shuddho/actions/runs/40750231571) reports `test-and-build=success`, `coworker=success`, `governance-audit=failure` and `ci-merge-gate=failure`; `main.protected=false` and active rulesets are empty. **Not release qualified.**
+- This draft branch `fix/pa10-preflight-https-raw-host-20261029` fixes a distinct `staging_prerequisite_preflight.py` HTTPS URL-shape gap (CR/LF/TAB stripping and local/IP destination admission), separate from draft [#593](https://github.com/rumman52/Shuddho/pull/593). See [task contract](PA10_PREFLIGHT_ENDPOINT_SECURITY_2026-10-29.md).
+- Local isolated TDD reproduction: 28 rejected cases incorrectly passed before; after change 36 parameterized tests passed with zero skips, and `compileall` passed. The isolated mirror is not a full repo test run. **Repository CI, independent review, merge and staging verification pending.**
+- Read-only live Render audit: `shuddho-staging-db` available, free tier, expiration `2026-10-31T17:11:33.79468Z`; no verified restore artifact; external SQL denied by current empty allowlist. Staging worker absent; staging API on 2 October SHA, config differs from reviewed Blueprint. Production `shuddho-api` auto-deploys unqualified main and reports degraded detector/corrector. Posted verified owner handoffs to [#291](https://github.com/rumman52/Shuddho/issues/291) and [#484](https://github.com/rumman52/Shuddho/issues/484).
+- **Evidence levels:** source proposed; repo verification pending; staging blocked; production qualification incomplete; activation prohibited. No paid provisioning, database/network writes, secret access, provider calls, merges or production changes.
+- **Next:** exact PR-head CI + independent review; owner to protect/restore-test staging DB before expiry and enforce native branch + promotion controls.
+
+---
+
+## Core Agent evidence ledger — 28 October 2026 (Asia/Dhaka)
+
+- **New source of truth for P0/P1 disposition:** [CORE_AGENT_COMPLETION_LEDGER.md](CORE_AGENT_COMPLETION_LEDGER.md), drafted from main `ec4276d982d4efe89743f09afca0db762be3f05b`. Exact-main [CI #40736158784](https://github.com/rumman52/Shuddho/actions/runs/40736158784): code jobs `test-and-build` and `coworker` passed; `governance-audit` and `ci-merge-gate` failed. Main `protected=false`, GitHub rulesets list `[]`, PR #589 has zero submitted reviews. This is **not** release-qualified.
+- **Owner blockers:** [#484](https://github.com/rumman52/Shuddho/issues/484) main governance; [#291](https://github.com/rumman52/Shuddho/issues/291) persistent worker/Temporal/S3, and the **last-reported** staging database expiry 31 Oct 2026 at 23:11:33 Dhaka; [#583](https://github.com/rumman52/Shuddho/issues/583) production API readiness; [#584](https://github.com/rumman52/Shuddho/issues/584) telemetry/privacy approval. Render workspace confirmation and Vercel deployment-access blockers prevent current operated validation. No production activation, paid provisioning or privileged mutation performed.
+- **This change:** documentation-only review branch; check draft PR final-head checks and obtain independent review before considering merge. No tests were executed locally for this documentation update.
+
+---
+
 ## PA-10 staging-freeze contract checkpoint — 29 October 2026 (Asia/Dhaka)
 
 - **Source branch:** [draft PR #593](https://github.com/rumman52/Shuddho/pull/593) replaces unmerged closed #591; this is P0-04 release-freeze source hardening, **not** staging or production qualification. Code changes in `scripts/staging_release_freeze.py` and `tests/test_staging_release_freeze.py` harden exact typing and environment/cohort checks, reject local/private/malformed bearer-token destinations, refuse silently normalized control-character origins, and turn off inherited HTTPX proxy/CA configuration.

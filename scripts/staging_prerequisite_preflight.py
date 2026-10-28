@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -54,16 +55,21 @@ def _validate_temporal_address(value: str) -> None:
 
 
 def _validate_https_endpoint(value: str, name: str) -> None:
-    parsed = urlparse(value.strip())
+    # urlparse silently removes CR, LF and TAB; inspect the raw value first.
+    if value != value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise PreflightFailure(f"{name} must not contain whitespace or control characters.")
     try:
+        parsed = urlparse(value)
         port = parsed.port
+        host = parsed.hostname
     except ValueError:
-        raise PreflightFailure(f"{name} must use a valid port.") from None
+        raise PreflightFailure(f"{name} must be a valid HTTPS endpoint.") from None
     if (
         parsed.scheme != "https"
         or not parsed.netloc
-        or parsed.username
-        or parsed.password
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
         or parsed.query
         or parsed.fragment
         or (port is not None and not 1 <= port <= 65535)
@@ -71,6 +77,22 @@ def _validate_https_endpoint(value: str, name: str) -> None:
         raise PreflightFailure(
             f"{name} must be an HTTPS endpoint without credentials, query or fragment."
         )
+
+    # A shape check cannot prevent DNS rebinding; it can reject obvious local
+    # destinations and IP literals before a credentialed provider is configured.
+    labels = host.split(".")
+    if (
+        len(host) > 253
+        or len(labels) < 2
+        # Reject resolver-compatible decimal, octal and hexadecimal IPv4 forms.
+        or all(re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]+)", label) for label in labels)
+        or host.endswith((".local", ".localhost", ".internal", ".home.arpa"))
+        or any(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+            for label in labels
+        )
+    ):
+        raise PreflightFailure(f"{name} must use a public DNS hostname, not a local or IP destination.")
 
 
 def _validate_postgresql_url(value: str) -> None:

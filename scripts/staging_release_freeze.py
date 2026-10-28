@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -169,6 +170,9 @@ def clean_origin(value: str) -> str:
         is_ip_address = True
 
     labels = hostname.split(".")
+    # Resolvers may accept shortened, octal or hexadecimal IPv4 notation that
+    # ipaddress rejects (for example 127.1 and 0x7f.1). These are not DNS names.
+    numeric_address = all(re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]+)", label) for label in labels)
     public_dns_name = (
         hostname.isascii()
         and len(hostname) <= 253
@@ -193,6 +197,7 @@ def clean_origin(value: str) -> str:
         or parsed.query
         or parsed.fragment
         or is_ip_address
+        or numeric_address
         or not public_dns_name
         or internal_dns_name
         or port == 0
@@ -469,7 +474,10 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
     if not isinstance(cohort, dict) or not isinstance(declared_cohort, dict):
         raise StagingReleaseFreezeError("Runtime cohort manifest is missing.")
     if (
-        cohort.get("enforced") is not declared_cohort.get("enforced")
+        declared_cohort.get("enforced") is not True
+        or cohort.get("enforced") is not True
+        or type(declared_cohort.get("max_users")) is not int
+        or not 1 <= declared_cohort["max_users"] <= 25
         or type(cohort.get("max_users")) is not int
         or cohort.get("max_users") != declared_cohort.get("max_users")
         or not isinstance(cohort.get("configured_members"), int)
