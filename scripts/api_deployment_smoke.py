@@ -85,7 +85,10 @@ def check_api_deployment(
                 "backend_rules_and_spell_only",
                 "frontend_local_fallback",
             }
-            if reasons or analysis_profile in degraded_profiles:
+            if reasons or (
+                isinstance(analysis_profile, str)
+                and analysis_profile in degraded_profiles
+            ):
                 analysis_status = "degraded"
             elif analysis_profile == "full_local":
                 analysis_status = "ready"
