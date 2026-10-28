@@ -228,3 +228,40 @@ def test_pa10_freeze_rejects_malformed_provider_entries_without_crashing(invalid
     candidate["action_providers"] = ["google", "microsoft", invalid]
     with pytest.raises(freeze.StagingReleaseFreezeError, match="action_providers"):
         freeze.validate_rollout(candidate)
+
+
+# PA-10 synthetic-cohort and exact runtime type negative controls.
+def test_rollout_rejects_unenforced_staging_cohort():
+    candidate = rollout()
+    candidate["cohort"]["enforced"] = False
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.validate_rollout(candidate)
+
+
+@pytest.mark.parametrize(("capability", "spoofed"), [("coworker", 1), ("research", 0)])
+def test_runtime_rejects_numeric_capability_spoofing(tmp_path, capability, spoofed):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["capabilities"] = dict(observed["capabilities"])
+    observed["capabilities"][capability] = spoofed
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="capability"):
+        freeze.verify_runtime(state, observed)
+
+
+def test_runtime_rejects_boolean_cohort_user_limit(tmp_path):
+    candidate = rollout()
+    candidate["cohort"]["max_users"] = 1
+    path = write_json(tmp_path / "rollout.json", candidate)
+    policy_path = write_json(tmp_path / "policy.json", {"release_id": candidate["release_id"]})
+    state = freeze.prepare_state(
+        rollout_path=path,
+        provider_policy_path=policy_path,
+        expected_source_revision="a" * 40,
+        build_reference="build-1",
+        deployment_reference="deploy-1",
+        synthetic_account_reference="synthetic-1",
+    )
+    observed = runtime(state)
+    observed["cohort"] = dict(observed["cohort"], max_users=True, configured_members=1)
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.verify_runtime(state, observed)
