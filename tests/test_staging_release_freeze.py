@@ -265,3 +265,29 @@ def test_runtime_rejects_boolean_cohort_user_limit(tmp_path):
     observed["cohort"] = dict(observed["cohort"], max_users=True, configured_members=1)
     with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
         freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("unsafe_origin", [
+    "https://localhost",
+    "https://localhost:443",
+    "https://api.local",
+    "https://worker.internal",
+    "https://preview.localhost",
+    "https://metadata.google.internal",
+    "https://api.home.arpa",
+    "https://127.0.0.1",
+    "https://10.12.0.5",
+    "https://169.254.169.254",
+    "https://[::1]",
+    "https://api",
+    "https://stage.example.test:bad",
+    "https://stage.example.test:65536",
+])
+def test_release_verifier_rejects_private_or_malformed_token_destinations(unsafe_origin):
+    """An accidental local origin must not receive the staging bearer token."""
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="HTTPS origin"):
+        freeze.clean_origin(unsafe_origin)
+
+
+def test_release_verifier_accepts_public_tls_dns_origin():
+    assert freeze.clean_origin("https://api-staging.onrender.com") == "https://api-staging.onrender.com"
