@@ -291,3 +291,59 @@ def test_release_verifier_rejects_private_or_malformed_token_destinations(unsafe
 
 def test_release_verifier_accepts_public_tls_dns_origin():
     assert freeze.clean_origin("https://api-staging.onrender.com") == "https://api-staging.onrender.com"
+
+
+@pytest.mark.parametrize("unsafe_origin", [
+    "https://stage.example.test\\n",
+    "https://sta\\tge.example.test",
+    "https://stage.example.test\\r",
+])
+def test_release_verifier_rejects_control_characters_in_origin(unsafe_origin):
+    # urlparse strips CR, LF, and TAB, otherwise normalizing attacker-controlled input.
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="HTTPS origin"):
+        freeze.clean_origin(unsafe_origin)
+
+
+def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
+    # No external request: exercise the real verify command with a fake transport.
+    state = prepared(tmp_path)
+    state_path = write_json(tmp_path / "freeze-state.json", state)
+    output_path = tmp_path / "evidence.json"
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RELEASE_FREEZE", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://api-staging.onrender.com")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "synthetic-test-token")
+    monkeypatch.setenv("HTTPS_PROXY", "http://untrusted-proxy.invalid:8080")
+    monkeypatch.setenv("SSL_CERT_FILE", "/untrusted/ca.pem")
+    client_calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return runtime(state)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            client_calls.append(kwargs)
+            assert kwargs.get("trust_env") is False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, path):
+            assert path == "/api/v1/runtime-manifest"
+            return FakeResponse()
+
+    monkeypatch.setattr(freeze.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["staging_release_freeze", "verify", "--state", str(state_path),
+         "--output", str(output_path)],
+    )
+    freeze.main()
+    assert len(client_calls) == 1
+    assert json.loads(output_path.read_text())["status"] == "frozen"
