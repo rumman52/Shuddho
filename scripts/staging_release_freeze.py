@@ -244,7 +244,7 @@ def validate_rollout(rollout: dict) -> None:
         not isinstance(cohort, dict)
         or set(cohort) != {"reference", "enforced", "max_users"}
         or not text_ref(cohort.get("reference"))
-        or not isinstance(cohort.get("enforced"), bool)
+        or cohort.get("enforced") is not True
         or not isinstance(cohort.get("max_users"), int)
         or isinstance(cohort.get("max_users"), bool)
         or not 1 <= cohort["max_users"] <= 25
@@ -407,7 +407,12 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         )
 
     capabilities = runtime.get("capabilities")
-    if capabilities != state.get("declared_capabilities"):
+    if (
+        not isinstance(capabilities, dict)
+        or set(capabilities) != RUNTIME_CAPABILITY_KEYS
+        or any(type(value) is not bool for value in capabilities.values())
+        or capabilities != state.get("declared_capabilities")
+    ):
         raise StagingReleaseFreezeError(
             "Deployed capability set does not exactly match the reviewed staging rollout."
         )
@@ -423,6 +428,7 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         raise StagingReleaseFreezeError("Runtime cohort manifest is missing.")
     if (
         cohort.get("enforced") is not declared_cohort.get("enforced")
+        or type(cohort.get("max_users")) is not int
         or cohort.get("max_users") != declared_cohort.get("max_users")
         or not isinstance(cohort.get("configured_members"), int)
         or isinstance(cohort.get("configured_members"), bool)
