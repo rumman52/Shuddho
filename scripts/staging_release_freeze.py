@@ -220,7 +220,7 @@ def validate_rollout(rollout: dict) -> None:
         raise StagingReleaseFreezeError(
             "PA-10 staging rollout must use the exact reviewed schema."
         )
-    if rollout.get("schema_version") != SCHEMA_VERSION:
+    if type(rollout.get("schema_version")) is not int or rollout["schema_version"] != SCHEMA_VERSION:
         raise StagingReleaseFreezeError(
             "PA-10 staging rollout has an unexpected schema_version."
         )
@@ -233,6 +233,10 @@ def validate_rollout(rollout: dict) -> None:
     if str(environment).strip().lower() in PRODUCTION_ENVIRONMENTS:
         raise StagingReleaseFreezeError(
             "PA-10 release freeze is staging-only and rejects production."
+        )
+    if environment != "staging":
+        raise StagingReleaseFreezeError(
+            "PA-10 release freeze requires the exact staging environment."
         )
 
     cohort = rollout.get("cohort")
@@ -252,8 +256,8 @@ def validate_rollout(rollout: dict) -> None:
     providers = rollout.get("action_providers")
     if (
         not isinstance(providers, list)
+        or any(type(item) is not str or item not in ALLOWED_ACTION_PROVIDERS for item in providers)
         or len(providers) != len(set(providers))
-        or any(item not in ALLOWED_ACTION_PROVIDERS for item in providers)
     ):
         raise StagingReleaseFreezeError(
             "PA-10 staging action_providers are invalid."
@@ -374,9 +378,14 @@ def prepare_state(
 
 
 def verify_runtime(state: dict, runtime: dict) -> dict:
-    if state.get("schema_version") != SCHEMA_VERSION or state.get("status") != "prepared":
+    if (
+        type(state.get("schema_version")) is not int
+        or state["schema_version"] != SCHEMA_VERSION
+        or state.get("status") != "prepared"
+        or state.get("expected_environment") != "staging"
+    ):
         raise StagingReleaseFreezeError("Release-freeze state is invalid.")
-    if runtime.get("schema_version") != 1:
+    if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != 1:
         raise StagingReleaseFreezeError(
             "Runtime manifest schema_version is unsupported."
         )
