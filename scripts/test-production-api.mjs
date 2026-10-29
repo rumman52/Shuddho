@@ -10,6 +10,12 @@ const ORIGINS = new Set([
 ]);
 const SAMPLE_TEXT = "গত মাসে আমি আর আমার ভাই চিড়িয়াখানায় যাবে। সেখানে অনেকগুলো সুন্দর পাখিরা ছিল।";
 const SHA = /^[a-f\d]{40}$/i;
+const DEGRADED_ANALYSIS_PROFILES = new Set([
+  "backend_without_detector",
+  "backend_without_corrector",
+  "backend_rules_and_spell_only",
+  "frontend_local_fallback",
+]);
 const FLAGS = new Set([
   "--inspect-components",
   "--allow-synthetic-analysis",
@@ -118,7 +124,9 @@ async function main() {
   console.log(JSON.stringify({
     status: "passed",
     source_revision: version.commit.toLowerCase(),
-    analysis_status: health.degraded_reasons.length ? "degraded" : "ready",
+    analysis_status: health.degraded_reasons.length || DEGRADED_ANALYSIS_PROFILES.has(health.analysis_profile)
+      ? "degraded"
+      : health.analysis_profile === "full_local" ? "ready" : "unverified",
     scope: config.inferred ? "authorized_synthetic_provider_probe" : config.synthetic ? "authorized_deterministic_synthetic_probe" : "read_only_liveness_and_revision",
     release_qualified: false,
   }));

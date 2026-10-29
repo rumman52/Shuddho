@@ -1,6 +1,6 @@
-## Current release-blocker checkpoint — 27 October 2026 (Asia/Dhaka)
+## Current release-blocker checkpoint — 29 October 2026 (Asia/Dhaka)
 
-The **single canonical release-readiness handoff** is maintained at the top of [PROGRESS.md](PROGRESS.md), under “Current release-readiness handoff — 27 October 2026”. It records the exact main SHA and CI state, PR #582 verification, V-01 governance blocker, current Render production/staging identities, database expiry, and the dependency-ordered owner actions.
+The **single canonical release-readiness handoff** is maintained at the top of [PROGRESS.md](PROGRESS.md). It records the exact main and PR CI state, V-01 governance blocker, live-evidence limits, last-reported database expiry, and the dependency-ordered owner actions. Older dated sections are historical snapshots.
 
 Treat the historical planning baselines below as history, not current deployment or qualification evidence. Do not repeat already-merged source fixes merely because an older checkpoint labels them pending.
 

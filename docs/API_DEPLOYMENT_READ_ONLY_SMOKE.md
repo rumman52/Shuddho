@@ -51,6 +51,11 @@ the pinned production Shuddho host. The only alternative allowed host is the pin
 Shuddho staging host. It rejects redirect responses, invalid health/revision payloads,
 unexpected hosts, HTTP failures and network errors. No response body is printed.
 
+Its `analysis_status` follows the Python probe: `ready` requires an explicit
+`full_local` profile and no degradation reasons. A known partial profile or any
+degradation reason yields `degraded`; missing, malformed or unknown profiles yield
+`unverified`. A liveness pass with `unverified` analysis does not certify readiness.
+
 ```bash
 node scripts/test-production-api.mjs
 SHUDDHO_PRODUCTION_API_URL=https://shuddho-api-staging.onrender.com node scripts/test-production-api.mjs

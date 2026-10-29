@@ -1,3 +1,41 @@
+## Current continuation — 29 October 2026: verified freeze CI and Node smoke status
+
+This checkpoint supersedes earlier pending-source statements. Current main is
+`93ff94f0e60723652d2a1b523bf91198ebe3bd74`. Main
+[CI #40765226807](https://github.com/rumman52/Shuddho/actions/runs/40765226807)
+finished with application and coworker jobs successful, governance and merge gate failed.
+Native `main.protected=false`; independent release governance remains unresolved.
+
+- **Existing PR #593:** conflict resolved against current main; numeric IPv4 destination
+  bypass and legacy unenforced-cohort verification fixed after reproduced failures.
+  Published head `9e6b239dd38f12ea224162ceb7970708a71c3fda`, tested tree
+  `6d01540f2021d173990dc35ef36d744791b2a95c`. Exact-head
+  [CI #40767073310](https://github.com/rumman52/Shuddho/actions/runs/40767073310)
+  has `test-and-build=success`, `coworker=success`, `governance-audit=skipped` (PR event),
+  and `ci-merge-gate=failure` at the non-draft independent-review requirement.
+  Submitted reviews are empty. It remains draft/unmerged; successful code CI is not approval.
+- **New bounded fix:** `fix/api-node-smoke-analysis-status-20261029` aligns the Node
+  diagnostic with Python's `ready` / `degraded` / `unverified` contract. Empty degradation
+  reasons alone no longer imply readiness. [Task and evidence](API_NODE_SMOKE_STATUS_2026-10-29.md).
+  Ten new regression failures reproduced before the change; final probe suite **26 passed,
+  zero skips**; full `npm test`, syntax and diff checks passed. Separate read-only review
+  found no scoped issues. Its final-head remote CI remains pending publication.
+- **Live check:** the existing GET-only production probe could not reach `/health` from
+  this environment. No live health/analysis qualification is claimed and no POST was sent.
+- **External work still blocked:** #484 native protection/independent review/promotion;
+  #291 Render workspace confirmation, database continuity, persistent worker and Temporal/S3
+  credentials; #583 production readiness policy/live evidence; #584 telemetry/privacy policy;
+  real provider, recovery, multilingual quality and SLO qualification. The last-reported
+  Render database expiry is **31 October 2026 at 23:11:33 Asia/Dhaka**; no restorable backup
+  or retention action is verified. Supabase health does not establish Render DB continuity.
+- **Next:** inspect the new branch's exact-head CI and obtain independent human reviews.
+  Render owner confirms `Rumman` and resolves the imminent database retention decision;
+  repository owner enforces native checks before any merge or deployment. All 17 A/C/P/V
+  acceptance rows remain not fully qualified. No paid provisioning, secrets, provider
+  mutations, production configuration changes or activation occurred.
+
+---
+
 ## Review-only source fix — 29 October 2026: staging prerequisite HTTPS preflight
 
 - Starting `main`: `141d1f0f16655dcb4037cb32fafbae374aab42e1`. The final main CI [#40750231571](https://github.com/rumman52/Shuddho/actions/runs/40750231571) reports `test-and-build=success`, `coworker=success`, `governance-audit=failure` and `ci-merge-gate=failure`; `main.protected=false` and active rulesets are empty. **Not release qualified.**
