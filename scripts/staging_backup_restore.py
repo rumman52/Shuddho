@@ -81,8 +81,36 @@ def environment_fingerprints(container: Container) -> dict:
     }
 
 
+def _preflight_private_json_destination(path: Path) -> None:
+    """Validate the evidence destination before contacting or mutating staging."""
+    if path.exists() or path.is_symlink():
+        raise StagingReleaseEvidenceError(
+            "Refusing to overwrite existing private evidence file."
+        )
+    if not path.parent.is_dir():
+        raise StagingReleaseEvidenceError(
+            "Private evidence directory does not exist."
+        )
+
+    probe_path = path.parent / f".{path.name}.{uuid.uuid4().hex}.preflight"
+    try:
+        # Exercise the same private, atomic writer that will publish the final
+        # manifest. A predictable local write failure must not leave staging
+        # uploads, task records, or objects behind.
+        write_private_json(probe_path, {"preflight": True})
+    finally:
+        try:
+            probe_path.unlink(missing_ok=True)
+        except OSError as error:
+            raise StagingReleaseEvidenceError(
+                f"Could not clean up private evidence preflight file: {type(error).__name__}"
+            ) from None
+
+
 def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
+    release_context = prepared_release_context(settings, rollout_path)
+    _preflight_private_json_destination(state_path)
     owner = resolve_owner()
     container = Container.create(settings)
     marker = uuid.uuid4().hex
@@ -115,7 +143,7 @@ def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
         container.repository.cancel(owner, task["id"])
 
         state = {
-            "release_context": prepared_release_context(settings, rollout_path),
+            "release_context": release_context,
             "owner_id": owner,
             "document_id": upload["id"],
             "version_id": upload["version_id"],
