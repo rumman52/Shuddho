@@ -84,7 +84,8 @@ def _validate_https_endpoint(value: str, name: str) -> None:
     if (
         len(host) > 253
         or len(labels) < 2
-        or all(label.isdecimal() for label in labels)
+        # Reject resolver-compatible decimal, octal and hexadecimal IPv4 forms.
+        or all(re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]+)", label) for label in labels)
         or host.endswith((".local", ".localhost", ".internal", ".home.arpa"))
         or any(
             re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None

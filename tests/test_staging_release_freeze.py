@@ -195,3 +195,184 @@ def test_verify_rejects_capability_and_cohort_drift(tmp_path):
     observed["cohort"]["configured_members"] = 0
     with pytest.raises(freeze.StagingReleaseFreezeError, match="synthetic member"):
         freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("schema", [True, False, 1.0, "1"])
+def test_rollout_rejects_non_integer_schema_version(schema):
+    candidate = rollout()
+    candidate["schema_version"] = schema
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="schema_version"):
+        freeze.validate_rollout(candidate)
+
+
+@pytest.mark.parametrize("schema", [True, False, 1.0, "1"])
+def test_runtime_rejects_non_integer_schema_version(tmp_path, schema):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["schema_version"] = schema
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="schema_version"):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("environment", ["preview", "development", "production-preview", "test"])
+def test_pa10_freeze_rejects_non_staging_environment(environment):
+    candidate = rollout()
+    candidate["environment"] = environment
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="staging environment"):
+        freeze.validate_rollout(candidate)
+
+
+@pytest.mark.parametrize("invalid", [{}, ["google"], 42, None, True])
+def test_pa10_freeze_rejects_malformed_provider_entries_without_crashing(invalid):
+    candidate = rollout()
+    candidate["action_providers"] = ["google", "microsoft", invalid]
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="action_providers"):
+        freeze.validate_rollout(candidate)
+
+
+# PA-10 synthetic-cohort and exact runtime type negative controls.
+def test_rollout_rejects_unenforced_staging_cohort():
+    candidate = rollout()
+    candidate["cohort"]["enforced"] = False
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.validate_rollout(candidate)
+
+
+@pytest.mark.parametrize(("capability", "spoofed"), [("coworker", 1), ("research", 0)])
+def test_runtime_rejects_numeric_capability_spoofing(tmp_path, capability, spoofed):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["capabilities"] = dict(observed["capabilities"])
+    observed["capabilities"][capability] = spoofed
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="capability"):
+        freeze.verify_runtime(state, observed)
+
+
+def test_runtime_rejects_boolean_cohort_user_limit(tmp_path):
+    candidate = rollout()
+    candidate["cohort"]["max_users"] = 1
+    path = write_json(tmp_path / "rollout.json", candidate)
+    policy_path = write_json(tmp_path / "policy.json", {"release_id": candidate["release_id"]})
+    state = freeze.prepare_state(
+        rollout_path=path,
+        provider_policy_path=policy_path,
+        expected_source_revision="a" * 40,
+        build_reference="build-1",
+        deployment_reference="deploy-1",
+        synthetic_account_reference="synthetic-1",
+    )
+    observed = runtime(state)
+    observed["cohort"] = dict(observed["cohort"], max_users=True, configured_members=1)
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.verify_runtime(state, observed)
+
+
+def test_verify_rejects_legacy_unenforced_prepared_cohort(tmp_path):
+    state = prepared(tmp_path)
+    # Older prepare commands admitted this state; equality with the runtime
+    # must not turn an unenforced, empty cohort into frozen release evidence.
+    state["declared_cohort"]["enforced"] = False
+    observed = runtime(state)
+    observed["cohort"]["configured_members"] = 0
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("limit", [True, 1.0, 0, 26])
+def test_verify_rejects_invalid_prepared_cohort_limit(tmp_path, limit):
+    state = prepared(tmp_path)
+    state["declared_cohort"]["max_users"] = limit
+    observed = runtime(state)
+    observed["cohort"].update(max_users=int(limit), configured_members=1)
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("unsafe_origin", [
+    "https://localhost",
+    "https://localhost:443",
+    "https://api.local",
+    "https://worker.internal",
+    "https://preview.localhost",
+    "https://metadata.google.internal",
+    "https://api.home.arpa",
+    "https://127.0.0.1",
+    "https://10.12.0.5",
+    "https://169.254.169.254",
+    "https://[::1]",
+    "https://api",
+    "https://stage.example.test:bad",
+    "https://stage.example.test:65536",
+])
+def test_release_verifier_rejects_private_or_malformed_token_destinations(unsafe_origin):
+    """An accidental local origin must not receive the staging bearer token."""
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="HTTPS origin"):
+        freeze.clean_origin(unsafe_origin)
+
+
+def test_release_verifier_accepts_public_tls_dns_origin():
+    assert freeze.clean_origin("https://api-staging.onrender.com") == "https://api-staging.onrender.com"
+
+
+@pytest.mark.parametrize("host", [
+    "127.1", "127.0.1", "0177.0.0.1", "0x7f.0.0.1", "0x7f.1", "127.0x1",
+])
+def test_release_verifier_rejects_legacy_ipv4_forms(host):
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="HTTPS origin"):
+        freeze.clean_origin("https://" + host)
+
+
+@pytest.mark.parametrize("unsafe_origin", [
+    "https://stage.example.test\n",
+    "https://sta\tge.example.test",
+    "https://stage.example.test\r",
+])
+def test_release_verifier_rejects_control_characters_in_origin(unsafe_origin):
+    # urlparse strips CR, LF, and TAB, otherwise normalizing attacker-controlled input.
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="HTTPS origin"):
+        freeze.clean_origin(unsafe_origin)
+
+
+def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
+    # No external request: exercise the real verify command with a fake transport.
+    state = prepared(tmp_path)
+    state_path = write_json(tmp_path / "freeze-state.json", state)
+    output_path = tmp_path / "evidence.json"
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RELEASE_FREEZE", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://api-staging.onrender.com")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "synthetic-test-token")
+    monkeypatch.setenv("HTTPS_PROXY", "http://untrusted-proxy.invalid:8080")
+    monkeypatch.setenv("SSL_CERT_FILE", "/untrusted/ca.pem")
+    client_calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return runtime(state)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            client_calls.append(kwargs)
+            assert kwargs.get("trust_env") is False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, path):
+            assert path == "/api/v1/runtime-manifest"
+            return FakeResponse()
+
+    monkeypatch.setattr(freeze.httpx, "Client", FakeClient)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["staging_release_freeze", "verify", "--state", str(state_path),
+         "--output", str(output_path)],
+    )
+    freeze.main()
+    assert len(client_calls) == 1
+    assert json.loads(output_path.read_text())["status"] == "frozen"

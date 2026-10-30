@@ -36,3 +36,12 @@ def test_controlled_staging_endpoint_rejects_unsafe_destination(name, value):
 ])
 def test_controlled_staging_endpoint_preserves_public_https_provider_urls(name, value):
     preflight._validate_https_endpoint(value, name)
+
+
+@pytest.mark.parametrize("name", ["SHUDDHO_AUTH_ISSUER", "SHUDDHO_COWORKER_S3_ENDPOINT"])
+@pytest.mark.parametrize("host", [
+    "127.1", "127.0.1", "0177.0.0.1", "0x7f.0.0.1", "0x7f.1", "127.0x1",
+])
+def test_controlled_staging_endpoint_rejects_legacy_ipv4_forms(name, host):
+    with pytest.raises(preflight.PreflightFailure, match=name):
+        preflight._validate_https_endpoint("https://" + host + "/auth/v1", name)

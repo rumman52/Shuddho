@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -144,8 +146,48 @@ def env(name: str) -> str:
 
 
 def clean_origin(value: str) -> str:
+    # urlparse silently strips CR/LF/TAB and leading C0 bytes; reject them
+    # before parsing so a bearer-token destination is never normalized silently.
+    if not isinstance(value, str) or any(ord(char) <= 0x20 or ord(char) == 0x7F for char in value):
+        raise StagingReleaseFreezeError(
+            "SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin."
+        )
     clean = value.rstrip("/")
-    parsed = urlparse(clean)
+    try:
+        parsed = urlparse(clean)
+        hostname = parsed.hostname or ""
+        port = parsed.port  # Force validation of malformed/out-of-range ports.
+    except ValueError:
+        raise StagingReleaseFreezeError(
+            "SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin."
+        ) from None
+
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        is_ip_address = False
+    else:
+        is_ip_address = True
+
+    labels = hostname.split(".")
+    # Resolvers may accept shortened, octal or hexadecimal IPv4 notation that
+    # ipaddress rejects (for example 127.1 and 0x7f.1). These are not DNS names.
+    numeric_address = all(re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]+)", label) for label in labels)
+    public_dns_name = (
+        hostname.isascii()
+        and len(hostname) <= 253
+        and len(labels) >= 2
+        and all(
+            1 <= len(label) <= 63
+            and label[0].isalnum()
+            and label[-1].isalnum()
+            and all(char.isascii() and (char.isalnum() or char == "-") for char in label)
+            for label in labels
+        )
+    )
+    internal_dns_name = hostname.endswith(
+        (".localhost", ".local", ".internal", ".home.arpa")
+    )
     if (
         parsed.scheme != "https"
         or not parsed.netloc
@@ -154,6 +196,11 @@ def clean_origin(value: str) -> str:
         or parsed.password
         or parsed.query
         or parsed.fragment
+        or is_ip_address
+        or numeric_address
+        or not public_dns_name
+        or internal_dns_name
+        or port == 0
     ):
         raise StagingReleaseFreezeError(
             "SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin."
@@ -220,7 +267,7 @@ def validate_rollout(rollout: dict) -> None:
         raise StagingReleaseFreezeError(
             "PA-10 staging rollout must use the exact reviewed schema."
         )
-    if rollout.get("schema_version") != SCHEMA_VERSION:
+    if type(rollout.get("schema_version")) is not int or rollout["schema_version"] != SCHEMA_VERSION:
         raise StagingReleaseFreezeError(
             "PA-10 staging rollout has an unexpected schema_version."
         )
@@ -234,13 +281,17 @@ def validate_rollout(rollout: dict) -> None:
         raise StagingReleaseFreezeError(
             "PA-10 release freeze is staging-only and rejects production."
         )
+    if environment != "staging":
+        raise StagingReleaseFreezeError(
+            "PA-10 release freeze requires the exact staging environment."
+        )
 
     cohort = rollout.get("cohort")
     if (
         not isinstance(cohort, dict)
         or set(cohort) != {"reference", "enforced", "max_users"}
         or not text_ref(cohort.get("reference"))
-        or not isinstance(cohort.get("enforced"), bool)
+        or cohort.get("enforced") is not True
         or not isinstance(cohort.get("max_users"), int)
         or isinstance(cohort.get("max_users"), bool)
         or not 1 <= cohort["max_users"] <= 25
@@ -252,8 +303,8 @@ def validate_rollout(rollout: dict) -> None:
     providers = rollout.get("action_providers")
     if (
         not isinstance(providers, list)
+        or any(type(item) is not str or item not in ALLOWED_ACTION_PROVIDERS for item in providers)
         or len(providers) != len(set(providers))
-        or any(item not in ALLOWED_ACTION_PROVIDERS for item in providers)
     ):
         raise StagingReleaseFreezeError(
             "PA-10 staging action_providers are invalid."
@@ -374,9 +425,14 @@ def prepare_state(
 
 
 def verify_runtime(state: dict, runtime: dict) -> dict:
-    if state.get("schema_version") != SCHEMA_VERSION or state.get("status") != "prepared":
+    if (
+        type(state.get("schema_version")) is not int
+        or state["schema_version"] != SCHEMA_VERSION
+        or state.get("status") != "prepared"
+        or state.get("expected_environment") != "staging"
+    ):
         raise StagingReleaseFreezeError("Release-freeze state is invalid.")
-    if runtime.get("schema_version") != 1:
+    if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != 1:
         raise StagingReleaseFreezeError(
             "Runtime manifest schema_version is unsupported."
         )
@@ -398,7 +454,12 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         )
 
     capabilities = runtime.get("capabilities")
-    if capabilities != state.get("declared_capabilities"):
+    if (
+        not isinstance(capabilities, dict)
+        or set(capabilities) != RUNTIME_CAPABILITY_KEYS
+        or any(type(value) is not bool for value in capabilities.values())
+        or capabilities != state.get("declared_capabilities")
+    ):
         raise StagingReleaseFreezeError(
             "Deployed capability set does not exactly match the reviewed staging rollout."
         )
@@ -413,7 +474,11 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
     if not isinstance(cohort, dict) or not isinstance(declared_cohort, dict):
         raise StagingReleaseFreezeError("Runtime cohort manifest is missing.")
     if (
-        cohort.get("enforced") is not declared_cohort.get("enforced")
+        declared_cohort.get("enforced") is not True
+        or cohort.get("enforced") is not True
+        or type(declared_cohort.get("max_users")) is not int
+        or not 1 <= declared_cohort["max_users"] <= 25
+        or type(cohort.get("max_users")) is not int
         or cohort.get("max_users") != declared_cohort.get("max_users")
         or not isinstance(cohort.get("configured_members"), int)
         or isinstance(cohort.get("configured_members"), bool)
@@ -527,6 +592,8 @@ def main() -> None:
             base_url=base_url,
             timeout=20,
             follow_redirects=False,
+            # Never inherit proxy or alternate CA roots when sending a staging bearer token.
+            trust_env=False,
             headers={"Authorization": "Bearer " + token},
         ) as client:
             runtime = json_object(
