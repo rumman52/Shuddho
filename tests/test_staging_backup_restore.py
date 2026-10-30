@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import stat
 from types import SimpleNamespace
 
 import pytest
@@ -87,7 +89,7 @@ def _install_prepare_fakes(monkeypatch, calls):
 
         def create_upload(self, owner, request):
             calls.append("create_upload")
-            return {"id": "upload-id", "version_id": "version-id"}
+            return {"id": "00000000-0000-4000-8000-000000000001", "version_id": "00000000-0000-4000-8000-000000000002"}
 
         def get_upload(self, owner, upload_id):
             calls.append("get_upload")
@@ -174,4 +176,58 @@ def test_prepare_rejects_missing_state_directory_before_staging_mutations(monkey
         backup.prepare(settings, state_path, rollout_path)
 
     assert calls == []
+
+def test_prepare_preflights_state_destination_before_staging_mutations(monkeypatch, tmp_path):
+    settings = SimpleNamespace(source_revision="a" * 40)
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(
+        json.dumps({"release_id": "backup-restore-test-release"}),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "state.json"
+    calls = []
+    _install_prepare_fakes(monkeypatch, calls)
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
+
+    original_writer = backup.write_private_json
+    write_phases = []
+
+    def record_write(path, value):
+        write_phases.append(("preflight" if not calls else "after_remote", path))
+        original_writer(path, value)
+
+    monkeypatch.setattr(backup, "write_private_json", record_write)
+
+    result = backup.prepare(settings, state_path, rollout_path)
+
+    assert write_phases[0][0] == "preflight"
+    assert write_phases[0][1] != state_path
+    assert write_phases[-1] == ("after_remote", state_path)
+    assert result["document_id"] == "00000000-0000-4000-8000-000000000001"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["release_context"]["release_id"] == "backup-restore-test-release"
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    assert not list(tmp_path.glob(".state.json.*.preflight"))
+
+
+def test_prepare_rejects_symlink_state_path_before_staging_mutations(monkeypatch, tmp_path):
+    settings = SimpleNamespace(source_revision="a" * 40)
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(
+        json.dumps({"release_id": "backup-restore-test-release"}),
+        encoding="utf-8",
+    )
+    target_path = tmp_path / "existing.json"
+    target_path.write_text('{"existing":true}', encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    state_path.symlink_to(target_path)
+    calls = []
+    _install_prepare_fakes(monkeypatch, calls)
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
+
+    with pytest.raises(backup.StagingReleaseEvidenceError, match="Refusing to overwrite"):
+        backup.prepare(settings, state_path, rollout_path)
+
+    assert calls == []
+    assert target_path.read_text(encoding="utf-8") == '{"existing":true}'
 
