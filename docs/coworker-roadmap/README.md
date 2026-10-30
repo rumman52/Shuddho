@@ -1,9 +1,8 @@
-## Current release-readiness handoff — 30 October 2026 (Asia/Dhaka)
+## Current release-readiness handoff — 31 October 2026 (Asia/Dhaka)
 
-The current live platform and CI snapshot is [RELEASE_READINESS_REFRESH_2026-10-30.md](RELEASE_READINESS_REFRESH_2026-10-30.md). It supersedes older operational status claims where they conflict. [PROGRESS.md](PROGRESS.md) remains the long historical work log; its older dated sections are snapshots, not current deployment evidence.
+The latest live platform and CI snapshot is [RELEASE_READINESS_REFRESH_2026-10-31.md](RELEASE_READINESS_REFRESH_2026-10-31.md). It supersedes older operational status claims where they conflict. [CORE_AGENT_COMPLETION_LEDGER.md](CORE_AGENT_COMPLETION_LEDGER.md) contains the evidence-based status queue. [PROGRESS.md](PROGRESS.md) remains the long historical work log; older dated sections are snapshots, not current deployment evidence.
 
-Treat historical planning baselines below as history. Do not repeat already-merged source fixes merely because an older checkpoint labels them pending.
-
+Current main is 38c5b8d0d3eafa5692f848a5e664897a500fcfe2. Application and coworker CI pass; governance and merge gate fail. The staging database expires today, its actual data inventory is unknown because hosted read-only SQL is blocked by the empty IP allowlist, and no persistent staging worker exists. Shuddho remains NOT RELEASE-QUALIFIED.
 
 ---
 

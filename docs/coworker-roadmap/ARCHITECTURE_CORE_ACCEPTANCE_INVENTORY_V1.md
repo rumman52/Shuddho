@@ -1,9 +1,10 @@
-## Current acceptance refresh — 27 October 2026 (Asia/Dhaka)
+## Current acceptance refresh — 31 October 2026 (Asia/Dhaka)
 
-The canonical current source/CI, environment and blocker evidence is the top [PROGRESS handoff](PROGRESS.md). Main is `b9bd701b86709a74a3aae195f8ec1a834ecc31b9`, after owner merge of PR #582 without submitted reviews. Current-main application/build passed, governance failed, and coworker was still running at refresh. PR #582's code jobs passed but its independent-human-review gate failed. The separate continuation branch `test/pa10-database-resolution-execution-20261027` verifies the actual database-resolution shell before sensitive-info access and changes no production behavior.
+The canonical live source/CI, environment and blocker evidence is [RELEASE_READINESS_REFRESH_2026-10-31.md](RELEASE_READINESS_REFRESH_2026-10-31.md). Current main is 38c5b8d0d3eafa5692f848a5e664897a500fcfe2. Exact-main CI #41098651428 has test-and-build and coworker successful, but governance-audit and ci-merge-gate failed because native main protection is not confirmed.
 
-All **17 A/C/P/V rows remain not fully qualified**. Remaining requirements concern enforced governance, matching persistent staging infrastructure, real provider/security/recovery scenarios, human quality and operations evidence, and separately authorized release. Missing worker and the staging database expiry on **31 October 2026 at 23:11:33 Asia/Dhaka** are current blockers. Historical source tasks below must not be reimplemented solely because their older handoffs say pending.
+All **17 A/C/P/V rows remain not fully qualified**. The highest-priority external blockers are staging database continuity before its 31 October 2026 23:11:33 Asia/Dhaka expiry, native GitHub merge governance, the missing persistent staging worker, exact API/worker release consistency, production detector/corrector readiness, telemetry privacy approval, and real provider/recovery evidence. The hosted read-only database query is blocked by the empty external IP allowlist; the actual data inventory is unknown. Do not infer an empty database.
 
+Historical source tasks below must not be reimplemented solely because an older checkpoint says pending. No production activation is authorized by this inventory.
 ---
 
 ## Refreshed 25 October 2026 — post-PR #568 and deployment verification
