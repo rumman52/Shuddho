@@ -1,3 +1,19 @@
+## Current continuation — 31 October 2026: live release-readiness and staging continuity
+
+This is the latest Shuddho handoff and supersedes older operational claims below. Read [RELEASE_READINESS_REFRESH_2026-10-31.md](RELEASE_READINESS_REFRESH_2026-10-31.md) for exact evidence and owner actions.
+
+- Current main: 38c5b8d0d3eafa5692f848a5e664897a500fcfe2. PR #596 and #597 are merged; no open PRs were returned.
+- Exact-main CI #41098651428: test-and-build and coworker passed; governance-audit and ci-merge-gate failed. GitHub main reports protected=false and no active rulesets.
+- Render Free staging PostgreSQL 18 expires 31 October at 23:11:33 Asia/Dhaka. It has no backups/PITR; external SQL is blocked by the empty IP allowlist, so its data inventory is unknown. No database or network changes were made.
+- Staging API remains on 2 October source and no persistent worker exists. Production is live on current main but starts in degraded local analysis mode with detector/corrector disabled; health-check path is blank.
+- Supabase is healthy but has no public tables/migrations; PostHog has ingested no events; Vercel deployment verification is denied; Linear and ProductOS expose no Shuddho project.
+- Transaction regression steps passed in the coworker CI job, but real provider-side receipts, mutation counts, frozen staging identity and rollback drills remain unverified. All 17 A/C/P/V acceptance rows remain not fully qualified.
+- Current evidence comments were added to #291, #339, #378, #484, #583 and #584. No source, database, network, service, billing, secret, branch-rule, production, provider or telemetry setting changed.
+
+**Next priority:** owner-authorized staging database preservation before expiry, followed by native GitHub governance and the missing persistent worker. No production activation is authorized.
+
+---
+
 ## Current continuation — 29 October 2026: PR #593 conflict resolution and review fixes
 
 This checkpoint supersedes the pending-source claims below. Main at inspection is
