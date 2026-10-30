@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -139,3 +141,69 @@ def passed(evidence: str, context: dict, *, now: datetime | None = None) -> dict
         "source_revision": context["source_revision"],
         "rollout_manifest_sha256": context["rollout_manifest_sha256"],
     }
+
+def write_private_json(path: Path, value: dict) -> None:
+    """Atomically create a private JSON evidence file without overwriting existing data."""
+    try:
+        payload = json.dumps(value, indent=2) + "\n"
+    except (TypeError, ValueError):
+        raise StagingReleaseEvidenceError(
+            "Private evidence must be JSON-serializable."
+        ) from None
+
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+    except OSError as error:
+        raise StagingReleaseEvidenceError(
+            f"Could not create private evidence file: {type(error).__name__}"
+        ) from None
+
+    temporary_path = Path(temporary_name)
+    descriptor_open = True
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        handle = os.fdopen(descriptor, "w", encoding="utf-8", newline="\n")
+        descriptor_open = False
+        with handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        try:
+            # A same-directory hard link publishes the complete file atomically
+            # and fails if the target already exists; evidence is never clobbered.
+            os.link(temporary_path, path)
+        except FileExistsError:
+            raise StagingReleaseEvidenceError(
+                "Refusing to overwrite existing private evidence file."
+            ) from None
+        except OSError as error:
+            raise StagingReleaseEvidenceError(
+                f"Could not atomically publish private evidence file: {type(error).__name__}"
+            ) from None
+
+        if os.name == "posix":
+            directory_fd = os.open(
+                path.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    except StagingReleaseEvidenceError:
+        raise
+    except OSError as error:
+        raise StagingReleaseEvidenceError(
+            f"Could not write private evidence file: {type(error).__name__}"
+        ) from None
+    finally:
+        if descriptor_open:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
+

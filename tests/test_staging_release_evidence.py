@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -13,6 +15,7 @@ from scripts.staging_release_evidence import (
     release_context,
     sha256_file,
     validate_prepared_release_context,
+    write_private_json,
 )
 
 
@@ -87,3 +90,28 @@ def test_prepared_context_rejects_revision_or_rollout_relabel(tmp_path):
             other,
             now=datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc),
         )
+
+
+
+def test_write_private_json_creates_private_file_and_cleans_temporary_files(tmp_path):
+    target = tmp_path / "state.json"
+    payload = {"owner_id": "synthetic-owner", "resource": "staging"}
+
+    write_private_json(target, payload)
+
+    assert json.loads(target.read_text(encoding="utf-8")) == payload
+    if os.name == "posix":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert list(tmp_path.glob(".state.json.*.tmp")) == []
+
+
+def test_write_private_json_refuses_to_overwrite_existing_evidence(tmp_path):
+    target = tmp_path / "state.json"
+    original = '{"owner_id":"original"}\n'
+    target.write_text(original, encoding="utf-8")
+
+    with pytest.raises(StagingReleaseEvidenceError, match="Refusing to overwrite"):
+        write_private_json(target, {"owner_id": "replacement"})
+
+    assert target.read_text(encoding="utf-8") == original
+    assert list(tmp_path.glob(".state.json.*.tmp")) == []

@@ -131,6 +131,17 @@ jobs:
           name: pa10-deadline-recovery-evidence
           path: /tmp/pa10-deadline-recovery.xml
 
+      - name: Qualify staging backup/restore preflight before side effects
+        run: |
+          uv run --extra coworker pytest tests/test_staging_backup_restore.py -q -rs --junitxml=/tmp/staging-backup-restore-preflight.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/staging-backup-restore-preflight.xml --required-module tests.test_staging_backup_restore
+      - name: Keep staging backup/restore preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-backup-restore-preflight-evidence
+          path: /tmp/staging-backup-restore-preflight.xml
+
       - name: Qualify A-03 legacy Temporal history replay without skips
         env:
           SHUDDHO_TEMPORAL_HISTORY_ARTIFACT_DIR: /tmp/a03-temporal-history-replay
