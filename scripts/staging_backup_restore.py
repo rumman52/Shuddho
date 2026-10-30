@@ -15,6 +15,7 @@ from scripts.staging_release_evidence import (
     passed,
     prepared_release_context,
     validate_prepared_release_context,
+    write_private_json,
 )
 from services.coworker.config import Settings
 from services.coworker.container import Container
@@ -123,7 +124,7 @@ def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
             "byte_size": len(payload),
             "source_fingerprints": environment_fingerprints(container),
         }
-        state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        write_private_json(state_path, state)
         return {
             "document_id": upload["id"],
             "task_id": task["id"],
@@ -213,7 +214,7 @@ def verify(
             f"isolated PostgreSQL + private object restore matched synthetic manifest and SHA-256; backup_ref={backup_ref}; restore_ref={restore_ref}",
             context,
         )
-        evidence_path.write_text(json.dumps(base, indent=2) + "\n", encoding="utf-8")
+        write_private_json(evidence_path, base)
         return {"checks": {"backup_restore": "passed"}}
     finally:
         container.repository.sessions.kw["bind"].dispose()

@@ -77,6 +77,10 @@ The gate becomes `passed` only if:
 - the object-storage target differs from the source fingerprint;
 - non-empty backup and restore references are supplied.
 
+## Local evidence-file protection
+
+The prepare state manifest and verified evidence output are created atomically with POSIX mode 0600. The writer refuses to overwrite an existing target and removes its temporary file after publication. Keep both files in a private operator-controlled directory and do not upload them to public issue comments.
+
 ## Evidence boundaries
 
 The evidence file contains no JWTs, database URLs, storage endpoints, object keys, source bytes, or provider credentials.
