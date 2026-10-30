@@ -1,6 +1,25 @@
 # Core Agent completion ledger — evidence-based review snapshot
 
-**Baseline:** `ec4276d982d4efe89743f09afca0db762be3f05b` on `main`, inspected 28 October 2026 (Asia/Dhaka).  
+## Fresh live refresh — 30 October 2026 (Asia/Dhaka)
+
+**Current disposition: NOT RELEASE-QUALIFIED.** This refresh supersedes older platform-state claims where they conflict; the detailed evidence and owner actions are in [RELEASE_READINESS_REFRESH_2026-10-30.md](RELEASE_READINESS_REFRESH_2026-10-30.md).
+
+- Current `main`: `5ebe86d4119bc7222c08270b7e93e106d6f3a3cc`.
+- Main CI [#40896814667](https://github.com/rumman52/Shuddho/actions/runs/40896814667): `test-and-build=success`, `coworker=success`, `governance-audit=failure`, `ci-merge-gate=failure`. Governance audit reason: `main branch protection is not confirmed`.
+- PR #593 merged as current main even though its exact-head merge gate failed and its body recorded zero submitted reviews. Production Render auto-deployed that SHA.
+- V-01 [#484](https://github.com/rumman52/Shuddho/issues/484) was prematurely closed and has been reopened. The connected rulesets list was empty; legacy branch-protection detail was not readable by the connector.
+- PR #596 is open **draft**, head `4f725b5558769a2072782be4cb069e3a5c7b8394`, recorded base `93ff94f0e60723652d2a1b523bf91198ebe3bd74`, `mergeable=false`, no submitted reviews. Its exact-head CI #40861018712 passed application/coworker jobs but failed the review gate. Refresh against current main and obtain independent approval; do not merge.
+- Render Free staging Postgres `shuddho-staging-db` expires **2026-10-31 17:11:33.79468 UTC / 23:11:33.79468 Asia/Dhaka**. Official Render policy confirms Free Postgres has no backups/PITR/managed exports and becomes inaccessible at expiry, with a 14-day grace period to upgrade before deletion. Its `ipAllowList=[]` disables external access. This is **OWNER_ACTION_REQUIRED — URGENT**.
+- Staging API is a Free web service last deployed 2 October on `fce7276`; its health path/build/start differ from the reviewed Blueprint. No persistent staging worker exists. These remain **BLOCKED_EXTERNAL**.
+- Production API is Free, auto-deploys from `main`, has no configured health-check path, and the latest live deployment is current main. Startup logs report detector/corrector disabled and degraded local analysis mode. No live readiness result is claimed.
+- Supabase staging reports `ACTIVE_HEALTHY`; this does not establish Render DB backup or worker health. PostHog project 675660 has ingested no events; no telemetry was enabled. Vercel deployment-level access is restricted; Linear/ProductOS returned no Shuddho project.
+- GitHub comments were added to #484, #291, #583 and #584; #484 was reopened; PR #596 was returned to draft. No source code, service configuration, branch rules, secrets, billing, database data, telemetry or deployment was changed.
+
+P0-01 and P0-02 remain **OWNER_ACTION_REQUIRED**; P0-03/P0-04 remain **BLOCKED_EXTERNAL**; repository foundations in P0-05..07 and P1-01..07 remain **CODE_COMPLETE_UNQUALIFIED**; P1-08 remains **INCOMPLETE**. The 17 architecture/core acceptance rows remain not fully qualified. Do not replace these statuses with historical percentages.
+
+---
+
+**Historical baseline:** `ec4276d982d4efe89743f09afca0db762be3f05b` on `main`, inspected 28 October 2026 (Asia/Dhaka).  
 **Overall disposition:** **NOT RELEASE-QUALIFIED**. This ledger is a read-only status record plus reviewer/owner action queue, not approval for provisioning, promotion or activation.
 
 ## Evidence standard
