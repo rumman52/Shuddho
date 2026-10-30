@@ -1,8 +1,8 @@
-## Current release-blocker checkpoint — 27 October 2026 (Asia/Dhaka)
+## Current release-readiness handoff — 30 October 2026 (Asia/Dhaka)
 
-The **single canonical release-readiness handoff** is maintained at the top of [PROGRESS.md](PROGRESS.md), under “Current release-readiness handoff — 27 October 2026”. It records the exact main SHA and CI state, PR #582 verification, V-01 governance blocker, current Render production/staging identities, database expiry, and the dependency-ordered owner actions.
+The current live platform and CI snapshot is [RELEASE_READINESS_REFRESH_2026-10-30.md](RELEASE_READINESS_REFRESH_2026-10-30.md). It supersedes older operational status claims where they conflict. [PROGRESS.md](PROGRESS.md) remains the long historical work log; its older dated sections are snapshots, not current deployment evidence.
 
-Treat the historical planning baselines below as history, not current deployment or qualification evidence. Do not repeat already-merged source fixes merely because an older checkpoint labels them pending.
+Treat historical planning baselines below as history. Do not repeat already-merged source fixes merely because an older checkpoint labels them pending.
 
 
 ---
@@ -11,7 +11,7 @@ Treat the historical planning baselines below as history, not current deployment
 
 Reviewed on 12 October 2026 (Asia/Dhaka). Baseline: main `ed1467d3e9ce230d1a8d9b24fdfa5594ebc0df40`.
 
-Start with [ROADMAP.md](ROADMAP.md), then [CHATBOT_WORKFLOW.md](CHATBOT_WORKFLOW.md).
+Start with the [latest live release-readiness refresh — 30 October 2026](RELEASE_READINESS_REFRESH_2026-10-30.md), then [ROADMAP.md](ROADMAP.md) and [CHATBOT_WORKFLOW.md](CHATBOT_WORKFLOW.md). Older sections in [PROGRESS.md](PROGRESS.md) are historical snapshots; use the dated refresh for current platform state.
 For the requested three-stage execution, use [THREE_STEP_EXECUTION.md](THREE_STEP_EXECUTION.md)
 and refresh [PROGRESS.md](PROGRESS.md) before starting the next task.
 The versioned architecture/core acceptance tracker is [ARCHITECTURE_CORE_ACCEPTANCE_INVENTORY_V1.md](ARCHITECTURE_CORE_ACCEPTANCE_INVENTORY_V1.md).
