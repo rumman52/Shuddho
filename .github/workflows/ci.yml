@@ -133,7 +133,7 @@ jobs:
 
       - name: Qualify staging backup/restore preflight before side effects
         run: |
-          uv run --extra coworker pytest -q -rs --junitxml=/tmp/staging-backup-restore-preflight.xml
+          uv run --extra coworker pytest tests/test_staging_backup_restore.py -q -rs --junitxml=/tmp/staging-backup-restore-preflight.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/staging-backup-restore-preflight.xml --required-module tests.test_staging_backup_restore
       - name: Keep staging backup/restore preflight evidence
         if: always()
