@@ -15,7 +15,7 @@ writeFileSync(preload, [
   ' const route = new URL(url).pathname;',
   ' if (process.env.MOCK_THROW_SECRET === "1") throw new Error("api-key=DO_NOT_ECHO_IN_DIAGNOSTIC");',
   ' const status = process.env.MOCK_FAIL_VERSION === "1" && route === "/version" ? 503 : process.env.MOCK_REDIRECT === "1" && route === "/health" ? 302 : 200;',
-  ' const data = route === "/health" ? {ok:process.env.MOCK_BAD_HEALTH !== "1",service:"shuddho-api",status:"ok",degraded_reasons:[],secret:"DO_NOT_ECHO_API_PAYLOAD"} : route === "/version" ? {commit:process.env.MOCK_BAD_SHA === "1" ? "unknown" : "a".repeat(40)} : {diagnostics:{llm:{attempted:false}},suggestions:[]};',
+  ' const data = route === "/health" ? {ok:process.env.MOCK_BAD_HEALTH !== "1",service:"shuddho-api",status:"ok",degraded_reasons:[],secret:"DO_NOT_ECHO_API_PAYLOAD",...JSON.parse(process.env.MOCK_HEALTH_OVERRIDES ?? "{}")} : route === "/version" ? {commit:process.env.MOCK_BAD_SHA === "1" ? "unknown" : "a".repeat(40)} : {diagnostics:{llm:{attempted:false}},suggestions:[]};',
   ' return new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json"}});',
   '};',
 ].join("\n"));
@@ -26,6 +26,7 @@ function run(args = [], env = {}) {
   delete clean.SHUDDHO_PRODUCTION_API_URL;
   delete clean.SHUDDHO_PRODUCTION_WEB_ORIGIN;
   delete clean.SHUDDHO_PROVIDER_SMOKE_AUTHORIZED;
+  delete clean.MOCK_HEALTH_OVERRIDES;
   const p = spawnSync(process.execPath, ["--import", preload, script, ...args], {
     env: { ...clean, ...env }, encoding: "utf8", timeout: 3000,
   });
@@ -41,6 +42,30 @@ test("default is two read-only health/version GETs with redirects disabled", () 
   assert.deepEqual(routes(p), [["GET","/health"],["GET","/version"]]);
   assert.ok(p.records.every(x=>x.url.startsWith("https://shuddho-api.onrender.com/") && x.redirect === "manual"));
 });
+
+for (const [label, health, expected] of [
+  ["missing profile", {}, "unverified"],
+  ["unknown profile", {analysis_profile:"future_profile"}, "unverified"],
+  ["null profile", {analysis_profile:null}, "unverified"],
+  ["numeric profile", {analysis_profile:1}, "unverified"],
+  ["object profile", {analysis_profile:{}}, "unverified"],
+  ["array profile", {analysis_profile:[]}, "unverified"],
+  ["missing detector", {analysis_profile:"backend_without_detector"}, "degraded"],
+  ["missing corrector", {analysis_profile:"backend_without_corrector"}, "degraded"],
+  ["rules and spell only", {analysis_profile:"backend_rules_and_spell_only"}, "degraded"],
+  ["frontend fallback", {analysis_profile:"frontend_local_fallback"}, "degraded"],
+  ["full local", {analysis_profile:"full_local"}, "ready"],
+  ["full local with degradation", {analysis_profile:"full_local",degraded_reasons:["detector_disabled"]}, "degraded"],
+]) {
+  test(`analysis status is ${expected} for ${label}`, () => {
+    const p = run([], {MOCK_HEALTH_OVERRIDES:JSON.stringify(health)});
+    assert.equal(p.status, 0, p.stderr);
+    const summary = JSON.parse(p.stdout.trim().split("\n").at(-1));
+    assert.equal(summary.analysis_status, expected);
+    assert.equal(summary.release_qualified, false);
+    assert.deepEqual(routes(p), [["GET","/health"],["GET","/version"]]);
+  });
+}
 test("component inspection adds only safe GETs", () => {
   const p=run(["--inspect-components"]);
   assert.equal(p.status,0,p.stderr);
