@@ -85,7 +85,7 @@ async function submit(tree: ReactTestRenderer, inputId: string, text: string) {
 
 test("conversation link opens the exact owned run beyond the thirty-run history", async () => {
   await mounted(async (tree, data) => {
-    await act(async () => { button(tree.root, "View Agent runs").props.onClick(); });
+    await act(async () => { button(tree.root, "View Agent run").props.onClick(); });
     const details = tree.root.findByProps({ "aria-label": "Agent run details" });
     assert.equal(details.findByType("h2").children.join(""), "Exact older conversation result");
     assert.deepEqual(data.requests.runs, ["linked-old-run"]);
@@ -125,7 +125,7 @@ test("editing a lost-response title creates a new payload-bound request", async 
 
 test("a rejected linked run never falls back to unrelated recent work", async () => {
   await mounted(async (tree, data) => {
-    await act(async () => { button(tree.root, "View Agent runs").props.onClick(); });
+    await act(async () => { button(tree.root, "View Agent run").props.onClick(); });
     assert.equal(tree.root.findAllByProps({ "aria-label": "Agent run details" }).length, 0);
     assert.ok(tree.root.findAllByProps({ role: "alert" }).some(item => item.children.includes("Linked run unavailable")));
     assert.deepEqual(data.requests.runs, ["linked-old-run"]);
