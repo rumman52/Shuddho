@@ -245,7 +245,10 @@ def test_gemma_function_call_accepts_non_bangla_language_codes(monkeypatch):
         candidates=[],
         usage_metadata=None,
     )
-    _install_fake_sdk(monkeypatch, response=response)
+    calls = _install_fake_sdk(monkeypatch, response=response)
     result = run_gemma_check("Hola!", DEFAULT_GEMMA_MODEL, "test-key", request_id="r1")
     assert result["status"] == "completed_empty"
     assert result["documentAssessment"]["language"] == "es"
+    function_schema = calls[0]["config"].tools[0].function_declarations[0].parameters_json_schema
+    language_schema = function_schema["properties"]["documentAssessment"]["properties"]["language"]
+    assert language_schema["type"] == "string" and "enum" not in language_schema
