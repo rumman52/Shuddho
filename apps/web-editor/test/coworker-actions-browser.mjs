@@ -12,7 +12,7 @@ export async function verifyActions(page, folder) {
     callback.searchParams.set("code", "simulated-authorization-code");
     await route.fulfill({ status: 302, headers: { Location: callback.href } });
   });
-  await page.getByRole("button", { name: "Email & calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Approvals & integrations", exact: true }).click();
   const area = page.getByRole("region", { name: "Email and calendar actions", exact: true });
   const review = area.getByRole("region", { name: "Action review" });
   await area.getByRole("button", { name: "Connect Gmail", exact: true }).click();
@@ -53,7 +53,7 @@ export async function verifyActions(page, folder) {
   await review.getByRole("button", { name: "Approve & send email" }).click();
   await review.getByText("Accepted by Gmail", { exact: true }).waitFor({ timeout: 30000 });
   await page.reload();
-  await page.getByRole("button", { name: "Email & calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Approvals & integrations", exact: true }).click();
   await area.locator(".cw-history li").filter({ hasText: "অনুমোদিত প্রকল্পের অগ্রগতি" }).getByRole("button").click();
   await review.getByText("Accepted by Gmail", { exact: true }).waitFor();
   await review.getByText("Action history", { exact: true }).click();
@@ -101,5 +101,5 @@ export async function verifyActions(page, folder) {
   page.once("dialog", dialog => dialog.accept());
   await area.getByRole("button", { name: "Disconnect Gmail", exact: true }).click();
   await area.getByRole("button", { name: "Connect Gmail", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Drafts & files", exact: true }).click();
+  await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
 }

@@ -9,7 +9,17 @@ export default defineConfig({
   resolve: {
     alias: { "@shared": fileURLToPath(new URL("../../shared", import.meta.url)) },
   },
-  server: { host: "0.0.0.0", fs: { allow: [repositoryRoot] } },
+  server: {
+    host: "0.0.0.0",
+    fs: { allow: [repositoryRoot] },
+    proxy: {
+      "/backend": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/backend/, ""),
+      },
+    },
+  },
   preview: { host: "0.0.0.0" },
   build: { outDir: "dist", emptyOutDir: true },
 });

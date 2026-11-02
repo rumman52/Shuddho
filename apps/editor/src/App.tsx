@@ -1,11 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "./styles.css";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
 import WritingAssistant from "../../web-editor/src/App";
 import { ErrorBoundary } from "../../web-editor/src/components/ErrorBoundary";
-import { CoworkerClient, isTextArtifact, type Artifact, type CoworkerTask } from "../../web-editor/src/coworker/client";
+import { CoworkerClient, isTextArtifact, type Artifact, type CoworkerTask, type SourceDocument } from "../../web-editor/src/coworker/client";
 
 type ArtifactItem = { artifact: Artifact; task: CoworkerTask };
+type HandoffAttempt = {
+  fingerprint: string;
+  createKey: string;
+  messageKey: string;
+  uploaded?: SourceDocument;
+  sourceVersionId?: string;
+  conversationId?: string;
+};
 
 export default function App() {
   const auth = useMemo(() => getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY), []);
@@ -20,6 +29,7 @@ export default function App() {
   const [initialText, setInitialText] = useState<string | undefined>();
   const [openedArtifact, setOpenedArtifact] = useState("");
   const [editorText, setEditorText] = useState("");
+  const handoffAttempt = useRef<HandoffAttempt | null>(null);
   const onTextChange = useCallback((value: string) => setEditorText(value), []);
 
   const client = useMemo(() => auth && session ? new CoworkerClient(
@@ -110,30 +120,70 @@ export default function App() {
       setLibraryError("Add some text to the editor before sending it to Coworker.");
       return;
     }
+
+    const fingerprint = JSON.stringify({ userId: session?.user.id, text: editorText });
+    if (handoffAttempt.current?.fingerprint !== fingerprint) {
+      handoffAttempt.current = {
+        fingerprint,
+        createKey: crypto.randomUUID(),
+        messageKey: crypto.randomUUID(),
+      };
+    }
+    const attempt = handoffAttempt.current;
+    if (!attempt) {
+      setLibraryError("The handoff could not be initialized. Try again.");
+      return;
+    }
+    const firstLine = content.split(/\r?\n/).find(line => line.trim())?.trim() ?? "Editor draft";
+    const title = firstLine.slice(0, 80) || "Editor draft";
+
     setBusy("handoff");
     setLibraryError("");
     setNotice("");
     try {
-      const file = new File([editorText], "rukh-editor-draft.txt", { type: "text/plain" });
-      const uploaded = await client.upload(file);
-      const manifest = await client.workspaceManifest();
-      const source = manifest.documents.find(item => item.document_id === uploaded.id && item.available);
-      if (!source) throw new Error("The uploaded draft is not yet available as a verified workspace source. Refresh and try again.");
-      const firstLine = content.split(/\r?\n/).find(line => line.trim())?.trim() ?? "Editor draft";
-      const title = firstLine.slice(0, 80) || "Editor draft";
-      const conversation = await client.createConversation(title, crypto.randomUUID());
-      await client.appendConversationMessage(
-        conversation.id,
-        "I am handing off this editor draft for help. Please review the attached source, ask for missing context, and suggest the next useful step. Do not perform external actions without my explicit approval.",
-        crypto.randomUUID(),
-        [source.version_id],
-      );
+      // Validate the destination before uploading anything or creating server records.
       const destination = new URL(coworkerUrl, window.location.origin);
+      if (!["https:", "http:"].includes(destination.protocol) || destination.username || destination.password) {
+        throw new Error("The Coworker destination URL is invalid.");
+      }
       if (!import.meta.env.DEV && destination.origin !== window.location.origin) {
         throw new Error("Coworker must use the same origin as Editor so the authenticated workspace session is shared.");
       }
-      destination.searchParams.set("conversation", conversation.id);
+
+      // Preserve each successful stage across retries. The create/message idempotency
+      // keys also make retries safe when a server committed but its response was lost.
+      if (!attempt.uploaded) {
+        const file = new File([editorText], "rukh-editor-draft.txt", { type: "text/plain" });
+        attempt.uploaded = await client.upload(file);
+      }
+      const uploaded = attempt.uploaded;
+      if (!uploaded) throw new Error("The draft upload did not return a document record.");
+
+      if (!attempt.sourceVersionId) {
+        const manifest = await client.workspaceManifest();
+        const source = manifest.documents.find(item => item.document_id === uploaded.id && item.available);
+        if (!source) throw new Error("The uploaded draft is not yet available as a verified workspace source. Retry after the workspace manifest refreshes.");
+        attempt.sourceVersionId = source.version_id;
+      }
+      const sourceVersionId = attempt.sourceVersionId;
+      if (!sourceVersionId) throw new Error("The uploaded draft has no verified source version.");
+
+      if (!attempt.conversationId) {
+        const conversation = await client.createConversation(title, attempt.createKey);
+        attempt.conversationId = conversation.id;
+      }
+      const conversationId = attempt.conversationId;
+      if (!conversationId) throw new Error("The Coworker conversation was not created.");
+
+      await client.appendConversationMessage(
+        conversationId,
+        "I am handing off this editor draft for help. Please review the attached source, ask for missing context, and suggest the next useful step. Do not perform external actions without my explicit approval.",
+        attempt.messageKey,
+        [sourceVersionId],
+      );
+      destination.searchParams.set("conversation", conversationId);
       window.location.assign(destination.toString());
+      handoffAttempt.current = null;
     } catch (error) {
       setLibraryError(error instanceof Error ? error.message : "The handoff could not be completed.");
     } finally {
