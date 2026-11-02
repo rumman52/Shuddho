@@ -3,7 +3,9 @@ import argparse, asyncio, hashlib, json, math, os, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from services.coworker.config import Settings
+from services.coworker.content_generation import CONTENT_TASK_TYPES, PROMPT_VERSION, classify_content_task
 from services.coworker.drafting import DeepSeekDraftModel, DraftFailure
+from services.coworker.research import validate_evidence
 from services.coworker.schemas import parse_draft, source_references
 from services.coworker.skills import SKILLS
 
@@ -15,7 +17,7 @@ def sha256_file(path):
         for chunk in iter(lambda: handle.read(1024*1024),b""):
             digest.update(chunk)
     return digest.hexdigest()
-KEYS={"id","skill_id","language","instruction","sources","required_terms","forbidden_terms","required_source_ids","missing_information","empty_paths","draft"}
+KEYS={"id","skill_id","language","instruction","sources","required_terms","forbidden_terms","required_source_ids","missing_information","empty_paths","expected_task_type","draft"}
 
 def norm(v): return unicodedata.normalize("NFKC",v).casefold()
 def strings(v):
@@ -34,7 +36,8 @@ def load_cases(path):
         if not line.strip(): continue
         v=json.loads(line)
         if set(v)!=KEYS: raise ValueError(f"{path}:{n} invalid keys")
-        if v["skill_id"] not in SKILLS or v["skill_id"]=="research": raise ValueError(f"{path}:{n} invalid skill")
+        if v["skill_id"] not in SKILLS: raise ValueError(f"{path}:{n} invalid skill")
+        if v["expected_task_type"] not in CONTENT_TASK_TYPES: raise ValueError(f"{path}:{n} invalid expected_task_type")
         if v["missing_information"] not in {"empty","required"}: raise ValueError(f"{path}:{n} invalid missing_information")
         ids=[s.get("id") for s in v["sources"]]
         if not ids or len(ids)!=len(set(ids)) or not set(v["required_source_ids"]).issubset(ids): raise ValueError(f"{path}:{n} invalid sources")
@@ -42,15 +45,24 @@ def load_cases(path):
     if not out or len({x["id"] for x in out})!=len(out): raise ValueError("quality fixture empty or duplicate ids")
     return out
 def score(case,draft_value):
-    r={"id":case["id"],"skill_id":case["skill_id"],"language":case["language"],"passed":False,"checks":{},"facts_total":len(case["required_terms"]),"facts_matched":0}
+    r={"id":case["id"],"skill_id":case["skill_id"],"language":case["language"],
+       "task_type":case["expected_task_type"],"passed":False,"checks":{},
+       "facts_total":len(case["required_terms"]),"facts_matched":0}
     try: d=parse_draft(case["skill_id"],draft_value)
     except Exception as e:
         r["checks"]["schema_valid"]=False; r["error"]=type(e).__name__; return r
     p=d.model_dump(); r["checks"]["schema_valid"]=True
+    r["checks"]["task_type_match"]=classify_content_task(case["skill_id"],case["instruction"])==case["expected_task_type"]
     r["checks"]["language_match"]=d.output_language.lower()==case["language"].lower()
     available={s["id"] for s in case["sources"]}; refs=source_references(d)
     r["checks"]["source_reference_valid"]=refs.issubset(available)
     r["checks"]["required_source_coverage"]=set(case["required_source_ids"]).issubset(refs)
+    if case["skill_id"]=="research":
+        try:
+            validate_evidence(d,case["sources"])
+            r["checks"]["citation_validation"]=True
+        except (ValueError,TypeError,KeyError):
+            r["checks"]["citation_validation"]=False
     text=norm("\n".join(strings(p)))
     missing=[x for x in case["required_terms"] if norm(x) not in text]
     forbidden=[x for x in case["forbidden_terms"] if norm(x) in text]
@@ -69,7 +81,15 @@ def pct(values,f):
 def aggregate(mode,cases,results):
     passed=sum(x.get("passed",False) for x in results); total=sum(x.get("facts_total",0) for x in results); matched=sum(x.get("facts_matched",0) for x in results)
     lat=[x["latency_ms"] for x in results if isinstance(x.get("latency_ms"),int)]; tok=[x["tokens"] for x in results if isinstance(x.get("tokens"),int)]
-    return {"mode":mode,"cases":len(cases),"languages":sorted({x["language"] for x in cases}),"passed":passed,"failed":len(cases)-passed,"pass_rate":round(passed/len(cases),4),"required_fact_recall":round(matched/total,4) if total else 1.0,"p95_latency_ms":pct(lat,.95),"average_tokens":round(sum(tok)/len(tok),2) if tok else None,"failures":[x["id"] for x in results if not x.get("passed")],"results":results}
+    generations=[x.get("generation") for x in results if isinstance(x.get("generation"),dict)]
+    return {"mode":mode,"cases":len(cases),"languages":sorted({x["language"] for x in cases}),
+            "task_types":sorted({x["expected_task_type"] for x in cases}),
+            "prompt_versions":sorted({x["prompt_version"] for x in generations if x.get("prompt_version")}),
+            "models":sorted({x["model"] for x in generations if x.get("model")}),
+            "passed":passed,"failed":len(cases)-passed,"pass_rate":round(passed/len(cases),4),
+            "required_fact_recall":round(matched/total,4) if total else 1.0,
+            "p95_latency_ms":pct(lat,.95),"average_tokens":round(sum(tok)/len(tok),2) if tok else None,
+            "failures":[x["id"] for x in results if not x.get("passed")],"results":results}
 def evaluate_offline(cases): return aggregate("offline",cases,[score(c,c["draft"]) for c in cases])
 def live_settings():
     return Settings(database_url="sqlite://",auth_issuer="https://identity.example.test/auth/v1",environment="development",storage_backend="local",work_services_enabled=True,artifact_services_enabled=True,deepseek_model=os.environ.get("DEEPSEEK_MODEL","deepseek-flash"),deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY",""))
@@ -78,10 +98,23 @@ async def evaluate_live(cases):
     out=[]
     for c in cases:
         m=DeepSeekDraftModel(settings,skill_id=c["skill_id"]); ids={s["id"] for s in c["sources"]}
+        messages=m.messages({"instruction":c["instruction"],"output_language":c["language"]},c["sources"])
+        prompt_sha256=hashlib.sha256(json.dumps(messages,ensure_ascii=False,sort_keys=True,separators=(",",":")).encode("utf-8")).hexdigest()
         try:
-            x=await m.generate(m.messages({"instruction":c["instruction"],"output_language":c["language"]},c["sources"]),c["language"],ids)
-            y=score(c,x.draft.model_dump()); y["tokens"]=x.total_tokens; y["latency_ms"]=x.latency_ms; out.append(y)
-        except DraftFailure as e: out.append({"id":c["id"],"skill_id":c["skill_id"],"language":c["language"],"passed":False,"model_error":e.code,"tokens":e.total_tokens,"latency_ms":None,"facts_total":len(c["required_terms"]),"facts_matched":0,"checks":{"model_generation":False}})
+            x=await m.generate(messages,c["language"],ids)
+            y=score(c,x.draft.model_dump())
+            y["tokens"]=x.total_tokens; y["latency_ms"]=x.latency_ms
+            y["generation"]=x.generation_metadata(validator_result="passed")
+            out.append(y)
+        except DraftFailure as e:
+            out.append({"id":c["id"],"skill_id":c["skill_id"],"language":c["language"],
+                        "task_type":c["expected_task_type"],"passed":False,"model_error":e.code,
+                        "tokens":e.total_tokens,"latency_ms":None,"facts_total":len(c["required_terms"]),
+                        "facts_matched":0,"checks":{"model_generation":False},
+                        "generation":{"provider":"deepseek","model":settings.deepseek_model,
+                                      "prompt_version":PROMPT_VERSION,"prompt_sha256":prompt_sha256,
+                                      "task_type":c["expected_task_type"],"validator_result":"failed",
+                                      "error_class":e.code}})
     return aggregate("live",cases,out)
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--cases",type=Path,default=DEFAULT_CASES); p.add_argument("--live",action="store_true"); p.add_argument("--release-id",default="ci-quality-contract"); p.add_argument("--rollout",type=Path); p.add_argument("--min-pass-rate",type=float,default=1.0); p.add_argument("--min-fact-recall",type=float,default=1.0); p.add_argument("--max-average-tokens",type=float); p.add_argument("--max-p95-latency-ms",type=int); p.add_argument("--output",type=Path); a=p.parse_args()
