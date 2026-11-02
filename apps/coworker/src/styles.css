@@ -34,8 +34,6 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
 .cw-secondary { border-color: var(--cw-border); color: var(--cw-text); }
 .rukh-cw-shell { display: grid; grid-template-columns: 218px minmax(0, 1fr); gap: 20px; align-items: start; }
 .rukh-cw-sidebar { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 18px; min-width: 0; padding: 14px; border: 1px solid var(--cw-border); border-radius: 17px; background: var(--cw-surface); box-shadow: var(--rukh-shadow-sm); }
-.rukh-cw-new { display: flex; align-items: center; gap: 9px; width: 100%; padding: 11px 12px; border: 1px solid var(--cw-border); border-radius: 10px; background: var(--cw-surface); color: var(--cw-text); text-align: left; font-size: 12px; font-weight: 650; cursor: pointer; }
-.rukh-cw-new span { color: var(--cw-accent); font-size: 18px; line-height: 1; }
 .rukh-cw-nav-group { display: grid; gap: 4px; }
 .rukh-cw-nav-label { padding: 0 9px 5px; color: var(--cw-muted); font-size: 9px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
 .rukh-cw-nav-item { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 9px; border-radius: 9px; background: transparent; color: #656b63; text-align: left; font-size: 12px; cursor: pointer; }
