@@ -13,9 +13,9 @@
   --shadow-sm: var(--rukh-shadow-sm, 0 1px 2px #191e180a);
   --shadow-md: var(--rukh-shadow-md, 0 12px 36px #191e1814);
 }
-html, body, #root { width: 100%; height: 100%; min-width: 320px; min-height: 0; }
-body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: var(--rukh-text, #20221f); font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif); }
-.rukh-editor-app { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); }
+html, body, #root { min-width: 320px; }
+body { margin: 0; background: var(--rukh-bg, #f7f7f5); color: var(--rukh-text, #20221f); font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif); }
+.rukh-editor-app { display: flex; flex-direction: column; width: 100%; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); }
 .rukh-editor-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 0 clamp(14px, 2.5vw, 30px); border-bottom: 1px solid var(--rukh-border); background: var(--rukh-surface); }
 .rukh-editor-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--rukh-text); text-decoration: none; }
 .rukh-editor-brand > span:last-child strong, .rukh-editor-brand > span:last-child small { display: block; }
@@ -66,7 +66,6 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: 
   .rukh-editor-canvas .review-toggle { display: none; }
 }
 @media (max-width: 820px) {
-  body { overflow: hidden; }
   .rukh-editor-content { display: flex; flex-direction: column; overflow: auto; }
   .rukh-editor-canvas { flex: 0 0 720px; min-height: 720px; overflow: hidden; }
   .rukh-editor-canvas .app-shell { min-height: 720px; }
