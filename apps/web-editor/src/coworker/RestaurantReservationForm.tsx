@@ -101,7 +101,7 @@ export default function RestaurantReservationForm({
   return <form onSubmit={submit}>
     <h3>New OpenTable reservation review</h3>
     <p className="cw-fineprint">
-      Shuddho checks the exact requested slot first. Creating this review does not book a table.
+      Rukh AI checks the exact requested slot first. Creating this review does not book a table.
       Only a later separately approved ExternalAction can submit one standard no-payment reservation.
     </p>
     {error && <p className="cw-error" role="alert">{error}</p>}
@@ -142,14 +142,14 @@ export default function RestaurantReservationForm({
     </label>
     <label className="cw-approval-check">
       <input type="checkbox" checked={contactSharing} required onChange={event => setContactSharing(event.target.checked)} />
-      I authorize Shuddho to send the guest name, email and phone entered above to OpenTable for this reservation and its confirmation.
+      I authorize Rukh AI to send the guest name, email and phone entered above to OpenTable for this reservation and its confirmation.
     </label>
 
     <button className="cw-primary" type="submit" disabled={busy || !termsAccepted || !contactSharing}>
       {busy ? "Checking exact availability…" : "Check availability & create review"}
     </button>
     <p className="cw-fineprint">
-      TX-06 excludes credit-card, deposit, hold, prepayment and experience inventory. If the provider requires payment, Shuddho will not escalate into a payment flow.
+      TX-06 excludes credit-card, deposit, hold, prepayment and experience inventory. If the provider requires payment, Rukh AI will not escalate into a payment flow.
     </p>
   </form>;
 }
