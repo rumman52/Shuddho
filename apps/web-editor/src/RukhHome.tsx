@@ -34,11 +34,11 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
       <main className="rukh-home-main">
         <section className="rukh-home-intro" aria-labelledby="rukh-home-title">
           <div className="rukh-home-intro-copy">
-            <h1 id="rukh-home-title">Make space for the work that matters.</h1>
+            <h1 id="rukh-home-title">Think clearly. Move work forward.</h1>
             <p>Rukh brings thoughtful writing and hands-on work into one place. Choose the workspace that fits what you need to do next.</p>
           </div>
           <aside className="rukh-home-intro-note" aria-label="Rukh AI approach">
-            <p>Think clearly.<br />Move deliberately.</p>
+            <p>Writing and execution,<br />connected.</p>
             <span>RUKH AI / WORKSPACE</span>
           </aside>
         </section>
@@ -51,25 +51,27 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
             </div>
             <div className="rukh-home-product-copy">
               <h2>Co-workers</h2>
-              <p>Give multi-step work to an AI teammate that keeps the brief, source files and conversation together. Review the result before you take it further.</p>
+              <p>Delegate multi-step work to an AI teammate that keeps the brief, source files and conversation together. Review each result before deciding what happens next.</p>
             </div>
-            <div className="rukh-home-flow" aria-label="Illustrative Co-workers workflow">
+            <div className="rukh-home-flow">
               <p className="rukh-home-flow-title">From brief to review</p>
-              <div className="rukh-home-flow-step">
-                <span className="rukh-home-flow-symbol"><FlowDocumentIcon /></span>
-                <span className="rukh-home-flow-copy"><strong>Understand the brief</strong><small>Keep context and source material together</small></span>
-                <span className="rukh-home-flow-state"><StepArrowIcon /></span>
-              </div>
-              <div className="rukh-home-flow-step">
-                <span className="rukh-home-flow-symbol"><CoworkerIcon /></span>
-                <span className="rukh-home-flow-copy"><strong>Prepare the work</strong><small>Organize, research and draft</small></span>
-                <span className="rukh-home-flow-state"><StepArrowIcon /></span>
-              </div>
-              <div className="rukh-home-flow-step">
-                <span className="rukh-home-flow-symbol"><EditorIcon /></span>
-                <span className="rukh-home-flow-copy"><strong>Bring it back for review</strong><small>You decide what happens next</small></span>
-                <span className="rukh-home-flow-state"><StepArrowIcon /></span>
-              </div>
+              <ol className="rukh-home-flow-list" aria-label="Illustrative Co-workers workflow">
+                <li className="rukh-home-flow-step">
+                  <span className="rukh-home-flow-symbol"><FlowDocumentIcon /></span>
+                  <span className="rukh-home-flow-copy"><strong>Understand the brief</strong><small>Keep context and source material together</small></span>
+                  <span className="rukh-home-flow-state"><StepArrowIcon /></span>
+                </li>
+                <li className="rukh-home-flow-step">
+                  <span className="rukh-home-flow-symbol"><CoworkerIcon /></span>
+                  <span className="rukh-home-flow-copy"><strong>Prepare the work</strong><small>Organize, research and draft</small></span>
+                  <span className="rukh-home-flow-state"><StepArrowIcon /></span>
+                </li>
+                <li className="rukh-home-flow-step">
+                  <span className="rukh-home-flow-symbol"><EditorIcon /></span>
+                  <span className="rukh-home-flow-copy"><strong>Bring it back for review</strong><small>You decide what happens next</small></span>
+                  <span className="rukh-home-flow-state"><StepArrowIcon /></span>
+                </li>
+              </ol>
             </div>
             <div className="rukh-home-product-footer">
               <p>{coworkerEnabled ? "Your brief stays connected to the work." : "Access is limited while the staged release continues."}</p>
@@ -84,9 +86,9 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
             </div>
             <div className="rukh-home-product-copy">
               <h2>Web Editor</h2>
-              <p>Shape ideas into clear writing with spelling, grammar, clarity and AI review beside your draft.</p>
+              <p>Write and refine in a multilingual workspace with spelling, grammar, clarity and contextual AI review alongside your draft.</p>
             </div>
-            <div className="rukh-home-editor-preview" aria-label="Web Editor writing preview">
+            <div className="rukh-home-editor-preview" aria-hidden="true">
               <div className="rukh-home-editor-preview-heading"><span>UNTITLED DOCUMENT</span><span>DRAFT</span></div>
               <h3>A thought, made clear.</h3>
               <p>Good writing gives an idea the structure it needs to travel. Refine the words without losing the meaning.</p>

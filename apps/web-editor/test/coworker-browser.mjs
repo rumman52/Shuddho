@@ -32,7 +32,16 @@ await page.route("https://identity.example.test/auth/v1/**", async route => {
 
 try {
   await page.goto("http://127.0.0.1:5173/");
-  await page.getByRole("button", { name: "Coworker", exact: true }).click();
+  await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
+  await page.getByRole("heading", { name: "Co-workers", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: join(folder, "screenshots/rukh-home-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: join(folder, "screenshots/rukh-home-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1365, height: 960 });
+  await page.getByRole("link", { name: "Co-workers", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   await page.screenshot({ path: join(folder, "screenshots/signin.png"), fullPage: true });
   await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
@@ -49,9 +58,25 @@ try {
   await page.getByLabel("Output language").selectOption("bn");
   await page.getByRole("button", { name: "Create report & email draft" }).click();
   await page.getByRole("region", { name: "Task result" }).waitFor();
-  await page.getByRole("button", { name: /^Editor/ }).click();
-  assert.equal(await page.locator(".workspace-writing").isVisible(), true);
-  await page.getByRole("button", { name: "Coworker", exact: true }).click();
+  const editorPagePromise = context.waitForEvent("page");
+  await page.getByRole("link", { name: "Web Editor", exact: true }).click();
+  const editorPage = await editorPagePromise;
+  editorPage.on("pageerror", error => failures.push(error.message));
+  await editorPage.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
+  await editorPage.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await editorPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await editorPage.screenshot({ path: join(folder, "screenshots/editor-mobile.png"), fullPage: true });
+  await editorPage.setViewportSize({ width: 1365, height: 960 });
+  const coworkerPagePromise = context.waitForEvent("page");
+  await editorPage.getByRole("link", { name: "Open Co-workers", exact: true }).click();
+  const coworkerPage = await coworkerPagePromise;
+  coworkerPage.on("pageerror", error => failures.push(error.message));
+  await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  await coworkerPage.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await coworkerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await coworkerPage.screenshot({ path: join(folder, "screenshots/coworker-switch-mobile.png"), fullPage: true });
+  await editorPage.close();
+  await coworkerPage.close();
   await page.reload();
   await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
   const result = page.getByRole("region", { name: "Task result" });

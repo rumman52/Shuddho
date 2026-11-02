@@ -87,7 +87,7 @@ export default function App() {
       .slice(0, 12),
   [tasks]);
 
-  const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:5174" : "/coworker");
+  const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? "/coworker";
 
   async function openArtifact(item: ArtifactItem) {
     if (!client || busy) return;
@@ -198,16 +198,16 @@ export default function App() {
     <ErrorBoundary>
       <div className="rukh-editor-app">
         <header className="rukh-editor-topbar">
-          <a className="rukh-editor-brand" href="/" aria-label="Rukh AI workspace home">
+          <a className="rukh-editor-brand" href="/" aria-label="Rukh AI workspace home" target="_blank" rel="noreferrer">
             <span className="rukh-brand-mark" aria-hidden="true">r</span>
             <span><strong>Rukh AI</strong><small>Web Editor</small></span>
           </a>
           <div className="rukh-editor-top-actions">
             {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
-            <a href="/" className="rukh-workspace-home">All workspaces</a>
+            <a href="/" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
             {coworkerEnabled && <>
               <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
-                {busy === "handoff" ? "Sending…" : "Send to Coworker ↗"}
+                {busy === "handoff" ? "Sending…" : "Send to Co-workers ↗"}
               </button>
               <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">Open Co-workers</a>
             </>}
@@ -222,8 +222,8 @@ export default function App() {
               <div><span>WORKSPACE</span><h2>Recent files</h2></div>
               <button type="button" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
             </div>
-            {!auth && <div className="rukh-library-empty"><p>Connect your workspace sign-in to browse saved Coworker files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open Coworker</a></div>}
-            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to Coworker to see your recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to Coworker ↗</a></div>}
+            {!auth && <div className="rukh-library-empty"><p>Connect your workspace sign-in to browse saved Co-workers files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open Co-workers</a></div>}
+            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to Co-workers to see your recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to Co-workers ↗</a></div>}
             {authLoading && <p className="rukh-library-muted">Restoring your workspace session…</p>}
             {libraryError && <p className="rukh-library-error" role="alert">{libraryError}</p>}
             {notice && <p className="rukh-library-notice" role="status">{notice}</p>}
