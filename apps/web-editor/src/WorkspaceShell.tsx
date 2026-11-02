@@ -16,10 +16,7 @@ const EditorStandalone = lazy(() => import("../../editor/src/App"));
 
 export default function WorkspaceShell() {
   const route = typeof window === "undefined" ? "default" : getStandaloneAppRoute(window.location.pathname);
-  if (route === "coworker") return <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh AI Coworker…</p>}><CoworkerStandalone /></Suspense>;
-  if (route === "editor" || import.meta.env.VITE_COWORKER_ENABLED !== "true") return <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh Editor…</p>}><EditorStandalone /></Suspense>;
-
-  const [active, setActive = useState<"writing" | "coworker">(() => {
+  const [active, setActive] = useState<"writing" | "coworker">(() => {
     if (typeof window === "undefined") return "writing";
     if (requestedNotificationView(window.location.search) || hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback() || window.location.hash.includes("type=recovery") || new URLSearchParams(window.location.search).has("code")) return "coworker";
     try { return sessionStorage.getItem("shuddho:workspace:tab") === "coworker" ? "coworker" : "writing"; } catch { return "writing"; }
@@ -30,7 +27,10 @@ export default function WorkspaceShell() {
     if (tab === "coworker") setOpened(true);
     try { sessionStorage.setItem("shuddho:workspace:tab", tab); } catch { /* Navigation works without storage. */ }
   };
-  if (import.meta.env.VITE_COWORKER_ENABLED !== "true") return <App />;
+
+  if (route === "coworker") return <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh AI Coworker…</p>}><CoworkerStandalone /></Suspense>;
+  if (route === "editor" || import.meta.env.VITE_COWORKER_ENABLED !== "true") return <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh Editor…</p>}><EditorStandalone /></Suspense>;
+
   return <div className="workspace-shell">
     <nav className="workspace-nav" aria-label="Rukh AI workspace">
       <span className="workspace-wordmark">rukh<span> / workspace</span></span>
