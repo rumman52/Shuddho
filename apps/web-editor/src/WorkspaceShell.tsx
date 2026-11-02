@@ -23,7 +23,7 @@ export default function WorkspaceShell() {
   };
   if (import.meta.env.VITE_COWORKER_ENABLED !== "true") return <App />;
   return <div className="workspace-shell">
-    <nav className="workspace-nav" aria-label="Shuddho workspace">
+    <nav className="workspace-nav" aria-label="Rukh AI workspace">
       <span className="workspace-wordmark">rukh<span> / workspace</span></span>
       <div className="workspace-tabs">
         <button type="button" aria-pressed={active === "writing"} onClick={() => select("writing")}>Editor <small>Writing</small></button>
