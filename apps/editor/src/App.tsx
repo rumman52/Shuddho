@@ -85,7 +85,7 @@ export default function App() {
       .slice(0, 12),
   [tasks]);
 
-  const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? "/coworker";
+  const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:5174" : "/coworker");
 
   async function openArtifact(item: ArtifactItem) {
     if (!client || busy) return;
