@@ -230,10 +230,14 @@ test("CW-10 model source drafts are explicit owner requests, not sandbox dispatc
   } finally { globalThis.fetch = original; }
 });
 
-test("text artifact reader fetches only the authenticated owner-bound content route", async () => {
+test("text artifact reader fetches only the authenticated owner-bound content route and verifies its digest", async () => {
   const original = globalThis.fetch;
   const seen: { url: string; options?: RequestInit }[] = [];
   const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const content = "# Reviewed draft\nবাংলা text";
+  const bytes = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
   globalThis.fetch = (async (url, options) => {
     seen.push({ url: String(url), options });
     if (String(url).endsWith(`/artifacts/${id}/download`)) {
@@ -242,16 +246,16 @@ test("text artifact reader fetches only the authenticated owner-bound content ro
       });
     }
     if (String(url).endsWith(`/artifacts/${id}/content`)) {
-      return new Response("# Reviewed draft\nবাংলা text", { headers: { "Content-Type": "text/markdown; charset=utf-8" } });
+      return new Response(content, { headers: { "Content-Type": "text/markdown; charset=utf-8" } });
     }
     throw new Error("Unexpected artifact route");
   }) as typeof fetch;
   try {
     const client = new CoworkerClient("/backend", async () => "owner-artifact-token");
-    const content = await client.readTextArtifact({
-      id, filename: "review.md", content_type: "text/markdown", byte_size: 28, sha256: "a".repeat(64),
+    const result = await client.readTextArtifact({
+      id, filename: "review.md", content_type: "text/markdown", byte_size: bytes.byteLength, sha256,
     });
-    assert.equal(content, "# Reviewed draft\nবাংলা text");
+    assert.equal(result, content);
     assert.equal(seen.length, 2);
     assert.equal(seen[0].url, `/backend/api/v1/artifacts/${id}/download`);
     assert.equal(seen[1].url, `/backend/api/v1/artifacts/${id}/content`);
@@ -260,6 +264,55 @@ test("text artifact reader fetches only the authenticated owner-bound content ro
       assert.equal(request.options?.credentials, "omit");
       assert.equal(request.options?.redirect, "error");
     }
+  } finally { globalThis.fetch = original; }
+});
+
+test("text artifact reader ignores signed storage URLs and still uses the owner-authenticated content route", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const content = "A plain text result";
+  const bytes = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    if (String(url).endsWith(`/artifacts/${id}/download`)) {
+      return new Response(JSON.stringify({ url: "https://objects.example/signed-download", content_path: null }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith(`/artifacts/${id}/content`)) {
+      return new Response(content, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    }
+    throw new Error("Unexpected artifact route");
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-artifact-token");
+    assert.equal(await client.readTextArtifact({
+      id, filename: "notes.txt", content_type: "text/plain", byte_size: bytes.byteLength, sha256,
+    }), content);
+    assert.deepEqual(seen.map(request => request.url), [
+      `/backend/api/v1/artifacts/${id}/download`,
+      `/backend/api/v1/artifacts/${id}/content`,
+    ]);
+    assert.ok(seen.every(request => new Headers(request.options?.headers).get("Authorization") === "Bearer owner-artifact-token"));
+  } finally { globalThis.fetch = original; }
+});
+
+test("text artifact reader rejects content whose digest does not match saved metadata", async () => {
+  const original = globalThis.fetch;
+  const id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const content = "tampered text";
+  const bytes = new TextEncoder().encode(content);
+  globalThis.fetch = (async url => String(url).endsWith("/download")
+    ? new Response(JSON.stringify({ url: null, content_path: `/api/v1/artifacts/${id}/content` }), { headers: { "Content-Type": "application/json" } })
+    : new Response(content, { headers: { "Content-Type": "text/plain" } })) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-artifact-token");
+    await assert.rejects(client.readTextArtifact({
+      id, filename: "notes.txt", content_type: "text/plain", byte_size: bytes.byteLength, sha256: "d".repeat(64),
+    }), error => error instanceof WorkspaceError);
   } finally { globalThis.fetch = original; }
 });
 

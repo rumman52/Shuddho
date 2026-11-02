@@ -2,6 +2,16 @@ import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "needs_input" | "failed" | "cancelled";
 export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string; created_at?: string };
+
+const TEXT_ARTIFACT_TYPES = new Set(["text/plain", "text/markdown"]);
+const MAX_TEXT_ARTIFACT_BYTES = 1024 * 1024;
+
+/** Only plain-text and Markdown files are opened in the editor. */
+export function isTextArtifact(artifact: Pick<Artifact, "filename" | "content_type">): boolean {
+  const mime = artifact.content_type.split(";")[0]?.trim().toLowerCase();
+  const extension = artifact.filename.toLowerCase().split(".").pop() ?? "";
+  return TEXT_ARTIFACT_TYPES.has(mime ?? "") && ["txt", "md", "markdown"].includes(extension);
+}
 export type SkillId = "report_email" | "email" | "document" | "career" | "social" | "meeting" | "daily_plan" | "personal_plan" | "presentation" | "spreadsheet" | "research";
 export type ResearchOptions = { query: string; time_range: "any" | "day" | "week" | "month" | "year" };
 export type ResearchSource = { id: string; label: string; sha256: string; kind?: "web"; url?: string; retrieved_at?: string; source_date?: string | null; truncated?: boolean };
@@ -974,6 +984,55 @@ export class CoworkerClient {
     anchor.href = href; anchor.download = artifact.filename; anchor.rel = "noreferrer";
     document.body.append(anchor); anchor.click(); anchor.remove();
     if (revoke) setTimeout(() => URL.revokeObjectURL(href), 10000);
+  }
+
+  /**
+   * Read a bounded text artifact through the authenticated owner-scoped API.
+   * Signed object-storage URLs are deliberately ignored: the content route
+   * rechecks ownership and integrity without exposing a bearer token off-origin.
+   */
+  async readTextArtifact(artifact: Artifact, signal?: AbortSignal): Promise<string> {
+    if (!isTextArtifact(artifact)) throw new WorkspaceError("Only plain-text and Markdown files can be opened in the editor.");
+    if (!Number.isSafeInteger(artifact.byte_size) || artifact.byte_size < 0 || artifact.byte_size > MAX_TEXT_ARTIFACT_BYTES) {
+      throw new WorkspaceError("This text file is too large to preview. Download it instead.");
+    }
+    if (!/^[a-f0-9]{64}$/i.test(artifact.sha256)) throw new WorkspaceError("This file is missing a valid integrity checksum.");
+    const id = identifier(artifact.id);
+    const expected = `/api/v1/artifacts/${id}/content`;
+    const metadata = await this.json<{ url: string | null; content_path: string | null }>(
+      `/api/v1/artifacts/${id}/download`, { signal },
+    );
+    if (metadata.content_path !== null && metadata.content_path !== expected) {
+      throw new WorkspaceError("The artifact content route did not match this file.");
+    }
+    if (metadata.url === null && metadata.content_path !== expected) {
+      throw new WorkspaceError("The owner-authenticated content route is unavailable for this file.");
+    }
+    if (metadata.url !== null && (typeof metadata.url !== "string" || !metadata.url)) {
+      throw new WorkspaceError("The artifact download metadata is invalid.");
+    }
+
+    const response = await this.response(expected, { signal }, 25000);
+    const expectedMime = artifact.content_type.split(";")[0]?.trim().toLowerCase();
+    const responseMime = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+    if (!expectedMime || !TEXT_ARTIFACT_TYPES.has(expectedMime) || responseMime !== expectedMime) {
+      throw new WorkspaceError("The server returned a different file type. Download it instead.");
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength !== artifact.byte_size || bytes.byteLength > MAX_TEXT_ARTIFACT_BYTES) {
+      throw new WorkspaceError("The text file size did not match its saved metadata.");
+    }
+    if (!globalThis.crypto?.subtle) throw new WorkspaceError("This browser cannot verify the file. Download it instead.");
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    const actualSha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+    if (actualSha256 !== artifact.sha256.toLowerCase()) {
+      throw new WorkspaceError("This file failed its integrity check. Download it again.");
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new WorkspaceError("This file is not valid UTF-8 text and cannot be previewed.");
+    }
   }
 
   private async stream(id: string, after: number, signal: AbortSignal, receive: (event: ProgressEvent) => void) {
