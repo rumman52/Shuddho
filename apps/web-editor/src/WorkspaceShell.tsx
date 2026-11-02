@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import RukhHome from "./RukhHome";
+import "./rukh-home.css";
 import { getWorkspaceAppRoute } from "./appRoutes.mjs";
 import "./coworker/workspace.css";
 import "../../coworker/src/styles.css";

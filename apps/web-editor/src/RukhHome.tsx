@@ -1,5 +1,3 @@
-import "./rukh-home.css";
-
 type RukhHomeProps = { coworkerEnabled: boolean };
 
 function ArrowIcon() {
