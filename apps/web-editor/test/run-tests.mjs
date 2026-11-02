@@ -7,6 +7,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outdir = join(root, ".test-dist");
 const tests = [
   "test/app-routes.test.mjs",
+  "test/rukh-home.test.tsx",
   "test/editor-feature-gate.test.tsx",
   "src/coworker/client.test.ts",
   "src/coworker/refreshOrder.test.ts",

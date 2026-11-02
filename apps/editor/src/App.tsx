@@ -17,7 +17,10 @@ type HandoffAttempt = {
 };
 
 export default function App() {
-  const auth = useMemo(() => getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY), []);
+  const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED === "true";
+  const auth = useMemo(() => coworkerEnabled
+    ? getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
+    : null, [coworkerEnabled]);
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(Boolean(auth));
   const [tasks, setTasks] = useState<CoworkerTask[]>([]);
@@ -110,7 +113,7 @@ export default function App() {
   }
 
   async function sendToCoworker() {
-    if (busy) return;
+    if (!coworkerEnabled || busy) return;
     if (!client) {
       setNotice("Sign in to Coworker in a new tab, then return here. Your editor text will remain in this tab.");
       return;
@@ -195,23 +198,26 @@ export default function App() {
     <ErrorBoundary>
       <div className="rukh-editor-app">
         <header className="rukh-editor-topbar">
-          <a className="rukh-editor-brand" href="/editor">
+          <a className="rukh-editor-brand" href="/" aria-label="Rukh AI workspace home">
             <span className="rukh-brand-mark" aria-hidden="true">r</span>
-            <span><strong>Rukh AI</strong><small>Editor</small></span>
+            <span><strong>Rukh AI</strong><small>Web Editor</small></span>
           </a>
           <div className="rukh-editor-top-actions">
             {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
-            <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
-              {busy === "handoff" ? "Sending…" : "Send to Coworker ↗"}
-            </button>
-            <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">Open Coworker</a>
+            <a href="/" className="rukh-workspace-home">All workspaces</a>
+            {coworkerEnabled && <>
+              <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
+                {busy === "handoff" ? "Sending…" : "Send to Coworker ↗"}
+              </button>
+              <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">Open Co-workers</a>
+            </>}
           </div>
         </header>
-        <div className="rukh-editor-content">
+        <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
           <section className="rukh-editor-canvas" aria-label="Writing editor">
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
           </section>
-          <aside className="rukh-editor-library" aria-label="Recent coworker files">
+          {coworkerEnabled && <aside className="rukh-editor-library" aria-label="Recent coworker files">
             <div className="rukh-library-heading">
               <div><span>WORKSPACE</span><h2>Recent files</h2></div>
               <button type="button" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
@@ -232,7 +238,7 @@ export default function App() {
               </li>)}
             </ul>}
             <p className="rukh-library-footnote">Text and Markdown previews use the owner-authenticated route and are checked against their saved SHA-256 digest. Other file types download.</p>
-          </aside>
+          </aside>}
         </div>
       </div>
     </ErrorBoundary>
