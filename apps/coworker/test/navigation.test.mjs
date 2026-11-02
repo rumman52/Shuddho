@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { coworkerNavigation, getCoworkerView, getInitialConversationId } from "../src/navigation.mjs";
+import { coworkerNavigation, getCoworkerView, getInitialCoworkerView, getInitialConversationId } from "../src/navigation.mjs";
 
 test("Coworker navigation maps only implemented workspace surfaces", () => {
   const ids = coworkerNavigation.map(item => item.id);
@@ -8,7 +8,15 @@ test("Coworker navigation maps only implemented workspace surfaces", () => {
   assert.equal(getCoworkerView("home"), "conversations");
   assert.equal(getCoworkerView("files"), "drafts");
   assert.equal(getCoworkerView("approvals"), "actions");
+  assert.equal(getCoworkerView("goals"), "goals");
   assert.equal(getCoworkerView("unknown"), "conversations");
+});
+
+test("Coworker initial view accepts only implemented routes", () => {
+  assert.equal(getInitialCoworkerView("?view=agent"), "agent");
+  assert.equal(getInitialCoworkerView("?view=files"), "drafts");
+  assert.equal(getInitialCoworkerView("?view=unknown"), "conversations");
+  assert.equal(getInitialCoworkerView(""), "conversations");
 });
 
 test("Coworker deep links accept only UUID conversation identifiers", () => {
