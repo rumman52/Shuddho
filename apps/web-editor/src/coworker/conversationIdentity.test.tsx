@@ -67,7 +67,7 @@ async function mounted(run: (tree: ReactTestRenderer, data: ReturnType<typeof fi
   let tree!: ReactTestRenderer;
   try {
     await act(async () => { tree = create(<CoworkerWorkspace client={data.client as unknown as CoworkerClient} email="owner@example.test" signOut={async () => undefined} />); });
-    await act(async () => { button(tree.root, "Conversations").props.onClick(); });
+    // Conversations is the Coworker's default landing view in the Rukh navigation.
     await run(tree, data);
   } finally {
     if (tree) await act(async () => { tree.unmount(); });
