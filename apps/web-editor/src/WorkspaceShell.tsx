@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from "react";
 import App from "./App";
 import "./coworker/workspace.css";
+import "../../coworker/src/styles.css";
 import { hasPendingGoogleCallback } from "./coworker/googleCallback";
 import { hasPendingMicrosoftCallback } from "./coworker/microsoftCallback";
 import { hasPendingLinkedInCallback } from "./coworker/linkedinCallback";
