@@ -89,6 +89,7 @@ export default function App() {
 
   async function openArtifact(item: ArtifactItem) {
     if (!client || busy) return;
+    if (isTextArtifact(item.artifact) && editorText.trim() && !window.confirm("Replace the text currently in the editor with this saved file?")) return;
     setBusy(item.artifact.id);
     setLibraryError("");
     setNotice("");
@@ -112,8 +113,7 @@ export default function App() {
   async function sendToCoworker() {
     if (busy) return;
     if (!client) {
-      setNotice("Sign in to Coworker first. Your editor text will remain in this tab.");
-      window.location.assign(coworkerUrl);
+      setNotice("Sign in to Coworker in a new tab, then return here. Your editor text will remain in this tab.");
       return;
     }
     const content = editorText.trim();
@@ -140,6 +140,9 @@ export default function App() {
         [source.version_id],
       );
       const destination = new URL(coworkerUrl, window.location.origin);
+      if (!import.meta.env.DEV && destination.origin !== window.location.origin) {
+        throw new Error("Coworker must use the same origin as Editor so the authenticated workspace session is shared.");
+      }
       destination.searchParams.set("conversation", conversation.id);
       window.location.assign(destination.toString());
     } catch (error) {
@@ -162,7 +165,7 @@ export default function App() {
             <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
               {busy === "handoff" ? "Sending…" : "Send to Coworker ↗"}
             </button>
-            <a href={coworkerUrl} className="rukh-coworker-link">Open Coworker</a>
+            <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">Open Coworker</a>
           </div>
         </header>
         <div className="rukh-editor-content">
@@ -174,8 +177,8 @@ export default function App() {
               <div><span>WORKSPACE</span><h2>Recent files</h2></div>
               <button type="button" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
             </div>
-            {!auth && <div className="rukh-library-empty"><p>Connect your workspace sign-in to browse saved Coworker files.</p><a href={coworkerUrl}>Open Coworker</a></div>}
-            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to Coworker to see your recent files and send drafts.</p><a href={coworkerUrl}>Sign in to Coworker ↗</a></div>}
+            {!auth && <div className="rukh-library-empty"><p>Connect your workspace sign-in to browse saved Coworker files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open Coworker</a></div>}
+            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to Coworker to see your recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to Coworker ↗</a></div>}
             {authLoading && <p className="rukh-library-muted">Restoring your workspace session…</p>}
             {libraryError && <p className="rukh-library-error" role="alert">{libraryError}</p>}
             {notice && <p className="rukh-library-notice" role="status">{notice}</p>}
