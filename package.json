@@ -9,6 +9,7 @@
     "apps/web",
     "apps/api",
     "apps/web-editor",
+    "apps/coworker",
     "apps/chrome-extension",
     "packages/*"
   ],

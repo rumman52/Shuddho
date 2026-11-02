@@ -229,3 +229,50 @@ test("CW-10 model source drafts are explicit owner requests, not sandbox dispatc
     assert.equal(seen.length, 1);
   } finally { globalThis.fetch = original; }
 });
+
+test("text artifact reader fetches only the authenticated owner-bound content route", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    if (String(url).endsWith(`/artifacts/${id}/download`)) {
+      return new Response(JSON.stringify({ url: null, content_path: `/api/v1/artifacts/${id}/content` }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith(`/artifacts/${id}/content`)) {
+      return new Response("# Reviewed draft\nবাংলা text", { headers: { "Content-Type": "text/markdown; charset=utf-8" } });
+    }
+    throw new Error("Unexpected artifact route");
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-artifact-token");
+    const content = await client.readTextArtifact({
+      id, filename: "review.md", content_type: "text/markdown", byte_size: 28, sha256: "a".repeat(64),
+    });
+    assert.equal(content, "# Reviewed draft\nবাংলা text");
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].url, `/backend/api/v1/artifacts/${id}/download`);
+    assert.equal(seen[1].url, `/backend/api/v1/artifacts/${id}/content`);
+    for (const request of seen) {
+      assert.equal(new Headers(request.options?.headers).get("Authorization"), "Bearer owner-artifact-token");
+      assert.equal(request.options?.credentials, "omit");
+      assert.equal(request.options?.redirect, "error");
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+test("text artifact reader rejects binary files before making a request", async () => {
+  const original = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = (async () => { requests += 1; throw new Error("must not fetch binary content"); }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-artifact-token");
+    await assert.rejects(client.readTextArtifact({
+      id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", filename: "report.pdf",
+      content_type: "application/pdf", byte_size: 100, sha256: "b".repeat(64),
+    }), error => error instanceof WorkspaceError);
+    assert.equal(requests, 0);
+  } finally { globalThis.fetch = original; }
+});
