@@ -4,7 +4,7 @@
 
 **Goal:** Apply the uploaded Rukh content-generation specification to the existing Coworker drafting pipeline, improving prompt structure, task-specific behavior, validation evidence and generation metadata without adding unrelated product scope.
 
-**Architecture:** Add a small, provider-independent prompt-policy module that classifies existing drafting tasks and builds a layered system prompt plus a separate task/context/output contract. Keep the existing DeepSeek adapter, Pydantic output schemas, source checks, research evidence validation, durable task checkpoints and quality-evaluation harness. Persist only safe generation metadata in the existing draft checkpoint; do not add a new database ledger.
+**Architecture:** Add a small, provider-independent Coworker prompt-policy module that classifies existing drafting tasks and builds a layered system prompt plus a separate task/context/output contract. Give the Web Editor one versioned, provider-agnostic multilingual review contract shared by DeepSeek and Gemma. Keep existing model adapters, Pydantic output schemas, source checks, research evidence validation, durable task checkpoints and quality-evaluation harness. Persist only safe generation metadata in the existing draft checkpoint; do not add a new database ledger.
 
 **Tech Stack:** Python 3.11, existing Pydantic schemas, httpx, pytest, GitHub Actions.
 
@@ -83,13 +83,35 @@
 - [ ] Expand the existing evaluator and fixtures, including exact-quote research validation.
 - [ ] Run focused tests and the complete offline Coworker quality gate.
 
-### Task 4: Exact-head verification and handoff
+### Task 4: Web Editor prompt parity
 
 **Files:**
-- No production files beyond Tasks 1–3.
+- Modify: `services/api/shuddho_api/ai_review_schema.py`
+- Modify: `services/api/shuddho_api/llm_deepseek.py`
+- Modify: `services/api/shuddho_api/llm_gemma.py`
+- Modify: `tests/test_deepseek_provider.py`
+- Modify: `tests/test_llm_pipeline.py`
 
-- [ ] Open/update a draft PR on the feature branch.
+- [x] Replace the Bangla-only legacy editor prompt with a versioned multilingual Rukh editing contract.
+- [x] Share the server-owned output schema through the common review-message builder for DeepSeek and Gemma.
+- [x] Keep DeepSeek JSON mode and Gemma function-call mode provider-specific without contradictory output instructions.
+- [x] Align Gemma's function schema with the Pydantic language-code contract; test Spanish as a non-Bangla example.
+
+### Task 5: Exact-head verification and handoff
+
+**Files:**
+- No additional production files beyond Tasks 1–4.
+
+- [x] Open/update a reviewable PR on the isolated feature branch (#612; follow-up to merged #611).
 - [ ] Run the repository's required GitHub Actions checks on the final head.
 - [ ] Inspect the exact-head test/build results and final diff.
-- [ ] Keep the PR unmerged pending the repository's independent current-head review and normal protected merge gate.
-- [ ] Report unavailable checks and the PostHog privacy blocker explicitly.
+- [x] Keep the PR unmerged pending the repository's independent current-head review and normal protected merge gate.
+- [ ] Report unavailable checks and the PostHog privacy blocker.
+
+## Execution record
+
+- The initial prompt-policy test suite was run in an isolated local test package: RED with the module absent, then GREEN with **18 passed** after implementation.
+- The 12-case quality fixture parses as JSONL, has unique source IDs, and every required source reference resolves to a supplied source. Full Pydantic/quality-gate execution remains delegated to repository CI.
+- PR #611 was marked merged by GitHub while work was continuing; the remaining evaluation and Web Editor changes are isolated in PR #612.
+- No GitHub Actions run result was available for the merged #611 commit. PR #612 is the final verification target; do not report the full suite as passing until its exact-head checks complete.
+- PostHog events remain intentionally disabled by the repository privacy gate. No raw prompts, document text, tokens or account identifiers are sent to external telemetry.
