@@ -287,7 +287,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
                   {run && <span role="status">Agent {run.state}: {run.detail}</span>}
                 </div>
                 {(activeRun || canDispatch || linked) && <div className="rukh-message-actions">
-                  {activeRun && <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>Cancel Agent work</button>}
+                  {activeRun && run && <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>Cancel Agent work</button>}
                   {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start bounded Agent work</button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
