@@ -1254,7 +1254,7 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
 
       <section
         className="workspace"
-        aria-label="Bangla writing assistant workspace"
+        aria-label="Rukh Editor writing workspace"
       >
         <section className="editor-column" aria-label="Writing workspace">
           {COMPETITION_DEMO_MODE ? (
