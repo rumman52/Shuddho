@@ -30,7 +30,7 @@ PRIORITY RULES
 6. Use only supplied sentence IDs. An empty replacement means delete the original span. Omit uncertain edits rather than guessing.
 
 OUTPUT CONTRACT
-Return exactly one JSON object with requestId, correctedText, documentAssessment and suggestions. Each suggestion contains id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start and end. documentAssessment contains summary, overallQuality (poor|fair|good|excellent) and language (bn|en|mixed|unknown). Use the supplied requestId unchanged. Explain corrections briefly in the document's language. Return no Markdown or extra keys.
+Return exactly one JSON object with requestId, correctedText, documentAssessment and suggestions. Each suggestion contains id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start and end. documentAssessment contains summary, overallQuality (poor|fair|good|excellent) and a short language code (for example bn, en or es), or mixed/unknown when appropriate. Use the supplied requestId unchanged. Explain corrections briefly in the document's language. Return no Markdown or extra keys.
 
 CORRECTED TEXT
 correctedText must be the complete document with only the accepted suggestions applied. Preserve all unaffected text. If no edits are needed, return suggestions=[] and correctedText exactly equal to fullText.
