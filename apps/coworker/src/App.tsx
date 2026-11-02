@@ -10,7 +10,7 @@ function ArrowIcon() {
 }
 
 export default function App() {
-  const editorUrl = import.meta.env.VITE_EDITOR_APP_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:5175" : "/editor");
+  const editorUrl = import.meta.env.VITE_EDITOR_APP_URL ?? "/editor";
   return (
     <ErrorBoundary>
       <div className="rukh-coworker-app">

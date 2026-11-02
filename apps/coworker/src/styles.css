@@ -160,7 +160,7 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
   padding: 0 13px;
   border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--cw-muted);
+  color: #646b62;
   font-size: 11px;
   font-weight: 650;
   text-decoration: none;

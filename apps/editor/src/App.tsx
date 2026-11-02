@@ -87,7 +87,7 @@ export default function App() {
       .slice(0, 12),
   [tasks]);
 
-  const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:5174" : "/coworker");
+  const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? "/coworker";
 
   async function openArtifact(item: ArtifactItem) {
     if (!client || busy) return;
@@ -209,7 +209,7 @@ export default function App() {
               <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
                 {busy === "handoff" ? "Sending…" : "Send to Coworker ↗"}
               </button>
-              <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">Open Co-workers</a>
+              <a href={coworkerUrl} className="rukh-coworker-link">Open Co-workers</a>
             </>}
           </div>
         </header>
