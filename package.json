@@ -9,6 +9,8 @@
     "apps/web",
     "apps/api",
     "apps/web-editor",
+    "apps/coworker",
+    "apps/editor",
     "apps/chrome-extension",
     "packages/*"
   ],
@@ -24,6 +26,10 @@
     "dev:python-api": "python -m uvicorn services.api.shuddho_api.app:app --host 127.0.0.1 --port 8000 --reload",
     "dev:all": "npm run dev",
     "dev:gateway": "npm run dev --workspace @shuddho/api",
-    "dev:legacy-web": "npm run dev --workspace @shuddho/web"
+    "dev:legacy-web": "npm run dev --workspace @shuddho/web",
+    "dev:coworker": "npm run dev --workspace @rukh/coworker",
+    "dev:editor": "npm run dev --workspace @rukh/editor",
+    "build:coworker": "npm run build --workspace @rukh/coworker",
+    "build:editor": "npm run build --workspace @rukh/editor"
   }
 }

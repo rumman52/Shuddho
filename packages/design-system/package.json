@@ -1,0 +1,12 @@
+{
+  "name": "@rukh/design-system",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "types": "./src/index.ts",
+  "sideEffects": ["./src/tokens.css"]
+}
