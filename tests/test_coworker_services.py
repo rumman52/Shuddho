@@ -226,3 +226,4 @@ def test_draft_checkpoint_persists_safe_generation_metadata(container):
     assert generation["tools_used"] == []
     assert generation["validator_result"] == "passed"
     assert generation["error_class"] is None
+    assert "instruction" not in generation and "sources" not in generation
