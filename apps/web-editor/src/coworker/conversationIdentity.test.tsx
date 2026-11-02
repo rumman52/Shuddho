@@ -59,7 +59,7 @@ function buttonText(item: ReactTestInstance): string {
   return item.children
     .map(child => typeof child === "string" ? child : buttonText(child))
     .join(" ")
-    .replace(/\\s+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
