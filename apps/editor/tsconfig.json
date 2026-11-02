@@ -3,8 +3,14 @@
   "compilerOptions": {
     "baseUrl": "../../",
     "jsx": "react-jsx",
-    "paths": { "@shared/*": ["shared/*"] },
-    "types": ["vite/client"]
+    "paths": {
+      "@shared/*": [
+        "shared/*"
+      ]
+    },
+    "types": [
+      "vite/client"
+    ]
   },
   "include": [
     "src",
@@ -12,5 +18,9 @@
     "../../shared/fixtures/bangla_samples.json",
     "../web-editor/src"
   ],
-  "exclude": ["test"]
+  "exclude": [
+    "test",
+    "../web-editor/src/**/*.test.ts",
+    "../web-editor/src/**/*.test.tsx"
+  ]
 }

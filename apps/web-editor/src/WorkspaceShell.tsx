@@ -3,7 +3,7 @@ import App from "./App";
 import { getStandaloneAppRoute } from "./appRoutes.mjs";
 import "./coworker/workspace.css";
 import "../../coworker/src/styles.css";
-import "../../packages/design-system/src/tokens.css";
+import "../../../packages/design-system/src/tokens.css";
 import { hasPendingGoogleCallback } from "./coworker/googleCallback";
 import { hasPendingMicrosoftCallback } from "./coworker/microsoftCallback";
 import { hasPendingLinkedInCallback } from "./coworker/linkedinCallback";
