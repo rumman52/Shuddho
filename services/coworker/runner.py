@@ -136,7 +136,12 @@ class DocumentRunner:
                   if task.get("agent_run_id") else {"facts": [], "provenance": []})
         model = (DeepSeekDraftModel(self.container.settings, self.model.transport, skill_id=skill.id)
                  if isinstance(self.model, DeepSeekDraftModel) else self.model)
+        generation_context = {
+            "retrieval_used": bool(research or memory["facts"] or handoff["sources"]),
+            "tools_used": ["tavily.search"] if research else [],
+        }
         prompt_task = task | ({"research": research["metadata"]} if research else {})
+        prompt_task = prompt_task | {"generation_context": generation_context}
         if memory["facts"]:
             prompt_task = prompt_task | {"memory": memory["facts"]}
         messages = model.messages(prompt_task, sources)
@@ -168,11 +173,16 @@ class DocumentRunner:
         manifest = [{key: value for key, value in source.items() if key != "text"} for source in sources]
         from .calculations import table_values
         preview = table_values(validated) if skill.id == "spreadsheet" else None
+        generation = (
+            result.generation_metadata(validator_result="passed")
+            if result.prompt_sha256 else None
+        )
         await asyncio.to_thread(self.repo.save_step, task["id"], "draft", {
             "draft": validated.model_dump(), "sources": manifest, "preview": preview,
             "research": research["metadata"] if research else None,
             "memory_provenance": memory["provenance"],
             "handoff_provenance": handoff["provenance"],
+            "generation": generation,
         })
 
     async def export(self, task):
