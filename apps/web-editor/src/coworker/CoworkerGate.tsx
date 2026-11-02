@@ -1,20 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { type Session } from "@supabase/supabase-js";
+import { getRukhAuthClient } from "@rukh/auth";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { CoworkerClient } from "./client";
-import { publicAuthConfig } from "./authConfig";
 
-let singleton: SupabaseClient | null = null;
-function authClient() {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  if (!publicAuthConfig(url, key)) return null;
-  singleton ??= createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
-  return singleton;
-}
 
 export default function CoworkerGate() {
-  const auth = useMemo(authClient, []);
+  const auth = useMemo(() => getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY), []);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(Boolean(auth));
   const [mode, setMode] = useState<"signin" | "signup" | "reset" | "recovery">("signin");
@@ -82,7 +74,7 @@ export default function CoworkerGate() {
   return <main className="cw-auth">
     <div className="cw-auth-story"><span className="cw-eyebrow">A little less busywork.</span>
       <h1>Your next draft,<br />already underway.</h1>
-      <p>Bring your notes or a document. Shuddho turns them into a professional report and email draft, in your chosen language.</p>
+      <p>Bring your notes or a document. Rukh AI turns them into a professional report and email draft, in your chosen language.</p>
       <div className="cw-auth-output"><span>01</span><div><strong>A report you can edit</strong><p>Download in Word and PDF.</p></div></div>
       <div className="cw-auth-output"><span>02</span><div><strong>An email ready for your review</strong><p>Your words. Your final say.</p></div></div>
     </div>

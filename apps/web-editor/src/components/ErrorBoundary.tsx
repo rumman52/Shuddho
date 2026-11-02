@@ -31,7 +31,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (this.state.hasError) {
       return (
         <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
-          <h1>Shuddho encountered an unexpected editor error</h1>
+          <h1>Rukh Editor encountered an unexpected error</h1>
           <p>Reload the page to recover. If this repeats, contact support with the time of the error.</p>
           <button type="button" onClick={() => window.location.reload()}>Reload</button>
           {import.meta.env.DEV && this.state.message ? <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.message}</pre> : null}

@@ -12,7 +12,13 @@ export const coworkerNavigation = Object.freeze([
 ]);
 
 export function getCoworkerView(id) {
-  return coworkerNavigation.find(item => item.id === id)?.view ?? "conversations";
+  return coworkerNavigation.find(item => item.id === id || item.view === id)?.view ?? "conversations";
+}
+
+export function getInitialCoworkerView(search) {
+  const params = new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
+  const requested = params.get("view");
+  return requested ? getCoworkerView(requested) : "conversations";
 }
 
 export function getInitialConversationId(search) {
