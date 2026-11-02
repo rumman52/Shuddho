@@ -17,9 +17,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from services.api.shuddho_api.ai_review_schema import (
-    AIReviewResponse, SYSTEM_PROMPT, build_review_messages, required_output_schema,
-)
+from services.api.shuddho_api.ai_review_schema import AIReviewResponse, build_review_messages
 from services.api.shuddho_api.llm_provider import DEFAULT_DEEPSEEK_MODEL, LlmProviderResult
 
 DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
@@ -135,10 +133,6 @@ def run_deepseek_check(
         request_id=request_id, full_text=text,
         sentences=sentences or [{"sentenceId": "s_0", "start": 0, "end": len(text)}],
         local_suggestions=local_suggestions or [], candidate_sentences=candidates or [],
-    )
-    messages[0]["content"] = (
-        SYSTEM_PROMPT + "\n\nSERVER-OWNED OUTPUT SCHEMA\n"
-        + json.dumps(required_output_schema(), ensure_ascii=False)
     )
     payload = {
         "model": model, "messages": messages,
