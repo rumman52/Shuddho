@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 
 export async function verifyAgentProposals(page, folder) {
-  await page.getByRole("button", { name: "Email & calendar", exact: true }).click();
+  await page.getByRole("button", { name: "Approvals & integrations", exact: true }).click();
   const actions = page.getByRole("region", { name: "Email and calendar actions", exact: true });
   if (await actions.getByRole("button", { name: "Connect Gmail", exact: true }).count()) {
     await actions.getByRole("button", { name: "Connect Gmail", exact: true }).click();
