@@ -1,0 +1,66 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Noto+Serif+Bengali:wght@400;500;600;700&display=swap");
+
+:root {
+  color-scheme: light;
+  --rukh-bg: #f7f7f5;
+  --rukh-surface: #ffffff;
+  --rukh-surface-soft: #f2f2ef;
+  --rukh-surface-raised: #fbfbfa;
+  --rukh-text: #20221f;
+  --rukh-muted: #747971;
+  --rukh-subtle: #9a9f98;
+  --rukh-border: #e6e8e3;
+  --rukh-border-strong: #d4d8d0;
+  --rukh-accent: #6257d9;
+  --rukh-accent-hover: #5145c6;
+  --rukh-accent-soft: #efedff;
+  --rukh-success: #24764e;
+  --rukh-success-soft: #eaf5ef;
+  --rukh-warning: #98600e;
+  --rukh-warning-soft: #fff5df;
+  --rukh-danger: #b33d45;
+  --rukh-danger-soft: #fff0f0;
+  --rukh-info: #356b9a;
+  --rukh-info-soft: #edf5fc;
+  --rukh-radius-xs: 6px;
+  --rukh-radius-sm: 9px;
+  --rukh-radius-md: 13px;
+  --rukh-radius-lg: 18px;
+  --rukh-radius-xl: 24px;
+  --rukh-shadow-sm: 0 1px 2px rgba(25, 30, 24, .04);
+  --rukh-shadow-md: 0 12px 36px rgba(25, 30, 24, .08);
+  --rukh-focus: 0 0 0 3px rgba(98, 87, 217, .18);
+  --rukh-font-ui: "DM Sans", "Manrope", system-ui, sans-serif;
+  --rukh-font-writing: "Noto Serif Bengali", Georgia, serif;
+}
+
+[data-rukh-theme="dark"] {
+  color-scheme: dark;
+  --rukh-bg: #171916;
+  --rukh-surface: #20231f;
+  --rukh-surface-soft: #262a25;
+  --rukh-surface-raised: #292d28;
+  --rukh-text: #f0f2ec;
+  --rukh-muted: #b1b8ae;
+  --rukh-subtle: #858d83;
+  --rukh-border: #373d35;
+  --rukh-border-strong: #4a5247;
+  --rukh-accent: #aaa2ff;
+  --rukh-accent-hover: #c2bcff;
+  --rukh-accent-soft: #302d4b;
+  --rukh-success: #78c79d;
+  --rukh-success-soft: #20382b;
+  --rukh-warning: #e5bb70;
+  --rukh-warning-soft: #3a3020;
+  --rukh-danger: #f08b91;
+  --rukh-danger-soft: #402528;
+  --rukh-info: #91bde7;
+  --rukh-info-soft: #253447;
+  --rukh-shadow-sm: 0 1px 2px rgba(0, 0, 0, .18);
+  --rukh-shadow-md: 0 12px 36px rgba(0, 0, 0, .28);
+}
+
+* { box-sizing: border-box; }
+button, input, textarea, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: none; box-shadow: var(--rukh-focus); }
