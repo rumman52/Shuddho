@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Execute this plan on the isolated feature branch with a test-first loop. Verify the exact final branch head through GitHub Actions before reporting completion.
 
-**Goal:** Apply the uploaded Rukh content-generation specification to the existing Coworker drafting pipeline, improving prompt structure, task-specific behavior, validation evidence and generation metadata without adding unrelated product scope.
+**Goal:** Apply the uploaded Rukh content-quality specification to the existing Coworker drafting and Web Editor review pipelines, improving prompt structure, task-specific behavior, source fidelity and generation metadata without adding unrelated product scope.
 
 **Architecture:** Add a small, provider-independent Coworker prompt-policy module that classifies existing drafting tasks and builds a layered system prompt plus a separate task/context/output contract. Give the Web Editor one versioned, provider-agnostic multilingual review contract shared by DeepSeek and Gemma. Keep existing model adapters, Pydantic output schemas, source checks, research evidence validation, durable task checkpoints and quality-evaluation harness. Persist only safe generation metadata in the existing draft checkpoint; do not add a new database ledger.
 
