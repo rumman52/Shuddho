@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { CoworkerClient } from "./client";
