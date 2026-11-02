@@ -49,6 +49,7 @@
 .rukh-home-product-copy h2 { margin: 0; color: var(--home-ink); font-size: clamp(25px, 2.4vw, 32px); font-weight: 650; letter-spacing: -.055em; line-height: 1.1; }
 .rukh-home-product-copy p { max-width: 56ch; margin: 11px 0 0; color: var(--home-muted); font-size: 14px; line-height: 1.75; }
 .rukh-home-flow { margin-top: auto; padding-top: 24px; }
+.rukh-home-flow-list { margin: 0; padding: 0; list-style: none; }
 .rukh-home-flow-title { margin: 0 0 7px; color: var(--home-ink); font-size: 12px; font-weight: 700; letter-spacing: -.01em; }
 .rukh-home-flow-step { display: grid; grid-template-columns: 34px minmax(0, 1fr) 20px; align-items: center; gap: 12px; min-height: 65px; padding: 10px 0; border-top: 1px solid var(--home-line); }
 .rukh-home-flow-symbol { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; background: var(--home-soft); color: var(--home-accent); }
@@ -59,7 +60,7 @@
 .rukh-home-flow-state { color: var(--home-muted); }
 .rukh-home-flow-state svg { display: block; width: 18px; height: 18px; }
 .rukh-home-product-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 15px; padding-top: 17px; border-top: 1px solid var(--home-line); }
-.rukh-home-product-footer p { max-width: 34ch; margin: 0; color: var(--home-muted); font-size: 11px; line-height: 1.55; }
+.rukh-home-product-footer p { max-width: 34ch; margin: 0; color: var(--home-muted); font-size: 12px; line-height: 1.55; }
 .rukh-home-action { display: inline-flex; min-height: 44px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; padding: 0 15px; border: 1px solid var(--home-accent); border-radius: 999px; background: var(--home-accent); color: #fff; font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap; transition: background .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .rukh-home-action:hover:not(:disabled) { border-color: var(--rukh-accent-hover, #5145c6); background: var(--rukh-accent-hover, #5145c6); box-shadow: 0 5px 14px rgba(49, 43, 120, .12); }
 .rukh-home-action--disabled, .rukh-home-action--disabled:disabled { border-color: var(--home-line-strong); background: #eceee9; color: #646b62; cursor: not-allowed; box-shadow: none; }
@@ -114,10 +115,10 @@
   .rukh-home-brand { gap: 8px; }
   .rukh-home-mark { width: 32px; height: 32px; }
   .rukh-home-brand-copy strong { font-size: 13px; }
-  .rukh-home-header-action { min-height: 38px; padding-inline: 9px; font-size: 9px; }
+  .rukh-home-header-action { min-height: 38px; padding-inline: 9px; font-size: 10px; }
   .rukh-home-nav { gap: 13px; }
   .rukh-home-nav a, .rukh-home-nav-disabled { font-size: 11px; }
-  .rukh-home-nav-disabled small { font-size: 8px; }
+  .rukh-home-nav-disabled small { font-size: 9px; }
   .rukh-home-product-footer { gap: 10px; }
   .rukh-home-action { min-height: 42px; padding-inline: 13px; }
 }
