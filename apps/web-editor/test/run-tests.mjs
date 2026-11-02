@@ -55,4 +55,7 @@ for (const testFile of tests) {
   await import(pathToFileURL(outfile));
 }
 
+// Keep standalone route tests in the canonical web-editor CI command.
+await import(pathToFileURL(join(root, "test/app-routes.test.mjs")));
+
 await rm(outdir, { recursive: true, force: true });
