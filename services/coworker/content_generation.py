@@ -31,7 +31,7 @@ _CODE_REQUEST = re.compile(
     r"create a (?:python|typescript|javascript|sql) function)\b"
 )
 _SUMMARY = re.compile(
-    r"\b(?:summari[sz](?:e|ation|ing)|summary|meeting minutes|transcript)\b"
+    r"\b(?:summari[sz](?:e|ed|ation|ing)|meeting minutes|transcript)\b"
 )
 _LONG_FORM = re.compile(
     r"\b(?:article|essay|long[- ]form|proposal|report|memo|whitepaper)\b"
