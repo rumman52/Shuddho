@@ -53,6 +53,7 @@ try {
   assert.equal(await page.locator(".workspace-writing").isVisible(), true);
   await page.getByRole("button", { name: "Coworker", exact: true }).click();
   await page.reload();
+  await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
   const result = page.getByRole("region", { name: "Task result" });
   await result.getByText("Ready", { exact: true }).waitFor({ timeout: 60000 });
   await result.getByRole("heading", { name: "প্রকল্পের অগ্রগতি", exact: true }).first().waitFor();
@@ -130,6 +131,7 @@ try {
       await current.getByText("Copied.", { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "দলটি ১২টি পর্যালোচনা সম্পন্ন করেছে।");
       await page.reload();
+      await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
       await page.locator(`.cw-result[data-task-id="${created.id}"]`).getByText("Ready", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Use these sources for a new draft" }).click();
       assert.equal(await page.getByLabel("Work service", { exact: true }).inputValue(), "social");
@@ -144,6 +146,7 @@ try {
       assert.equal(await current.locator("blockquote p").textContent(), "The team completed 12 reviews.");
       await downloaded.saveAs(join(folder, "screenshots", filename));
       await page.reload();
+      await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
       await current.getByText("Ready", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Use these sources for a new draft" }).click();
       assert.equal(await page.getByLabel("Work service", { exact: true }).inputValue(), "research");
