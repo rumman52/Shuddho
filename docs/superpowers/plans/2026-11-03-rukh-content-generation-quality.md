@@ -42,10 +42,10 @@
 - Produces `PROMPT_VERSION`, `classify_content_task(skill_id, instruction)`, and `build_content_messages(...)`.
 - The builder receives the server-owned skill guidance and Pydantic schema; user content cannot replace either.
 
-- [ ] Write tests for the existing skill-to-task mappings, explicit code/image-prompt requests, separate task/context payloads, default output-contract fields, source-as-untrusted-data handling and schema ownership.
-- [ ] Run the focused test and confirm it fails because the module is not implemented.
-- [ ] Implement the minimal pure prompt-policy module.
-- [ ] Run the focused test and confirm it passes.
+- [x] Write tests for the existing skill-to-task mappings, explicit code/image-prompt requests, separate task/context payloads, default output-contract fields, source-as-untrusted-data handling and schema ownership.
+- [x] Run the focused test and confirm it fails because the module is not implemented (isolated local RED phase).
+- [x] Implement the minimal pure prompt-policy module.
+- [x] Run the focused test and confirm it passes (18 passed).
 
 ### Task 2: Draft model integration and generation evidence
 
@@ -58,9 +58,9 @@
 - `DraftResult` gains optional, backwards-compatible metadata for provider/model, prompt version/hash, task type, input/output/total tokens, latency, finish reason, reasoning mode, retrieval and tools.
 - Existing model-response validation and error codes remain authoritative.
 
-- [ ] Extend the existing model success test to assert the prompt contract and safe generation metadata.
-- [ ] Run the focused test and confirm the new metadata assertions fail.
-- [ ] Integrate the prompt builder and capture validated provider usage without changing provider, temperature or reasoning settings.
+- [x] Extend the existing model success test to assert the prompt contract and safe generation metadata.
+- [ ] Run the focused model test RED phase; not yet observed in the full repository environment.
+- [x] Integrate the prompt builder and capture validated provider usage without changing provider, temperature or reasoning settings.
 - [ ] Run the focused model tests and confirm they pass.
 
 ### Task 3: Persist safe metadata and expand quality evaluation
@@ -77,10 +77,10 @@
 - The existing quality evaluator reports prompt version/hash, task type, provider/model, token counts, finish reason, latency and validation result for live runs.
 - Offline fixtures validate task classification, schema, language, source attribution, missing-information behavior and research quote fidelity.
 
-- [ ] Add tests for metadata persistence and the expanded offline evaluation categories.
-- [ ] Run the focused tests and confirm the new assertions fail.
-- [ ] Persist metadata in the existing JSON checkpoint; do not add a migration or external telemetry.
-- [ ] Expand the existing evaluator and fixtures, including exact-quote research validation.
+- [x] Add tests for metadata persistence and the expanded offline evaluation categories.
+- [ ] Run the Coworker integration/evaluation RED phase; not yet observed in the full repository environment.
+- [x] Persist metadata in the existing JSON checkpoint; do not add a migration or external telemetry.
+- [x] Expand the existing evaluator and fixtures, including exact-quote research validation.
 - [ ] Run focused tests and the complete offline Coworker quality gate.
 
 ### Task 4: Web Editor prompt parity
