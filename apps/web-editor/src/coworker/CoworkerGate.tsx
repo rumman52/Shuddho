@@ -1,20 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { getRukhAuthClient } from "@rukh/auth";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { CoworkerClient } from "./client";
-import { publicAuthConfig } from "./authConfig";
 
-let singleton: SupabaseClient | null = null;
-function authClient() {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  if (!publicAuthConfig(url, key)) return null;
-  singleton ??= createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
-  return singleton;
-}
 
 export default function CoworkerGate() {
-  const auth = useMemo(authClient, []);
+  const auth = useMemo(() => getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY), []);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(Boolean(auth));
   const [mode, setMode] = useState<"signin" | "signup" | "reset" | "recovery">("signin");
