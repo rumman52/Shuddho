@@ -1,16 +1,25 @@
 import { lazy, Suspense, useState } from "react";
 import App from "./App";
+import { getStandaloneAppRoute } from "./appRoutes.mjs";
 import "./coworker/workspace.css";
 import "../../coworker/src/styles.css";
+import "../../editor/src/styles.css";
+import "../../packages/design-system/src/tokens.css";
 import { hasPendingGoogleCallback } from "./coworker/googleCallback";
 import { hasPendingMicrosoftCallback } from "./coworker/microsoftCallback";
 import { hasPendingLinkedInCallback } from "./coworker/linkedinCallback";
 import { requestedNotificationView } from "./coworker/pushNavigation";
 
 const Coworker = lazy(() => import("./coworker/CoworkerGate"));
+const CoworkerStandalone = lazy(() => import("../../coworker/src/App"));
+const EditorStandalone = lazy(() => import("../../editor/src/App"));
 
 export default function WorkspaceShell() {
-  const [active, setActive] = useState<"writing" | "coworker">(() => {
+  const route = typeof window === "undefined" ? "default" : getStandaloneAppRoute(window.location.pathname);
+  if (route === "coworker") return <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh AI Coworker…</p>}><CoworkerStandalone /></Suspense>;
+  if (route === "editor" || import.meta.env.VITE_COWORKER_ENABLED !== "true") return <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh Editor…</p>}><EditorStandalone /></Suspense>;
+
+  const [active, setActive = useState<"writing" | "coworker">(() => {
     if (typeof window === "undefined") return "writing";
     if (requestedNotificationView(window.location.search) || hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback() || window.location.hash.includes("type=recovery") || new URLSearchParams(window.location.search).has("code")) return "coworker";
     try { return sessionStorage.getItem("shuddho:workspace:tab") === "coworker" ? "coworker" : "writing"; } catch { return "writing"; }
