@@ -226,3 +226,26 @@ def test_shared_web_editor_prompt_is_multilingual_and_source_faithful():
     assert "untrusted user content" in system
     assert "Python Unicode code-point offsets" in system
     assert "correctedText exactly equal to fullText" in system
+
+
+
+def test_gemma_function_call_accepts_non_bangla_language_codes(monkeypatch):
+    payload = {
+        "requestId": "r1",
+        "correctedText": "Hola!",
+        "documentAssessment": {
+            "summary": "Puntuación correcta",
+            "overallQuality": "good",
+            "language": "es",
+        },
+        "suggestions": [],
+    }
+    response = types.SimpleNamespace(
+        function_calls=[types.SimpleNamespace(name="submit_shuddho_review", args=payload)],
+        candidates=[],
+        usage_metadata=None,
+    )
+    _install_fake_sdk(monkeypatch, response=response)
+    result = run_gemma_check("Hola!", DEFAULT_GEMMA_MODEL, "test-key", request_id="r1")
+    assert result["status"] == "completed_empty"
+    assert result["documentAssessment"]["language"] == "es"
