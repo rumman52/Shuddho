@@ -53,6 +53,10 @@ for (const testFile of tests) {
       "import.meta.env.VITE_COMPETITION_DEMO_MODE": '"true"',
       "import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED": '"false"',
       "import.meta.env.VITE_COWORKER_ENABLED": '"false"',
+      "import.meta.env.VITE_SUPABASE_URL": '""',
+      "import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY": '""',
+      "import.meta.env.VITE_COWORKER_API_BASE_URL": '"/backend"',
+      "import.meta.env.VITE_COWORKER_APP_URL": '"/coworker"',
     },
   });
   await import(pathToFileURL(outfile));
