@@ -9,7 +9,7 @@ export default defineConfig({
   resolve: {
     alias: { "@shared": fileURLToPath(new URL("../../shared", import.meta.url)) },
   },
-  server: { host: "0.0.0.0", fs: { allow: [repositoryRoot] } },
-  preview: { host: "0.0.0.0" },
+  server: { host: "0.0.0.0", port: 5175, strictPort: true, fs: { allow: [repositoryRoot] } },
+  preview: { host: "0.0.0.0", port: 4175, strictPort: true },
   build: { outDir: "dist", emptyOutDir: true },
 });
