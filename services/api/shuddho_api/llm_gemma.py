@@ -166,7 +166,7 @@ def _function_schema() -> dict[str, Any]:
             "requestId": {"type": "string"}, "correctedText": {"type": "string"},
             "documentAssessment": {
                 "type": "object", "properties": {
-                    "summary": {"type": "string"}, "overallQuality": {"type": "string", "enum": ["poor", "fair", "good", "excellent"]}, "language": {"type": "string", "enum": ["bn", "en", "mixed", "unknown"]},
+                    "summary": {"type": "string"}, "overallQuality": {"type": "string", "enum": ["poor", "fair", "good", "excellent"]}, "language": {"type": "string", "minLength": 2, "maxLength": 35},
                 }, "required": ["summary", "overallQuality", "language"], "additionalProperties": False,
             },
             "suggestions": {"type": "array", "items": suggestion},
@@ -189,7 +189,7 @@ def _config(response_mode: str, timeout_seconds: float, system_instruction: str)
     }
     if response_mode == "function_call":
         name = "submit_shuddho_review"
-        declaration = types.FunctionDeclaration(name=name, description="Submit the complete Shuddho Bangla review.", parameters_json_schema=_function_schema())
+        declaration = types.FunctionDeclaration(name=name, description="Submit the complete multilingual writing review.", parameters_json_schema=_function_schema())
         kwargs["tools"] = [types.Tool(function_declarations=[declaration])]
         kwargs["tool_config"] = types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[name]))
         kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
