@@ -138,8 +138,8 @@ type SafeApplyResult = {
 
 type FriendlyStatus = { label: string; tone: "ok" | "warn" | "error" | "info" };
 
-export default function App() {
-  const [text, setText] = useState(INITIAL_TEXT);
+export default function App({ initialText, onTextChange }: { initialText?: string; onTextChange?: (text: string) => void } = {}) {
+  const [text, setText] = useState(initialText ?? INITIAL_TEXT);
   const [mode, setMode] = useState<AnalyzeMode>("standard");
   const [userId] = useState(loadOrCreateLocalUserId);
   const [preferences, setPreferences] = useState<ShuddhoPreferences>(() =>
@@ -339,6 +339,17 @@ export default function App() {
   useEffect(() => {
     void loadPreferences(userId);
   }, [userId, apiBaseUrl]);
+
+  useEffect(() => {
+    if (initialText !== undefined && initialText !== text) {
+      latestTextRef.current = initialText;
+      setText(initialText);
+    }
+  }, [initialText]);
+
+  useEffect(() => {
+    onTextChange?.(text);
+  }, [onTextChange, text]);
 
   useEffect(() => {
     latestTextRef.current = text;
@@ -1185,8 +1196,8 @@ export default function App() {
     <main className="app-shell">
       <header className="app-header">
         <div className="brand-text" aria-label="Shuddho home">
-          <strong>Shuddho</strong>
-          <span>Bangla Writing Assistant</span>
+          <strong>Rukh Editor</strong>
+          <span>Multilingual Writing Studio</span>
         </div>
         <div className="header-actions" aria-label="Workspace actions">
           <span
@@ -1419,7 +1430,7 @@ export default function App() {
                 ref={textareaRef}
                 className="editor-textarea"
                 aria-label="Bangla editor"
-                placeholder="এখানে বাংলা লেখা শুরু করুন। Shuddho বানান, ব্যাকরণ, স্পষ্টতা ও প্রবাহ নিয়ে পরামর্শ দেবে।"
+                placeholder="এখানে বাংলা লেখা শুরু করুন। Rukh Editor বানান, ব্যাকরণ, স্পষ্টতা ও প্রবাহ নিয়ে পরামর্শ দেবে।"
                 value={text}
                 onChange={(event) => setText(event.target.value)}
                 onSelect={handleSelectionChange}
