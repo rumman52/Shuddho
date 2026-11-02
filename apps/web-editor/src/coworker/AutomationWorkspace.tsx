@@ -484,7 +484,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
               ...notificationPreferences,
               in_app_enabled: event.target.checked,
               browser_push_enabled: event.target.checked ? notificationPreferences.browser_push_enabled : false,
-            })} /> Show personal-agent notifications in Shuddho</label>
+            })} /> Show personal-agent notifications in Rukh AI</label>
           <label><input type="checkbox"
             checked={notificationPreferences.automation_updates_enabled}
             disabled={Boolean(busy) || !notificationPreferences.in_app_enabled}
@@ -504,7 +504,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             })}>Turn off Browser Push for this account</button>}
           {notificationPreferences.browser_push_enabled && browserPushConfig?.enabled && !browserPushDeviceActive &&
             <p className="cw-fineprint">Browser Push is allowed for this account, but this browser is not registered yet. Enable the checkbox to add this device.</p>}
-          <p className="cw-fineprint">Browser Push requires separate account consent plus browser permission. Push messages use generic text; open Shuddho to review the actual notice. Turning notifications off never pauses goals or automations.</p>
+          <p className="cw-fineprint">Browser Push requires separate account consent plus browser permission. Push messages use generic text; open Rukh AI to review the actual notice. Turning notifications off never pauses goals or automations.</p>
         </div>}
         <label className="cw-digest-toggle"><input type="checkbox" checked={groupNotices} onChange={event => setGroupNotices(event.target.checked)} /> Group suggestion notices into digests</label>
         <p className="cw-fineprint">Groups contain up to ten delivered notices from the same six-hour period. Expand a group to review each notice.</p>
