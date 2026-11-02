@@ -5,6 +5,7 @@ import { coworkerNavigation, getCoworkerView, getInitialCoworkerView, getInitial
 test("Coworker navigation maps only implemented workspace surfaces", () => {
   const ids = coworkerNavigation.map(item => item.id);
   assert.deepEqual(ids, ["home", "agent", "goals", "automations", "browser", "files", "approvals", "sandbox", "transactions", "negotiations"]);
+  assert.equal(coworkerNavigation[0].label, "Conversations");
   assert.equal(getCoworkerView("home"), "conversations");
   assert.equal(getCoworkerView("files"), "drafts");
   assert.equal(getCoworkerView("approvals"), "actions");
