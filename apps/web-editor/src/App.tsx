@@ -1195,7 +1195,7 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
   return (
     <main className="app-shell">
       <header className="app-header">
-        <div className="brand-text" aria-label="Shuddho home">
+        <div className="brand-text" aria-label="Rukh Editor home">
           <strong>Rukh Editor</strong>
           <span>Multilingual Writing Studio</span>
         </div>
@@ -2258,7 +2258,7 @@ async function sendFeedbackIfOnline(
   try {
     await sendFeedback(payload);
   } catch (error) {
-    console.warn("Shuddho feedback request failed", error);
+    console.warn("Rukh Editor feedback request failed", error);
   }
 }
 
