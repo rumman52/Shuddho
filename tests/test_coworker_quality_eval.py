@@ -12,6 +12,8 @@ def test_curated_multilingual_quality_fixture_passes():
     assert len(cases)>=10
     assert r["pass_rate"]==1.0
     assert r["required_fact_recall"]==1.0
+    assert r["citation_source_precision"]==1.0
+    assert r["citation_source_recall"]==1.0
     assert r["languages"]==["ar","bn","en","es"]
     assert {"analysis_research","code","image_prompt","structured_data","creative_writing","summarisation","long_form_report","complex_planning"}.issubset(set(r["task_types"]))
 
