@@ -149,3 +149,29 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+.rukh-product-switcher { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.rukh-product-switch {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--cw-muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
+}
+.rukh-product-switch svg { width: 14px; height: 14px; }
+.rukh-product-switch:hover { border-color: var(--cw-border); background: var(--cw-bg); color: var(--cw-text); }
+.rukh-product-switch--home { border-color: var(--cw-border); background: var(--cw-surface); color: var(--cw-text); }
+@media (max-width: 560px) {
+  .rukh-productbar { height: auto; min-height: 60px; padding: 10px 12px; }
+  .rukh-product-switcher { gap: 4px; }
+  .rukh-product-switch { min-height: 38px; padding-inline: 9px; font-size: 10px; }
+}
