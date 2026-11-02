@@ -4,13 +4,14 @@ import {
   type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
 import { RefreshOrder } from "./refreshOrder";
+import { getInitialConversationId } from "../../../coworker/src/navigation.mjs";
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
 export default function ConversationWorkspace({ client, openAgent }: {
   client: CoworkerClient; openAgent: (runId: string) => void;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(() => typeof window !== "undefined" ? getInitialConversationId(window.location.search) ?? "" : "");
   const [messages, setMessages] = useState<ConversationMessageRecord[]>([]);
   const [activity, setActivity] = useState<ConversationActivityRecord[]>([]);
   const [manifest, setManifest] = useState<WorkspaceManifest | null>(null);
@@ -242,96 +243,126 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
   const selectedConversation = conversations.find(item => item.id === selected);
-  return <section className="cw-card" aria-label="Private conversations">
-    <header>
-      <h2>Conversations & activity</h2>
-      <p>Save a private brief, then explicitly start bounded Agent work. No message approves an external action.</p>
-    </header>
-    {error && <p role="alert">{error}</p>}
-    {notice && <p role="status">{notice}</p>}
-    {disabled ? <p>Conversations are not enabled for this workspace. Existing work is unchanged.</p> : <>
-      <form onSubmit={create}>
-        <label htmlFor="cw-conversation-title">New conversation</label>
-        <input id="cw-conversation-title" value={title} minLength={1} maxLength={160}
-          disabled={working} onChange={event => setTitle(event.target.value)} required />
-        <button type="submit" disabled={working || !title.trim()}>Create private conversation</button>
-      </form>
-      <label htmlFor="cw-conversation-select">Conversation</label>
-      <select id="cw-conversation-select" value={selected}
-        onChange={event => { setSelected(event.target.value); setDraft(""); setSelectedSources([]); messageKey.current = null; }}>
-        <option value="">Choose a conversation</option>
-        {conversations.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-      </select>
-      {memoryEnabled && <details>
-        <summary>Review saved memory ({memoryFacts.length})</summary>
-        {memoryError && <p role="alert">{memoryError}</p>}
-        <p>Memory is separate from conversation messages and never authorizes external actions.</p>
-        <ul>{memoryFacts.map(fact => <li key={fact.id}>
-          <strong>{fact.namespace} / {fact.key}</strong> · version {fact.version}
-          <p dir="auto">{fact.value}</p>
-          {!fact.active && <p>Expired</p>}
-          {editingMemory === fact.id ? <>
-            <label htmlFor="cw-memory-edit">Edit memory fact</label>
-            <textarea id="cw-memory-edit" value={memoryDraft} maxLength={2000} rows={3}
-              disabled={working} onChange={event => setMemoryDraft(event.target.value)} />
-            <button type="button" onClick={() => { void saveMemory(fact); }}
-              disabled={working || !memoryDraft.trim()}>Save reviewed edit</button>
-            <button type="button" onClick={() => { setEditingMemory(""); setMemoryDraft(""); }}
-              disabled={working}>Cancel edit</button>
-          </> : <button type="button" disabled={working} onClick={() => {
-            setEditingMemory(fact.id); setMemoryDraft(fact.value);
-          }}>Edit</button>}
-          <button type="button" disabled={working} onClick={() => { void removeMemory(fact); }}>Delete</button>
-        </li>)}</ul>
-      </details>}
-      {selectedConversation && <>
-        <button type="button" onClick={() => { void remove(); }} disabled={working}>Delete and redact</button>
-        <ol aria-label="Conversation messages">
-          {messages.map(item => {
-            const run = statusByMessage.get(item.id);
-            const linked = item.resource_links.find(link => link.resource_type === "agent_run");
-            return <li key={item.id}>
-              <p dir="auto">{item.text}</p>
-              <small>Message {item.sequence} · {new Date(item.created_at).toLocaleString()}</small>
-              {run && <p role="status">Agent {run.state}: {run.detail}</p>}
-              {run && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state) &&
-                <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>
-                  Cancel Agent work
-                </button>}
-              {!linked && item.sequence === selectedConversation.message_sequence &&
-                <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>
-                  Start bounded Agent work
-                </button>}
-              {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent runs</button>}
-            </li>;
-          })}
-        </ol>
-        <form onSubmit={send}>
-          {manifestError && <p role="status">Document selection unavailable: {manifestError}</p>}
-          {manifest && <fieldset>
-            <legend>Owned document context (optional, at most five)</legend>
-            <p>Workspace revision: <code>{manifest.revision_sha256.slice(0, 12)}</code>. Documents are rechecked when work starts.</p>
-            {manifest.truncated.documents && <p role="status">Only the first document page is shown. Review sources before selecting.</p>}
-            {manifest.documents.filter(doc => doc.available).map(doc =>
-              <label key={doc.version_id}>
-                <input type="checkbox" checked={selectedSources.includes(doc.version_id)}
-                  disabled={working || (!selectedSources.includes(doc.version_id) && selectedSources.length >= 5)}
-                  onChange={event => {
-                    setSelectedSources(current => event.target.checked
-                      ? [...current, doc.version_id].slice(0, 5)
-                      : current.filter(id => id !== doc.version_id));
-                  }} />
-                {doc.name} · version {doc.version}
-              </label>
-            )}
-            <small>Selected files are untrusted inputs, not instructions or permissions. Memory and artifacts cannot authorize external actions.</small>
-          </fieldset>}
-          <label htmlFor="cw-conversation-message">New message</label>
+  return <section className="rukh-conversation-workspace" aria-label="Private conversations">
+    <aside className="rukh-conversation-list">
+      <div className="rukh-panel-heading"><div><span className="cw-eyebrow">WORKSPACE</span><h2>Conversations</h2></div><span className="rukh-count">{conversations.length}</span></div>
+      {error && <p className="cw-error" role="alert">{error}</p>}
+      {notice && <p className="cw-notice" role="status">{notice}</p>}
+      {disabled ? <p className="rukh-muted">Conversations are not enabled for this workspace. Existing work is unchanged.</p> : <>
+        <form className="rukh-conversation-create" onSubmit={create}>
+          <label className="rukh-sr-only" htmlFor="cw-conversation-title">New conversation title</label>
+          <input id="cw-conversation-title" value={title} placeholder="Name a conversation…" minLength={1} maxLength={160}
+            disabled={working} onChange={event => setTitle(event.target.value)} required />
+          <button type="submit" aria-label="Create private conversation" disabled={working || !title.trim()}>＋</button>
+        </form>
+        <ul className="rukh-conversation-items">
+          {conversations.map(item => <li key={item.id}>
+            <button type="button" aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); messageKey.current = null; }}>
+              <span className="rukh-conversation-item-title">{item.title}</span>
+              <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
+            </button>
+          </li>)}
+        </ul>
+        {conversations.length === 0 && <p className="rukh-muted">Your private conversations will appear here.</p>}
+      </>}
+      <p className="rukh-panel-footnote">Messages are private workspace records. Saving a message does not start Agent work.</p>
+    </aside>
+
+    <section className="rukh-conversation-thread" aria-label="Conversation">
+      <header className="rukh-thread-header">
+        <div><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Start a conversation"}</h2></div>
+        {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
+      </header>
+      {!selectedConversation ? <div className="rukh-thread-empty"><span aria-hidden="true">✳</span><h3>Give your work a place to begin.</h3><p>Create a private conversation on the left, then add a brief or a question. Agent work always requires a separate action.</p></div> : <>
+        {messages.length === 0 ? <div className="rukh-thread-empty"><span aria-hidden="true">✳</span><h3>What should we work on?</h3><p>Share context, attach approved workspace documents, or ask for a plan. Nothing is dispatched automatically.</p></div> :
+          <ol className="rukh-message-list" aria-label="Conversation messages">
+            {messages.map(item => {
+              const run = statusByMessage.get(item.id);
+              const linked = item.resource_links.find(link => link.resource_type === "agent_run");
+              const activeRun = run && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state);
+              const canDispatch = !linked && item.sequence === selectedConversation.message_sequence;
+              return <li className="rukh-message" key={item.id}>
+                <p dir="auto">{item.text}</p>
+                <div className="rukh-message-meta"><small>Message {item.sequence} · {new Date(item.created_at).toLocaleString()}</small>
+                  {run && <span role="status">Agent {run.state}: {run.detail}</span>}
+                </div>
+                {(activeRun || canDispatch || linked) && <div className="rukh-message-actions">
+                  {activeRun && <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>Cancel Agent work</button>}
+                  {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start bounded Agent work</button>}
+                  {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
+                </div>}
+              </li>;
+            })}
+          </ol>}
+        <form className="rukh-message-composer" onSubmit={send}>
+          <label className="rukh-sr-only" htmlFor="cw-conversation-message">New message</label>
           <textarea id="cw-conversation-message" dir="auto" value={draft} minLength={1} maxLength={12000}
-            rows={4} disabled={working} required onChange={event => setDraft(event.target.value)} />
-          <button type="submit" disabled={working || !draft.trim()}>Save message</button>
+            rows={4} disabled={working} required onChange={event => setDraft(event.target.value)}
+            placeholder="Message your coworker…" />
+          <div><span>{selectedSources.length ? `${selectedSources.length} source(s) attached` : "Your message is saved privately"}</span>
+            <button type="submit" disabled={working || !draft.trim()}>Save message <span aria-hidden="true">↗</span></button>
+          </div>
         </form>
       </>}
-    </>}
+    </section>
+
+    <aside className="rukh-context-panel" aria-label="Workspace context">
+      <section>
+        <div className="rukh-panel-heading"><div><span className="cw-eyebrow">CONTEXT</span><h3>Workspace sources</h3></div></div>
+        {manifestError && <p className="rukh-muted" role="status">{manifestError}</p>}
+        {!manifest && !manifestError && <p className="rukh-muted">Loading available sources…</p>}
+        {manifest && <>
+          <p className="rukh-context-revision">Revision <code>{manifest.revision_sha256.slice(0, 12)}</code></p>
+          {manifest.truncated.documents && <p className="rukh-muted">Only the first document page is shown.</p>}
+          {manifest.documents.filter(doc => doc.available).length === 0 ? <p className="rukh-muted">No available documents yet.</p> :
+            <div className="rukh-source-list">
+              {manifest.documents.filter(doc => doc.available).map(doc =>
+                <label key={doc.version_id}>
+                  <input type="checkbox" checked={selectedSources.includes(doc.version_id)}
+                    disabled={working || (!selectedSources.includes(doc.version_id) && selectedSources.length >= 5)}
+                    onChange={event => setSelectedSources(current => event.target.checked
+                      ? [...current, doc.version_id].slice(0, 5)
+                      : current.filter(id => id !== doc.version_id))} />
+                  <span><strong>{doc.name}</strong><small>Version {doc.version} · {doc.sha256.slice(0, 10)}</small></span>
+                </label>
+              )}
+            </div>}
+          <p className="rukh-panel-footnote">Selected sources are untrusted inputs, not instructions or permissions. Maximum five per message.</p>
+        </>}
+      </section>
+      <section>
+        <div className="rukh-panel-heading"><div><span className="cw-eyebrow">ACTIVITY</span><h3>Agent activity</h3></div></div>
+        {activity.length === 0 ? <p className="rukh-muted">No Agent runs in this conversation.</p> :
+          <ul className="rukh-activity-list">{activity.slice(-5).reverse().map(item => <li key={item.run_id}>
+            <span className={`rukh-activity-dot rukh-activity-${item.state}`} aria-hidden="true" />
+            <span><strong>{item.state.replace(/_/g, " ")}</strong><small>{item.detail}</small></span>
+          </li>)}</ul>}
+      </section>
+      <section>
+        <div className="rukh-panel-heading"><div><span className="cw-eyebrow">MEMORY</span><h3>Saved context</h3></div></div>
+        {memoryError && <p className="cw-error" role="alert">{memoryError}</p>}
+        {!memoryEnabled ? <p className="rukh-muted">Memory is disabled for this workspace.</p> :
+          <details className="rukh-memory-details">
+            <summary>Review saved memory ({memoryFacts.length})</summary>
+            <p className="rukh-panel-footnote">Memory is separate from messages and never authorizes external actions.</p>
+            <ul>{memoryFacts.map(fact => <li key={fact.id}>
+              <strong>{fact.namespace} / {fact.key}</strong><small>Version {fact.version}{!fact.active ? " · Expired" : ""}</small>
+              <p dir="auto">{fact.value}</p>
+              {editingMemory === fact.id ? <>
+                <label htmlFor="cw-memory-edit">Edit memory fact</label>
+                <textarea id="cw-memory-edit" value={memoryDraft} maxLength={2000} rows={3}
+                  disabled={working} onChange={event => setMemoryDraft(event.target.value)} />
+                <div className="rukh-memory-actions">
+                  <button type="button" onClick={() => { void saveMemory(fact); }} disabled={working || !memoryDraft.trim()}>Save edit</button>
+                  <button type="button" onClick={() => { setEditingMemory(""); setMemoryDraft(""); }} disabled={working}>Cancel</button>
+                </div>
+              </> : <div className="rukh-memory-actions">
+                <button type="button" disabled={working} onClick={() => { setEditingMemory(fact.id); setMemoryDraft(fact.value); }}>Edit</button>
+                <button type="button" disabled={working} onClick={() => { void removeMemory(fact); }}>Delete</button>
+              </div>}
+            </li>)}</ul>
+          </details>}
+      </section>
+    </aside>
   </section>;
 }
