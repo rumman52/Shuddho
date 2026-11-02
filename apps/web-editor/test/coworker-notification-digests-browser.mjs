@@ -83,7 +83,7 @@ export async function verifyNotificationDigests(page, folder) {
     assert.equal(readRequests, 2);
     // A source withdrawn after display must refresh away after the action returns a conflict.
     notices.forEach(item => { item.state = "delivered"; item.read_at = null; });
-    await page.getByRole("button", { name: "Drafts & files", exact: true }).click();
+    await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
     await page.getByRole("button", { name: "Automations", exact: true }).click();
     await workspace.getByText("Review your study plan", { exact: true }).waitFor();
     await workspace.getByLabel("Group suggestion notices into digests").check();
@@ -95,6 +95,6 @@ export async function verifyNotificationDigests(page, folder) {
   } finally {
     await page.unroute(pattern, handler);
     await page.setViewportSize({ width: 1365, height: 960 });
-    await page.getByRole("button", { name: "Drafts & files", exact: true }).click();
+    await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
   }
 }
