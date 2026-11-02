@@ -219,7 +219,11 @@ def test_shared_web_editor_prompt_is_multilingual_and_source_faithful():
         candidate_sentences=[],
     )
     system = messages[0]["content"]
+    payload = json.loads(messages[1]["content"])
     assert PROMPT_SCHEMA_VERSION == "ai-review-v6-rukh-content-quality"
+    assert payload["schemaVersion"] == PROMPT_SCHEMA_VERSION
+    assert "SERVER-OWNED OUTPUT SCHEMA" in system
+    assert '"requestId"' in system
     assert "You are Rukh AI" in system
     assert "multilingual writing editor" in system
     assert "Preserve the author's intended meaning" in system
