@@ -47,7 +47,9 @@
 ## Task 5 — Consistent standalone navigation and identity
 
 - Update `apps/coworker/src/App.tsx` and its styles to link back to the home and to Web Editor.
-- Update standalone HTML titles/descriptions and the web-editor font link to use the established DM Sans / Noto Serif Bengali families, removing the stale Inter mismatch.
+- Use same-origin `/coworker` and `/editor` routes in the integrated workspace; retain `VITE_COWORKER_APP_URL` and `VITE_EDITOR_APP_URL` overrides for separately hosted deployments.
+- Update standalone HTML titles/descriptions and the web-editor font link to use the established DM Sans / Manrope / Noto Serif Bengali families, removing the stale Inter mismatch.
+- Update the Playwright browser flow to verify the two home destinations, desktop/mobile horizontal overflow, and navigation between standalone workspaces.
 - Verification: standalone shell tests and workspace builds.
 
 ## Task 6 — Exact-head verification
