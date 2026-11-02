@@ -30,3 +30,12 @@ test("Coworker standalone app entry resolves every local module and stylesheet",
   assertRelativeImportsResolve(app);
   assert.match(readFileSync(app, "utf8"), /export\s+default/);
 });
+
+test("Coworker development port and API defaults match the Editor handoff", () => {
+  const config = readFileSync(resolve(appRoot, "vite.config.ts"), "utf8");
+  const env = readFileSync(resolve(appRoot, ".env.example"), "utf8");
+  assert.match(config, /port:\\s*5174/);
+  assert.match(config, /port:\\s*4174/);
+  assert.match(config, /strictPort:\\s*true/);
+  assert.doesNotMatch(env, /^VITE_COWORKER_API_BASE_URL=/m);
+});
