@@ -104,7 +104,10 @@ async def evaluate_live(cases):
             x=await m.generate(messages,c["language"],ids)
             y=score(c,x.draft.model_dump())
             y["tokens"]=x.total_tokens; y["latency_ms"]=x.latency_ms
-            y["generation"]=x.generation_metadata(validator_result="passed")
+            y["generation"]=x.generation_metadata(
+                validator_result="passed" if y["passed"] else "failed",
+                error_class=None if y["passed"] else "quality_evaluation_failed",
+            )
             out.append(y)
         except DraftFailure as e:
             out.append({"id":c["id"],"skill_id":c["skill_id"],"language":c["language"],
