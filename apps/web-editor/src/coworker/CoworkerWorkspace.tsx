@@ -301,6 +301,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
       }}>{task.state === "cancelling" ? "Stopping…" : "Cancel this task"}</button>}</> : selected ? <p className="cw-loading" role="status">Loading your task…</p> : <section className="cw-empty"><span className="cw-empty-mark" aria-hidden="true">✦</span><span className="cw-eyebrow">From scattered notes to finished drafts</span><h2>Make space for the work<br />that matters.</h2><p>Choose the work you need, add your details, and leave with a draft you can review and use.</p><div className="cw-format-tags"><span>DOCX</span><span>PDF</span><span>TEXT</span></div></section>}
       {history.length > 0 && <section className="cw-history"><div className="cw-history-title"><h2>Recent work</h2><button className="cw-text-button" type="button" onClick={() => setReload(value => value + 1)}>Refresh</button></div><ul>{history.map(item => <li key={item.id}><button type="button" aria-pressed={selected === item.id} onClick={() => setSelected(item.id)}><div><strong>{item.instruction}</strong><small>{skills.find(skill => skill.id === (item.skill_id ?? "report_email"))?.name ?? "Saved work"} · {new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {item.output_language}</small></div><span className={`cw-status cw-status-${item.state}`}>{labels[item.state]}</span></button></li>)}</ul></section>}
     </div>
+    </div>
       </section>
     </div>
   </main>;
