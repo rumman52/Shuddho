@@ -1,25 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { type Session } from "@supabase/supabase-js";
+import { getRukhAuthClient } from "@rukh/auth";
 import WritingAssistant from "../../web-editor/src/App";
 import { ErrorBoundary } from "../../web-editor/src/components/ErrorBoundary";
 import { CoworkerClient, isTextArtifact, type Artifact, type CoworkerTask } from "../../web-editor/src/coworker/client";
-import { publicAuthConfig } from "../../web-editor/src/coworker/authConfig";
-
-let authSingleton: SupabaseClient | null = null;
-function getAuthClient(): SupabaseClient | null {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  if (!publicAuthConfig(url, key)) return null;
-  authSingleton ??= createClient(url, key, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-  });
-  return authSingleton;
-}
 
 type ArtifactItem = { artifact: Artifact; task: CoworkerTask };
 
 export default function App() {
-  const auth = useMemo(getAuthClient, []);
+  const auth = useMemo(() => getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY), []);
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(Boolean(auth));
   const [tasks, setTasks] = useState<CoworkerTask[]>([]);
