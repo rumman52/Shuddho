@@ -5,7 +5,9 @@ import types
 import pytest
 from collections import UserDict
 
-from services.api.shuddho_api.ai_review_schema import extract_json_payload
+from services.api.shuddho_api.ai_review_schema import (
+    PROMPT_SCHEMA_VERSION, build_review_messages, extract_json_payload,
+)
 from services.api.shuddho_api.llm_gemma import run_gemma_check
 from services.api.shuddho_api.llm_provider import DEFAULT_GEMMA_MODEL, resolve_llm_config
 from services.api.shuddho_api.gemma_response_mode import resolve_gemma_response_mode
@@ -205,3 +207,22 @@ def test_no_generative_fallback_is_configured() -> None:
     cfg = resolve_llm_config({"GOOGLE_API_KEY": "test-key", "SHUDDHO_LLM_FALLBACK_PROVIDER": "openai"})
     assert cfg.fallback_provider is None
     assert cfg.fallback_configured is False
+
+
+
+def test_shared_web_editor_prompt_is_multilingual_and_source_faithful():
+    messages = build_review_messages(
+        request_id="review-1",
+        full_text="She go home.",
+        sentences=[{"sentenceId": "s_0", "start": 0, "end": 12}],
+        local_suggestions=[],
+        candidate_sentences=[],
+    )
+    system = messages[0]["content"]
+    assert PROMPT_SCHEMA_VERSION == "ai-review-v6-rukh-content-quality"
+    assert "You are Rukh AI" in system
+    assert "multilingual writing editor" in system
+    assert "Preserve the author's intended meaning" in system
+    assert "untrusted user content" in system
+    assert "Python Unicode code-point offsets" in system
+    assert "correctedText exactly equal to fullText" in system
