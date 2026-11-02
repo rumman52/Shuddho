@@ -55,8 +55,22 @@ function fixture() {
   return { client, requests, messagesByKey, titlesByKey };
 }
 
+function buttonText(item: ReactTestInstance): string {
+  return item.children
+    .map(child => typeof child === "string" ? child : buttonText(child))
+    .join(" ")
+    .replace(/\\s+/g, " ")
+    .trim();
+}
+
 function button(root: ReactTestInstance, label: string) {
-  return root.findAllByType("button").find(item => item.children.some(child => child === label))!;
+  const expected = label.toLowerCase();
+  const found = root.findAllByType("button").find(item => {
+    const accessibleName = typeof item.props["aria-label"] === "string" ? item.props["aria-label"] : "";
+    return accessibleName.toLowerCase() === expected || buttonText(item).toLowerCase().includes(expected);
+  });
+  assert.ok(found, `Expected a button matching "${label}".`);
+  return found!;
 }
 
 async function mounted(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>, configure?: (data: ReturnType<typeof fixture>) => void) {
@@ -67,7 +81,7 @@ async function mounted(run: (tree: ReactTestRenderer, data: ReturnType<typeof fi
   let tree!: ReactTestRenderer;
   try {
     await act(async () => { tree = create(<CoworkerWorkspace client={data.client as unknown as CoworkerClient} email="owner@example.test" signOut={async () => undefined} />); });
-    await act(async () => { button(tree.root, "Conversations").props.onClick(); });
+    await act(async () => { button(tree.root, "Open conversations").props.onClick(); });
     await run(tree, data);
   } finally {
     if (tree) await act(async () => { tree.unmount(); });
@@ -85,7 +99,7 @@ async function submit(tree: ReactTestRenderer, inputId: string, text: string) {
 
 test("conversation link opens the exact owned run beyond the thirty-run history", async () => {
   await mounted(async (tree, data) => {
-    await act(async () => { button(tree.root, "View Agent runs").props.onClick(); });
+    await act(async () => { button(tree.root, "View Agent run").props.onClick(); });
     const details = tree.root.findByProps({ "aria-label": "Agent run details" });
     assert.equal(details.findByType("h2").children.join(""), "Exact older conversation result");
     assert.deepEqual(data.requests.runs, ["linked-old-run"]);
@@ -125,7 +139,7 @@ test("editing a lost-response title creates a new payload-bound request", async 
 
 test("a rejected linked run never falls back to unrelated recent work", async () => {
   await mounted(async (tree, data) => {
-    await act(async () => { button(tree.root, "View Agent runs").props.onClick(); });
+    await act(async () => { button(tree.root, "View Agent run").props.onClick(); });
     assert.equal(tree.root.findAllByProps({ "aria-label": "Agent run details" }).length, 0);
     assert.ok(tree.root.findAllByProps({ role: "alert" }).some(item => item.children.includes("Linked run unavailable")));
     assert.deepEqual(data.requests.runs, ["linked-old-run"]);
