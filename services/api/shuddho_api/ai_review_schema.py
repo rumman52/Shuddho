@@ -247,7 +247,7 @@ def build_review_messages(
         "schemaVersion": PROMPT_SCHEMA_VERSION,
     }
     system_prompt = (
-        SYSTEM_PROMPT + "\\n\\nSERVER-OWNED OUTPUT SCHEMA\\n"
+        SYSTEM_PROMPT + "\n\nSERVER-OWNED OUTPUT SCHEMA\n"
         + json.dumps(required_output_schema(), ensure_ascii=False)
     )
     return [
