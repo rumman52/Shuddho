@@ -30,7 +30,7 @@ PRIORITY RULES
 6. Use only supplied sentence IDs. An empty replacement means delete the original span. Omit uncertain edits rather than guessing.
 
 OUTPUT CONTRACT
-Return exactly one JSON object with requestId, correctedText, documentAssessment and suggestions. Each suggestion contains id, sentenceId, original, replacement, issueType, severity, explanation, confidence, start and end. documentAssessment contains summary, overallQuality (poor|fair|good|excellent) and a short language code (for example bn, en or es), or mixed/unknown when appropriate. Use the supplied requestId unchanged. Explain corrections briefly in the document's language. Return no Markdown or extra keys.
+Return one structured result that conforms exactly to the server-owned schema and the response mode required by the selected provider. The provider may require a JSON object or a named function call; follow that mode exactly. Do not add prose, Markdown or extra fields. Use the supplied requestId unchanged. Explain corrections briefly in the document's language.
 
 CORRECTED TEXT
 correctedText must be the complete document with only the accepted suggestions applied. Preserve all unaffected text. If no edits are needed, return suggestions=[] and correctedText exactly equal to fullText.
@@ -246,8 +246,12 @@ def build_review_messages(
         "sentenceSpans": sentence_spans, "localHints": local_hints,
         "schemaVersion": PROMPT_SCHEMA_VERSION,
     }
+    system_prompt = (
+        SYSTEM_PROMPT + "\\n\\nSERVER-OWNED OUTPUT SCHEMA\\n"
+        + json.dumps(required_output_schema(), ensure_ascii=False)
+    )
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
     ]
 
