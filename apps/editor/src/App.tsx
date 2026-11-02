@@ -129,7 +129,11 @@ export default function App() {
       };
     }
     const attempt = handoffAttempt.current;
-    const firstLine = content.split(/\\r?\\n/).find(line => line.trim())?.trim() ?? "Editor draft";
+    if (!attempt) {
+      setLibraryError("The handoff could not be initialized. Try again.");
+      return;
+    }
+    const firstLine = content.split(/\r?\n/).find(line => line.trim())?.trim() ?? "Editor draft";
     const title = firstLine.slice(0, 80) || "Editor draft";
 
     setBusy("handoff");
@@ -151,23 +155,32 @@ export default function App() {
         const file = new File([editorText], "rukh-editor-draft.txt", { type: "text/plain" });
         attempt.uploaded = await client.upload(file);
       }
+      const uploaded = attempt.uploaded;
+      if (!uploaded) throw new Error("The draft upload did not return a document record.");
+
       if (!attempt.sourceVersionId) {
         const manifest = await client.workspaceManifest();
-        const source = manifest.documents.find(item => item.document_id === attempt.uploaded?.id && item.available);
+        const source = manifest.documents.find(item => item.document_id === uploaded.id && item.available);
         if (!source) throw new Error("The uploaded draft is not yet available as a verified workspace source. Retry after the workspace manifest refreshes.");
         attempt.sourceVersionId = source.version_id;
       }
+      const sourceVersionId = attempt.sourceVersionId;
+      if (!sourceVersionId) throw new Error("The uploaded draft has no verified source version.");
+
       if (!attempt.conversationId) {
         const conversation = await client.createConversation(title, attempt.createKey);
         attempt.conversationId = conversation.id;
       }
+      const conversationId = attempt.conversationId;
+      if (!conversationId) throw new Error("The Coworker conversation was not created.");
+
       await client.appendConversationMessage(
-        attempt.conversationId,
+        conversationId,
         "I am handing off this editor draft for help. Please review the attached source, ask for missing context, and suggest the next useful step. Do not perform external actions without my explicit approval.",
         attempt.messageKey,
-        [attempt.sourceVersionId],
+        [sourceVersionId],
       );
-      destination.searchParams.set("conversation", attempt.conversationId);
+      destination.searchParams.set("conversation", conversationId);
       window.location.assign(destination.toString());
       handoffAttempt.current = null;
     } catch (error) {
