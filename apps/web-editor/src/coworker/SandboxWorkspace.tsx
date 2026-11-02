@@ -8,7 +8,7 @@ const INTERACTIVE_SAMPLE = `from pathlib import Path
 html = """<!doctype html>
 <html>
 <head>
-  <title>Shuddho private preview</title>
+  <title>Rukh AI private preview</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 2rem; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 1rem; }
@@ -197,7 +197,7 @@ export default function SandboxWorkspace({ client }: { client: CoworkerClient })
           <button className="cw-primary" type="submit" disabled={Boolean(busy)}>
             {busy === "create" ? "Preparing…" : "Prepare disposable sandbox"}<span aria-hidden="true">↗</span>
           </button>
-          <p className="cw-fineprint">No network, host filesystem, connector credentials, production secrets, arbitrary packages, Docker socket, or privileged Shuddho API bridge are available to generated code.</p>
+          <p className="cw-fineprint">No network, host filesystem, connector credentials, production secrets, arbitrary packages, Docker socket, or privileged Rukh AI API bridge are available to generated code.</p>
         </form>
 
         {selected && <form onSubmit={run}>
