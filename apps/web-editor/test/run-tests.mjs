@@ -6,6 +6,8 @@ import { build } from "esbuild";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outdir = join(root, ".test-dist");
 const tests = [
+  "test/app-routes.test.mjs",
+  "test/editor-feature-gate.test.tsx",
   "src/coworker/client.test.ts",
   "src/coworker/refreshOrder.test.ts",
   "src/coworker/conversationIdentity.test.tsx",
@@ -50,6 +52,11 @@ for (const testFile of tests) {
       "import.meta.env.VITE_API_BASE_URL": '"https://shuddho-api.onrender.com"',
       "import.meta.env.VITE_COMPETITION_DEMO_MODE": '"true"',
       "import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED": '"false"',
+      "import.meta.env.VITE_COWORKER_ENABLED": '"false"',
+      "import.meta.env.VITE_SUPABASE_URL": '""',
+      "import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY": '""',
+      "import.meta.env.VITE_COWORKER_API_BASE_URL": '"/backend"',
+      "import.meta.env.VITE_COWORKER_APP_URL": '"/coworker"',
     },
   });
   await import(pathToFileURL(outfile));

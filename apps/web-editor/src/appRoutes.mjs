@@ -4,3 +4,9 @@ export function getStandaloneAppRoute(pathname) {
   if (path === "/editor" || path.startsWith("/editor/")) return "editor";
   return "default";
 }
+
+export function getWorkspaceAppRoute(pathname, coworkerEnabled = false) {
+  const route = getStandaloneAppRoute(pathname);
+  if (!coworkerEnabled && route !== "editor") return "editor";
+  return route;
+}
