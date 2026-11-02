@@ -160,7 +160,7 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
   padding: 0 13px;
   border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--cw-muted);
+  color: #646b62;
   font-size: 11px;
   font-weight: 650;
   text-decoration: none;
@@ -171,7 +171,15 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
 .rukh-product-switch:hover { border-color: var(--cw-border); background: var(--cw-bg); color: var(--cw-text); }
 .rukh-product-switch--home { border-color: var(--cw-border); background: var(--cw-surface); color: var(--cw-text); }
 @media (max-width: 560px) {
-  .rukh-productbar { height: auto; min-height: 60px; padding: 10px 12px; }
-  .rukh-product-switcher { gap: 4px; }
+  .rukh-productbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    height: auto;
+    min-height: 60px;
+    padding: 10px 12px;
+  }
+  .rukh-product-switcher { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 4px; }
   .rukh-product-switch { min-height: 38px; padding-inline: 9px; font-size: 10px; }
 }

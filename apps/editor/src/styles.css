@@ -110,3 +110,17 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: 
 @media (max-width: 560px) {
   .rukh-workspace-home { min-height: 36px; padding-inline: 9px; font-size: 10px; }
 }
+
+@media (max-width: 560px) {
+  .rukh-editor-topbar {
+    height: auto;
+    min-height: 54px;
+    flex-wrap: wrap;
+    padding-block: 8px;
+  }
+  .rukh-editor-top-actions {
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}

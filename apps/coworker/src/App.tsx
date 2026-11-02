@@ -10,18 +10,18 @@ function ArrowIcon() {
 }
 
 export default function App() {
-  const editorUrl = import.meta.env.VITE_EDITOR_APP_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:5175" : "/editor");
+  const editorUrl = import.meta.env.VITE_EDITOR_APP_URL ?? "/editor";
   return (
     <ErrorBoundary>
       <div className="rukh-coworker-app">
         <header className="rukh-productbar">
-          <a className="rukh-product-brand" href="/" aria-label="Rukh AI workspace home">
+          <a className="rukh-product-brand" href="/" aria-label="Rukh AI workspace home" target="_blank" rel="noreferrer">
             <span className="rukh-brand-mark" aria-hidden="true">r</span>
             <span><strong>Rukh AI</strong><small>Co-workers</small></span>
           </a>
           <nav className="rukh-product-switcher" aria-label="Workspace navigation">
-            <a className="rukh-product-switch rukh-product-switch--home" href="/">All workspaces</a>
-            <a className="rukh-product-switch" href={editorUrl}>Web Editor <ArrowIcon /></a>
+            <a className="rukh-product-switch rukh-product-switch--home" href="/" target="_blank" rel="noreferrer">All workspaces</a>
+            <a className="rukh-product-switch" href={editorUrl} target="_blank" rel="noreferrer">Web Editor <ArrowIcon /></a>
           </nav>
         </header>
         <CoworkerGate />
