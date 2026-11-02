@@ -155,6 +155,7 @@ def test_root_workspace_includes_gateway_web_and_packages() -> None:
         "apps/api",
         "apps/web-editor",
         "apps/coworker",
+        "apps/editor",
         "apps/chrome-extension",
         "packages/*",
     ]
