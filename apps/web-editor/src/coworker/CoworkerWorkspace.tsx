@@ -14,6 +14,12 @@ import { hasPendingGoogleCallback } from "./googleCallback";
 import { hasPendingMicrosoftCallback } from "./microsoftCallback";
 import { hasPendingLinkedInCallback } from "./linkedinCallback";
 import { requestedNotificationView } from "./pushNavigation";
+import { coworkerNavigation, getInitialCoworkerView } from "../../../coworker/src/navigation.mjs";
+
+const navigationGlyphs: Record<string, string> = {
+  home: "⌂", activity: "◌", target: "◎", calendar: "▦", globe: "◉",
+  "file-text": "▤", shield: "◇", terminal: "⌘", wallet: "▣", handshake: "⇄",
+};
 
 const originalService: WorkSkill = {
   id: "report_email", name: "Report & email", description: "Turn your sources into a report and an email draft.",
@@ -66,8 +72,8 @@ export function TaskResult({ task, client, revise, prepareEmail, prepareSocial }
 export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
   const [view, setView] = useState<"drafts" | "goals" | "automations" | "browser" | "sandbox" | "transactions" | "negotiations" | "actions" | "agent" | "conversations">(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
-    if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? "drafts";
-    return "drafts";
+    if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerView(window.location.search);
+    return "conversations";
   });
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
   const [socialActionDraft, setSocialActionDraft] = useState<string | null>(null);
@@ -202,15 +208,29 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     notesInput.current?.focus(); notesInput.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
-  return <main className="cw-workspace">
-    <header className="cw-header"><div><span className="cw-eyebrow">Shuddho coworker</span><h1>Good work starts here.</h1><p>Your documents, communication, and everyday plans. In your language.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
+  return <main className="cw-workspace rukh-cw-workspace">
+    <header className="cw-header"><div><span className="cw-eyebrow">RUKH AI / COWORKER</span><h1>What are we working on?</h1><p>A persistent workspace for conversations, focused work and connected tools.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
         setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
       }}>Sign out</button></div>
     </header>
     {error && <div className="cw-error cw-banner" role="alert">{error} {!workspace && <button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
-    <nav className="cw-work-tabs" aria-label="Coworker services"><button aria-pressed={view === "drafts"} onClick={() => setView("drafts")}>Drafts & files</button><button aria-pressed={view === "goals"} onClick={() => setView("goals")}>Goals</button><button aria-pressed={view === "automations"} onClick={() => setView("automations")}>Automations</button><button aria-pressed={view === "browser"} onClick={() => setView("browser")}>Browser</button><button aria-pressed={view === "sandbox"} onClick={() => setView("sandbox")}>Sandbox</button><button aria-pressed={view === "transactions"} onClick={() => setView("transactions")}>Transactions</button><button aria-pressed={view === "negotiations"} onClick={() => setView("negotiations")}>Negotiations</button><button aria-pressed={view === "agent"} onClick={() => { setFocusAgentRunId(null); setView("agent"); }}>Agent</button><button aria-pressed={view === "conversations"} onClick={() => setView("conversations")}>Conversations</button><button aria-pressed={view === "actions"} onClick={() => setView("actions")}>Email & calendar</button></nav>
+    <div className="rukh-cw-shell">
+      <aside className="rukh-cw-sidebar" aria-label="Coworker navigation">
+        <button className="rukh-cw-new" type="button" onClick={() => setView("conversations")}><span aria-hidden="true">＋</span> Open conversations</button>
+        {["Workspace", "Tools", "Manage"].map(group => <div className="rukh-cw-nav-group" key={group}>
+          <span className="rukh-cw-nav-label">{group}</span>
+          {coworkerNavigation.filter(item => item.group === group).map(item =>
+            <button key={item.id} type="button" className="rukh-cw-nav-item" aria-pressed={view === item.view}
+              onClick={() => { if (item.view === "agent") setFocusAgentRunId(null); setView(item.view); }}>
+              <span className="rukh-cw-nav-icon" aria-hidden="true">{navigationGlyphs[item.icon] ?? "·"}</span><span>{item.label}</span>
+            </button>
+          )}
+        </div>)}
+        <div className="rukh-cw-sidebar-foot"><span className="rukh-cw-private-dot" aria-hidden="true" /><div><strong>Private workspace</strong><small>External actions require review.</small></div></div>
+      </aside>
+      <section className="rukh-cw-content" aria-label="Coworker workspace">
     {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); setView("agent"); }} openAutomations={() => setView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
@@ -280,6 +300,8 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
         finally { setBusy(""); }
       }}>{task.state === "cancelling" ? "Stopping…" : "Cancel this task"}</button>}</> : selected ? <p className="cw-loading" role="status">Loading your task…</p> : <section className="cw-empty"><span className="cw-empty-mark" aria-hidden="true">✦</span><span className="cw-eyebrow">From scattered notes to finished drafts</span><h2>Make space for the work<br />that matters.</h2><p>Choose the work you need, add your details, and leave with a draft you can review and use.</p><div className="cw-format-tags"><span>DOCX</span><span>PDF</span><span>TEXT</span></div></section>}
       {history.length > 0 && <section className="cw-history"><div className="cw-history-title"><h2>Recent work</h2><button className="cw-text-button" type="button" onClick={() => setReload(value => value + 1)}>Refresh</button></div><ul>{history.map(item => <li key={item.id}><button type="button" aria-pressed={selected === item.id} onClick={() => setSelected(item.id)}><div><strong>{item.instruction}</strong><small>{skills.find(skill => skill.id === (item.skill_id ?? "report_email"))?.name ?? "Saved work"} · {new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {item.output_language}</small></div><span className={`cw-status cw-status-${item.state}`}>{labels[item.state]}</span></button></li>)}</ul></section>}
-    </div></div>
+    </div>
+      </section>
+    </div>
   </main>;
 }
