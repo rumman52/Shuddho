@@ -219,7 +219,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
     setProvider("google"); setMode("email"); setReplyParentId(parent.id);
     setTo(payload.to.join(", ")); setCc(payload.cc.join(", ")); setBcc("");
     setSubject(payload.subject); setBody(""); setAttachmentSelection([]);
-    setSelectedSharedArtifact(""); setReminderMinutes(0); setNotice("Replying inside a Shuddho-owned Gmail thread. No mailbox-read permission is used.");
+    setSelectedSharedArtifact(""); setReminderMinutes(0); setNotice("Replying inside a Rukh AI-owned Gmail thread. No mailbox-read permission is used.");
     setComposing(true); setAction(null); setChecked(false); setError(""); submission.current = undefined;
   }
 
@@ -354,7 +354,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
                 : "Read bounded Outlook mail metadata only after a separate Agent read grant")
               : capability === "calendar_read"
                 ? "Read bounded calendar events only after a separate Agent read grant"
-                : "Share one approved Shuddho artifact";
+                : "Share one approved Rukh AI artifact";
       return <div className="cw-connection" key={provider + capability}><div><strong>{label}</strong><small>{connected ? accountLabel : description}</small></div>
         {connected ? <button className="cw-text-button" disabled={Boolean(busy)} onClick={() => {
           const confirmation = provider === "linkedin"
@@ -395,16 +395,16 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
             <div><button type="button" className="cw-text-button" disabled={Boolean(busy) || !recipientDirectoryEnabled} onClick={() => addSavedRecipient(item)}>{mode === "email" || mode === "negotiation" ? "Add to To" : mode === "calendar" ? "Add guest" : "Use recipient"}</button>
               <button type="button" className="cw-text-button" disabled={Boolean(busy)} onClick={() => void removeSavedRecipient(item)}>Remove</button></div>
           </div>)}</div> : recipientDirectoryEnabled && <small>No saved recipients yet.</small>}
-          <small>Saved recipients are private Shuddho shortcuts. Selecting one only copies its exact email address into this draft; the final immutable preview is still what you approve. Agents cannot resolve or select saved recipients.</small>
+          <small>Saved recipients are private Rukh AI shortcuts. Selecting one only copies its exact email address into this draft; the final immutable preview is still what you approve. Agents cannot resolve or select saved recipients.</small>
         </fieldset>}
         {mode === "email" ? <>
           {replyParentId && <p className="cw-notice">This reply keeps the original To/Cc recipients and subject. Bcc and attachments are disabled so the approved Gmail thread cannot be widened.</p>}
           <label>To<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required readOnly={Boolean(replyParentId)} maxLength={5100} placeholder="name@example.com" /></label>
           <div className="cw-action-row"><label>Cc<input dir="ltr" value={cc} onChange={event => setCc(event.target.value)} readOnly={Boolean(replyParentId)} maxLength={5100} /></label><label>Bcc<input dir="ltr" value={bcc} onChange={event => setBcc(event.target.value)} readOnly={Boolean(replyParentId)} maxLength={5100} /></label></div>
-          <small>{replyParentId ? "Thread authority comes only from the confirmed Shuddho parent email; Shuddho does not read your mailbox." : "Use full email addresses, separated by commas. Up to 20 recipients in total."}</small>
+          <small>{replyParentId ? "Thread authority comes only from the confirmed Rukh AI parent email; Rukh AI does not read your mailbox." : "Use full email addresses, separated by commas. Up to 20 recipients in total."}</small>
           <label>Subject<input dir="auto" value={subject} onChange={event => setSubject(event.target.value)} required readOnly={Boolean(replyParentId)} maxLength={300} /></label>
           <label>Message<textarea dir="auto" rows={9} value={body} onChange={event => setBody(event.target.value)} required maxLength={20000} /></label>
-          {!replyParentId && attachmentsEnabled && artifacts.length > 0 && <fieldset className="cw-agent-files"><legend>Attach Shuddho artifacts (optional)</legend>
+          {!replyParentId && attachmentsEnabled && artifacts.length > 0 && <fieldset className="cw-agent-files"><legend>Attach Rukh AI artifacts (optional)</legend>
             {artifacts.filter(item => {
               const type = item.content_type.split(";", 1)[0].toLowerCase();
               return ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/plain"].includes(type);
@@ -421,9 +421,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
                 }} />
                 <span>{item.filename} · {(item.byte_size / 1024).toFixed(0)} KB · SHA {item.sha256.slice(0, 8)}{item.created_at ? ` · ${new Date(item.created_at).toLocaleDateString()}` : ""}</span></label>;
             })}
-            <small>Up to 3 existing Shuddho artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>
+            <small>Up to 3 existing Rukh AI artifacts, 2 MB total. The exact artifact hashes are bound to approval.</small>
           </fieldset>}
-          <p className="cw-fineprint">Plain-text email, sent immediately after approval.{attachmentsEnabled ? " Attachments must already exist in this Shuddho workspace." : " Attachments are disabled in this deployment."}</p>
+          <p className="cw-fineprint">Plain-text email, sent immediately after approval.{attachmentsEnabled ? " Attachments must already exist in this Rukh AI workspace." : " Attachments are disabled in this deployment."}</p>
         </> : mode === "negotiation" ? <>
           <p className="cw-notice">This is a binding commitment action. A changed recipient, message, summary, or term requires a completely fresh approval preview.</p>
           <label>Primary counterparty email<input dir="ltr" value={to} onChange={event => setTo(event.target.value)} required maxLength={254} placeholder="counterparty@example.com" /></label>
@@ -433,7 +433,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
           <label>Commitment summary<textarea dir="auto" rows={4} value={commitmentSummary} onChange={event => setCommitmentSummary(event.target.value)} required maxLength={2000} placeholder="Exact binding commitment being made" /></label>
           <label>Final terms<textarea dir="auto" rows={6} value={negotiationTerms} onChange={event => setNegotiationTerms(event.target.value)} required maxLength={12000} placeholder={"Price=USD 5,000\nDelivery=30 days\nCancellation=Non-refundable after acceptance"} /><small>One exact term per line as Name=Value. Each name must be unique.</small></label>
           <label>Message<textarea dir="auto" rows={9} value={body} onChange={event => setBody(event.target.value)} required maxLength={20000} /></label>
-          <p className="cw-fineprint">Exactly one primary counterparty; Bcc and attachments are disabled. The immutable approval binds the full message and every final term. If provider acceptance becomes uncertain, Shuddho will not resend blindly.</p>
+          <p className="cw-fineprint">Exactly one primary counterparty; Bcc and attachments are disabled. The immutable approval binds the full message and every final term. If provider acceptance becomes uncertain, Rukh AI will not resend blindly.</p>
         </> : mode === "calendar" ? <>
           <label>Event title<input dir="auto" required maxLength={300} value={eventTitle} onChange={event => setEventTitle(event.target.value)} /></label>
           <div className="cw-action-row"><label>Starts<input type="datetime-local" required value={start} onChange={event => setStart(event.target.value)} /></label><label>Ends<input type="datetime-local" required value={end} onChange={event => setEnd(event.target.value)} /></label></div>
@@ -453,9 +453,9 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
               const type = item.content_type.split(";", 1)[0].toLowerCase();
               return item.byte_size <= 8 * 1024 * 1024 && ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/plain"].includes(type);
             }).slice(0, 30).map(item => <label key={item.id}><input type="radio" name="shared_artifact_id" value={item.id} checked={selectedSharedArtifact === item.id} disabled={Boolean(busy)} onChange={() => setSelectedSharedArtifact(item.id)} /><span>{item.filename} · {(item.byte_size / 1024).toFixed(0)} KB · SHA {item.sha256.slice(0, 8)}</span></label>)}
-            <small>Exactly one existing Shuddho artifact, up to 8 MB. Its full SHA-256 is bound to your approval.</small>
+            <small>Exactly one existing Rukh AI artifact, up to 8 MB. Its full SHA-256 is bound to your approval.</small>
           </fieldset>
-          <p className="cw-fineprint">Google Drive only. Shuddho uploads this exact artifact and grants this exact recipient reader access. No public link, folder browsing, writer access, or contact lookup.</p>
+          <p className="cw-fineprint">Google Drive only. Rukh AI uploads this exact artifact and grants this exact recipient reader access. No public link, folder browsing, writer access, or contact lookup.</p>
         </> : <>
           <label>LinkedIn post<textarea dir="auto" rows={10} value={socialText} onChange={event => setSocialText(event.target.value)} required minLength={1} maxLength={3000} /></label>
           <span className="cw-field-meta">{socialText.length.toLocaleString()} / 3,000 characters</span>
@@ -484,7 +484,7 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
         {["awaiting_approval", "queued"].includes(action.state) && <button className="cw-text-button cw-cancel" disabled={Boolean(busy)} onClick={() => void run("cancel", async () => updateAction(await client.cancelAction(action.id)))}>Cancel action</button>}
         {action.state === "outcome_unknown" && (isCalendar(action.kind) || isDocumentShare(action.kind)) && action.preview.provider === "google" && <button className="cw-secondary" disabled={Boolean(busy) || !enabled} onClick={() => void run("reconcile", async () => updateAction(await client.reconcileAction(action.id)))}>{busy === "reconcile" ? (isDocumentShare(action.kind) ? "Checking Drive…" : "Checking calendar…") : (isDocumentShare(action.kind) ? "Check Drive result" : "Check calendar result")}</button>}
         {threadingEnabled && action.state === "succeeded" && action.preview.provider === "google" && isEmail(action.kind) && !isNegotiation(action.kind) && action.receipt?.thread_id && <button type="button" className="cw-secondary" disabled={Boolean(busy)} onClick={() => startThreadReply(action)}>Reply in this Gmail thread</button>}
-        {action.receipt && <div className="cw-receipt"><strong>{isReservation(action.kind) ? "Reservation confirmed by OpenTable" : isSocial(action.kind) ? "Published on LinkedIn" : isDocumentShare(action.kind) ? "Shared in Google Drive" : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (isEmail(action.kind) ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{isReservation(action.kind) ? `OpenTable confirmed reservation ${action.receipt.confirmation_number ?? ""} for ${action.receipt.party_size ?? "the approved party size"}. No payment or card authorization was performed.` : isSocial(action.kind) ? "LinkedIn confirmed creation of the approved public post. Shuddho does not read engagement, comments, reactions, or your feed." : isDocumentShare(action.kind) ? `Google Drive confirmed reader access for ${action.receipt.recipient ?? "the approved recipient"}. This does not mean the recipient opened the document.` : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (isEmail(action.kind) ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{isReservation(action.kind) && action.receipt.confirmation_number && <code>Confirmation: {action.receipt.confirmation_number}</code>}{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
+        {action.receipt && <div className="cw-receipt"><strong>{isReservation(action.kind) ? "Reservation confirmed by OpenTable" : isSocial(action.kind) ? "Published on LinkedIn" : isDocumentShare(action.kind) ? "Shared in Google Drive" : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "Accepted by Microsoft Graph" : "Created in Microsoft Calendar") : (isEmail(action.kind) ? "Accepted by Gmail" : "Created in Google Calendar")}</strong><p>{isReservation(action.kind) ? `OpenTable confirmed reservation ${action.receipt.confirmation_number ?? ""} for ${action.receipt.party_size ?? "the approved party size"}. No payment or card authorization was performed.` : isSocial(action.kind) ? "LinkedIn confirmed creation of the approved public post. Rukh AI does not read engagement, comments, reactions, or your feed." : isDocumentShare(action.kind) ? `Google Drive confirmed reader access for ${action.receipt.recipient ?? "the approved recipient"}. This does not mean the recipient opened the document.` : action.preview.provider === "microsoft" ? (isEmail(action.kind) ? "This confirms Microsoft Graph accepted the send request. It does not confirm delivery or reading." : "Microsoft Graph confirmed the event. Guest attendance is not yet confirmed.") : (isEmail(action.kind) ? "This confirms Gmail accepted the message. It does not confirm delivery or that it was read." : "Google confirmed the event. Guest attendance is not yet confirmed.")}</p><small>{new Date(action.receipt.confirmed_at).toLocaleString()}</small>{isReservation(action.kind) && action.receipt.confirmation_number && <code>Confirmation: {action.receipt.confirmation_number}</code>}{action.receipt.provider_id && <code>Receipt: {action.receipt.provider_id}</code>}</div>}
         {action.audit && <details className="cw-action-audit"><summary>Action history</summary><ol>{action.audit.map((item, index) => <li key={index}>{item.action.replace("action.", "").replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</li>)}</ol></details>}
       </>}
     </section>
