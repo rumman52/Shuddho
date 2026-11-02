@@ -1,8 +1,8 @@
 self.addEventListener("push", event => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
-  const title = typeof data.title === "string" && data.title ? data.title : "Shuddho";
-  const body = typeof data.body === "string" && data.body ? data.body : "You have a new Shuddho update.";
+  const title = typeof data.title === "string" && data.title ? data.title : "Rukh AI";
+  const body = typeof data.body === "string" && data.body ? data.body : "You have a new Rukh AI update.";
   let path = "/";
   if (typeof data.url === "string") {
     try {
