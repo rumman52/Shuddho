@@ -487,13 +487,34 @@ def test_model_rejects_unusable_or_unattributed_output(container, change):
 
 def test_model_success_and_retryable_provider_failure(container):
     settings = replace(container.settings, deepseek_api_key="test-only-placeholder")
+
     def respond(request):
         body = json.loads(request.content)
         assert body["thinking"] == {"type": "disabled"}
         assert body["response_format"] == {"type": "json_object"}
-        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": draft().model_dump_json()}}], "usage": {"total_tokens": 200}})
+        assert [item["role"] for item in body["messages"]] == ["system", "user"]
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": draft().model_dump_json()}}],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200},
+        })
+
     model = DeepSeekDraftModel(settings, httpx.MockTransport(respond))
-    assert asyncio.run(model.generate([], "en", {"notes"})).total_tokens == 200
+    messages = model.messages(
+        {"instruction": "Create a short project update report and email using only supplied facts.",
+         "output_language": "en"},
+        [{"id": "notes", "text": "Project Atlas launches on 15 October 2026."}],
+    )
+    result = asyncio.run(model.generate(messages, "en", {"notes"}))
+    assert result.total_tokens == 200
+    assert result.provider == "deepseek"
+    assert result.model == settings.deepseek_model
+    assert result.prompt_version == "rukh-content-v1"
+    assert len(result.prompt_sha256) == 64
+    assert result.task_type == "long_form_report"
+    assert result.input_tokens == 120 and result.output_tokens == 80
+    assert result.finish_reason == "stop" and result.reasoning_mode == "disabled"
+    assert result.retrieval_used is False and result.tools_used == []
+
     model = DeepSeekDraftModel(settings, httpx.MockTransport(lambda _: httpx.Response(429, text="PRIVATE PROVIDER BODY")))
     with pytest.raises(DraftFailure) as failure:
         asyncio.run(model.generate([], "en", {"notes"}))
