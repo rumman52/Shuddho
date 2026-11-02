@@ -55,8 +55,12 @@ def score(case,draft_value):
     r["checks"]["task_type_match"]=classify_content_task(case["skill_id"],case["instruction"])==case["expected_task_type"]
     r["checks"]["language_match"]=d.output_language.lower()==case["language"].lower()
     available={s["id"] for s in case["sources"]}; refs=source_references(d)
+    required_refs=set(case["required_source_ids"])
+    valid_refs=refs.intersection(available)
     r["checks"]["source_reference_valid"]=refs.issubset(available)
-    r["checks"]["required_source_coverage"]=set(case["required_source_ids"]).issubset(refs)
+    r["checks"]["required_source_coverage"]=required_refs.issubset(refs)
+    r["citation_source_precision"]=len(valid_refs)/len(refs) if refs else 1.0
+    r["citation_source_recall"]=len(required_refs.intersection(refs))/len(required_refs) if required_refs else 1.0
     if case["skill_id"]=="research":
         try:
             validate_evidence(d,case["sources"])
@@ -81,8 +85,12 @@ def pct(values,f):
 def aggregate(mode,cases,results):
     passed=sum(x.get("passed",False) for x in results); total=sum(x.get("facts_total",0) for x in results); matched=sum(x.get("facts_matched",0) for x in results)
     lat=[x["latency_ms"] for x in results if isinstance(x.get("latency_ms"),int)]; tok=[x["tokens"] for x in results if isinstance(x.get("tokens"),int)]
+    citation_precision=[x["citation_source_precision"] for x in results if isinstance(x.get("citation_source_precision"),(int,float))]
+    citation_recall=[x["citation_source_recall"] for x in results if isinstance(x.get("citation_source_recall"),(int,float))]
     generations=[x.get("generation") for x in results if isinstance(x.get("generation"),dict)]
     return {"mode":mode,"cases":len(cases),"languages":sorted({x["language"] for x in cases}),
+            "citation_source_precision":round(sum(citation_precision)/len(citation_precision),4) if citation_precision else 1.0,
+            "citation_source_recall":round(sum(citation_recall)/len(citation_recall),4) if citation_recall else 1.0,
             "task_types":sorted({x["expected_task_type"] for x in cases}),
             "prompt_versions":sorted({x["prompt_version"] for x in generations if x.get("prompt_version")}),
             "models":sorted({x["model"] for x in generations if x.get("model")}),
