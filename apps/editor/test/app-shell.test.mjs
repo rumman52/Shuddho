@@ -33,7 +33,7 @@ test("Editor standalone app entry resolves every local module and stylesheet", (
 
 test("Editor scroll containment does not lock the shared Coworker page", () => {
   const styles = readFileSync(resolve(sourceRoot, "styles.css"), "utf8");
-  assert.doesNotMatch(styles, /(?:^|\\n)\\s*body\\s*\\{[^}]*overflow:\\s*hidden/s);
-  assert.doesNotMatch(styles, /(?:^|\\n)\\s*(?:html|#root)\\s*\\{[^}]*height:\\s*100%/s);
-  assert.match(styles, /\\.rukh-editor-app\\s*\\{[^}]*overflow:\\s*hidden/s);
+  assert.doesNotMatch(styles, /(?:^|\n)\s*body\s*\{[^}]*overflow:\s*hidden/s);
+  assert.doesNotMatch(styles, /(?:^|\n)\s*(?:html|#root)\s*\{[^}]*height:\s*100%/s);
+  assert.match(styles, /\.rukh-editor-app\s*\{[^}]*overflow:\s*hidden/s);
 });
