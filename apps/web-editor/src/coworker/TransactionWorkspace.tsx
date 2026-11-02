@@ -313,7 +313,7 @@ export default function TransactionWorkspace({ client, reviewAction }: { client:
     await run("sync-execution", async () => {
       await client.syncTransactionExecution(transactionId);
       await refreshSurface(transactionId);
-      setNotice("Linked action status synchronized from Shuddho's local action ledger. No provider call was made.");
+      setNotice("Linked action status synchronized from Rukh AI's local action ledger. No provider call was made.");
     });
   }
 
@@ -323,7 +323,7 @@ export default function TransactionWorkspace({ client, reviewAction }: { client:
     await run("reconcile-execution", async () => {
       await client.reconcileTransaction(transactionId);
       await refreshSurface(transactionId);
-      setNotice("Read-only provider reconciliation completed. Shuddho did not repeat the external mutation.");
+      setNotice("Read-only provider reconciliation completed. Rukh AI did not repeat the external mutation.");
     });
   }
 
@@ -414,7 +414,7 @@ export default function TransactionWorkspace({ client, reviewAction }: { client:
         </dl>
         <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={syncExecution}>Sync linked status</button>
         {execution.reconciliation.available && <button className="cw-secondary" type="button" disabled={Boolean(busy)} onClick={reconcileExecution}>Check provider receipt</button>}
-        <p className="cw-fineprint">{surface.transaction.provider === "opentable" ? "Sync reads Shuddho's existing ExternalAction ledger. If an OpenTable booking result is uncertain, TX-06 does not retry or automatically reconcile it; verify the provider manually." : "Sync reads Shuddho's existing ExternalAction ledger. Provider reconciliation, when available, is read-only and never resends the mutation."}</p>
+        <p className="cw-fineprint">{surface.transaction.provider === "opentable" ? "Sync reads Rukh AI's existing ExternalAction ledger. If an OpenTable booking result is uncertain, TX-06 does not retry or automatically reconcile it; verify the provider manually." : "Sync reads Rukh AI's existing ExternalAction ledger. Provider reconciliation, when available, is read-only and never resends the mutation."}</p>
         {execution.evidence.length === 0 ? <p>No execution observations recorded yet.</p> : <ol>
           {execution.evidence.map(item => <li key={item.id}>
             #{item.sequence} · {item.action_state} · transaction r{item.transaction_revision}
