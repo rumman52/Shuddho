@@ -114,6 +114,11 @@ export default function App() {
     setLibraryError("");
     setNotice("");
     try {
+      // Validate the destination before uploading or creating owner-scoped records.
+      const destination = new URL(coworkerUrl, window.location.origin);
+      if (!import.meta.env.DEV && destination.origin !== window.location.origin) {
+        throw new Error("Coworker must use the same origin as Editor so the authenticated workspace session is shared.");
+      }
       const file = new File([editorText], "rukh-editor-draft.txt", { type: "text/plain" });
       const uploaded = await client.upload(file);
       const manifest = await client.workspaceManifest();
@@ -128,10 +133,6 @@ export default function App() {
         crypto.randomUUID(),
         [source.version_id],
       );
-      const destination = new URL(coworkerUrl, window.location.origin);
-      if (!import.meta.env.DEV && destination.origin !== window.location.origin) {
-        throw new Error("Coworker must use the same origin as Editor so the authenticated workspace session is shared.");
-      }
       destination.searchParams.set("conversation", conversation.id);
       window.location.assign(destination.toString());
     } catch (error) {
