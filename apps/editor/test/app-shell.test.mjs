@@ -37,3 +37,12 @@ test("Editor scroll containment does not lock the shared Coworker page", () => {
   assert.doesNotMatch(styles, /(?:^|\n)\s*(?:html|#root)\s*\{[^}]*height:\s*100%/s);
   assert.match(styles, /\.rukh-editor-app\s*\{[^}]*overflow:\s*hidden/s);
 });
+
+test("Editor development port and API defaults match the Coworker handoff", () => {
+  const config = readFileSync(resolve(appRoot, "vite.config.ts"), "utf8");
+  const env = readFileSync(resolve(appRoot, ".env.example"), "utf8");
+  assert.match(config, /port:\\s*5175/);
+  assert.match(config, /port:\\s*4175/);
+  assert.match(config, /strictPort:\\s*true/);
+  assert.doesNotMatch(env, /^VITE_COWORKER_API_BASE_URL=/m);
+});
