@@ -54,6 +54,15 @@ jobs:
 
       - name: Install JavaScript dependencies
         run: npm ci
+      - name: Test standalone Rukh app shells
+        run: |
+          set +e
+          npm run test --workspace @rukh/coworker
+          coworker_status=$?
+          npm run test --workspace @rukh/editor
+          editor_status=$?
+          if [ "$coworker_status" -ne 0 ] || [ "$editor_status" -ne 0 ]; then exit 1; fi
+
       - name: Run JavaScript tests
         run: npm test
       # Keep the real proxy safety regressions in the fast job as well as the
