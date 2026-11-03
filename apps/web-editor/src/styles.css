@@ -18,7 +18,7 @@
   --radius-lg: var(--rukh-radius-lg, 18px);
   --shadow-sm: var(--rukh-shadow-sm, 0 1px 2px rgba(25, 30, 24, .04));
   --shadow-md: var(--rukh-shadow-md, 0 12px 36px rgba(25, 30, 24, .08));
-  font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif);
+  font-family: var(--rukh-font-ui, system-ui, sans-serif);
 }
 * {
   box-sizing: border-box;
@@ -34,7 +34,7 @@ body {
   min-width: 320px;
   background: var(--rukh-bg, var(--bg));
   color: var(--rukh-text, var(--text));
-  font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif);
+  font-family: var(--rukh-font-ui, system-ui, sans-serif);
   overflow: hidden;
 }
 button,
@@ -336,7 +336,7 @@ summary:focus-visible {
   border-radius: var(--radius-md);
   background: #fff;
   box-shadow: var(--shadow-md);
-  font-family: Inter, system-ui, sans-serif;
+  font-family: var(--rukh-font-ui, system-ui, sans-serif);
   font-size: 0.9rem;
   line-height: 1.45;
   text-decoration: none;
