@@ -3,6 +3,7 @@ import "./styles.css";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
 import WritingAssistant from "../../web-editor/src/App";
+import ThemeToggle from "../../web-editor/src/components/ThemeToggle";
 import { ErrorBoundary } from "../../web-editor/src/components/ErrorBoundary";
 import { CoworkerClient, isTextArtifact, type Artifact, type CoworkerTask, type SourceDocument } from "../../web-editor/src/coworker/client";
 
@@ -31,6 +32,10 @@ export default function App() {
   const [reload, setReload] = useState(0);
   const [initialText, setInitialText] = useState<string | undefined>();
   const [openedArtifact, setOpenedArtifact] = useState("");
+  const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
+  const mobileLibraryTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const mobileLibraryCloseRef = useRef<HTMLButtonElement | null>(null);
+  const mobileLibraryPanelRef = useRef<HTMLElement | null>(null);
   const [editorText, setEditorText] = useState("");
   const handoffAttempt = useRef<HandoffAttempt | null>(null);
   const onTextChange = useCallback((value: string) => setEditorText(value), []);
@@ -89,6 +94,52 @@ export default function App() {
 
   const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? "/coworker";
 
+  useEffect(() => {
+    if (!mobileLibraryOpen) return;
+    const panel = mobileLibraryPanelRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => panel?.querySelectorAll<HTMLElement>(
+      "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex='-1'])"
+    ) ?? [];
+    const frame = window.requestAnimationFrame(() => {
+      (mobileLibraryCloseRef.current ?? focusable()[0])?.focus();
+    });
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileLibraryOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = Array.from(focusable());
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => mobileLibraryTriggerRef.current?.focus());
+    };
+  }, [mobileLibraryOpen]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 901px)");
+    const closeOnDesktop = () => { if (media.matches) setMobileLibraryOpen(false); };
+    media.addEventListener("change", closeOnDesktop);
+    return () => media.removeEventListener("change", closeOnDesktop);
+  }, []);
+
   async function openArtifact(item: ArtifactItem) {
     if (!client || busy) return;
     if (isTextArtifact(item.artifact) && editorText.trim() && !window.confirm("Replace the text currently in the editor with this saved file?")) return;
@@ -100,9 +151,11 @@ export default function App() {
         const content = await client.readTextArtifact(item.artifact);
         setInitialText(content);
         setOpenedArtifact(item.artifact.filename);
+        setMobileLibraryOpen(false);
         setNotice(`Opened ${item.artifact.filename} in the editor. Changes here do not overwrite the saved artifact.`);
       } else {
         await client.download(item.artifact);
+        setMobileLibraryOpen(false);
         setNotice(`Download started for ${item.artifact.filename}.`);
       }
     } catch (error) {
@@ -204,7 +257,17 @@ export default function App() {
           </a>
           <div className="rukh-editor-top-actions">
             {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
-            <a href="/workspaces" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
+            {coworkerEnabled && <button
+            ref={mobileLibraryTriggerRef}
+            className="rukh-editor-mobile-files"
+            type="button"
+            aria-label="Open recent files"
+            aria-controls="rukh-editor-library"
+            aria-expanded={mobileLibraryOpen}
+            onClick={() => setMobileLibraryOpen(true)}
+          >Recent files</button>}
+          <ThemeToggle />
+          <a href="/workspaces" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
             {coworkerEnabled && <>
               <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
                 {busy === "handoff" ? "Sending…" : "Send to AI Coworker ↗"}
@@ -214,10 +277,21 @@ export default function App() {
           </div>
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
-          {coworkerEnabled && <aside className="rukh-editor-library" aria-label="Recent AI Coworker files">
+          {coworkerEnabled && <aside
+            ref={mobileLibraryPanelRef}
+            id="rukh-editor-library"
+            className={"rukh-editor-library" + (mobileLibraryOpen ? " rukh-editor-library--open" : "")}
+            aria-label="Recent AI Coworker files"
+            role={mobileLibraryOpen ? "dialog" : undefined}
+            aria-modal={mobileLibraryOpen ? true : undefined}
+            aria-labelledby="rukh-library-title"
+          >
             <div className="rukh-library-heading">
-              <div><span>WORKSPACE</span><h2>Recent files</h2></div>
-              <button type="button" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
+              <div><span>WORKSPACE</span><h2 id="rukh-library-title">Recent files</h2></div>
+              <div className="rukh-library-actions">
+                <button className="rukh-library-refresh" type="button" aria-label="Refresh recent files" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
+                <button className="rukh-library-close" ref={mobileLibraryCloseRef} type="button" aria-label="Close recent files" onClick={() => setMobileLibraryOpen(false)}>×</button>
+              </div>
             </div>
             {!auth && <div className="rukh-library-empty"><p>Connect your Rukh AI account to browse saved Coworker files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open AI Coworker</a></div>}
             {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to AI Coworker to see recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to AI Coworker ↗</a></div>}
@@ -236,6 +310,7 @@ export default function App() {
             </ul>}
             <p className="rukh-library-footnote">Text and Markdown previews use the owner-authenticated route and are checked against their saved SHA-256 digest. Other file types download.</p>
           </aside>}
+          {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-label="Close recent files drawer" onClick={() => setMobileLibraryOpen(false)} />}
           <section className="rukh-editor-canvas" aria-label="Writing editor">
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
           </section>
