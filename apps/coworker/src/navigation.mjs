@@ -1,5 +1,5 @@
 export const coworkerNavigation = Object.freeze([
-  { id: "home", label: "Home", icon: "home", group: "Workspace", view: "conversations" },
+  { id: "home", label: "Conversations", icon: "home", group: "Workspace", view: "conversations" },
   { id: "agent", label: "Agent activity", icon: "activity", group: "Workspace", view: "agent" },
   { id: "goals", label: "Goals & ideas", icon: "target", group: "Workspace", view: "goals" },
   { id: "automations", label: "Automations", icon: "calendar", group: "Workspace", view: "automations" },
