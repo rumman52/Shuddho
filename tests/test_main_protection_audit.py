@@ -204,6 +204,7 @@ def test_merge_gate_rejects_any_unsuccessful_required_job(upstream, result):
 def test_merge_gate_accepts_all_required_jobs_succeeding():
     completed = _run_ci_result_gate({
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": "success",
     })
@@ -215,6 +216,7 @@ def test_pr_gate_preserves_expected_audit_skip_before_independent_review(event):
     completed = _run_ci_result_gate({
         "CI_EVENT_NAME": event,
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": "skipped",
     })
@@ -227,6 +229,7 @@ def test_pr_gate_does_not_hide_unexpected_audit_result(event, result):
     completed = _run_ci_result_gate({
         "CI_EVENT_NAME": event,
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": result,
     })
@@ -238,6 +241,7 @@ def test_merge_gate_rejects_unreviewed_event_types(event):
     completed = _run_ci_result_gate({
         "CI_EVENT_NAME": event,
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": "skipped",
     })
