@@ -124,3 +124,70 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: 
     justify-content: flex-end;
   }
 }
+
+/* Rukh AI premium Web Editor layout: recent work / writing / AI review. */
+.rukh-editor-app {
+  font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.rukh-editor-topbar {
+  min-height: 64px;
+  padding-inline: clamp(16px, 3vw, 40px);
+  background: color-mix(in srgb, var(--rukh-surface, #fff) 96%, transparent);
+  backdrop-filter: blur(14px);
+}
+.rukh-editor-content {
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  grid-template-areas: "library canvas";
+  gap: 16px;
+  padding: 16px;
+}
+.rukh-editor-library { grid-area: library; order: 0; border-radius: 17px; box-shadow: var(--rukh-shadow-sm); }
+.rukh-editor-canvas { grid-area: canvas; border-radius: 17px; box-shadow: var(--rukh-shadow-sm); }
+.rukh-editor-canvas > .app-shell { border-radius: 17px; }
+.rukh-editor-canvas .app-header { border-bottom: 1px solid var(--rukh-border); }
+.rukh-library-heading h2 { font-family: "Manrope", var(--rukh-font-ui, sans-serif); font-size: 17px; font-weight: 700; letter-spacing: -.04em; }
+.rukh-artifact-list { gap: 9px; }
+.rukh-artifact-list li { padding: 12px; border-radius: 11px; transition: border-color .16s ease, background .16s ease; }
+.rukh-artifact-list li:hover { border-color: var(--rukh-border-strong); background: var(--rukh-surface-raised); }
+.rukh-artifact-list strong { font-size: 11px; font-weight: 700; }
+.rukh-artifact-list button { min-height: 34px; padding-inline: 11px; border-radius: 8px; }
+.rukh-editor-canvas .editor-card,
+.rukh-editor-canvas .review-panel,
+.rukh-editor-canvas .rewrite-panel { border-radius: 16px; }
+.rukh-editor-canvas .editor-card { padding: 20px; }
+.rukh-editor-top-actions { gap: 10px; }
+.rukh-coworker-link { min-height: 40px; display: inline-flex; align-items: center; padding-inline: 12px; border: 1px solid var(--rukh-border); border-radius: 999px; text-decoration: none; }
+.rukh-coworker-link:hover { border-color: var(--rukh-border-strong); background: var(--rukh-surface-soft); }
+.rukh-handoff-button { min-height: 40px; padding-inline: 14px; border-radius: 999px; font-weight: 700; }
+.rukh-workspace-home { min-height: 40px; padding-inline: 14px; border-radius: 999px; }
+.rukh-editor-app a:focus-visible,
+.rukh-editor-app button:focus-visible,
+.rukh-editor-app input:focus-visible,
+.rukh-editor-app textarea:focus-visible,
+.rukh-editor-app select:focus-visible {
+  outline: 3px solid transparent;
+  box-shadow: var(--rukh-focus, 0 0 0 3px rgba(98, 87, 217, .18));
+}
+@media (max-width: 1100px) {
+  .rukh-editor-content { grid-template-columns: minmax(200px, 230px) minmax(0, 1fr); }
+  .rukh-editor-canvas .workspace { grid-template-columns: minmax(0, 1fr) minmax(190px, 26%); overflow: auto; }
+  .rukh-editor-canvas .review-panel { position: static; max-height: none; transform: none; }
+  .rukh-editor-canvas .review-toggle { display: none; }
+}
+@media (max-width: 900px) {
+  .rukh-editor-content { display: flex; flex-direction: column; overflow: auto; }
+  .rukh-editor-canvas { order: 0; flex: 0 0 720px; min-height: 720px; }
+  .rukh-editor-library { order: 1; flex: 0 0 auto; overflow: visible; }
+  .rukh-editor-canvas .workspace { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .rukh-editor-canvas .review-panel { position: static; max-height: none; transform: none; }
+  .rukh-editor-canvas .review-toggle { display: none; }
+}
+@media (max-width: 560px) {
+  .rukh-editor-topbar { gap: 8px; }
+  .rukh-editor-top-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .rukh-editor-content { padding: 9px; gap: 10px; }
+  .rukh-editor-canvas { flex-basis: 720px; }
+  .rukh-editor-library { padding: 14px; }
+}
