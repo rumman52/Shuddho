@@ -304,7 +304,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
   const selectedConversation = conversations.find(item => item.id === selected);
   return <section className="rukh-conversation-workspace" aria-label="Private conversations">
-    <div className="rukh-mobile-workspace-tools" aria-label="Workspace panels">
+    <div className="rukh-mobile-workspace-tools" aria-label="Workspace panels" aria-hidden={mobilePanel !== null ? true : undefined}>
       <button type="button" aria-label="Open conversations" aria-controls="rukh-conversation-list"
         aria-expanded={mobilePanel === "conversations"}
         onClick={event => openMobilePanel("conversations", event.currentTarget)}>
@@ -353,7 +353,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       <p className="rukh-panel-footnote">Messages are private workspace records. Saving a message does not start Agent work.</p>
     </aside>
 
-    <section className="rukh-conversation-thread" aria-label="Conversation">
+    <section aria-hidden={mobilePanel !== null ? true : undefined} className="rukh-conversation-thread" aria-label="Conversation">
       <header className="rukh-thread-header">
         <div><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Start a conversation"}</h2></div>
         {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
