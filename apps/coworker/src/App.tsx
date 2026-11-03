@@ -1,5 +1,6 @@
 import { ErrorBoundary } from "../../web-editor/src/components/ErrorBoundary";
 import CoworkerGate from "../../web-editor/src/coworker/CoworkerGate";
+import ThemeToggle from "../../web-editor/src/components/ThemeToggle";
 
 function ArrowIcon() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <nav className="rukh-product-switcher" aria-label="Workspace navigation">
             <a className="rukh-product-switch rukh-product-switch--home" href="/workspaces" target="_blank" rel="noreferrer">All workspaces</a>
             <a className="rukh-product-switch" href={editorUrl} target="_blank" rel="noreferrer">Web Editor <ArrowIcon /></a>
+            <ThemeToggle />
           </nav>
         </header>
         <CoworkerGate />
