@@ -201,13 +201,13 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: 
 /* Rukh responsive workspace controls and mobile-first Editor. */
 .rukh-editor-mobile-files, .rukh-editor-mobile-backdrop, .rukh-library-close { display: none; }
 .rukh-editor-mobile-files {
-  min-height: 40px; align-items: center; justify-content: center; padding: 0 12px;
+  min-height: 44px; align-items: center; justify-content: center; padding: 0 12px;
   border: 1px solid var(--rukh-border); border-radius: 999px; background: var(--rukh-surface);
   color: var(--rukh-text); font-size: 11px; font-weight: 650; cursor: pointer;
 }
 .rukh-library-actions { display: inline-flex; align-items: center; gap: 6px; }
 .rukh-library-close {
-  width: 36px; height: 36px; align-items: center; justify-content: center; border: 1px solid var(--rukh-border);
+  width: 44px; height: 44px; align-items: center; justify-content: center; border: 1px solid var(--rukh-border);
   border-radius: 10px; background: var(--rukh-surface); color: var(--rukh-text); font-size: 18px; cursor: pointer;
 }
 [data-rukh-theme="dark"] .rukh-editor-app { background: var(--rukh-bg); color: var(--rukh-text); }
