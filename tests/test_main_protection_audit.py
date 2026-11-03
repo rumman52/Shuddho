@@ -168,7 +168,9 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     gate = workflow.split("\n  ci-merge-gate:\n", 1)[1].split("\n  governance-audit:\n", 1)[0]
     assert "    if: always()" in gate
     needs = gate.split("    needs:\n", 1)[1].split("    runs-on:", 1)[0]
+    assert "      - frontend\n" in needs
     assert "      - governance-audit\n" in needs
+    assert "FRONTEND_RESULT: ${{ needs.frontend.result }}" in gate
     assert "GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}" in gate
     assert "continue-on-error" not in gate
     assert "python -m scripts.independent_review_gate" in gate
@@ -185,11 +187,12 @@ def _run_ci_result_gate(results: dict[str, str]) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.parametrize("upstream", ["TEST_AND_BUILD_RESULT", "COWORKER_RESULT", "GOVERNANCE_AUDIT_RESULT"])
+@pytest.mark.parametrize("upstream", ["TEST_AND_BUILD_RESULT", "FRONTEND_RESULT", "COWORKER_RESULT", "GOVERNANCE_AUDIT_RESULT"])
 @pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
 def test_merge_gate_rejects_any_unsuccessful_required_job(upstream, result):
     results = {
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": "success",
     }
@@ -201,6 +204,7 @@ def test_merge_gate_rejects_any_unsuccessful_required_job(upstream, result):
 def test_merge_gate_accepts_all_required_jobs_succeeding():
     completed = _run_ci_result_gate({
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": "success",
     })
@@ -212,6 +216,7 @@ def test_pr_gate_preserves_expected_audit_skip_before_independent_review(event):
     completed = _run_ci_result_gate({
         "CI_EVENT_NAME": event,
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": "skipped",
     })
@@ -224,6 +229,7 @@ def test_pr_gate_does_not_hide_unexpected_audit_result(event, result):
     completed = _run_ci_result_gate({
         "CI_EVENT_NAME": event,
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": result,
     })
@@ -235,6 +241,7 @@ def test_merge_gate_rejects_unreviewed_event_types(event):
     completed = _run_ci_result_gate({
         "CI_EVENT_NAME": event,
         "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
         "COWORKER_RESULT": "success",
         "GOVERNANCE_AUDIT_RESULT": "skipped",
     })

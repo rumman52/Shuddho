@@ -72,14 +72,14 @@ export default function CoworkerGate() {
       setSession(null); setNotice("");
     }} />;
   return <main className="cw-auth">
-    <div className="cw-auth-story"><span className="cw-eyebrow">A little less busywork.</span>
-      <h1>Your next draft,<br />already underway.</h1>
-      <p>Bring your notes or a document. Rukh AI turns them into a professional report and email draft, in your chosen language.</p>
-      <div className="cw-auth-output"><span>01</span><div><strong>A report you can edit</strong><p>Download in Word and PDF.</p></div></div>
-      <div className="cw-auth-output"><span>02</span><div><strong>An email ready for your review</strong><p>Your words. Your final say.</p></div></div>
+    <div className="cw-auth-story"><span className="cw-eyebrow">A coworker for complex work.</span>
+      <h1>Move complex work<br />forward, with context.</h1>
+      <p>Keep conversations, source material and Agent activity in one private workspace. Rukh helps you organize the work, prepare deliverables and review the next step.</p>
+      <div className="cw-auth-output"><span>01</span><div><strong>Context that stays together</strong><p>Your brief, files and decisions stay connected.</p></div></div>
+      <div className="cw-auth-output"><span>02</span><div><strong>Work you can review</strong><p>Track Agent progress and approve external actions.</p></div></div>
     </div>
     <section className="cw-auth-card" aria-label="Account access">
-      {!auth ? <><h2>Your coworker is coming soon.</h2><p>This workspace is being prepared. You can keep using the writing assistant.</p></> : <>
+      {!auth ? <><h2>Sign-in is not configured for this environment.</h2><p>The Coworker account service is unavailable in this deployment. You can still open Web Editor or contact your workspace administrator.</p></> : <>
         <span className="cw-eyebrow">Your personal workspace</span>
         <h2>{mode === "signup" ? "Make room for better work." : mode === "reset" ? "Reset your password." : mode === "recovery" ? "Choose a new password." : "Welcome back."}</h2>
         <form onSubmit={submit}>

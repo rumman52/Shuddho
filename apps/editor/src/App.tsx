@@ -207,23 +207,20 @@ export default function App() {
             <a href="/workspaces" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
             {coworkerEnabled && <>
               <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
-                {busy === "handoff" ? "Sending…" : "Send to Co-workers ↗"}
+                {busy === "handoff" ? "Sending…" : "Send to AI Coworker ↗"}
               </button>
-              <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">Open Co-workers</a>
+              <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">AI Coworker</a>
             </>}
           </div>
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
-          <section className="rukh-editor-canvas" aria-label="Writing editor">
-            <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
-          </section>
-          {coworkerEnabled && <aside className="rukh-editor-library" aria-label="Recent coworker files">
+          {coworkerEnabled && <aside className="rukh-editor-library" aria-label="Recent AI Coworker files">
             <div className="rukh-library-heading">
               <div><span>WORKSPACE</span><h2>Recent files</h2></div>
               <button type="button" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
             </div>
-            {!auth && <div className="rukh-library-empty"><p>Connect your workspace sign-in to browse saved Co-workers files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open Co-workers</a></div>}
-            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to Co-workers to see your recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to Co-workers ↗</a></div>}
+            {!auth && <div className="rukh-library-empty"><p>Connect your Rukh AI account to browse saved Coworker files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open AI Coworker</a></div>}
+            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to AI Coworker to see recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to AI Coworker ↗</a></div>}
             {authLoading && <p className="rukh-library-muted">Restoring your workspace session…</p>}
             {libraryError && <p className="rukh-library-error" role="alert">{libraryError}</p>}
             {notice && <p className="rukh-library-notice" role="status">{notice}</p>}
@@ -239,6 +236,9 @@ export default function App() {
             </ul>}
             <p className="rukh-library-footnote">Text and Markdown previews use the owner-authenticated route and are checked against their saved SHA-256 digest. Other file types download.</p>
           </aside>}
+          <section className="rukh-editor-canvas" aria-label="Writing editor">
+            <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
+          </section>
         </div>
       </div>
     </ErrorBoundary>
