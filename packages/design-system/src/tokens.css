@@ -30,7 +30,8 @@
   --rukh-shadow-sm: 0 1px 2px rgba(25, 30, 24, .04);
   --rukh-shadow-md: 0 12px 36px rgba(25, 30, 24, .08);
   --rukh-focus: 0 0 0 3px rgba(23, 107, 91, .22);
-  --rukh-font-ui: "DM Sans", "Manrope", system-ui, sans-serif;
+  --rukh-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --rukh-font-display: "Manrope", var(--rukh-font-ui, system-ui, sans-serif);
   --rukh-font-writing: "Noto Serif Bengali", Georgia, serif;
   --rukh-space-1: 4px;
   --rukh-space-2: 8px;
