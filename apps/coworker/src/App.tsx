@@ -20,7 +20,7 @@ export default function App() {
             <span><strong>Rukh AI</strong><small>Co-workers</small></span>
           </a>
           <nav className="rukh-product-switcher" aria-label="Workspace navigation">
-            <a className="rukh-product-switch rukh-product-switch--home" href="/" target="_blank" rel="noreferrer">All workspaces</a>
+            <a className="rukh-product-switch rukh-product-switch--home" href="/workspaces" target="_blank" rel="noreferrer">All workspaces</a>
             <a className="rukh-product-switch" href={editorUrl} target="_blank" rel="noreferrer">Web Editor <ArrowIcon /></a>
           </nav>
         </header>
