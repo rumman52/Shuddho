@@ -463,6 +463,6 @@ export default function ConversationWorkspace({ client, openAgent }: {
           </details>}
       </section>
     </aside>
-    {mobilePanel && <button className="rukh-mobile-backdrop" type="button" aria-label="Close workspace panel" onClick={closeMobilePanel} />}
+    {mobilePanel && <button className="rukh-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={closeMobilePanel} />}
   </section>;
 }
