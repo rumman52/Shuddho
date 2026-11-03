@@ -8,8 +8,8 @@
   --muted: var(--rukh-muted, #747971);
   --border: var(--rukh-border, #e6e8e3);
   --border-strong: var(--rukh-border-strong, #d4d8d0);
-  --primary: var(--rukh-accent, #6257d9);
-  --primary-hover: var(--rukh-accent-hover, #5145c6);
+  --primary: var(--rukh-accent, var(--rukh-accent));
+  --primary-hover: var(--rukh-accent-hover, var(--rukh-accent-hover));
   --success: var(--rukh-success, #24764e);
   --warning: var(--rukh-warning, #98600e);
   --error: var(--rukh-danger, #b33d45);
@@ -166,9 +166,9 @@ summary:focus-visible {
   border-color: #fecaca;
 }
 .runtime-chip--info {
-  color: #4338ca;
-  background: #eef2ff;
-  border-color: #c7d2fe;
+  color: var(--rukh-accent);
+  background: var(--rukh-accent-soft);
+  border-color: var(--rukh-border-strong);
 }
 .runtime-banner {
   display: flex;
@@ -698,7 +698,7 @@ textarea {
   }
 }
 .competition-demo-panel {
-  background: linear-gradient(135deg, #ffffff, #f4f2fb);
+  background: linear-gradient(135deg, #ffffff, var(--rukh-surface-soft));
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
@@ -749,4 +749,27 @@ textarea {
 }
 .competition-demo-detail p {
   margin: 0;
+}
+
+
+/* Theme-aware writing and review surfaces. */
+[data-rukh-theme="dark"] .app-shell,
+[data-rukh-theme="dark"] .app-header,
+[data-rukh-theme="dark"] .workspace,
+[data-rukh-theme="dark"] .editor-column,
+[data-rukh-theme="dark"] .editor-card,
+[data-rukh-theme="dark"] .review-panel,
+[data-rukh-theme="dark"] .rewrite-panel,
+[data-rukh-theme="dark"] .editor-frame,
+[data-rukh-theme="dark"] .review-card,
+[data-rukh-theme="dark"] .suggestion-card {
+  background: var(--rukh-surface); border-color: var(--rukh-border); color: var(--rukh-text);
+}
+[data-rukh-theme="dark"] .editor-frame,
+[data-rukh-theme="dark"] .editor-highlight-layer { background: var(--rukh-surface-raised); color: var(--rukh-text); }
+[data-rukh-theme="dark"] .editor-textarea,
+[data-rukh-theme="dark"] .editor-frame textarea { background: transparent; color: var(--rukh-text); }
+[data-rukh-theme="dark"] .review-toggle,
+[data-rukh-theme="dark"] .rewrite-panel button {
+  border-color: var(--rukh-border); background: var(--rukh-surface); color: var(--rukh-text);
 }
