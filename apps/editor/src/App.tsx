@@ -214,13 +214,13 @@ export default function App() {
           </div>
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
-          {coworkerEnabled && <aside className="rukh-editor-library" aria-label="Recent coworker files">
+          {coworkerEnabled && <aside className="rukh-editor-library" aria-label="Recent AI Coworker files">
             <div className="rukh-library-heading">
               <div><span>WORKSPACE</span><h2>Recent files</h2></div>
               <button type="button" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
             </div>
-            {!auth && <div className="rukh-library-empty"><p>Connect your workspace sign-in to browse saved Co-workers files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open Co-workers</a></div>}
-            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to Co-workers to see your recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to AI Coworker ↗</a></div>}
+            {!auth && <div className="rukh-library-empty"><p>Connect your Rukh AI account to browse saved Coworker files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open AI Coworker</a></div>}
+            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to AI Coworker to see recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to AI Coworker ↗</a></div>}
             {authLoading && <p className="rukh-library-muted">Restoring your workspace session…</p>}
             {libraryError && <p className="rukh-library-error" role="alert">{libraryError}</p>}
             {notice && <p className="rukh-library-notice" role="status">{notice}</p>}
