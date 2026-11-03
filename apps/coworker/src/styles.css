@@ -1,7 +1,7 @@
 :root {
   --cw-bg: var(--rukh-bg, #f7f7f5);
   --cw-surface: var(--rukh-surface, #fff);
-  --cw-text: var(--rukh-text, #20221f);
+  --cw-text: var(--rukh-text, #171816);
   --cw-muted: var(--rukh-muted, #747971);
   --cw-border: var(--rukh-border, #e6e8e3);
   --cw-accent: var(--rukh-accent, #176b5b);
@@ -207,7 +207,7 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
   width: 36px;
   height: 36px;
   border-radius: 12px;
-  background: var(--rukh-accent, var(--rukh-accent));
+  background: var(--rukh-accent);
   box-shadow: 0 3px 10px rgba(63, 53, 150, .16);
 }
 .rukh-product-brand strong { font-size: 15px; font-weight: 750; }
@@ -275,7 +275,7 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
   padding: 12px 14px;
   border-color: var(--rukh-border-strong, #d4d8d0);
   border-radius: 11px;
-  background: var(--rukh-surface-raised, var(--rukh-surface-raised));
+  background: var(--rukh-surface-raised);
   color: var(--rukh-text, #20221f);
   font-size: 13px;
 }
@@ -367,7 +367,7 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
 .rukh-coworker-app textarea:focus-visible,
 .rukh-coworker-app select:focus-visible {
   outline: 3px solid transparent;
-  box-shadow: var(--rukh-focus, 0 0 0 3px rgba(98, 87, 217, .18));
+  box-shadow: var(--rukh-focus);
 }
 @media (max-width: 1220px) {
   .rukh-conversation-workspace { grid-template-columns: minmax(180px, 210px) minmax(0, 1fr); }
@@ -505,7 +505,7 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
   .rukh-conversation-list.rukh-mobile-panel-open { left: 12px; right: auto; }
   .rukh-context-panel.rukh-mobile-panel-open { left: auto; right: 12px; grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .rukh-mobile-panel-close {
-    display: inline-flex; min-width: 36px; min-height: 36px; align-items: center; justify-content: center;
+    display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center;
     border: 1px solid var(--rukh-border); border-radius: 10px; background: var(--rukh-surface);
     color: var(--rukh-text); font-size: 18px; line-height: 1; cursor: pointer;
   }
