@@ -21,4 +21,5 @@ test("Coworker sign-in explains the broader persistent-work workspace", () => {
   assert.match(html, /A coworker for complex work/);
   assert.match(html, /conversations, source material and Agent activity/);
   assert.match(html, /External actions require review/);
+  assert.match(html, /Sign-in is not configured for this environment/);
 });
