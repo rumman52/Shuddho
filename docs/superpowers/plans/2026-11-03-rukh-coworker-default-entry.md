@@ -39,26 +39,26 @@
 - Consumes: `getStandaloneAppRoute(pathname)` and `getWorkspaceAppRoute(pathname, coworkerEnabled)`.
 - Produces: route helper returns `"coworker"` for `/` only when enabled, `"home"` for `/workspaces`, and preserves fail-closed behavior for direct Coworker routes.
 
-- [ ] **Step 1: Write the failing route tests**
+- [x] **Step 1: Write the failing route tests**
   - Assert `getStandaloneAppRoute("/workspaces")` and `getStandaloneAppRoute("/workspaces/?from=editor")` return `"home"`.
   - Assert `getWorkspaceAppRoute("/", true)` and `getWorkspaceAppRoute("/?from=bookmark", true)` return `"coworker"`.
   - Assert `getWorkspaceAppRoute("/", false)`, `getWorkspaceAppRoute("/coworker", false)`, and `getWorkspaceAppRoute("/coworker?conversation=abc", false)` return `"home"`.
   - Assert `getWorkspaceAppRoute("/workspaces", true)`, `getWorkspaceAppRoute("/editor", true)`, and `getWorkspaceAppRoute("/unknown", true)` retain their separate route behavior.
 
-- [ ] **Step 2: Run the focused route test and confirm RED**
+- [x] **Step 2: Run the focused route test and confirm RED**
   - Run: `node --test apps/web-editor/test/app-routes.test.mjs`
   - Expected: FAIL because root currently resolves to `"home"` even when Coworker is enabled and `/workspaces` is not classified as the workspace directory.
 
-- [ ] **Step 3: Implement the minimal route helper change**
+- [x] **Step 3: Implement the minimal route helper change**
   - In `getStandaloneAppRoute`, classify `/workspaces` and its nested paths as `"home"`.
   - In `getWorkspaceAppRoute`, classify the normalized root path as `"coworker"` only when `coworkerEnabled` is true; retain the current gated fallback for `/coworker`.
   - Keep unknown paths mapped to the workspace directory.
 
-- [ ] **Step 4: Re-run the focused route test and confirm GREEN**
+- [x] **Step 4: Re-run the focused route test and confirm GREEN**
   - Run: `node --test apps/web-editor/test/app-routes.test.mjs`
   - Expected: all route tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   - Commit message: `feat(frontend): make coworker the gated default entry`.
 
 ### Task 2: Make workspace switching clear and preserve Editor drafts
