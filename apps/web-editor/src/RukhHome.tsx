@@ -55,7 +55,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
             </div>
             <div className="rukh-home-flow">
               <p className="rukh-home-flow-title">From brief to review</p>
-              <ol className="rukh-home-flow-list" aria-label="Illustrative Co-workers workflow">
+              <ol className="rukh-home-flow-list" aria-label="Illustrative AI Coworker workflow">
                 <li className="rukh-home-flow-step">
                   <span className="rukh-home-flow-symbol"><FlowDocumentIcon /></span>
                   <span className="rukh-home-flow-copy"><strong>Understand the brief</strong><small>Keep context and source material together</small></span>
