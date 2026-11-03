@@ -9,6 +9,7 @@ const tests = [
   "test/app-routes.test.mjs",
   "test/rukh-home.test.tsx",
   "test/editor-feature-gate.test.tsx",
+  "test/coworker-app-navigation.test.tsx",
   "src/coworker/client.test.ts",
   "src/coworker/refreshOrder.test.ts",
   "src/coworker/conversationIdentity.test.tsx",
