@@ -25,7 +25,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
           <span className="rukh-home-brand-copy"><strong>Rukh AI</strong><small>Workspace</small></span>
         </a>
         <nav className="rukh-home-nav" aria-label="Workspace navigation">
-          {coworkerEnabled ? <a href="/coworker">Co-workers</a> : <span className="rukh-home-nav-disabled" aria-disabled="true">Co-workers <small>Preview</small></span>}
+          {coworkerEnabled ? <a href="/coworker">AI Coworker</a> : <span className="rukh-home-nav-disabled" aria-disabled="true">Co-workers <small>Preview</small></span>}
           <a href="/editor">Web Editor</a>
         </nav>
         <a className="rukh-home-header-action" href="/editor">Open Web Editor <ArrowIcon /></a>
@@ -50,7 +50,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
               <span className={coworkerEnabled ? "rukh-home-product-status rukh-home-product-status--active" : "rukh-home-product-status"}>{coworkerEnabled ? "Available" : "Staged release"}</span>
             </div>
             <div className="rukh-home-product-copy">
-              <h2>Co-workers</h2>
+              <h2>AI Coworker</h2>
               <p>Delegate multi-step work to an AI teammate that keeps the brief, source files and conversation together. Review each result before deciding what happens next.</p>
             </div>
             <div className="rukh-home-flow">
@@ -75,7 +75,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
             </div>
             <div className="rukh-home-product-footer">
               <p>{coworkerEnabled ? "Your brief stays connected to the work." : "Access is limited while the staged release continues."}</p>
-              {coworkerEnabled ? <a className="rukh-home-action" href="/coworker">Open Co-workers <ArrowIcon /></a> : <button className="rukh-home-action rukh-home-action--disabled" type="button" disabled>Private preview</button>}
+              {coworkerEnabled ? <a className="rukh-home-action" href="/coworker">Open AI Coworker <ArrowIcon /></a> : <button className="rukh-home-action rukh-home-action--disabled" type="button" disabled>Private preview</button>}
             </div>
           </article>
 
