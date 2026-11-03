@@ -80,7 +80,7 @@ def test_prompt_separates_task_context_and_server_owned_output_contract():
     }
     system = messages[0]["content"].lower()
     assert "untrusted data" in system
-    assert "never claim tests passed" in system
+    assert "never claim code was executed or tests passed" in system
     assert "use concise findings and preserve source references" in system
 
 

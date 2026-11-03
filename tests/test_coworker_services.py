@@ -185,3 +185,45 @@ def test_dispatcher_routes_work_services_using_persisted_version(container):
     asyncio.run(dispatch_tick(container, client))
     assert len(client.calls) == 1
     assert client.calls[0][0] is WorkServicesWorkflow.run and client.calls[0][1] == task["id"]
+
+def test_draft_checkpoint_persists_safe_generation_metadata(container):
+    enable_services(container)
+    task = create_work(container, "email")
+    settings = replace(container.settings, deepseek_api_key="test-only")
+    container.settings = settings
+    container.repository.settings = settings
+
+    def respond(request):
+        body = json.loads(request.content)
+        assert body["messages"][0]["content"].startswith("ROLE")
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": work_draft("email").model_dump_json()}}],
+            "usage": {"prompt_tokens": 42, "completion_tokens": 58, "total_tokens": 100},
+        })
+
+    model = DeepSeekDraftModel(settings, httpx.MockTransport(respond), skill_id="email")
+    runner = DocumentRunner(container, model)
+
+    async def run():
+        await runner.phase(task["id"], "extract")
+        await runner.phase(task["id"], "draft")
+
+    asyncio.run(run())
+    saved = container.repository.step(task["id"], "draft")
+    generation = saved["generation"]
+
+    assert generation["provider"] == "deepseek"
+    assert generation["model"] == settings.deepseek_model
+    assert generation["prompt_version"] == "rukh-content-v1"
+    assert len(generation["prompt_sha256"]) == 64
+    assert generation["task_type"] == "factual_writing"
+    assert generation["input_tokens"] == 42
+    assert generation["output_tokens"] == 58
+    assert generation["total_tokens"] == 100
+    assert generation["finish_reason"] == "stop"
+    assert generation["reasoning_mode"] == "disabled"
+    assert generation["retrieval_used"] is False
+    assert generation["tools_used"] == []
+    assert generation["validator_result"] == "passed"
+    assert generation["error_class"] is None
+    assert "instruction" not in generation and "sources" not in generation

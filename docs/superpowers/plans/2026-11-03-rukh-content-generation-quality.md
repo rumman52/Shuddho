@@ -2,9 +2,9 @@
 
 > **For agentic workers:** Execute this plan on the isolated feature branch with a test-first loop. Verify the exact final branch head through GitHub Actions before reporting completion.
 
-**Goal:** Apply the uploaded Rukh content-generation specification to the existing Coworker drafting pipeline, improving prompt structure, task-specific behavior, validation evidence and generation metadata without adding unrelated product scope.
+**Goal:** Apply the uploaded Rukh content-quality specification to the existing Coworker drafting and Web Editor review pipelines, improving prompt structure, task-specific behavior, source fidelity and generation metadata without adding unrelated product scope.
 
-**Architecture:** Add a small, provider-independent prompt-policy module that classifies existing drafting tasks and builds a layered system prompt plus a separate task/context/output contract. Keep the existing DeepSeek adapter, Pydantic output schemas, source checks, research evidence validation, durable task checkpoints and quality-evaluation harness. Persist only safe generation metadata in the existing draft checkpoint; do not add a new database ledger.
+**Architecture:** Add a small, provider-independent Coworker prompt-policy module that classifies existing drafting tasks and builds a layered system prompt plus a separate task/context/output contract. Give the Web Editor one versioned, provider-agnostic multilingual review contract shared by DeepSeek and Gemma. Keep existing model adapters, Pydantic output schemas, source checks, research evidence validation, durable task checkpoints and quality-evaluation harness. Persist only safe generation metadata in the existing draft checkpoint; do not add a new database ledger.
 
 **Tech Stack:** Python 3.11, existing Pydantic schemas, httpx, pytest, GitHub Actions.
 
@@ -42,10 +42,10 @@
 - Produces `PROMPT_VERSION`, `classify_content_task(skill_id, instruction)`, and `build_content_messages(...)`.
 - The builder receives the server-owned skill guidance and Pydantic schema; user content cannot replace either.
 
-- [ ] Write tests for the existing skill-to-task mappings, explicit code/image-prompt requests, separate task/context payloads, default output-contract fields, source-as-untrusted-data handling and schema ownership.
-- [ ] Run the focused test and confirm it fails because the module is not implemented.
-- [ ] Implement the minimal pure prompt-policy module.
-- [ ] Run the focused test and confirm it passes.
+- [x] Write tests for the existing skill-to-task mappings, explicit code/image-prompt requests, separate task/context payloads, default output-contract fields, source-as-untrusted-data handling and schema ownership.
+- [x] Run the focused test and confirm it fails because the module is not implemented (isolated local RED phase).
+- [x] Implement the minimal pure prompt-policy module.
+- [x] Run the focused test and confirm it passes (18 passed).
 
 ### Task 2: Draft model integration and generation evidence
 
@@ -58,9 +58,9 @@
 - `DraftResult` gains optional, backwards-compatible metadata for provider/model, prompt version/hash, task type, input/output/total tokens, latency, finish reason, reasoning mode, retrieval and tools.
 - Existing model-response validation and error codes remain authoritative.
 
-- [ ] Extend the existing model success test to assert the prompt contract and safe generation metadata.
-- [ ] Run the focused test and confirm the new metadata assertions fail.
-- [ ] Integrate the prompt builder and capture validated provider usage without changing provider, temperature or reasoning settings.
+- [x] Extend the existing model success test to assert the prompt contract and safe generation metadata.
+- [ ] Run the focused model test RED phase; not yet observed in the full repository environment.
+- [x] Integrate the prompt builder and capture validated provider usage without changing provider, temperature or reasoning settings.
 - [ ] Run the focused model tests and confirm they pass.
 
 ### Task 3: Persist safe metadata and expand quality evaluation
@@ -77,19 +77,41 @@
 - The existing quality evaluator reports prompt version/hash, task type, provider/model, token counts, finish reason, latency and validation result for live runs.
 - Offline fixtures validate task classification, schema, language, source attribution, missing-information behavior and research quote fidelity.
 
-- [ ] Add tests for metadata persistence and the expanded offline evaluation categories.
-- [ ] Run the focused tests and confirm the new assertions fail.
-- [ ] Persist metadata in the existing JSON checkpoint; do not add a migration or external telemetry.
-- [ ] Expand the existing evaluator and fixtures, including exact-quote research validation.
+- [x] Add tests for metadata persistence and the expanded offline evaluation categories.
+- [ ] Run the Coworker integration/evaluation RED phase; not yet observed in the full repository environment.
+- [x] Persist metadata in the existing JSON checkpoint; do not add a migration or external telemetry.
+- [x] Expand the existing evaluator and fixtures, including exact-quote research validation.
 - [ ] Run focused tests and the complete offline Coworker quality gate.
 
-### Task 4: Exact-head verification and handoff
+### Task 4: Web Editor prompt parity
 
 **Files:**
-- No production files beyond Tasks 1–3.
+- Modify: `services/api/shuddho_api/ai_review_schema.py`
+- Modify: `services/api/shuddho_api/llm_deepseek.py`
+- Modify: `services/api/shuddho_api/llm_gemma.py`
+- Modify: `tests/test_deepseek_provider.py`
+- Modify: `tests/test_llm_pipeline.py`
 
-- [ ] Open/update a draft PR on the feature branch.
+- [x] Replace the Bangla-only legacy editor prompt with a versioned multilingual Rukh editing contract.
+- [x] Share the server-owned output schema through the common review-message builder for DeepSeek and Gemma.
+- [x] Keep DeepSeek JSON mode and Gemma function-call mode provider-specific without contradictory output instructions.
+- [x] Align Gemma's function schema with the Pydantic language-code contract; test Spanish as a non-Bangla example.
+
+### Task 5: Exact-head verification and handoff
+
+**Files:**
+- No additional production files beyond Tasks 1–4.
+
+- [x] Open/update a reviewable PR on the isolated feature branch (#612; follow-up to merged #611).
 - [ ] Run the repository's required GitHub Actions checks on the final head.
 - [ ] Inspect the exact-head test/build results and final diff.
-- [ ] Keep the PR unmerged pending the repository's independent current-head review and normal protected merge gate.
-- [ ] Report unavailable checks and the PostHog privacy blocker explicitly.
+- [x] Keep the PR unmerged pending the repository's independent current-head review and normal protected merge gate.
+- [ ] Report unavailable checks and the PostHog privacy blocker.
+
+## Execution record
+
+- The initial prompt-policy test suite was run in an isolated local test package: RED with the module absent, then GREEN with **18 passed** after implementation.
+- The 12-case quality fixture parses as JSONL, has unique source IDs, and every required source reference resolves to a supplied source. Full Pydantic/quality-gate execution remains delegated to repository CI.
+- PR #611 was marked merged by GitHub while work was continuing; the remaining evaluation and Web Editor changes are isolated in PR #612.
+- No GitHub Actions run result was available for the merged #611 commit. PR #612 is the final verification target; do not report the full suite as passing until its exact-head checks complete.
+- PostHog events remain intentionally disabled by the repository privacy gate. No raw prompts, document text, tokens or account identifiers are sent to external telemetry.

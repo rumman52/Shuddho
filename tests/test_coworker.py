@@ -3854,3 +3854,23 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
             assert hashlib.sha256(body).hexdigest() == item["sha256"]
 
     asyncio.run(scenario())
+
+def test_model_usage_metadata_rejects_boolean_token_counts(container):
+    settings = replace(container.settings, deepseek_api_key="test-only-placeholder")
+
+    def respond(_request):
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": draft().model_dump_json()}}],
+            "usage": {"prompt_tokens": True, "completion_tokens": 20, "total_tokens": 21},
+        })
+
+    model = DeepSeekDraftModel(settings, httpx.MockTransport(respond))
+    messages = model.messages(
+        {"instruction": "Create a short project update report and email using only supplied facts.",
+         "output_language": "en"},
+        [{"id": "notes", "text": "Project Atlas launches on 15 October 2026."}],
+    )
+    result = asyncio.run(model.generate(messages, "en", {"notes"}))
+    assert result.total_tokens == 21
+    assert result.input_tokens is None
+    assert result.output_tokens == 20
