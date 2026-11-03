@@ -74,6 +74,7 @@ class Settings:
     transaction_operations: frozenset[str] = field(default_factory=frozenset)
     agent_runtime_enabled: bool = False
     conversations_enabled: bool = False
+    conversation_replies_enabled: bool = False
     max_conversations: int = 100
     max_conversation_messages: int = 500
     agent_runtime_v3_enabled: bool = False
@@ -258,6 +259,7 @@ class Settings:
                 if value.strip()
             ),
             agent_runtime_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_ENABLED", "false").lower() == "true",
+            conversation_replies_enabled=os.getenv("SHUDDHO_CONVERSATION_REPLIES_ENABLED", "false").lower() == "true",
             conversations_enabled=os.getenv("SHUDDHO_CONVERSATIONS_ENABLED", "false").lower() == "true",
             agent_runtime_v3_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_V3_ENABLED", "false").lower() == "true",
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",

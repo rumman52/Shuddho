@@ -467,7 +467,9 @@ export type WorkspaceManifest = {
 export type ConversationRecord = {
   id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
 };
+export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string };
 export type ConversationMessageRecord = {
+  assistant_reply?: AssistantReply | null;
   id: string; conversation_id: string; sequence: number; text: string;
   selected_sources: Array<Record<string, unknown>>;
   resource_links: Array<{ resource_type: string; resource_id: string }>;
@@ -508,6 +510,15 @@ export class CoworkerClient {
 
   private async json<T>(path: string, options: RequestInit = {}): Promise<T> {
     return (await this.response(path, options)).json() as Promise<T>;
+  }
+  runtimeManifest(signal?: AbortSignal) {
+    return this.json<{ capabilities: { conversation_replies?: boolean } }>("/api/v1/runtime-manifest", { signal });
+  }
+  async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal) {
+    return (await this.response(`/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal,
+      body: JSON.stringify({ expected_sequence: sequence }),
+    }, 75000)).json() as Promise<AssistantReply>;
   }
   workspaceManifest(signal?: AbortSignal) {
     return this.json<WorkspaceManifest>("/api/v1/workspace-manifest", { signal });

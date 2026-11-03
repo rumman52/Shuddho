@@ -14,7 +14,7 @@ from .models import (
     ModelAttempt, NegotiationCase, NegotiationCaseRevision, NegotiationOffer, NegotiationProposal,
     RestaurantReservationIntent, ShoppingCartIntent, ShoppingCartVerificationEvidence, ShoppingCheckoutBinding, TravelBookingBinding, TravelQuoteIntent, TravelQuoteVerificationEvidence, Transaction, TransactionEvent, TransactionExecutionLink, TransactionReconciliationEvidence, TransactionRevision, TransactionTermsSnapshot,
     Notification, NotificationOutbox, OAuthAttempt, Outbox, PersonalGoal,
-    PersonalGoalRevision, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
+    PersonalGoalRevision, ProviderLease, Step, Task, TaskEvent, ToolInvocation, ToolReceipt, Workspace, utcnow,
 )
 
 TERMINAL_TASKS = {"completed", "failed", "cancelled", "needs_input"}
@@ -179,6 +179,9 @@ class RetentionService:
                 SandboxSession.state.not_in({"cancelled", "completed", "expired", "failed"}),
                 SandboxSession.expires_at > utcnow(),
             ).limit(1))
+            active_provider = db.scalar(select(ProviderLease.id).where(
+                ProviderLease.owner_id == owner, ProviderLease.expires_at > utcnow(),
+            ).limit(1))
             pending_automation = db.scalar(
                 select(Automation.id).outerjoin(
                     AutomationScheduleOutbox,
@@ -192,10 +195,10 @@ class RetentionService:
                     ),
                 ).limit(1)
             )
-            if active_tasks or active_runs or active_actions or active_browser or active_sandbox or pending_automation:
+            if active_tasks or active_runs or active_actions or active_browser or active_sandbox or active_provider or pending_automation:
                 raise CoworkerError(
                     "account_active",
-                    "Cancel or finish active work, close browser/sandbox sessions, and reconcile automation schedule deletion before erasing this account.",
+                    "Wait for AI replies to finish, cancel or finish other active work, close browser/sandbox sessions, and reconcile automation schedule deletion before erasing this account.",
                     409,
                 )
 
@@ -288,6 +291,9 @@ class RetentionService:
             db.execute(delete(OAuthAttempt).where(OAuthAttempt.owner_id == owner))
             db.execute(delete(Connection).where(Connection.owner_id == owner))
             db.execute(delete(DailyUsage).where(DailyUsage.owner_id == owner))
+            # Expired leases may survive a crashed chat request. Active leases
+            # are refused above; anonymous provider cost totals stay charged.
+            db.execute(delete(ProviderLease).where(ProviderLease.owner_id == owner))
             db.execute(delete(AuditEvent).where(AuditEvent.owner_id == owner))
             db.execute(delete(Workspace).where(Workspace.owner_id == owner))
             db.delete(account)

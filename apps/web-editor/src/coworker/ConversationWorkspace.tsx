@@ -3,6 +3,8 @@ import {
   CoworkerClient, WorkspaceError, type ConversationRecord,
   type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
+import ConversationReply from "./ConversationReply";
+import ConversationRunStatus from "./ConversationRunStatus";
 import { RefreshOrder } from "./refreshOrder";
 import { getInitialConversationId } from "../../../coworker/src/navigation.mjs";
 
@@ -22,6 +24,18 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [memoryError, setMemoryError] = useState("");
   const [editingMemory, setEditingMemory] = useState("");
   const [memoryDraft, setMemoryDraft] = useState("");
+  const [chatAvailable, setChatAvailable] = useState(false);
+  const [chatMode, setChatMode] = useState(false);
+  const [replyingId, setReplyingId] = useState("");
+  const [replyErrors, setReplyErrors] = useState<Record<string, string>>({});
+  const replyController = useRef<AbortController | null>(null);
+  const [listRevision, setListRevision] = useState(0);
+  const [listReady, setListReady] = useState(false);
+  const [search, setSearch] = useState("");
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageListRef = useRef<HTMLOListElement | null>(null);
+  const followLatest = useRef(true);
+  const firstMessage = useRef<{ fingerprint: string; key: string; conversation: ConversationRecord | null } | null>(null);
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
   const [working, setWorking] = useState(false);
@@ -89,7 +103,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(min-width: 721px)");
+    const media = window.matchMedia("(min-width: 1221px)");
     const closeOnDesktop = () => { if (media.matches) setMobilePanel(null); };
     if (typeof media.addEventListener === "function") {
       media.addEventListener("change", closeOnDesktop);
@@ -101,9 +115,11 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
   useEffect(() => {
     const controller = new AbortController();
+    setListReady(false); setError("");
     client.conversations(controller.signal).then(({ items }) => {
       if (controller.signal.aborted) return;
       setDisabled(false);
+      setListReady(true);
       setConversations(items);
       setSelected(current => items.some(item => item.id === current) ? current : (items[0]?.id ?? ""));
     }).catch(cause => {
@@ -112,7 +128,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       setError(cause instanceof Error ? cause.message : "Could not load conversations.");
     });
     return () => controller.abort();
-  }, [client]);
+  }, [client, listRevision]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -140,6 +156,46 @@ export default function ConversationWorkspace({ client, openAgent }: {
     });
     return () => controller.abort();
   }, [client]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (typeof client.runtimeManifest !== "function") return;
+    client.runtimeManifest(controller.signal).then(result => {
+      if (!controller.signal.aborted) {
+        const enabled = result.capabilities.conversation_replies === true;
+        setChatAvailable(enabled); setChatMode(enabled);
+      }
+    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatMode(false); } });
+    return () => controller.abort();
+  }, [client]);
+
+  useEffect(() => () => { replyController.current?.abort(); }, [client, selected]);
+
+  const lastReply = messages[messages.length - 1]?.assistant_reply;
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (list && followLatest.current) list.scrollTop = list.scrollHeight;
+  }, [messages.length, lastReply?.state, lastReply?.text, replyingId]);
+
+  async function askForReply(item: ConversationMessageRecord) {
+    followLatest.current = true;
+    const id = item.conversation_id;
+    const controller = new AbortController();
+    replyController.current?.abort(); replyController.current = controller;
+    setReplyingId(item.id); setReplyErrors(current => ({ ...current, [item.id]: "" }));
+    try {
+      const reply = await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+      if (!controller.signal.aborted && selectedRef.current === id) {
+        refreshOrder.current.invalidate();
+        setMessages(current => current.map(message => message.id === item.id ? { ...message, assistant_reply: reply } : message));
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted && selectedRef.current === id)
+        setReplyErrors(current => ({ ...current, [item.id]: cause instanceof Error ? cause.message : "Could not load the AI reply." }));
+    } finally {
+      if (replyController.current === controller) setReplyingId("");
+    }
+  }
 
   async function refreshMemory() {
     const reply = await client.memory();
@@ -192,6 +248,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
     // A response from an old conversation or refresh must not roll back newer
     // run progress, especially after a user-initiated dispatch/cancellation.
     refreshOrder.current.invalidate();
+    followLatest.current = true;
     setMessages([]);
     setActivity([]);
     if (!selected) return;
@@ -227,7 +284,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
   async function create(event: FormEvent) {
     event.preventDefault();
-    if (working || !title.trim()) return;
+    if (!listReady || disabled || working || !title.trim()) return;
     setWorking(true); setError(""); setNotice("");
     try {
       const normalizedTitle = title.trim();
@@ -237,6 +294,8 @@ export default function ConversationWorkspace({ client, openAgent }: {
       const response = await client.conversations();
       setConversations(response.items);
       setSelected(record.id);
+      firstMessage.current = null;
+      setMobilePanel(null);
       setTitle("");
       createKey.current = null;
       setNotice("Private conversation created.");
@@ -245,24 +304,56 @@ export default function ConversationWorkspace({ client, openAgent }: {
     } finally { setWorking(false); }
   }
 
+  function startNew() {
+    if (working) return;
+    setSelected(""); setDraft(""); setSelectedSources([]); setError(""); setNotice("");
+    setMobilePanel(null); messageKey.current = null; firstMessage.current = null;
+    composerRef.current?.focus();
+  }
+
   async function send(event: FormEvent) {
     event.preventDefault();
-    if (!selected || working || !draft.trim()) return;
+    if (!listReady || disabled || working || !draft.trim()) return;
     setWorking(true); setError(""); setNotice("");
     try {
       const text = draft.trim();
       const sources = [...selectedSources];
-      const fingerprint = JSON.stringify({ conversation: selected, text, sources });
+      let conversationId = selected;
+      if (!conversationId) {
+        const fingerprint = JSON.stringify({ text, sources });
+        if (firstMessage.current?.fingerprint !== fingerprint)
+          firstMessage.current = { fingerprint, key: crypto.randomUUID(), conversation: null };
+        const pending = firstMessage.current;
+        if (!pending.conversation) {
+          const record = await client.createConversation(Array.from(text).slice(0, 80).join(""), pending.key);
+          pending.conversation = record;
+        }
+        conversationId = pending.conversation.id;
+      }
+      const fingerprint = JSON.stringify({ conversation: conversationId, text, sources });
       if (messageKey.current?.fingerprint !== fingerprint)
         messageKey.current = { fingerprint, key: crypto.randomUUID() };
-      await client.appendConversationMessage(selected, text, messageKey.current.key, sources);
+      const savedMessage = await client.appendConversationMessage(conversationId, text, messageKey.current.key, sources);
+      // Admission succeeded. Keep this thread reachable even if a subsequent read fails.
+      if (!selected) {
+        const created = firstMessage.current!.conversation!;
+        setConversations(current => current.some(item => item.id === conversationId) ? current : [
+          created, ...current,
+        ]);
+        selectedRef.current = conversationId;
+        setSelected(conversationId);
+      }
+      firstMessage.current = null;
       setDraft("");
       setSelectedSources([]);
       messageKey.current = null;
       const currentManifest = await client.workspaceManifest().catch(() => null);
       if (currentManifest) setManifest(currentManifest);
-      await reloadConversation(selected);
-      setNotice("Message saved. Starting a task requires a separate action.");
+      await reloadConversation(conversationId);
+      if (chatMode && sources.length === 0) {
+        setNotice("");
+        await askForReply(savedMessage);
+      } else setNotice("Message saved. Choose Start task when you are ready.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Message could not be saved.");
     } finally { setWorking(false); }
@@ -274,7 +365,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
     try {
       await client.dispatchConversationMessage(selected, item.id, item.sequence);
       await reloadConversation(selected);
-      setNotice("Bounded Agent work admitted. Check Agent for full progress.");
+      setNotice("Task started. Follow progress below or open Agent activity.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Agent admission was not accepted.");
     } finally { setWorking(false); }
@@ -306,6 +397,10 @@ export default function ConversationWorkspace({ client, openAgent }: {
     } finally { setWorking(false); }
   }
 
+  const filteredConversations = conversations.filter(item => item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const composerDisabled = working || Boolean(replyingId) || disabled || !listReady;
+  // Load the newest result eagerly; older histories may contain thousands of runs.
+  const latestRunMessageId = [...messages].reverse().find(item => item.resource_links.some(link => link.resource_type === "agent_run"))?.id;
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
   const selectedConversation = conversations.find(item => item.id === selected);
   return <section className="rukh-conversation-workspace" aria-label="Private conversations">
@@ -336,23 +431,27 @@ export default function ConversationWorkspace({ client, openAgent }: {
             type="button" aria-label="Close conversations" onClick={closeMobilePanel}>×</button>
         </div>
       </div>
-      {error && <p className="cw-error" role="alert">{error}</p>}
-      {notice && <p className="cw-notice" role="status">{notice}</p>}
+
+      {mobilePanel === "conversations" && error && <p className="cw-error" role="alert">{error}</p>}
       {disabled ? <p className="rukh-muted">Conversations are not enabled for this workspace. Existing work is unchanged.</p> : <>
+        <label className="rukh-sr-only" htmlFor="cw-conversation-search">Search conversations</label>
+        <input id="cw-conversation-search" className="rukh-conversation-search" type="search" aria-label="Search conversations"
+          placeholder="Search conversations" value={search} onChange={event => setSearch(event.target.value)} />
         <form className="rukh-conversation-create" onSubmit={create}>
           <label className="rukh-sr-only" htmlFor="cw-conversation-title">New conversation title</label>
           <input id="cw-conversation-title" value={title} placeholder="Name a conversation…" minLength={1} maxLength={160}
-            disabled={working} onChange={event => setTitle(event.target.value)} required />
-          <button type="submit" aria-label="Create private conversation" disabled={working || !title.trim()}>＋</button>
+            disabled={composerDisabled} onChange={event => setTitle(event.target.value)} required />
+          <button type="submit" aria-label="Create private conversation" disabled={composerDisabled || !title.trim()}>+</button>
         </form>
         <ul className="rukh-conversation-items">
-          {conversations.map(item => <li key={item.id}>
-            <button type="button" aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); messageKey.current = null; setMobilePanel(null); }}>
+          {filteredConversations.map(item => <li key={item.id}>
+            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
               <span className="rukh-conversation-item-title">{item.title}</span>
               <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
             </button>
           </li>)}
         </ul>
+        {search.trim() && filteredConversations.length === 0 && <p className="rukh-muted" role="status">No conversations match your search.</p>}
         {conversations.length === 0 && <p className="rukh-muted">Your private conversations will appear here.</p>}
       </>}
       <p className="rukh-panel-footnote">Messages are private workspace records. Saving a message does not start Agent work.</p>
@@ -361,39 +460,77 @@ export default function ConversationWorkspace({ client, openAgent }: {
     <section aria-hidden={mobilePanel !== null ? true : undefined} className="rukh-conversation-thread" aria-label="Conversation">
       <header className="rukh-thread-header">
         <div><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Start a conversation"}</h2></div>
+        <div className="rukh-thread-tools">
+          <button type="button" className="cw-text-button" aria-label="New conversation" disabled={composerDisabled} onClick={startNew}>+ New chat</button>
         {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
+        </div>
       </header>
-      {!selectedConversation ? <div className="rukh-thread-empty"><span aria-hidden="true">✳</span><h3>Give your work a place to begin.</h3><p>Create a private conversation on the left, then add a brief or a question. Agent work always requires a separate action.</p></div> : <>
-        {messages.length === 0 ? <div className="rukh-thread-empty"><span aria-hidden="true">✳</span><h3>What should we work on?</h3><p>Share context, attach approved workspace documents, or ask for a plan. Nothing is dispatched automatically.</p></div> :
-          <ol className="rukh-message-list" aria-label="Conversation messages">
+      {error && <div className="rukh-thread-error"><p className="cw-error" role="alert">{error}</p>
+        {!listReady && <button type="button" className="cw-text-button" aria-label="Retry conversations" onClick={() => setListRevision(value => value + 1)}>Retry loading conversations</button>}
+      </div>}
+      {notice && <p className="cw-notice" role="status">{notice}</p>}
+      {disabled && <p className="rukh-muted" role="status">Conversations are not enabled for this workspace. Contact your workspace administrator.</p>}
+      {messages.length === 0 ? <div className="rukh-thread-empty">
+        <span className="rukh-chat-mark" aria-hidden="true">R</span>
+        <h3>What should we work on?</h3>
+        <p>{chatAvailable ? "Ask a question, explore an idea, or write something together." : "Save a brief here, then choose Start task. AI chat is not enabled in this workspace."}</p>
+        <div className="rukh-prompt-starters" aria-label="Conversation starters">
+          {[
+            ["research brief", "Research a topic", "Research this topic and summarize the findings with sources: "],
+            ["writing draft", "Write something", "Help me write a clear, professional draft about: "],
+            ["work plan", "Make a plan", "Break this goal into a practical plan with next steps: "],
+            ["Bangla draft", "বাংলায় লিখুন", "এই বিষয়ে বাংলায় একটি খসড়া তৈরি করুন: "],
+          ].map(([id, label, prompt]) => <button type="button" key={id} disabled={composerDisabled}
+            aria-label={`Start with a ${id}`} onClick={() => { setDraft(prompt); composerRef.current?.focus(); }}>{label}<span aria-hidden="true">↗</span></button>)}
+        </div>
+      </div> :
+          <ol ref={messageListRef} className="rukh-message-list" aria-label="Conversation messages"
+            onScroll={event => { const list = event.currentTarget; followLatest.current = list.scrollHeight - list.scrollTop - list.clientHeight < 96; }}>
             {messages.map(item => {
               const run = statusByMessage.get(item.id);
               const linked = item.resource_links.find(link => link.resource_type === "agent_run");
               const activeRun = run && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state);
-              const canDispatch = !linked && item.sequence === selectedConversation.message_sequence;
-              return <li className="rukh-message" key={item.id}>
+              const canDispatch = !linked && item.sequence === selectedConversation?.message_sequence;
+              return <li className="rukh-message rukh-chat-turn" key={item.id}>
+                <div className="rukh-user-message">
+                <span className="rukh-message-author">You</span>
                 <p dir="auto">{item.text}</p>
                 <div className="rukh-message-meta"><small>Message {item.sequence} · {new Date(item.created_at).toLocaleString()}</small>
                   {run && <span role="status">Agent {run.state}: {run.detail}</span>}
                 </div>
-                {(activeRun || canDispatch || linked) && <div className="rukh-message-actions">
+                </div>
+                {(activeRun || canDispatch || linked || chatAvailable) && <div className="rukh-message-actions">
+                  {chatAvailable && !item.assistant_reply && item.sequence === selectedConversation?.message_sequence && <button type="button" disabled={composerDisabled || item.selected_sources.length > 0} onClick={() => { void askForReply(item); }}>Ask Rukh</button>}
                   {activeRun && run && <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>Cancel Agent work</button>}
-                  {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start bounded Agent work</button>}
+                  {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start task</button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
+                {(item.assistant_reply || replyingId === item.id || replyErrors[item.id]) && <ConversationReply reply={item.assistant_reply}
+                  pending={replyingId === item.id} error={replyErrors[item.id]} disabled={composerDisabled} retry={() => { void askForReply(item); }} />}
+                {linked && <ConversationRunStatus client={client} runId={linked.resource_id} eager={item.id === latestRunMessageId} />}
               </li>;
             })}
           </ol>}
-        <form className="rukh-message-composer" onSubmit={send}>
+        {chatAvailable && <div className="rukh-chat-mode" aria-label="Message mode">
+          <button type="button" aria-pressed={chatMode} disabled={composerDisabled} onClick={() => setChatMode(true)}>Chat with Rukh</button>
+          <button type="button" aria-pressed={!chatMode} disabled={composerDisabled} onClick={() => setChatMode(false)}>Save only</button>
+        </div>}
+        <form className="rukh-message-composer" aria-label="Message composer" onSubmit={send}>
           <label className="rukh-sr-only" htmlFor="cw-conversation-message">New message</label>
-          <textarea id="cw-conversation-message" dir="auto" value={draft} minLength={1} maxLength={12000}
-            rows={4} disabled={working} required onChange={event => setDraft(event.target.value)}
+          <textarea ref={composerRef} id="cw-conversation-message" dir="auto" value={draft} minLength={1} maxLength={12000}
+            rows={3} disabled={composerDisabled} required onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                event.preventDefault();
+                if (!composerDisabled && draft.trim()) event.currentTarget.form?.requestSubmit();
+              }
+            }}
             placeholder="Message your coworker…" />
           <div><span>{selectedSources.length ? `${selectedSources.length} source(s) attached` : "Your message is saved privately"}</span>
-            <button type="submit" disabled={working || !draft.trim()}>Save message <span aria-hidden="true">↗</span></button>
+            <button type="submit" disabled={composerDisabled || !draft.trim()}>{replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} <span aria-hidden="true">↗</span></button>
           </div>
         </form>
-      </>}
+        <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · Start task separately</p>
     </section>
 
     <aside ref={contextPanelRef} id="rukh-context-panel"

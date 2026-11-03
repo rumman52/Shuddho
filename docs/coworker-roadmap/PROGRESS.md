@@ -1,3 +1,27 @@
+## Native chatbox continuation — 4 November 2026 (Asia/Dhaka)
+
+The same local branch now implements native assistant text replies through an authenticated, owner-scoped conversation endpoint and migration 0063. The composer remains visible while message history scrolls. [Implementation, evidence and rollout handoff](../frontend/CHATBOX_COMPLETION_2026-11-04.md) supersedes the previous native-chat/browser limitations below.
+
+- Backend conversation/context/dispatch/retention/manifest suite: **92 passed, zero skips**, mandatory gate passed. The final reply-only rerun and independent reviewer run each passed **21 tests**.
+- Full root JavaScript suite passes, including **169 web-editor tests**; web-editor, Coworker and Editor builds pass. Existing Coworker bundle-size warning remains.
+- Real Chromium with a synthetic API passes five desktop/tablet/phone viewports, including first-entry and after-reply composer visibility, send/reply, scroll, history search, drawer keyboard focus, new chat and dark mode.
+- Source review found and verified a fix for active/expired provider leases breaking account erasure. No remaining Critical/Important finding was reported.
+- Publication remains blocked pending explicit approval to push to the public repository. No PR, merge, production migration, deployment, real provider call or feature activation was performed. Native text chat is implemented locally; streaming and full Muse parity remain incomplete.
+
+---
+
+## Frontend conversation continuation — 4 November 2026 (Asia/Dhaka)
+
+Base main `a8385b5a2849afd01486d86106cfa4ea491f46fd` includes merged #615. Branch `feat/rukh-conversation-usability-20261104` completes the first-entry composer, first-message conversation creation with retry identity, history search, prompt starters, IME-safe keyboard submission and inline real linked-run progress. [Task contract and capability matrix](../frontend/CONVERSATION_USABILITY_2026-11-04.md); [current frontend ledger](../frontend/IMPLEMENTATION_LEDGER.md).
+
+- Local full root `npm test` passes, including **167 web-editor tests, zero skips**, standalone Coworker **4** and Editor **1**, gateway/shared/NLP and production-API checks. All three frontend TypeScript/Vite builds pass; the existing Coworker chunk-size warning remains.
+- Browser qualification blocked locally: no Chromium executable and browser download returned invalid/truncated data. No mobile/desktop screenshots or real auth/provider scenario claimed.
+- Fresh base-main frontend CI passed. Both Python jobs failed the existing multilingual quality fixture (0.8333 versus required 1.0); governance and merge gate failed. Base Vercel commit status reports success, which does not verify the live UI.
+- Agent review found Unicode title splitting and historical-run request fan-out; both were reproduced and fixed with regressions. Continuation-head remote CI and human review pending at this source checkpoint. Source work is implemented and locally verified; staging/live deployment unverified; full production qualification incomplete; no activation, merge, paid provisioning or production deployment change.
+- Next: inspect continuation PR exact-head frontend CI, review and browser evidence; implement native assistant conversation messages/streaming as a separate backend contract. Existing automations/connectors/VM/transaction surfaces do not establish full Muse parity or operated capability acceptance.
+
+---
+
 ## Current continuation — 31 October 2026: live release-readiness and staging continuity
 
 This is the latest Shuddho handoff and supersedes older operational claims below. Read [RELEASE_READINESS_REFRESH_2026-10-31.md](RELEASE_READINESS_REFRESH_2026-10-31.md) for exact evidence and owner actions.
@@ -458,7 +482,7 @@ No administrator-only settings, secrets, paid resources, provider actions or pro
 ## Architecture/core checkpoint — A-03 compatibility inventory and combined verification (20 October 2026)
 
 - Inspected main `b6e57dd8f378b0b878c66fd6ef8ceb1d09dbcb4d`; dedicated documentation branch `codex/a03-compatibility-inventory-20261020`. [62-revision review and rollback inventory](A03_MIGRATION_COMPATIBILITY_2026-10-20.md). Alembic ScriptDirectory and source metadata confirm one linear chain of 62 revisions with head0062; all local links resolve. Independent review corrected five explicitly refused expand-only downgrades and clarified reviewed research's database version versus Temporal type.
-- Three separate, unmerged source PRs: [#491](https://github.com/rumman52/Shuddho/pull/491), head `e7644e64ac47fd81652894108dc2698bd4f02765`, final completion result validation; [#492](https://github.com/rumman52/Shuddho/pull/492), head `7e9d5f96658a80d6dc96e9dc4961e0250d1e1710`, sandbox supervision/cleanup; [#493](https://github.com/rumman52/Shuddho/pull/493), head `ab428153cb4828f945252f020062e7b48b205651`, conversation retry/navigation identity. Their source trees match the corresponding locally tested commits. No PR is treated as merged or activated.
+- Three separate, unmerged source PRs: [#491](https://github.com/rumman52/Shuddho/pull/491), head `e7644e64ac47fd81672894108dc2698bd4f02765`, final completion result validation; [#492](https://github.com/rumman52/Shuddho/pull/492), head `7e9d5f96658a80d6dc96e9dc4961e0250d1e1710`, sandbox supervision/cleanup; [#493](https://github.com/rumman52/Shuddho/pull/493), head `ab428153cb4828f945252f020062e7b48b205651`, conversation retry/navigation identity. Their source trees match the corresponding locally tested commits. No PR is treated as merged or activated.
 - Combined local source head `6cc65704ea7fb9ad5005405dc5b253b39e848a30`, tree `d13cef85655742286560609215a2081cd11afba2`, applies all three without conflicts: **245 related Python tests passed, zero skips/failures**, mandatory collection gates passed. Full JavaScript workspaces passed, including web-editor **120 tests**; final TypeScript/Vite build passed. Independent source reviews resolved all substantiated Critical/Important findings.
 - Full local Python run on the C-01 source tree matching #491: **2338 passed, 86 skipped, 17 warnings**, zero failed/error tests. Skips: 43 need PostgreSQL (41 dedicated DB, one concurrent admission, one post-mutation disconnect); 41 need a Temporal server; two ML collection skips need PyTorch. This is not a zero-skip mandatory-integration verdict. Local JUnit2 emitted record_property warnings; six proposal-fixture serialization warnings also occurred. Required GitHub coworker CI supplies separate PostgreSQL/Temporal/browser evidence.
 - At this checkpoint, all three PRs have successful test-and-build checks; their full coworker/merge gates remain to be refreshed. CI runs: [#491](https://github.com/rumman52/Shuddho/actions/runs/39314867789), [#492](https://github.com/rumman52/Shuddho/actions/runs/39316114712), [#493](https://github.com/rumman52/Shuddho/actions/runs/39316327464).
@@ -841,7 +865,7 @@ This is repository code/test work only. Protected Render staging, independent op
 
 ## CW-11 / A-03 historical reviewed-skill rollback task-ledger preflight — 16 October 2026
 
-**Baseline verified at task selection:** `main` `d757d165bbb36eaea829b683714f03b37d7206d9`, merged [#435](https://github.com/rumman52/Shuddho/pull/435). [#436](https://github.com/rumman52/Shuddho/pull/436) has since been merged into `main` at `8dba11cb3d288f374be12c96410f8ee276aff67a`; this reconciliation preserves its cohort-health regression and documentation. The initial checkpoint was written before that merge. Exact review/qualification evidence remains separately gated. The merged #435 required long-running coworker jobs and P1/P2 re-review were not fully qualified at last observation. Older checkpoint sections below predate those merges.
+**Baseline verified at task selection:** `main` `d757d167bbb36eaea829b683714f03b37d7206d9`, merged [#435](https://github.com/rumman52/Shuddho/pull/435). [#436](https://github.com/rumman52/Shuddho/pull/436) has since been merged into `main` at `8dba11cb3d288f374be12c96410f8ee276aff67a`; this reconciliation preserves its cohort-health regression and documentation. The initial checkpoint was written before that merge. Exact review/qualification evidence remains separately gated. The merged #435 required long-running coworker jobs and P1/P2 re-review were not fully qualified at last observation. Older checkpoint sections below predate those merges.
 
 **Isolated new work:** `codex/cw11-legacy-reviewed-rollback-preflight-20261016` introduces read-only `scripts/reviewed_skill_rollback_preflight.py` and SQL regression cases in `tests/test_cohort_health_gate.py` to count nonterminal legacy-reviewed Tasks (pinned reviewed Step without the new workflow version), active new-version Tasks missing an identity, ambiguous active legacy Agent research without a review Step, safely fenced Tasks and terminal old-reviewed Tasks. The counts run in one SQL statement snapshot; missing review Step never creates an optimistic clean result. Nonzero blocker counts return `BLOCKED_TASK_LEDGER` / failed CLI exit. A clean task-ledger snapshot is only `TASK_LEDGER_CHECK_ONLY`, with explicit false `fleet_drained_verified`, `staging_verified` and `rollout_authorized`; no mutation/provider operation or owner data disclosure. [Bounded task and operated acceptance contract](CW11_LEGACY_REVIEWED_ROLLBACK_PREFLIGHT_2026-10-16.md). Exact final-head CI and independent review are pending, so this is **implemented on branch, not repository/staging verified**.
 
@@ -853,7 +877,7 @@ This is repository code/test work only. Protected Render staging, independent op
 
 ## CW-11 old-worker fence merged; cohort metric and rollout contract follow-up — 16 October 2026
 
-**Current merged implementation baseline:** `main` `d757d165bbb36eaea829b683714f03b37d7206d9`, externally merged [PR #435](https://github.com/rumman52/Shuddho/pull/435) at last observed PR head `62665ecedeae26b4d1e7a541b41601dac1070fc9`. The merged patch gives *newly admitted* reviewed research Tasks distinct `work_research_reviewed_v1` workflow identity, which older `work_research_v1` workers fail to resolve and whose old paid-search reservation rejects. Current worker/runner maps this reviewed workflow to the existing source-reviewed WorkSkill; SQL pinned Step, grants and exact sources are still rechecked. Terminal reviewed Task idempotent replay is retained. No capability activation, external sends, or deployment is established.
+**Current merged implementation baseline:** `main` `d757d167bbb36eaea829b683714f03b37d7206d9`, externally merged [PR #435](https://github.com/rumman52/Shuddho/pull/435) at last observed PR head `62665ecedeae26b4d1e7a541b41601dac1070fc9`. The merged patch gives *newly admitted* reviewed research Tasks distinct `work_research_reviewed_v1` workflow identity, which older `work_research_v1` workers fail to resolve and whose old paid-search reservation rejects. Current worker/runner maps this reviewed workflow to the existing source-reviewed WorkSkill; SQL pinned Step, grants and exact sources are still rechecked. Terminal reviewed Task idempotent replay is retained. No capability activation, external sends, or deployment is established.
 
 **Evidence:** Last observed exact-head [PR #435 CI #38911379269](https://github.com/rumman52/Shuddho/actions/runs/38911379269): `test-and-build` passed, mandatory `coworker` in progress, dependent merge gate pending. Merged-main [CI #38911480448](https://github.com/rumman52/Shuddho/actions/runs/38911480448) also pending. The first independent review recorded P1 older-worker downgrade and P2 terminal replay; amended source addresses new Tasks and terminal replay, but the final re-review attempt failed to produce clean clearance and threads remained unresolved at observation. Do not treat merge as security qualification.
 
@@ -1859,7 +1883,7 @@ Review PR: [#375](https://github.com/rumman52/Shuddho/pull/375). Initial impleme
 commit: `b8a5a2b2130991b383cc8a9bfd16472b903a8ed4`; the follow-up also binds restarted
 Temporal worker readiness before unlocking its virtual retry clock. The PR check suite
 records the exact final head and required CI evidence; this checkpoint precedes that result.
-CI run `38240791655` remained in rendering dependency installation for more than fifteen
+CI run `38240791675` remained in rendering dependency installation for more than fifteen
 minutes. The final follow-up makes apt/debconf/needrestart noninteractive and bounds the
 installer to ten minutes, triggering a fresh runner without removing any required check.
 The cause of the stalled installer was not observable from unfinished GitHub job logs.

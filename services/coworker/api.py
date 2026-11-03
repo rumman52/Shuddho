@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
-from .conversation_schemas import ConversationCreate, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
+from .conversation_schemas import ConversationReplyCreate, ConversationCreate, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1027,6 +1027,7 @@ def runtime_manifest(
         "artifact_services": settings.artifact_services_enabled,
         "agent_runtime": settings.agent_runtime_enabled,
         "conversations": settings.conversations_enabled,
+        "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and bool(settings.deepseek_api_key),
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,
@@ -1621,6 +1622,13 @@ def list_conversation_messages(conversation_id: UUID, identity: Identity, servic
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: UUID, identity: Identity, services: Services):
     return services.conversations.delete(identity.account_id, str(conversation_id))
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/reply")
+async def reply_to_conversation_message(conversation_id: UUID, message_id: UUID,
+    payload: ConversationReplyCreate, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await services.conversation_replies.reply(identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence)
 
 
 @router.post("/conversations/{conversation_id}/messages/{message_id}/dispatch", status_code=202)

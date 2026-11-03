@@ -47,3 +47,8 @@ class ConversationCancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
     expected_event_sequence: int = Field(ge=0)
+
+
+class ConversationReplyCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_sequence: int = Field(ge=1)
