@@ -1,6 +1,6 @@
 export type RukhTheme = "light" | "dark";
 
-const STORAGE_KEY = "rukh-ai-theme";
+const STORAGE_KEY = "rukh-ai-theme:v1";
 
 function storedTheme(): RukhTheme | null {
   if (typeof window === "undefined") return null;
