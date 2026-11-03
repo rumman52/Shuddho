@@ -1,21 +1,21 @@
 :root {
-  --bg: var(--rukh-bg, #f7f7f5);
+  --bg: var(--rukh-bg, var(--rukh-bg));
   --surface: var(--rukh-surface, #fff);
-  --surface-soft: var(--rukh-surface-soft, #f2f2ef);
+  --surface-soft: var(--rukh-surface-soft, var(--rukh-surface-soft));
   --text: var(--rukh-text, #20221f);
-  --muted: var(--rukh-muted, #747971);
-  --border: var(--rukh-border, #e6e8e3);
-  --border-strong: var(--rukh-border-strong, #d4d8d0);
-  --primary: var(--rukh-accent, #6257d9);
-  --primary-hover: var(--rukh-accent-hover, #5145c6);
+  --muted: var(--rukh-muted, var(--rukh-muted));
+  --border: var(--rukh-border, var(--rukh-border));
+  --border-strong: var(--rukh-border-strong, var(--rukh-border-strong));
+  --primary: var(--rukh-accent, var(--rukh-accent));
+  --primary-hover: var(--rukh-accent-hover, var(--rukh-accent-hover));
   --radius-md: var(--rukh-radius-md, 13px);
   --radius-lg: var(--rukh-radius-lg, 18px);
   --shadow-sm: var(--rukh-shadow-sm, 0 1px 2px #191e180a);
   --shadow-md: var(--rukh-shadow-md, 0 12px 36px #191e1814);
 }
 html, body, #root { width: 100%; height: 100%; min-width: 320px; min-height: 0; }
-body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: var(--rukh-text, #20221f); font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif); }
-.rukh-editor-app { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); }
+body { margin: 0; overflow: hidden; background: var(--rukh-bg, var(--rukh-bg)); color: var(--rukh-text, #20221f); font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif); }
+.rukh-editor-app { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; background: var(--rukh-bg, var(--rukh-bg)); }
 .rukh-editor-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 0 clamp(14px, 2.5vw, 30px); border-bottom: 1px solid var(--rukh-border); background: var(--rukh-surface); }
 .rukh-editor-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--rukh-text); text-decoration: none; }
 .rukh-editor-brand > span:last-child strong, .rukh-editor-brand > span:last-child small { display: block; }
@@ -57,7 +57,7 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: 
 .rukh-library-empty a { color: var(--rukh-accent); font-size: 10px; font-weight: 700; text-decoration: none; }
 .rukh-library-error, .rukh-library-notice { padding: 10px; border-radius: 8px; font-size: 10px; line-height: 1.6; }
 .rukh-library-error { background: #fff0f0; color: #9f303e; }
-.rukh-library-notice { background: var(--rukh-accent-soft); color: #5145a6; }
+.rukh-library-notice { background: var(--rukh-accent-soft); color: var(--rukh-accent); }
 .rukh-library-footnote { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--rukh-border); }
 @media (max-width: 1100px) {
   .rukh-editor-content { grid-template-columns: minmax(0, 1fr) 250px; }
@@ -170,7 +170,7 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg, #f7f7f5); color: 
 .rukh-editor-app textarea:focus-visible,
 .rukh-editor-app select:focus-visible {
   outline: 3px solid transparent;
-  box-shadow: var(--rukh-focus, 0 0 0 3px rgba(98, 87, 217, .18));
+  box-shadow: var(--rukh-focus, 0 0 0 3px rgba(23, 107, 91, .22));
 }
 @media (max-width: 1100px) {
   .rukh-editor-content { grid-template-columns: minmax(200px, 230px) minmax(0, 1fr); }
