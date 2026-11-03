@@ -9,7 +9,7 @@ test("Coworker navigation keeps the workspace directory and Web Editor reachable
 
   assert.match(html, /href="\/workspaces"/);
   assert.match(html, /All workspaces/);
-  assert.match(html, /href="\\/workspaces"[^>]*target="_blank"/);
+  assert.match(html, /href="\/workspaces"[^>]*target="_blank"/);
   assert.match(html, /href="\/editor"/);
   assert.match(html, /Web Editor/);
 });
