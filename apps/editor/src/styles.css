@@ -1,21 +1,21 @@
 :root {
-  --bg: var(--rukh-bg, var(--rukh-bg));
+  --bg: var(--rukh-bg);
   --surface: var(--rukh-surface, #fff);
-  --surface-soft: var(--rukh-surface-soft, var(--rukh-surface-soft));
+  --surface-soft: var(--rukh-surface-soft);
   --text: var(--rukh-text, #20221f);
-  --muted: var(--rukh-muted, var(--rukh-muted));
-  --border: var(--rukh-border, var(--rukh-border));
-  --border-strong: var(--rukh-border-strong, var(--rukh-border-strong));
-  --primary: var(--rukh-accent, var(--rukh-accent));
-  --primary-hover: var(--rukh-accent-hover, var(--rukh-accent-hover));
+  --muted: var(--rukh-muted);
+  --border: var(--rukh-border);
+  --border-strong: var(--rukh-border-strong);
+  --primary: var(--rukh-accent);
+  --primary-hover: var(--rukh-accent-hover);
   --radius-md: var(--rukh-radius-md, 13px);
   --radius-lg: var(--rukh-radius-lg, 18px);
   --shadow-sm: var(--rukh-shadow-sm, 0 1px 2px #191e180a);
   --shadow-md: var(--rukh-shadow-md, 0 12px 36px #191e1814);
 }
 html, body, #root { width: 100%; height: 100%; min-width: 320px; min-height: 0; }
-body { margin: 0; overflow: hidden; background: var(--rukh-bg, var(--rukh-bg)); color: var(--rukh-text, #20221f); font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif); }
-.rukh-editor-app { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; background: var(--rukh-bg, var(--rukh-bg)); }
+body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--rukh-text, #20221f); font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif); }
+.rukh-editor-app { display: flex; flex-direction: column; width: 100%; height: 100vh; min-height: 0; overflow: hidden; background: var(--rukh-bg); }
 .rukh-editor-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 0 clamp(14px, 2.5vw, 30px); border-bottom: 1px solid var(--rukh-border); background: var(--rukh-surface); }
 .rukh-editor-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--rukh-text); text-decoration: none; }
 .rukh-editor-brand > span:last-child strong, .rukh-editor-brand > span:last-child small { display: block; }
