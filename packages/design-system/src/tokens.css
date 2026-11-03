@@ -78,7 +78,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 
 .rukh-theme-toggle {
-  display: inline-flex; min-width: 40px; min-height: 40px; align-items: center; justify-content: center;
+  display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center;
   gap: 8px; padding: 0 12px; border: 1px solid var(--rukh-border); border-radius: 999px;
   background: var(--rukh-surface); color: var(--rukh-muted); font: inherit; font-size: 11px;
   font-weight: 650; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease;
@@ -87,6 +87,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .rukh-theme-toggle svg { width: 16px; height: 16px; flex: 0 0 16px; }
 .rukh-theme-toggle:focus-visible { outline: none; box-shadow: var(--rukh-focus); }
 @media (max-width: 560px) {
-  .rukh-theme-toggle { width: 40px; padding-inline: 0; }
+  .rukh-theme-toggle { width: 44px; padding-inline: 0; }
   .rukh-theme-toggle-label { display: none; }
 }
