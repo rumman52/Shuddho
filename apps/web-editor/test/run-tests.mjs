@@ -9,6 +9,7 @@ const tests = [
   "test/app-routes.test.mjs",
   "test/rukh-home.test.tsx",
   "test/editor-feature-gate.test.tsx",
+  "test/coworker-app-navigation.test.tsx",
   "src/coworker/client.test.ts",
   "src/coworker/refreshOrder.test.ts",
   "src/coworker/conversationIdentity.test.tsx",
@@ -58,6 +59,7 @@ for (const testFile of tests) {
       "import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY": '""',
       "import.meta.env.VITE_COWORKER_API_BASE_URL": '"/backend"',
       "import.meta.env.VITE_COWORKER_APP_URL": '"/coworker"',
+      "import.meta.env.VITE_EDITOR_APP_URL": '"/editor"',
     },
   });
   await import(pathToFileURL(outfile));
