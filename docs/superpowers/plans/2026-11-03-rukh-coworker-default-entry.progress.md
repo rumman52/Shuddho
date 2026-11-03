@@ -12,6 +12,6 @@
 - Task 2's navigation test imports the existing Coworker standalone App; it must remain server-renderable with Coworker disabled.
 
 ## Task progress
-- Task 1: pending
+- Task 1: complete — failing route tests observed against the old helper (2 failures), then passing after implementation (2/2); local verification: `node --test /tmp/rukh-route-tdd/test/app-routes.test.mjs`; implementation commit: `9278fc5f17f594b75a88ab5ce9cb158a09a3a57f`.
 - Task 2: pending
 - Task 3: pending
