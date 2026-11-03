@@ -14,7 +14,7 @@
   --shadow-md: var(--rukh-shadow-md, 0 12px 36px #191e1814);
 }
 html, body, #root { width: 100%; height: 100%; min-width: 320px; min-height: 0; }
-body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--rukh-text, #171816); font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif); }
+body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--rukh-text, #171816); font-family: var(--rukh-font-ui, system-ui, sans-serif); }
 .rukh-editor-app { display: flex; flex-direction: column; width: 100%; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; background: var(--rukh-bg); }
 .rukh-editor-topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; padding: 0 clamp(14px, 2.5vw, 30px); border-bottom: 1px solid var(--rukh-border); background: var(--rukh-surface); }
 .rukh-editor-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--rukh-text); text-decoration: none; }
@@ -129,7 +129,7 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 
 /* Rukh AI premium Web Editor layout: recent work / writing / AI review. */
 .rukh-editor-app {
-  font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif);
+  font-family: var(--rukh-font-ui, system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -149,7 +149,7 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 .rukh-editor-canvas { grid-area: canvas; border-radius: 17px; box-shadow: var(--rukh-shadow-sm); }
 .rukh-editor-canvas > .app-shell { border-radius: 17px; }
 .rukh-editor-canvas .app-header { border-bottom: 1px solid var(--rukh-border); }
-.rukh-library-heading h2 { font-family: "Manrope", var(--rukh-font-ui, sans-serif); font-size: 17px; font-weight: 700; letter-spacing: -.04em; }
+.rukh-library-heading h2 { font-family: var(--rukh-font-display, var(--rukh-font-ui, system-ui, sans-serif)); font-size: 17px; font-weight: 700; letter-spacing: -.04em; }
 .rukh-artifact-list { gap: 9px; }
 .rukh-artifact-list li { padding: 12px; border-radius: 11px; transition: border-color .16s ease, background .16s ease; }
 .rukh-artifact-list li:hover { border-color: var(--rukh-border-strong); background: var(--rukh-surface-raised); }
