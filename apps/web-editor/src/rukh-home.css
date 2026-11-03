@@ -1,12 +1,12 @@
 .rukh-home {
-  --home-paper: var(--rukh-bg, var(--rukh-bg));
+  --home-paper: var(--rukh-bg);
   --home-surface: var(--rukh-surface, #fff);
-  --home-soft: var(--rukh-surface-soft, var(--rukh-surface-soft));
+  --home-soft: var(--rukh-surface-soft);
   --home-ink: var(--rukh-text, #20221f);
   --home-muted: var(--rukh-muted);
-  --home-line: var(--rukh-border, var(--rukh-border));
-  --home-line-strong: var(--rukh-border-strong, var(--rukh-border-strong));
-  --home-accent: var(--rukh-accent, var(--rukh-accent));
+  --home-line: var(--rukh-border);
+  --home-line-strong: var(--rukh-border-strong);
+  --home-accent: var(--rukh-accent);
   min-height: 100vh; height: 100vh; overflow-y: auto; overflow-x: hidden;
   background: var(--home-paper); color: var(--home-ink);
   font-family: var(--rukh-font-ui, "DM Sans", system-ui, sans-serif);
@@ -24,9 +24,9 @@
 .rukh-home-nav a, .rukh-home-nav-disabled { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--home-muted); font-size: 12px; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .rukh-home-nav a:hover { color: var(--home-ink); }
 .rukh-home-nav-disabled { cursor: default; }
-.rukh-home-nav-disabled small { padding: 4px 7px; border-radius: 999px; background: var(--rukh-accent-soft, var(--rukh-accent-soft)); color: var(--home-accent); font-size: 9px; font-weight: 700; }
+.rukh-home-nav-disabled small { padding: 4px 7px; border-radius: 999px; background: var(--rukh-accent-soft); color: var(--home-accent); font-size: 9px; font-weight: 700; }
 .rukh-home-header-action { display: inline-flex; justify-self: end; align-items: center; justify-content: center; gap: 9px; min-height: 44px; padding: 0 16px; border: 1px solid var(--home-accent); border-radius: 999px; background: var(--home-accent); color: #fff; font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap; transition: background .18s ease, border-color .18s ease, box-shadow .18s ease; }
-.rukh-home-header-action:hover { border-color: var(--rukh-accent-hover, var(--rukh-accent-hover)); background: var(--rukh-accent-hover, var(--rukh-accent-hover)); box-shadow: 0 5px 14px rgba(49, 43, 120, .12); }
+.rukh-home-header-action:hover { border-color: var(--rukh-accent-hover); background: var(--rukh-accent-hover); box-shadow: 0 5px 14px rgba(49, 43, 120, .12); }
 .rukh-home-header-action svg, .rukh-home-action svg { width: 16px; height: 16px; flex: 0 0 16px; }
 .rukh-home-main { width: min(100%, 1440px); margin: 0 auto; padding: clamp(36px, 5vw, 68px) clamp(20px, 4.5vw, 68px) 28px; }
 .rukh-home-intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 250px); align-items: end; gap: clamp(30px, 6vw, 92px); margin-bottom: clamp(34px, 4.5vw, 58px); }
@@ -62,7 +62,7 @@
 .rukh-home-product-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 15px; padding-top: 17px; border-top: 1px solid var(--home-line); }
 .rukh-home-product-footer p { max-width: 34ch; margin: 0; color: var(--home-muted); font-size: 12px; line-height: 1.55; }
 .rukh-home-action { display: inline-flex; min-height: 44px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; padding: 0 15px; border: 1px solid var(--home-accent); border-radius: 999px; background: var(--home-accent); color: #fff; font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap; transition: background .18s ease, border-color .18s ease, box-shadow .18s ease; }
-.rukh-home-action:hover:not(:disabled) { border-color: var(--rukh-accent-hover, var(--rukh-accent-hover)); background: var(--rukh-accent-hover, var(--rukh-accent-hover)); box-shadow: 0 5px 14px rgba(49, 43, 120, .12); }
+.rukh-home-action:hover:not(:disabled) { border-color: var(--rukh-accent-hover); background: var(--rukh-accent-hover); box-shadow: 0 5px 14px rgba(49, 43, 120, .12); }
 .rukh-home-action--disabled, .rukh-home-action--disabled:disabled { border-color: var(--home-line-strong); background: var(--rukh-border); color: var(--rukh-muted); cursor: not-allowed; box-shadow: none; }
 .rukh-home-editor-preview { margin-top: auto; padding-top: 25px; border-top: 1px solid var(--home-line-strong); }
 .rukh-home-editor-preview-heading { display: flex; justify-content: space-between; gap: 12px; color: var(--home-muted); font-size: 9px; font-weight: 750; letter-spacing: .12em; }
