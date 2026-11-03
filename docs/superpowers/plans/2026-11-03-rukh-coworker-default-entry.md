@@ -75,7 +75,7 @@
 - Editor "All workspaces" points to `/workspaces`; Editor-to-Coworker handoff and direct Coworker link remain available only when the Coworker flag is enabled.
 - Editor directory links open a separate tab so unsaved in-memory editor text is not discarded.
 
-- [ ] **Step 1: Write failing server-rendered navigation tests**
+- [x] **Step 1: Write failing server-rendered navigation tests**
   - Add a Coworker app test asserting its header links target `/workspaces` for "All workspaces" and `/editor` for "Web Editor".
   - Extend the Editor feature-gate test to assert the "All workspaces" link targets `/workspaces`, and keep Coworker-only controls absent when the flag is disabled.
   - Add the new test to `apps/web-editor/test/run-tests.mjs`.
@@ -84,7 +84,7 @@
   - Run: `npm run test --workspace @shuddho/web-editor`
   - Expected: fail because the current headers point "All workspaces" to `/`, which will become the Coworker-first entry point.
 
-- [ ] **Step 3: Update only the navigation destinations**
+- [x] **Step 3: Update only the navigation destinations**
   - Change the Coworker "All workspaces" link from `/` to `/workspaces`.
   - Change the Editor "All workspaces" link from `/` to `/workspaces`.
   - Keep the Editor directory link opening a new tab to protect the current in-memory draft.
@@ -94,8 +94,8 @@
   - Run: `npm run test --workspace @shuddho/web-editor`
   - Expected: all web-editor tests pass.
 
-- [ ] **Step 5: Commit**
-  - Commit message: `fix(frontend): keep workspace navigation distinct`.
+- [x] **Step 5: Commit**
+  - Navigation updates and test coverage are committed in the isolated feature branch.
 
 ### Task 3: Verify the integrated workspaces and prepare review
 
@@ -121,11 +121,11 @@
   - Confirm root, direct Coworker, Editor, workspace directory, query-string and unknown-path behavior.
   - Confirm no Coworker flag bypass and no accidental changes to the Editor content surface.
 
-- [ ] **Step 4: Create a draft pull request and inspect CI / preview results**
+- [x] **Step 4: Create a draft pull request and inspect CI / preview results**
   - Required checks must be evaluated on the final PR head, not on an earlier commit.
   - A Vercel preview marked READY proves only deployment readiness; browser route and UI behavior must also be checked.
   - Do not merge or promote to production as part of this plan.
 
-- [ ] **Step 5: Record verification and review findings**
+- [x] **Step 5: Record verification and review findings**
   - Report exact commands, results, failures and any baseline failures separately.
   - Commit message for any final review fix must follow its own RED-to-GREEN test cycle.
