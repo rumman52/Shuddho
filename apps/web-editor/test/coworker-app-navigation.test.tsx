@@ -7,8 +7,8 @@ import CoworkerApp from "../../coworker/src/App";
 test("Coworker navigation keeps the workspace directory and Web Editor reachable", () => {
   const html = renderToString(<CoworkerApp />);
 
-  assert.match(html, /href="\\/workspaces"/);
+  assert.match(html, /href="\/workspaces"/);
   assert.match(html, /All workspaces/);
-  assert.match(html, /href="\\/editor"/);
+  assert.match(html, /href="\/editor"/);
   assert.match(html, /Web Editor/);
 });
