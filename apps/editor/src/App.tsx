@@ -315,7 +315,7 @@ export default function App() {
             </ul>}
             <p className="rukh-library-footnote">Text and Markdown previews use the owner-authenticated route and are checked against their saved SHA-256 digest. Other file types download.</p>
           </aside>}
-          {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-label="Close recent files drawer" onClick={() => setMobileLibraryOpen(false)} />}
+          {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
           <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
           </section>
