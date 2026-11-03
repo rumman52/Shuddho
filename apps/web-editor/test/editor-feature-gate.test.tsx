@@ -11,4 +11,6 @@ test("Editor remains usable while Coworker integration is disabled", () => {
   assert.doesNotMatch(html, /Send to Coworker/);
   assert.doesNotMatch(html, /Open Coworker/);
   assert.doesNotMatch(html, /Recent coworker files/);
+  assert.match(html, /href="\\/workspaces"/);
+  assert.match(html, /All workspaces/);
 });
