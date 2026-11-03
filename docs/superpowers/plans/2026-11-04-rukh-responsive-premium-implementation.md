@@ -16,49 +16,49 @@
 
 ## Task 1 — Regression contracts (test first)
 
-- [ ] Add tests for the shared theme control and local preference behavior.
-- [ ] Add server-rendered contracts for Coworker mobile panel controls and Editor recent-file control.
-- [ ] Add CSS contract checks for the 720px mobile-canvas regression, sheet breakpoints and touch target sizing.
-- [ ] Confirm the new tests fail before implementation where the expected controls/behavior are absent.
+- [x] Add tests for the shared theme control and local preference behavior.
+- [x] Add server-rendered contracts for Coworker mobile panel controls and Editor recent-file control.
+- [x] Add CSS contract checks for the 720px mobile-canvas regression, sheet breakpoints and touch target sizing.
+- [ ] Capture a separate red-before-implementation CI run; tests were authored first, but that failure was not observed before implementation.
 
 ## Task 2 — Shared visual foundation
 
-- [ ] Update design tokens to the researched warm-neutral/deep-green palette and strengthen dark tokens.
-- [ ] Add a shared theme utility and accessible theme toggle.
-- [ ] Initialize the theme before mounting each app; persist preference locally.
-- [ ] Update browser theme-color and SVG favicon to the new Rukh accent.
-- [ ] Replace legacy hard-coded violet accent usage in the Coworker shell with semantic tokens.
+- [x] Update design tokens to the researched warm-neutral/deep-green palette and strengthen dark tokens.
+- [x] Add a shared theme utility and accessible theme toggle.
+- [x] Initialize the theme before mounting each app; persist preference locally.
+- [x] Update browser theme-color and SVG favicon to the new Rukh accent.
+- [x] Replace legacy hard-coded violet accent usage in the Coworker shell with semantic tokens.
 
 ## Task 3 — Coworker mobile experience
 
-- [ ] Add a mobile toolbar for Conversations and Context.
-- [ ] Turn the existing conversation list and Context inspector into mobile sheets without duplicating data/state.
-- [ ] Add Escape/backdrop/close handling, focus return and labelled dialog semantics.
-- [ ] Convert the outer workspace navigation to a horizontally scrollable, touch-friendly mobile rail.
-- [ ] Keep desktop three-region behavior and the conversation composer intact.
+- [x] Add a mobile toolbar for Conversations and Context.
+- [x] Turn the existing conversation list and Context inspector into mobile sheets without duplicating data/state.
+- [x] Add Escape/backdrop/close handling, focus return and labelled dialog semantics.
+- [x] Convert the outer workspace navigation to a horizontally scrollable, touch-friendly mobile rail.
+- [x] Keep desktop three-region behavior and the conversation composer intact.
 
 ## Task 4 — Editor mobile experience
 
-- [ ] Add a Recent files control and accessible drawer.
-- [ ] Keep the editor canvas at the available viewport height rather than a fixed 720px.
-- [ ] Restore the existing AI review toggle and use the existing review panel as a mobile bottom sheet.
-- [ ] Preserve artifact digest verification, unsaved-text replacement confirmation and Coworker handoff.
+- [x] Add a Recent files control and accessible drawer.
+- [x] Keep the editor canvas at the available viewport height rather than a fixed 720px.
+- [x] Restore the existing AI review toggle and use the existing review panel as a mobile bottom sheet.
+- [x] Preserve artifact digest verification, unsaved-text replacement confirmation and Coworker handoff (logic unchanged; still requires live regression verification).
 
 ## Task 5 — Theme/accessibility polish
 
-- [ ] Add dark-surface overrides for Coworker, Editor, inputs, review cards and sheets.
-- [ ] Ensure focus indicators, reduced motion, 44px touch controls and safe-area/viewport behavior.
-- [ ] Keep Bangla input/output and direction-aware text rendering unchanged.
+- [x] Add dark-surface overrides for Coworker, Editor, inputs, review cards and sheets.
+- [x] Ensure focus indicators, reduced motion, 44px touch controls and safe-area/viewport behavior.
+- [x] Keep Bangla input/output and direction-aware text rendering unchanged (no localization or direction logic changed).
 
 ## Task 6 — Verification and handoff
 
-- [ ] Run `npm run test --workspace @shuddho/web-editor`.
-- [ ] Run `npm run test --workspace @rukh/coworker` and `npm run test --workspace @rukh/editor`.
-- [ ] Run the three corresponding production builds.
-- [ ] Inspect the exact PR-head GitHub Actions checks; distinguish frontend regressions from failures already present on base `d9b83c7`.
-- [ ] Inspect the Vercel preview for this branch. Use protected-deployment access without disabling SSO or changing protection.
-- [ ] Verify 1440×900, 1366×768, 390×844 and 375×812, plus keyboard/Escape and theme persistence where browser access permits.
-- [ ] Open a draft PR with evidence, blockers and explicit non-production status.
+- [ ] Confirm the final-head frontend test run after the latest test-only assertion commit.
+- [ ] Confirm exact-head Coworker and Editor checks/builds from CI.
+- [x] Frontend production builds passed in CI at commit 654c41a; rerun on latest head is pending.
+- [x] Inspect exact-head GitHub Actions. Frontend tests/builds passed at 654c41a; a prior run exposed browser-only matchMedia assumptions, now guarded. Python test-and-build failed as it did on base d9b83c7; latest run remains pending.
+- [ ] Inspect the latest Vercel preview. Current preview creation is blocked by the free per-day deployment quota (api-deployments-free-per-day); do not bypass protection or quota.
+- [ ] Verify 1440×900, 1366×768, 390×844 and 375×812 in a live browser; browser preview is currently unavailable. Unit/SSR/CSS contracts are committed.
+- [x] Open PR #615 with evidence, blockers and explicit non-production status; it is open and unmerged.
 
 ## Known baseline
 
@@ -66,7 +66,8 @@ At base commit `d9b83c7`, the dedicated **Frontend tests and builds** job passed
 
 ## Handoff status
 
-- Implementation: pending.
-- Repository verification: pending.
-- Preview verification: pending.
-- Production qualification/activation: not in scope.
+- Implementation: complete for the scoped frontend changes.
+- Repository verification: partial. The dedicated Frontend tests and builds job passed at 654c41a; latest-head CI is pending. The Python test-and-build job is failing on base and feature branch; no Python files were changed here.
+- Preview verification: blocked by the Vercel free per-day deployment quota. No current-head live-browser screenshot or production verification is claimed.
+- Production qualification/activation: not in scope; PR #615 remains open and unmerged.
+- Latest test-only follow-up commit: 4af690f; it adds an assertion that the main app bundle loads the Editor stylesheet.
