@@ -4,11 +4,11 @@ import React from "react";
 import { renderToString } from "react-dom/server.browser";
 import RukhHome from "../src/RukhHome";
 
-test("Rukh home presents both products and keeps Co-workers unavailable while preview is off", () => {
+test("Rukh home presents both products and keeps AI Coworker unavailable while preview is off", () => {
   const html = renderToString(<RukhHome coworkerEnabled={false} />);
 
   assert.match(html, /Rukh AI/);
-  assert.match(html, /Co-workers/);
+  assert.match(html, /AI Coworker/);
   assert.match(html, /Web Editor/);
   assert.match(html, /Private preview/);
   assert.match(html, /href="\/editor"/);
@@ -16,10 +16,10 @@ test("Rukh home presents both products and keeps Co-workers unavailable while pr
   assert.match(html, /disabled=""/);
 });
 
-test("Rukh home exposes Co-workers only when its release flag is enabled", () => {
+test("Rukh home exposes AI Coworker only when its release flag is enabled", () => {
   const html = renderToString(<RukhHome coworkerEnabled={true} />);
 
   assert.match(html, /href="\/coworker"/);
-  assert.match(html, /Open Co-workers/);
+  assert.match(html, /Open AI Coworker/);
   assert.doesNotMatch(html, /Private preview/);
 });
