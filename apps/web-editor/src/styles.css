@@ -1,15 +1,15 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Noto+Serif+Bengali:wght@400;500;600;700&display=swap");
 :root {
   color-scheme: light;
-  --bg: var(--rukh-bg, var(--rukh-bg));
+  --bg: var(--rukh-bg);
   --surface: var(--rukh-surface, #fff);
-  --surface-soft: var(--rukh-surface-soft, var(--rukh-surface-soft));
+  --surface-soft: var(--rukh-surface-soft);
   --text: var(--rukh-text, #20221f);
-  --muted: var(--rukh-muted, var(--rukh-muted));
-  --border: var(--rukh-border, var(--rukh-border));
-  --border-strong: var(--rukh-border-strong, var(--rukh-border-strong));
-  --primary: var(--rukh-accent, var(--rukh-accent));
-  --primary-hover: var(--rukh-accent-hover, var(--rukh-accent-hover));
+  --muted: var(--rukh-muted);
+  --border: var(--rukh-border);
+  --border-strong: var(--rukh-border-strong);
+  --primary: var(--rukh-accent);
+  --primary-hover: var(--rukh-accent-hover);
   --success: var(--rukh-success, #24764e);
   --warning: var(--rukh-warning, #98600e);
   --error: var(--rukh-danger, #b33d45);
