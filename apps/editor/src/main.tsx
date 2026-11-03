@@ -4,6 +4,9 @@ import "@rukh/design-system/tokens.css";
 import "../../web-editor/src/styles.css";
 import "./styles.css";
 import App from "./App";
+import { initializeRukhTheme } from "../../web-editor/src/lib/theme";
+
+initializeRukhTheme();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Rukh Editor root element is missing.");
