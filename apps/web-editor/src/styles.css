@@ -698,7 +698,7 @@ textarea {
   }
 }
 .competition-demo-panel {
-  background: linear-gradient(135deg, #ffffff, var(--rukh-surface-soft));
+  background: var(--rukh-surface-soft);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
