@@ -95,7 +95,7 @@ export default function App() {
   const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? "/coworker";
 
   useEffect(() => {
-    if (!mobileLibraryOpen) return;
+    if (!mobileLibraryOpen || typeof window === "undefined" || typeof document === "undefined") return;
     const panel = mobileLibraryPanelRef.current;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -134,10 +134,15 @@ export default function App() {
   }, [mobileLibraryOpen]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(min-width: 901px)");
     const closeOnDesktop = () => { if (media.matches) setMobileLibraryOpen(false); };
-    media.addEventListener("change", closeOnDesktop);
-    return () => media.removeEventListener("change", closeOnDesktop);
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", closeOnDesktop);
+      return () => media.removeEventListener("change", closeOnDesktop);
+    }
+    media.addListener?.(closeOnDesktop);
+    return () => media.removeListener?.(closeOnDesktop);
   }, []);
 
   async function openArtifact(item: ArtifactItem) {
