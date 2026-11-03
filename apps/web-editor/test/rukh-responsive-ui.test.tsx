@@ -34,7 +34,7 @@ test("Web Editor exposes a mobile Recent files drawer control", () => {
 test("theme preference is restored and persisted without requiring a backend", () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const values = new Map<string, string>([["rukh-ai-theme", "dark"]]);
+  const values = new Map<string, string>([["rukh-ai-theme:v1", "dark"]]);
   const meta = { content: "" };
   const fakeWindow = {
     localStorage: {
@@ -55,7 +55,7 @@ test("theme preference is restored and persisted without requiring a backend", (
     assert.equal(fakeDocument.documentElement.dataset.rukhTheme, "dark");
     assert.equal(fakeDocument.documentElement.style.colorScheme, "dark");
     saveRukhTheme("light");
-    assert.equal(values.get("rukh-ai-theme"), "light");
+    assert.equal(values.get("rukh-ai-theme:v1"), "light");
     assert.equal(fakeDocument.documentElement.dataset.rukhTheme, "light");
     assert.equal(meta.content, "#F7F7F5");
   } finally {
