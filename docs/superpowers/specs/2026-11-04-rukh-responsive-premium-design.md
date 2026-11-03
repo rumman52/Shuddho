@@ -27,7 +27,7 @@ Use the new research recommendation: warm neutral surfaces, restrained deep-gree
 | Accent | `#176B5B` | `#78CDBB` |
 | Accent soft | `#E6F2EF` | `#20382F` |
 
-Retain DM Sans / Manrope for interface text and Noto Serif Bengali for Bengali writing. Keep user-provided text direction-aware (`dir="auto"`). Do not use gradients, emoji or copied competitor branding as structural UI.
+Use the platform/system UI font stack for interface text and Noto Serif Bengali for Bengali writing. Keep user-provided text direction-aware (`dir="auto"`). Do not use gradients, emoji or copied competitor branding as structural UI.
 
 ## Desktop behavior
 
