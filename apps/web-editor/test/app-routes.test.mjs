@@ -24,6 +24,8 @@ test("Rukh opens Coworker by default only when enabled and keeps the workspace d
   assert.equal(getWorkspaceAppRoute("/coworker", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/workspaces", true), "home");
   assert.equal(getWorkspaceAppRoute("/workspaces", false), "home");
+  assert.equal(getWorkspaceAppRoute("/workspaces/?from=editor", true), "home");
+  assert.equal(getWorkspaceAppRoute("/workspaces/?from=editor", false), "home");
   assert.equal(getWorkspaceAppRoute("/editor", false), "editor");
   assert.equal(getWorkspaceAppRoute("/editor", true), "editor");
 });
