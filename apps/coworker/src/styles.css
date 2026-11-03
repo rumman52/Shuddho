@@ -405,3 +405,6 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
     animation-iteration-count: 1 !important;
   }
 }
+
+.rukh-cw-nav-icon { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; }
+.rukh-cw-nav-icon svg { display: block; width: 17px; height: 17px; overflow: visible; }
