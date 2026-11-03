@@ -1,13 +1,13 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Noto+Serif+Bengali:wght@400;500;600;700&display=swap");
 :root {
   color-scheme: light;
-  --bg: var(--rukh-bg, #f7f7f5);
+  --bg: var(--rukh-bg, var(--rukh-bg));
   --surface: var(--rukh-surface, #fff);
-  --surface-soft: var(--rukh-surface-soft, #f2f2ef);
+  --surface-soft: var(--rukh-surface-soft, var(--rukh-surface-soft));
   --text: var(--rukh-text, #20221f);
-  --muted: var(--rukh-muted, #747971);
-  --border: var(--rukh-border, #e6e8e3);
-  --border-strong: var(--rukh-border-strong, #d4d8d0);
+  --muted: var(--rukh-muted, var(--rukh-muted));
+  --border: var(--rukh-border, var(--rukh-border));
+  --border-strong: var(--rukh-border-strong, var(--rukh-border-strong));
   --primary: var(--rukh-accent, var(--rukh-accent));
   --primary-hover: var(--rukh-accent-hover, var(--rukh-accent-hover));
   --success: var(--rukh-success, #24764e);
@@ -301,7 +301,7 @@ summary:focus-visible {
   caret-color: var(--text);
 }
 .editor-textarea::placeholder {
-  color: #9b95a7;
+  color: var(--rukh-subtle);
 }
 .editor-textarea::selection {
   background: rgba(91, 53, 213, 0.16);
@@ -479,7 +479,7 @@ summary:focus-visible {
   border-radius: var(--radius-md);
   padding: 24px;
   color: var(--muted);
-  background: #fbfbfd;
+  background: var(--rukh-surface-raised);
 }
 .corrected-preview {
   border-top: 1px solid var(--border);
@@ -544,7 +544,7 @@ textarea {
   max-height: 280px;
   overflow: auto;
   background: #111827;
-  color: #e5e7eb;
+  color: var(--rukh-border);
   padding: 12px;
   border-radius: 10px;
   font-size: 0.78rem;
