@@ -250,7 +250,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="rukh-editor-app">
-        <header className="rukh-editor-topbar">
+        <header className="rukh-editor-topbar" aria-hidden={mobileLibraryOpen ? true : undefined}>
           <a className="rukh-editor-brand" href="/" aria-label="Rukh AI workspace home" target="_blank" rel="noreferrer">
             <span className="rukh-brand-mark" aria-hidden="true">r</span>
             <span><strong>Rukh AI</strong><small>Web Editor</small></span>
@@ -311,7 +311,7 @@ export default function App() {
             <p className="rukh-library-footnote">Text and Markdown previews use the owner-authenticated route and are checked against their saved SHA-256 digest. Other file types download.</p>
           </aside>}
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-label="Close recent files drawer" onClick={() => setMobileLibraryOpen(false)} />}
-          <section className="rukh-editor-canvas" aria-label="Writing editor">
+          <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
           </section>
         </div>
