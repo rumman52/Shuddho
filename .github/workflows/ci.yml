@@ -84,6 +84,31 @@ jobs:
           if (value.microsoft_actions_enabled !== false) throw new Error("Microsoft frontend rollout must default off in CI");
           NODE
 
+  frontend:
+    name: Frontend tests and builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Test web-editor shell and shared workspace routes
+        run: npm run test --workspace @shuddho/web-editor
+      - name: Test standalone Coworker navigation
+        run: npm run test --workspace @rukh/coworker
+      - name: Test standalone Web Editor
+        run: npm run test --workspace @rukh/editor
+      - name: Build web-editor deployment shell
+        run: npm run build --workspace @shuddho/web-editor
+      - name: Build standalone Coworker
+        run: npm run build --workspace @rukh/coworker
+      - name: Build standalone Web Editor
+        run: npm run build --workspace @rukh/editor
+
   coworker:
     runs-on: ubuntu-latest
     services:
@@ -364,6 +389,7 @@ jobs:
     if: always()
     needs:
       - test-and-build
+      - frontend
       - coworker
       - governance-audit
     runs-on: ubuntu-latest
@@ -372,14 +398,16 @@ jobs:
       - name: Require complete CI success
         env:
           TEST_AND_BUILD_RESULT: ${{ needs.test-and-build.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
           COWORKER_RESULT: ${{ needs.coworker.result }}
           GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}
           CI_EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "test-and-build=$TEST_AND_BUILD_RESULT"
+          echo "frontend=$FRONTEND_RESULT"
           echo "coworker=$COWORKER_RESULT"
           echo "governance-audit=$GOVERNANCE_AUDIT_RESULT"
-          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ]; then
+          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$FRONTEND_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ]; then
             echo "CI merge gate failed: every required upstream job must succeed."
             exit 1
           fi
