@@ -49,7 +49,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }
 
   useEffect(() => {
-    if (!mobilePanel) return;
+    if (!mobilePanel || typeof window === "undefined" || typeof document === "undefined") return;
     const panel = mobilePanel === "conversations" ? conversationPanelRef.current : contextPanelRef.current;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -88,10 +88,15 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }, [mobilePanel]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(min-width: 721px)");
     const closeOnDesktop = () => { if (media.matches) setMobilePanel(null); };
-    media.addEventListener("change", closeOnDesktop);
-    return () => media.removeEventListener("change", closeOnDesktop);
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", closeOnDesktop);
+      return () => media.removeEventListener("change", closeOnDesktop);
+    }
+    media.addListener?.(closeOnDesktop);
+    return () => media.removeListener?.(closeOnDesktop);
   }, []);
 
   useEffect(() => {
