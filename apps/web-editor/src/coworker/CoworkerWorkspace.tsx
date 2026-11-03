@@ -218,7 +218,6 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
     <div className="rukh-cw-shell">
       <aside className="rukh-cw-sidebar" aria-label="Coworker navigation">
-        <button className="rukh-cw-new" type="button" onClick={() => setView("conversations")}><span aria-hidden="true">＋</span> Open conversations</button>
         {["Workspace", "Tools", "Manage"].map(group => <div className="rukh-cw-nav-group" key={group}>
           <span className="rukh-cw-nav-label">{group}</span>
           {coworkerNavigation.filter(item => item.group === group).map(item =>
