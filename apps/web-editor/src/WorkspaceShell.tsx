@@ -18,7 +18,7 @@ export default function WorkspaceShell() {
 
   if (route === "coworker") {
     return (
-      <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh AI Co-workers…</p>}>
+      <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh AI Coworker…</p>}>
         <CoworkerStandalone />
       </Suspense>
     );
