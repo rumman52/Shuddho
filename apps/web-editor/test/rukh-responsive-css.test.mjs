@@ -20,6 +20,8 @@ test("Coworker mobile sheets and touch targets are defined", async () => {
 
 test("Editor mobile layout removes the fixed desktop-height canvas", async () => {
   const css = await readFile(join(cwd, "../editor/src/styles.css"), "utf8");
+  const appEntry = await readFile(join(cwd, "src/main.tsx"), "utf8");
+  assert.match(appEntry, /import "\.\.\/\.\.\/editor\/src\/styles\.css";/);
   assert.match(css, /rukh-editor-library--open/);
   assert.match(css, /rukh-editor-mobile-backdrop/);
   assert.doesNotMatch(css, /flex:\s*0\s+0\s+720px/);
