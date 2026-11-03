@@ -146,11 +146,12 @@
 [data-rukh-theme="dark"] .rukh-home-flow-step { background: var(--rukh-surface-raised); border-color: var(--rukh-border); }
 [data-rukh-theme="dark"] .rukh-home-editor-preview-checks span { background: var(--rukh-accent-soft); color: var(--rukh-accent); }
 .rukh-home-header { display: flex; align-items: center; gap: 12px; }
+.rukh-home-header nav { margin-left: auto; }
 .rukh-home-header > .rukh-theme-toggle { flex: 0 0 auto; }
 @media (max-width: 980px) {
   .rukh-home-header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .rukh-home-header > .rukh-theme-toggle { order: 2; }
   .rukh-home-header-action { order: 3; }
-  .rukh-home-header nav { order: 4; flex: 0 0 100%; max-width: 100%; overflow-x: auto; }
+  .rukh-home-header nav { order: 4; flex: 0 0 100%; max-width: 100%; margin-left: 0; overflow-x: auto; }
 }
 
