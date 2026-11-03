@@ -17,7 +17,7 @@ export default function App() {
         <header className="rukh-productbar">
           <a className="rukh-product-brand" href="/" aria-label="Rukh AI workspace home" target="_blank" rel="noreferrer">
             <span className="rukh-brand-mark" aria-hidden="true">r</span>
-            <span><strong>Rukh AI</strong><small>Co-workers</small></span>
+            <span><strong>Rukh AI</strong><small>AI Coworker</small></span>
           </a>
           <nav className="rukh-product-switcher" aria-label="Workspace navigation">
             <a className="rukh-product-switch rukh-product-switch--home" href="/workspaces" target="_blank" rel="noreferrer">All workspaces</a>
