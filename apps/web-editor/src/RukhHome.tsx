@@ -1,3 +1,5 @@
+import ThemeToggle from "./components/ThemeToggle";
+
 type RukhHomeProps = { coworkerEnabled: boolean };
 
 function ArrowIcon() {
@@ -28,6 +30,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
           {coworkerEnabled ? <a href="/coworker">AI Coworker</a> : <span className="rukh-home-nav-disabled" aria-disabled="true">Co-workers <small>Preview</small></span>}
           <a href="/editor">Web Editor</a>
         </nav>
+        <ThemeToggle />
         <a className="rukh-home-header-action" href="/editor">Open Web Editor <ArrowIcon /></a>
       </header>
 

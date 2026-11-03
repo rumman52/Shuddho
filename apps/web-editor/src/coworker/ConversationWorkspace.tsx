@@ -33,6 +33,71 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const refreshOrder = useRef(new RefreshOrder());
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  const [mobilePanel, setMobilePanel] = useState<"conversations" | "context" | null>(null);
+  const mobilePanelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const mobilePanelCloseRef = useRef<HTMLButtonElement | null>(null);
+  const conversationPanelRef = useRef<HTMLElement | null>(null);
+  const contextPanelRef = useRef<HTMLElement | null>(null);
+
+  function openMobilePanel(panel: "conversations" | "context", trigger: HTMLButtonElement) {
+    mobilePanelTriggerRef.current = trigger;
+    setMobilePanel(panel);
+  }
+
+  function closeMobilePanel() {
+    setMobilePanel(null);
+  }
+
+  useEffect(() => {
+    if (!mobilePanel || typeof window === "undefined" || typeof document === "undefined") return;
+    const panel = mobilePanel === "conversations" ? conversationPanelRef.current : contextPanelRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => panel?.querySelectorAll<HTMLElement>(
+      "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex='-1'])"
+    ) ?? [];
+    const frame = window.requestAnimationFrame(() => {
+      (mobilePanelCloseRef.current ?? focusable()[0])?.focus();
+    });
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobilePanel(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = Array.from(focusable());
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => mobilePanelTriggerRef.current?.focus());
+    };
+  }, [mobilePanel]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(min-width: 721px)");
+    const closeOnDesktop = () => { if (media.matches) setMobilePanel(null); };
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", closeOnDesktop);
+      return () => media.removeEventListener("change", closeOnDesktop);
+    }
+    media.addListener?.(closeOnDesktop);
+    return () => media.removeListener?.(closeOnDesktop);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -244,8 +309,33 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
   const selectedConversation = conversations.find(item => item.id === selected);
   return <section className="rukh-conversation-workspace" aria-label="Private conversations">
-    <aside className="rukh-conversation-list">
-      <div className="rukh-panel-heading"><div><span className="cw-eyebrow">WORKSPACE</span><h2>Conversations</h2></div><span className="rukh-count">{conversations.length}</span></div>
+    <div className="rukh-mobile-workspace-tools" aria-label="Workspace panels" aria-hidden={mobilePanel !== null ? true : undefined}>
+      <button type="button" aria-label="Open conversations" aria-controls="rukh-conversation-list"
+        aria-expanded={mobilePanel === "conversations"}
+        onClick={event => openMobilePanel("conversations", event.currentTarget)}>
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4.5h14M3 9.9h14M3 15.3h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+        Conversations
+      </button>
+      <button type="button" aria-label="Open workspace context" aria-controls="rukh-context-panel"
+        aria-expanded={mobilePanel === "context"}
+        onClick={event => openMobilePanel("context", event.currentTarget)}>
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 5h12M4 10h8M4 15h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="15" cy="10" r="2" stroke="currentColor" strokeWidth="1.3"/></svg>
+        Context
+      </button>
+    </div>
+    <aside ref={conversationPanelRef} id="rukh-conversation-list"
+      className={"rukh-conversation-list" + (mobilePanel === "conversations" ? " rukh-mobile-panel-open" : "")}
+      aria-label="Private conversations"
+      role={mobilePanel === "conversations" ? "dialog" : undefined}
+      aria-modal={mobilePanel === "conversations" ? true : undefined}
+      aria-labelledby="rukh-conversations-heading"
+      aria-hidden={mobilePanel === "context" ? true : undefined}>
+      <div className="rukh-panel-heading"><div><span className="cw-eyebrow">WORKSPACE</span><h2 id="rukh-conversations-heading">Conversations</h2></div>
+        <div className="rukh-panel-heading-actions"><span className="rukh-count">{conversations.length}</span>
+          <button className="rukh-mobile-panel-close" ref={mobilePanel === "conversations" ? mobilePanelCloseRef : null}
+            type="button" aria-label="Close conversations" onClick={closeMobilePanel}>×</button>
+        </div>
+      </div>
       {error && <p className="cw-error" role="alert">{error}</p>}
       {notice && <p className="cw-notice" role="status">{notice}</p>}
       {disabled ? <p className="rukh-muted">Conversations are not enabled for this workspace. Existing work is unchanged.</p> : <>
@@ -257,7 +347,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
         </form>
         <ul className="rukh-conversation-items">
           {conversations.map(item => <li key={item.id}>
-            <button type="button" aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); messageKey.current = null; }}>
+            <button type="button" aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); messageKey.current = null; setMobilePanel(null); }}>
               <span className="rukh-conversation-item-title">{item.title}</span>
               <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
             </button>
@@ -268,7 +358,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       <p className="rukh-panel-footnote">Messages are private workspace records. Saving a message does not start Agent work.</p>
     </aside>
 
-    <section className="rukh-conversation-thread" aria-label="Conversation">
+    <section aria-hidden={mobilePanel !== null ? true : undefined} className="rukh-conversation-thread" aria-label="Conversation">
       <header className="rukh-thread-header">
         <div><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Start a conversation"}</h2></div>
         {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
@@ -306,9 +396,18 @@ export default function ConversationWorkspace({ client, openAgent }: {
       </>}
     </section>
 
-    <aside className="rukh-context-panel" aria-label="Workspace context">
+    <aside ref={contextPanelRef} id="rukh-context-panel"
+      className={"rukh-context-panel" + (mobilePanel === "context" ? " rukh-mobile-panel-open" : "")}
+      aria-label="Workspace context"
+      role={mobilePanel === "context" ? "dialog" : undefined}
+      aria-modal={mobilePanel === "context" ? true : undefined}
+      aria-labelledby="rukh-context-heading"
+      aria-hidden={mobilePanel === "conversations" ? true : undefined}>
       <section>
-        <div className="rukh-panel-heading"><div><span className="cw-eyebrow">CONTEXT</span><h3>Workspace sources</h3></div></div>
+        <div className="rukh-panel-heading"><div><span className="cw-eyebrow">CONTEXT</span><h3 id="rukh-context-heading">Workspace sources</h3></div>
+          <button className="rukh-mobile-panel-close" ref={mobilePanel === "context" ? mobilePanelCloseRef : null}
+            type="button" aria-label="Close workspace context" onClick={closeMobilePanel}>×</button>
+        </div>
         {manifestError && <p className="rukh-muted" role="status">{manifestError}</p>}
         {!manifest && !manifestError && <p className="rukh-muted">Loading available sources…</p>}
         {manifest && <>
@@ -364,5 +463,6 @@ export default function ConversationWorkspace({ client, openAgent }: {
           </details>}
       </section>
     </aside>
+    {mobilePanel && <button className="rukh-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={closeMobilePanel} />}
   </section>;
 }

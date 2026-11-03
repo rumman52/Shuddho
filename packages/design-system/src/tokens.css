@@ -4,16 +4,16 @@
   color-scheme: light;
   --rukh-bg: #f7f7f5;
   --rukh-surface: #ffffff;
-  --rukh-surface-soft: #f2f2ef;
+  --rukh-surface-soft: #f1f1ee;
   --rukh-surface-raised: #fbfbfa;
-  --rukh-text: #20221f;
-  --rukh-muted: #747971;
+  --rukh-text: #171816;
+  --rukh-muted: #6c706a;
   --rukh-subtle: #9a9f98;
-  --rukh-border: #e6e8e3;
+  --rukh-border: #e3e3de;
   --rukh-border-strong: #d4d8d0;
-  --rukh-accent: #6257d9;
-  --rukh-accent-hover: #5145c6;
-  --rukh-accent-soft: #efedff;
+  --rukh-accent: #176b5b;
+  --rukh-accent-hover: #115447;
+  --rukh-accent-soft: #e6f2ef;
   --rukh-success: #24764e;
   --rukh-success-soft: #eaf5ef;
   --rukh-warning: #98600e;
@@ -29,9 +29,20 @@
   --rukh-radius-xl: 24px;
   --rukh-shadow-sm: 0 1px 2px rgba(25, 30, 24, .04);
   --rukh-shadow-md: 0 12px 36px rgba(25, 30, 24, .08);
-  --rukh-focus: 0 0 0 3px rgba(98, 87, 217, .18);
-  --rukh-font-ui: "DM Sans", "Manrope", system-ui, sans-serif;
+  --rukh-focus: 0 0 0 3px rgba(23, 107, 91, .22);
+  --rukh-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --rukh-font-display: "Manrope", var(--rukh-font-ui, system-ui, sans-serif);
   --rukh-font-writing: "Noto Serif Bengali", Georgia, serif;
+  --rukh-space-1: 4px;
+  --rukh-space-2: 8px;
+  --rukh-space-3: 12px;
+  --rukh-space-4: 16px;
+  --rukh-space-6: 24px;
+  --rukh-space-8: 32px;
+  --rukh-text-xs: 12px;
+  --rukh-text-sm: 13px;
+  --rukh-text-md: 14px;
+  --rukh-text-lg: 16px;
 }
 
 [data-rukh-theme="dark"] {
@@ -42,12 +53,12 @@
   --rukh-surface-raised: #292d28;
   --rukh-text: #f0f2ec;
   --rukh-muted: #b1b8ae;
-  --rukh-subtle: #858d83;
+  --rukh-subtle: #8f988c;
   --rukh-border: #373d35;
   --rukh-border-strong: #4a5247;
-  --rukh-accent: #aaa2ff;
-  --rukh-accent-hover: #c2bcff;
-  --rukh-accent-soft: #302d4b;
+  --rukh-accent: #78cdbb;
+  --rukh-accent-hover: #a5e1d4;
+  --rukh-accent-soft: #20382f;
   --rukh-success: #78c79d;
   --rukh-success-soft: #20382b;
   --rukh-warning: #e5bb70;
@@ -58,9 +69,25 @@
   --rukh-info-soft: #253447;
   --rukh-shadow-sm: 0 1px 2px rgba(0, 0, 0, .18);
   --rukh-shadow-md: 0 12px 36px rgba(0, 0, 0, .28);
+  --rukh-focus: 0 0 0 3px rgba(120, 205, 187, .24);
 }
 
 * { box-sizing: border-box; }
 button, input, textarea, select { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 :focus-visible { outline: none; box-shadow: var(--rukh-focus); }
+
+
+.rukh-theme-toggle {
+  display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center;
+  gap: 8px; padding: 0 12px; border: 1px solid var(--rukh-border); border-radius: 999px;
+  background: var(--rukh-surface); color: var(--rukh-muted); font: inherit; font-size: 11px;
+  font-weight: 650; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+.rukh-theme-toggle:hover { border-color: var(--rukh-border-strong); background: var(--rukh-surface-soft); color: var(--rukh-text); }
+.rukh-theme-toggle svg { width: 16px; height: 16px; flex: 0 0 16px; }
+.rukh-theme-toggle:focus-visible { outline: none; box-shadow: var(--rukh-focus); }
+@media (max-width: 560px) {
+  .rukh-theme-toggle { width: 44px; padding-inline: 0; }
+  .rukh-theme-toggle-label { display: none; }
+}
