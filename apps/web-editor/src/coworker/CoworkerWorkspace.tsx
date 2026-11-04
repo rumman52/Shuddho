@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, WorkspaceError, terminal, type CoworkerTask, type CoworkerView, type EmailDraft, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
+import { CoworkerClient, WorkspaceError, isTextArtifact, terminal, type CoworkerTask, type CoworkerView, type EmailDraft, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
 import DraftPreview, { draftTitle } from "./DraftPreview";
 import ActionWorkspace from "./ActionWorkspace";
 import AgentWorkspace from "./AgentWorkspace";
@@ -56,11 +56,14 @@ export function TaskResult({ task, client, revise, prepareEmail, prepareSocial }
       {task.research && <p className="cw-fineprint">Search: <bdi>{task.research.query}</bdi> · Date range: {task.research.time_range === "any" ? "Any time" : `Past ${task.research.time_range}`}. {task.research.skipped_results > 0 && `${task.research.skipped_results} results were excluded because usable evidence was unavailable, duplicated, or outside the date range.`}</p>}
       <p className="cw-fineprint">{task.skill_id === "research" ? "Review each finding against its evidence. Source dates are estimates of publication or update; retrieval today does not establish current accuracy." : "Review the facts and wording before using these drafts. Source references point to your provided material."}</p>
     </>}
-    {task.artifacts.length > 0 && <div className="cw-downloads" aria-label="Downloads">{task.artifacts.map(artifact => <button type="button" className="cw-secondary" key={artifact.id} disabled={Boolean(downloading)} onClick={async () => {
-      setDownloadError(""); setDownloading(artifact.id);
-      try { await client.download(artifact); } catch (error) { setDownloadError(message(error)); }
-      finally { setDownloading(""); }
-    }}><span aria-hidden="true">↓ </span>{downloading === artifact.id ? "Preparing…" : artifact.filename}</button>)}</div>}
+    {task.artifacts.length > 0 && <div className="cw-downloads" aria-label="Downloads">{task.artifacts.map(artifact => <div className="cw-download-item" key={artifact.id}>
+      <button type="button" className="cw-secondary" disabled={Boolean(downloading)} onClick={async () => {
+        setDownloadError(""); setDownloading(artifact.id);
+        try { await client.download(artifact); } catch (error) { setDownloadError(message(error)); }
+        finally { setDownloading(""); }
+      }}><span aria-hidden="true">↓ </span>{downloading === artifact.id ? "Preparing…" : artifact.filename}</button>
+      {isTextArtifact(artifact) && <a className="cw-secondary cw-open-editor-link" href={`/editor?artifact_id=${encodeURIComponent(artifact.id)}`}>Open in Web Editor</a>}
+    </div>)}</div>}
     {downloadError && <p className="cw-error" role="alert">{downloadError}</p>}
     {terminal(task.state) && task.input && <button type="button" className="cw-text-button" onClick={revise}>Use these sources for a new draft</button>}
   </section>;

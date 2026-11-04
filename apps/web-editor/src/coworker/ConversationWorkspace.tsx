@@ -564,7 +564,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       <div className="rukh-cw-brand"><span className="rukh-cw-brand-mark" aria-hidden="true">r</span><span><strong>Rukh AI</strong><small>AI coworker</small></span></div>
       <nav className="rukh-cw-primary-nav" aria-label="Primary workspace navigation">
         <button type="button" className="rukh-cw-nav-item is-active" aria-current="page" aria-pressed="true"><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="home" /></span><span>Coworker</span></button>
-        <a className="rukh-cw-nav-item" href="/editor"><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="file-text" /></span><span>Web Editor</span></a>
+        <a className="rukh-cw-nav-item" href={selected ? `/editor?conversation=${encodeURIComponent(selected)}` : "/editor"}><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="file-text" /></span><span>Web Editor</span></a>
         <button type="button" className="rukh-cw-nav-item" disabled title="Project storage is not available in the current Coworker API."><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="folder" /></span><span>Projects</span><small>Unavailable</small></button>
       </nav>
       <nav className="rukh-cw-secondary-nav" aria-label="Coworker tools">

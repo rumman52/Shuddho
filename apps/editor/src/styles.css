@@ -276,3 +276,68 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 @media (prefers-reduced-motion: reduce) {
   .rukh-editor-library, .rukh-editor-canvas .review-panel, .rukh-editor-mobile-backdrop { transition: none !important; }
 }
+
+
+.rukh-editor-top-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  min-width: 0;
+}
+
+.rukh-save-workspace-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 1px solid #245A43;
+  border-radius: 999px;
+  background: #245A43;
+  color: #FFFFFF;
+  padding: 8px 13px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.rukh-save-workspace-button:disabled {
+  cursor: default;
+  opacity: .72;
+}
+
+.rukh-editor-save-status {
+  max-width: 180px;
+  overflow: hidden;
+  color: #687064;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rukh-editor-save-error {
+  max-width: 230px;
+  color: #A33B31;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+@media (max-width: 760px) {
+  .rukh-editor-top-actions {
+    justify-content: flex-start;
+    gap: 7px;
+  }
+
+  .rukh-editor-save-status,
+  .rukh-editor-save-error {
+    flex: 1 1 100%;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .rukh-save-workspace-button {
+    min-height: 42px;
+  }
+}

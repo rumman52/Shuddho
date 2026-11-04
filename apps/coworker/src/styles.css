@@ -1217,3 +1217,19 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
     transition: none !important;
   }
 }
+
+
+.cw-download-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cw-download-item .cw-open-editor-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}

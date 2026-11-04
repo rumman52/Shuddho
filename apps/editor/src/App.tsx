@@ -6,6 +6,7 @@ import WritingAssistant from "../../web-editor/src/App";
 import ThemeToggle from "../../web-editor/src/components/ThemeToggle";
 import { ErrorBoundary } from "../../web-editor/src/components/ErrorBoundary";
 import { CoworkerClient, isTextArtifact, type Artifact, type CoworkerTask, type SourceDocument } from "../../web-editor/src/coworker/client";
+import { clearEditorDraft, persistEditorCopy, readEditorDraft, writeEditorDraft, type EditorDraftRecord } from "./persistence.mjs";
 
 type ArtifactItem = { artifact: Artifact; task: CoworkerTask };
 type HandoffAttempt = {
@@ -16,6 +17,9 @@ type HandoffAttempt = {
   sourceVersionId?: string;
   conversationId?: string;
 };
+type SaveAttempt = { fingerprint: string; uploaded?: SourceDocument };
+type SavedEditorRecord = { text: string; documentId: string; sha256: string; name: string };
+type PendingSavedDocument = { id: string; sha256: string; text: string; name: string };
 
 export default function App() {
   const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED === "true";
@@ -37,8 +41,41 @@ export default function App() {
   const mobileLibraryCloseRef = useRef<HTMLButtonElement | null>(null);
   const mobileLibraryPanelRef = useRef<HTMLElement | null>(null);
   const [editorText, setEditorText] = useState("");
+  const [openedArtifactId, setOpenedArtifactId] = useState("");
+  const [originConversationId, setOriginConversationId] = useState<string | null>(() => typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("conversation") : null);
+  const [originProjectId, setOriginProjectId] = useState<string | null>(() => typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("project") : null);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [savedDocumentId, setSavedDocumentId] = useState("");
+  const [savedSha256, setSavedSha256] = useState("");
+  const [savedDocumentName, setSavedDocumentName] = useState("");
+  const [saveStatus, setSaveStatus] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [pendingSavedDocument, setPendingSavedDocument] = useState<PendingSavedDocument | null>(null);
   const handoffAttempt = useRef<HandoffAttempt | null>(null);
-  const onTextChange = useCallback((value: string) => setEditorText(value), []);
+  const saveAttempt = useRef<SaveAttempt | null>(null);
+  const previousUserId = useRef<string | null>(null);
+  const artifactQueryHandled = useRef(false);
+  const lastSavedRecord = useRef<SavedEditorRecord | null>(null);
+  const pendingSavedDocumentRef = useRef<PendingSavedDocument | null>(null);
+  const onTextChange = useCallback((value: string) => {
+    setEditorText(value);
+    if (pendingSavedDocumentRef.current?.text === value) return;
+    const saved = lastSavedRecord.current;
+    if (saved && saved.text === value) {
+      setSavedDocumentId(saved.documentId);
+      setSavedSha256(saved.sha256);
+      setSavedDocumentName(saved.name);
+      setSaveStatus("Saved to workspace");
+    } else {
+      pendingSavedDocumentRef.current = null;
+      setPendingSavedDocument(null);
+      setSavedDocumentId("");
+      setSavedSha256("");
+      setSavedDocumentName("");
+      setSaveStatus(value.trim() ? "Unsaved changes" : "");
+    }
+    setSaveError("");
+  }, []);
 
   const client = useMemo(() => auth && session ? new CoworkerClient(
     import.meta.env.VITE_COWORKER_API_BASE_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8000" : "/backend"),
@@ -72,6 +109,82 @@ export default function App() {
   }, [auth]);
 
   useEffect(() => {
+    const userId = session?.user.id ?? null;
+    const previousId = previousUserId.current;
+    if (previousId && previousId !== userId && typeof window !== "undefined") {
+      try { clearEditorDraft(window.sessionStorage, previousId); } catch { /* Storage may be unavailable. */ }
+      lastSavedRecord.current = null;
+      saveAttempt.current = null;
+    }
+    previousUserId.current = userId;
+    if (!userId || typeof window === "undefined") {
+      setDraftRestored(false);
+      setEditorText("");
+      setInitialText(undefined);
+      setOpenedArtifact("");
+      setOpenedArtifactId("");
+      setSavedDocumentId("");
+      setSavedSha256("");
+      setSavedDocumentName("");
+      setSaveStatus("");
+      setSaveError("");
+      setPendingSavedDocument(null);
+      pendingSavedDocumentRef.current = null;
+      lastSavedRecord.current = null;
+      if (!userId) { setOriginConversationId(null); setOriginProjectId(null); }
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    try {
+      const restored = readEditorDraft(window.sessionStorage, userId);
+      if (restored) {
+        setEditorText(restored.text);
+        setInitialText(restored.text);
+        setOpenedArtifact(restored.openedArtifact);
+        setOpenedArtifactId(restored.openedArtifactId);
+        setOriginConversationId(params.get("conversation") ?? restored.originConversationId);
+        setOriginProjectId(params.get("project") ?? restored.originProjectId);
+        if (restored.savedDocumentId && restored.savedSha256) {
+          const pending = { id: restored.savedDocumentId, sha256: restored.savedSha256, text: restored.text, name: restored.savedDocumentName };
+          pendingSavedDocumentRef.current = pending;
+          setPendingSavedDocument(pending);
+          setSavedDocumentId(restored.savedDocumentId);
+          setSavedSha256(restored.savedSha256);
+          setSavedDocumentName(restored.savedDocumentName);
+          setSaveStatus("Verifying saved copy…");
+        } else {
+          setSavedDocumentId("");
+          setSavedSha256("");
+          setSavedDocumentName("");
+          setSaveStatus(restored.text.trim() ? "Unsaved changes" : "");
+        }
+      } else {
+        setOriginConversationId(params.get("conversation"));
+        setOriginProjectId(params.get("project"));
+      }
+    } catch {
+      setSaveError("The editor draft could not be restored in this tab.");
+    }
+    setDraftRestored(true);
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!session || !draftRestored || typeof window === "undefined") return;
+    const record: EditorDraftRecord = {
+      text: editorText,
+      openedArtifact,
+      openedArtifactId,
+      originConversationId,
+      originProjectId,
+      savedDocumentId: savedDocumentId || null,
+      savedSha256: savedSha256 || null,
+      savedDocumentName,
+    };
+    try { writeEditorDraft(window.sessionStorage, session.user.id, record); }
+    catch { setSaveError("This browser could not preserve the editor draft in this tab."); }
+  }, [session?.user.id, draftRestored, editorText, openedArtifact, openedArtifactId, originConversationId, originProjectId, savedDocumentId, savedSha256, savedDocumentName]);
+
+  useEffect(() => {
     if (!client) { setTasks([]); setLibraryLoading(false); return; }
     const controller = new AbortController();
     setLibraryLoading(true);
@@ -86,6 +199,52 @@ export default function App() {
     return () => controller.abort();
   }, [client, reload]);
 
+  useEffect(() => {
+    if (!client || !pendingSavedDocument || editorText !== pendingSavedDocument.text) return;
+    let active = true;
+    void (async () => {
+      try {
+        const [manifest, listing] = await Promise.all([client.workspaceManifest(), client.documents()]);
+        if (!active) return;
+        const manifestRecord = manifest.documents.find(item => item.document_id === pendingSavedDocument.id && item.available && item.sha256 === pendingSavedDocument.sha256);
+        const listedRecord = listing.documents.find(item => item.id === pendingSavedDocument.id && item.state === "available");
+        if (manifestRecord || listedRecord) {
+          const record: SavedEditorRecord = {
+            text: pendingSavedDocument.text,
+            documentId: pendingSavedDocument.id,
+            sha256: pendingSavedDocument.sha256,
+            name: manifestRecord?.name ?? listedRecord?.filename ?? pendingSavedDocument.name,
+          };
+          lastSavedRecord.current = record;
+          setSavedDocumentId(record.documentId);
+          setSavedSha256(record.sha256);
+          setSavedDocumentName(record.name);
+          setSaveStatus("Saved to workspace");
+          setSaveError("");
+        } else {
+          setSavedDocumentId("");
+          setSavedSha256("");
+          setSavedDocumentName("");
+          setSaveStatus("Unsaved changes");
+        }
+      } catch (error) {
+        if (active) {
+          setSavedDocumentId("");
+          setSavedSha256("");
+          setSavedDocumentName("");
+          setSaveStatus("Save status unavailable");
+          setSaveError(error instanceof Error ? error.message : "The saved copy could not be verified.");
+        }
+      } finally {
+        if (active) {
+          pendingSavedDocumentRef.current = null;
+          setPendingSavedDocument(null);
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [client, pendingSavedDocument, editorText]);
+
   const artifacts = useMemo<ArtifactItem[]>(() =>
     tasks.flatMap(task => task.artifacts.map(artifact => ({ artifact, task })))
       .sort((a, b) => (b.artifact.created_at ?? b.task.created_at).localeCompare(a.artifact.created_at ?? a.task.created_at))
@@ -93,6 +252,13 @@ export default function App() {
   [tasks]);
 
   const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? "/coworker";
+  const coworkerReturnUrl = useMemo(() => {
+    if (typeof window === "undefined") return coworkerUrl;
+    const destination = new URL(coworkerUrl, window.location.origin);
+    if (originConversationId) destination.searchParams.set("conversation", originConversationId);
+    if (originProjectId) destination.searchParams.set("project", originProjectId);
+    return destination.toString();
+  }, [coworkerUrl, originConversationId, originProjectId]);
 
   useEffect(() => {
     if (!mobileLibraryOpen || typeof window === "undefined" || typeof document === "undefined") return;
@@ -145,26 +311,100 @@ export default function App() {
     return () => media.removeListener?.(closeOnDesktop);
   }, []);
 
-  async function openArtifact(item: ArtifactItem) {
-    if (!client || busy) return;
-    if (isTextArtifact(item.artifact) && editorText.trim() && !window.confirm("Replace the text currently in the editor with this saved file?")) return;
+  async function openArtifact(item: ArtifactItem): Promise<boolean> {
+    if (!client || busy) return false;
+    if (isTextArtifact(item.artifact) && editorText.trim() && !window.confirm("Replace the text currently in the editor with this saved file?")) return false;
     setBusy(item.artifact.id);
     setLibraryError("");
     setNotice("");
+    setSaveError("");
     try {
       if (isTextArtifact(item.artifact)) {
         const content = await client.readTextArtifact(item.artifact);
+        lastSavedRecord.current = null;
+        pendingSavedDocumentRef.current = null;
+        setPendingSavedDocument(null);
+        setSavedDocumentId("");
+        setSavedSha256("");
+        setSavedDocumentName("");
+        setSaveStatus(content.trim() ? "Unsaved changes" : "");
         setInitialText(content);
+        setEditorText(content);
         setOpenedArtifact(item.artifact.filename);
+        setOpenedArtifactId(item.artifact.id);
         setMobileLibraryOpen(false);
-        setNotice(`Opened ${item.artifact.filename} in the editor. Changes here do not overwrite the saved artifact.`);
+        setNotice(`Opened ${item.artifact.filename}. Save a new workspace copy to keep your edits; the original artifact is unchanged.`);
       } else {
         await client.download(item.artifact);
         setMobileLibraryOpen(false);
         setNotice(`Download started for ${item.artifact.filename}.`);
       }
+      return true;
     } catch (error) {
       setLibraryError(error instanceof Error ? error.message : "The file could not be opened.");
+      return false;
+    } finally {
+      setBusy("");
+    }
+  }
+
+  useEffect(() => {
+    if (artifactQueryHandled.current || !client || libraryLoading || !draftRestored || typeof window === "undefined") return;
+    const artifactId = new URLSearchParams(window.location.search).get("artifact_id");
+    if (!artifactId) { artifactQueryHandled.current = true; return; }
+    const item = artifacts.find(entry => entry.artifact.id === artifactId);
+    if (!item) {
+      if (!libraryError) setLibraryError("The requested text artifact is not available in this workspace.");
+      artifactQueryHandled.current = true;
+      return;
+    }
+    artifactQueryHandled.current = true;
+    void openArtifact(item).then(opened => {
+      if (!opened) return;
+      const next = new URL(window.location.href);
+      next.searchParams.delete("artifact_id");
+      window.history.replaceState({}, "", next.toString());
+    });
+  }, [client, artifacts, libraryLoading, draftRestored, libraryError]);
+
+  async function saveToWorkspace() {
+    if (!client) {
+      setSaveStatus("Sign-in required");
+      setSaveError("Sign in to AI Coworker before saving this editor copy to your workspace.");
+      return;
+    }
+    if (!editorText.trim()) {
+      setSaveStatus("");
+      setSaveError("Add text to the editor before saving.");
+      return;
+    }
+    const baseName = (openedArtifact || "rukh-editor-draft").replace(/\.[^.]+$/, "");
+    const safeName = baseName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^\.+/, "").slice(0, 88) || "rukh-editor-draft";
+    const filename = `${safeName}-edited.txt`;
+    const fingerprint = JSON.stringify({ userId: session?.user.id, text: editorText, filename });
+    if (saveAttempt.current?.fingerprint !== fingerprint) saveAttempt.current = { fingerprint };
+    const attempt = saveAttempt.current;
+    if (!attempt) { setSaveError("The save could not be initialized. Try again."); return; }
+
+    setBusy("save");
+    setSaveStatus("Saving to workspace…");
+    setSaveError("");
+    try {
+      const saved = await persistEditorCopy(client, editorText, filename, attempt);
+      const record: SavedEditorRecord = { text: editorText, ...saved };
+      lastSavedRecord.current = record;
+      pendingSavedDocumentRef.current = null;
+      setPendingSavedDocument(null);
+      setSavedDocumentId(saved.documentId);
+      setSavedSha256(saved.sha256);
+      setSavedDocumentName(saved.name);
+      setSaveStatus("Saved to workspace");
+      setSaveError("");
+      setNotice(`Saved ${saved.name} as a new workspace copy. The original artifact was not overwritten.`);
+      saveAttempt.current = null;
+    } catch (error) {
+      setSaveStatus("Save failed");
+      setSaveError(error instanceof Error ? error.message : "The editor copy could not be saved.");
     } finally {
       setBusy("");
     }
@@ -182,7 +422,7 @@ export default function App() {
       return;
     }
 
-    const fingerprint = JSON.stringify({ userId: session?.user.id, text: editorText });
+    const fingerprint = JSON.stringify({ userId: session?.user.id, text: editorText, originConversationId });
     if (handoffAttempt.current?.fingerprint !== fingerprint) {
       handoffAttempt.current = {
         fingerprint,
@@ -230,8 +470,11 @@ export default function App() {
       if (!sourceVersionId) throw new Error("The uploaded draft has no verified source version.");
 
       if (!attempt.conversationId) {
-        const conversation = await client.createConversation(title, attempt.createKey);
-        attempt.conversationId = conversation.id;
+        if (originConversationId) attempt.conversationId = originConversationId;
+        else {
+          const conversation = await client.createConversation(title, attempt.createKey);
+          attempt.conversationId = conversation.id;
+        }
       }
       const conversationId = attempt.conversationId;
       if (!conversationId) throw new Error("The Coworker conversation was not created.");
@@ -243,6 +486,7 @@ export default function App() {
         [sourceVersionId],
       );
       destination.searchParams.set("conversation", conversationId);
+      if (originProjectId) destination.searchParams.set("project", originProjectId);
       window.location.assign(destination.toString());
       handoffAttempt.current = null;
     } catch (error) {
@@ -274,12 +518,19 @@ export default function App() {
           <ThemeToggle />
           <a href="/workspaces" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
             {coworkerEnabled && <>
+              <span className="rukh-editor-save-status" role="status">{saveStatus}</span>
+              <button type="button" className="rukh-save-workspace-button" onClick={() => void saveToWorkspace()}
+                disabled={!editorText.trim() || busy === "save" || (Boolean(savedDocumentId) && saveStatus === "Saved to workspace")}
+                aria-label="Save editor copy to workspace">
+                {busy === "save" ? "Saving…" : savedDocumentId && saveStatus === "Saved to workspace" ? "Saved" : "Save to workspace"}
+              </button>
               <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
                 {busy === "handoff" ? "Sending…" : "Send to AI Coworker ↗"}
               </button>
-              <a href={coworkerUrl} className="rukh-coworker-link" target="_blank" rel="noreferrer">AI Coworker</a>
+              <a href={coworkerReturnUrl} className="rukh-coworker-link">{originConversationId ? "Return to Coworker" : "AI Coworker"}</a>
             </>}
           </div>
+          {saveError && coworkerEnabled && <p className="rukh-editor-save-error" role="alert">{saveError}</p>}
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
           {coworkerEnabled && <aside
