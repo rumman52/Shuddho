@@ -332,6 +332,31 @@ test("chat mode applies incremental streamed reply updates without dispatching A
   }, data);
 });
 
+test("composer stays disabled while an admitted streamed reply is still generating", async () => {
+  const data = fixture([record]);
+  const message = {
+    id: "saved-message", conversation_id: record.id, sequence: 1, text: "Explain recursion",
+    assistant_reply: null, selected_sources: [], resource_links: [], created_at: timestamp,
+  };
+  data.client.conversationHistory = async () => ({ items: [message] });
+  data.client.appendConversationMessage = async () => message;
+  Object.assign(data.client, {
+    runtimeManifest: async () => ({ capabilities: { conversation_replies: true } }),
+    replyToConversationMessageStream: async (
+      _id: string, _messageId: string, _sequence: number,
+      onUpdate: (reply: { state: "generating"; text: string }) => void,
+    ) => {
+      onUpdate({ state: "generating", text: "Partial response" });
+      throw new Error("Connection lost");
+    },
+  });
+  await mount(async tree => {
+    await send(tree, "Explain recursion");
+    assert.equal(tree.root.findByProps({ id: "cw-conversation-message" }).props.disabled, true);
+    assert.ok(tree.root.findAllByProps({ role: "alert" }).some(node => node.children.join("").includes("Connection lost")));
+  }, data);
+});
+
 test("failed reply transport preserves the saved message and retries the reply only", async () => {
   const data = fixture(); let requests = 0;
   const message = { id: "saved-message", conversation_id: record.id, sequence: 1, text: "Explain recursion", selected_sources: [], resource_links: [], created_at: timestamp };
