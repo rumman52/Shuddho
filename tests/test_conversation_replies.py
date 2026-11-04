@@ -275,14 +275,10 @@ def test_streamed_reply_is_persisted_once_and_replays_without_second_inference(c
     service.model = model
 
     async def collect():
-        claim, messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
-        events = [event async for event in service.stream_events(
-            owner, conversation["id"], message["id"], claim, messages,
-        )]
-        replay, replay_messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
-        replay_events = [event async for event in service.stream_events(
-            owner, conversation["id"], message["id"], replay, replay_messages,
-        )]
+        claim, queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        events = [event async for event in service.stream_events(claim, queue)]
+        replay, replay_queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        replay_events = [event async for event in service.stream_events(replay, replay_queue)]
         return events, replay_events
 
     events, replay_events = asyncio.run(collect())
@@ -306,8 +302,8 @@ def test_streamed_reply_continues_after_browser_stream_disconnect(container):
 
     async def disconnect():
         model.finished = asyncio.Event()
-        claim, messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
-        events = service.stream_events(owner, conversation["id"], message["id"], claim, messages)
+        claim, queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        events = service.stream_events(claim, queue)
         first = await anext(events)
         await events.aclose()
         await model.finished.wait()
@@ -353,10 +349,8 @@ def test_streamed_provider_failure_discards_partial_text_and_releases_lease(cont
 
     service.model = BrokenStream()
     async def collect():
-        claim, messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
-        return [event async for event in service.stream_events(
-            owner, conversation["id"], message["id"], claim, messages,
-        )]
+        claim, queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        return [event async for event in service.stream_events(claim, queue)]
     events = asyncio.run(collect())
     assert events[-1][0] == "final"
     assert events[-1][1]["state"] == "failed"
