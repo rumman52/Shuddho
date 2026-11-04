@@ -41,14 +41,19 @@
 
 Exact main SHA: `4db2843e0d43447af5065b04c13b82cf710a1084`.
 
-[GitHub Actions run #41800917260](https://github.com/rumman52/Shuddho/actions/runs/41800917260) was still in progress when this report was prepared:
+[GitHub Actions run #41800917260](https://github.com/rumman52/Shuddho/actions/runs/41800917260) completed with an overall failure:
 
-| Job | Observed state |
+| Job | Final state |
 |---|---|
 | `test-and-build` | Success |
 | `Frontend tests and builds` | Success |
-| `coworker` | In progress; mandatory PostgreSQL/Temporal/browser qualification had not finished |
+| `coworker` | Failure at the final browser workflow step |
 | `governance-audit` | Failure: main branch protection is not confirmed |
+| `ci-merge-gate` | Failure because required jobs failed |
+
+The Coworker failure was traced to stale test selectors, not the chat component or the API fixture. The default route now mounts the standalone `.rukh-coworker-app`; the browser scripts still queried the removed `.workspace-coworker` scroll wrapper. The test had already completed the preceding API-backed scenarios and failed when resetting scroll for a screenshot. The initial health-check connection refusals were transient startup retries; the API fixture subsequently served the test scenarios.
+
+PR #624 now changes the browser scripts to reset the page with `window.scrollTo(0, 0)`, matching the standalone app's document scrolling. Exact-head rerun is pending.
 
 The GitHub Vercel commit status for this revision is success. That status alone does not prove that the deployed UI, authentication, API routing or live provider behavior works.
 
@@ -56,7 +61,7 @@ The GitHub Vercel commit status for this revision is success. That status alone 
 
 PR #617's first CI run exposed two frontend test defects: the attachment renderer test called `toJSON` on the wrong renderer object, and filename sanitization removed Bengali combining marks. Its Python job also failed the existing multilingual quality fixture at 0.8333 against a required 1.0. The renderer assertion and Unicode filename handling were corrected in #618; #622 added server-side source-limit validation and further regression coverage.
 
-The latest main run reports the frontend and `test-and-build` jobs successful. The full Coworker job and governance status must be read from the exact run before making a repository-wide green-CI claim.
+The latest main run reports the frontend and `test-and-build` jobs successful, but the Coworker browser job and governance audit failed. The Coworker browser-selector correction is on PR #624; repository-wide CI is not green until its exact-head run completes successfully and governance is resolved.
 
 ### Browser and backend limits
 
@@ -91,4 +96,4 @@ These require separate provider/API contracts, persistence and recovery design, 
 | Production-qualified | No |
 | Activated | No — native replies remain default-off |
 
-**Next exact action:** inspect the completion of [CI run #41800917260](https://github.com/rumman52/Shuddho/actions/runs/41800917260), then run and inspect the exact-head checks for this documentation handoff PR. Do not merge or deploy this handoff as a substitute for the outstanding governance and staging gates.
+**Next exact action:** inspect the exact-head CI for PR #624 after the browser scroll-selector correction. The main governance failure remains a separate owner/repository-settings issue. Do not merge or deploy this handoff as a substitute for the outstanding governance and staging gates.

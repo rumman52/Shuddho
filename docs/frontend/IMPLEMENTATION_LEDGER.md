@@ -18,8 +18,8 @@ Updated 4 November 2026 (Asia/Dhaka). Source base: `main 4db2843e0d43447af5065b0
 | Cross-app document handoff | Existing source preserved | Owner-bound upload/manifest/artifact contracts; fresh live auth/storage/provider run not claimed |
 | Frontend CI on latest main | Passing | CI run #41800917260: `Frontend tests and builds` succeeded |
 | Python `test-and-build` on latest main | Passing | CI run #41800917260: `test-and-build` succeeded |
-| Mandatory Coworker CI on latest main | Pending at handoff | CI run #41800917260: `coworker` was still in progress; inspect its final exact-head result |
-| Governance audit | Failing | CI run #41800917260 reports main branch protection is not confirmed; this is separate from the chat UI implementation |
+| Mandatory Coworker CI on latest main | Failed; test-harness fix in PR #624 | CI run #41800917260 failed only at the final browser step: stale `.workspace-coworker` selector after standalone Coworker routing. PR #624 replaces wrapper scrolling with `window.scrollTo`; exact-head rerun pending |
+| Governance audit | Failing | CI run #41800917260 reports main branch protection is not confirmed; this is separate from the chat UI and test-harness changes |
 | Browser evidence | Synthetic API checks recorded | Native chat Chromium evidence covers five viewports and composer/send/reply/history/drawer/theme behavior; no real signed-in production session claimed |
 | Live deployment | Not verified | Vercel commit status is success; that alone does not verify current routes, auth, API or provider behavior |
 | Full Muse parity | Incomplete | Streaming, voice/audio, image capabilities, direct file-aware chat, native integrations and operated Agent/automation/transaction qualification remain separate work |
