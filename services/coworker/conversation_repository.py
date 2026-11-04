@@ -12,7 +12,7 @@ from .conversation_schemas import ConversationCreate, ConversationRename, Messag
 from .errors import CoworkerError
 from .models import Account, AgentRun, Artifact, AuditEvent, Conversation, ConversationMessage, Document, DocumentVersion, utcnow
 from .agent_repository import ACTIVE_RUN_STATES
-from .repository import iso, not_found
+from .repository import aware, iso, not_found
 
 
 def fingerprint(payload: dict) -> str:
@@ -101,7 +101,6 @@ class ConversationRepository:
                 )
             updated_at = utcnow()
             if iso(updated_at) <= iso(row.updated_at):
-                from .repository import aware
                 updated_at = aware(row.updated_at) + timedelta(microseconds=1)
             row.title = request.title
             row.updated_at = updated_at
