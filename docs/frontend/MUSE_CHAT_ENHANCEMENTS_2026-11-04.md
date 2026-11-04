@@ -75,6 +75,12 @@ This implementation completes the approved Muse-inspired conversation enhancemen
 
 These require separate provider/API contracts, persistence and recovery design, privacy/security review, evaluation coverage and explicit rollout approval. They must not be represented as UI-only features.
 
+### Additional renderer regression coverage in this handoff branch
+
+- `markdownMessage.test.tsx` now asserts that Bangla text and a long unbroken Bengali/emoji string are preserved by the renderer without truncation.
+- `rukh-responsive-css.test.mjs` now asserts that Markdown content, code blocks and tables remain constrained/scrollable on narrow panels.
+- These are coverage-only changes; the existing renderer and CSS already implement the required text preservation and overflow behavior. Exact-head CI for this branch is pending.
+
 ## Release disposition
 
 | Qualification level | Status |

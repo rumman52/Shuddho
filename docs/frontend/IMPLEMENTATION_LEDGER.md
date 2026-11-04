@@ -12,7 +12,7 @@ Updated 4 November 2026 (Asia/Dhaka). Source base: `main 4db2843e0d43447af5065b0
 | Native assistant text chat | Implemented; default off | PR #616; owner-scoped persisted replies, bounded context, duplicate-claim protection, budget reservations and interrupted recovery; migration 0063 and existing backend configuration required |
 | Conversation rename | Implemented | PR #617; authenticated owner-scoped PATCH, optimistic `updated_at` revision, stale conflict and CORS preflight |
 | Conversation export | Implemented | PR #617/#618; complete paginated history to local Markdown or JSON, including replies, source labels and provenance; Unicode-safe filenames |
-| Safe Markdown replies | Implemented | PR #617; inert raw HTML, safe HTTP/HTTPS/mailto links, headings, lists, tables, blockquotes and code |
+| Safe Markdown replies | Implemented | PR #617; inert raw HTML, safe HTTP/HTTPS/mailto links, headings, lists, tables, blockquotes and code; PR #624 adds explicit Bangla/long-Unicode preservation and narrow-panel overflow regressions (CI pending) |
 | Source attachments | Implemented | PR #617/#618/#622; existing upload/manifest APIs, five-source limit enforced in UI and schema, owner-scoped untrusted inputs; direct chat does not read files |
 | Sources, memory and action approvals | Existing source preserved | Version-bound source selection, reviewable memory and explicit Agent start/external-action approval remain canonical |
 | Cross-app document handoff | Existing source preserved | Owner-bound upload/manifest/artifact contracts; fresh live auth/storage/provider run not claimed |

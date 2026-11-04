@@ -6,6 +6,7 @@ The approved practical chat enhancement slice is merged to main. Current source:
 - Safety: saved messages and renames do not dispatch Agent work; direct chat does not read attached file contents; explicit Start task remains required for Agent processing. Native replies remain default-off.
 - Latest main CI #41800917260: `test-and-build=success`, `Frontend tests and builds=success`, `coworker=in_progress`, `governance-audit=failure` because main branch protection is not confirmed. Vercel commit status is success, not live UI qualification.
 - Qualification levels: scoped source merged; repository verification partial until the Coworker job completes; staging not freshly verified; production not qualified; activation not performed.
+- Handoff regression coverage now explicitly checks Bangla/long-Unicode Markdown preservation and narrow-panel code/table overflow; exact-head PR CI is pending.
 - Remaining Muse gaps: streaming, voice/audio, image capabilities, direct file-aware chat, native mobile/WhatsApp integrations, and operated qualification of the wider Agent/automation/transaction surfaces.
 - Next: inspect exact-head Coworker CI and this handoff PR's checks. Do not merge or deploy this documentation handoff as a substitute for governance or staging gates.
 
