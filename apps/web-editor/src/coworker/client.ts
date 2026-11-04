@@ -512,7 +512,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   runtimeManifest(signal?: AbortSignal) {
-    return this.json<{ capabilities: { conversation_replies?: boolean } }>("/api/v1/runtime-manifest", { signal });
+    return this.json<{ capabilities: { conversation_replies?: boolean; conversation_replies_streaming?: boolean } }>("/api/v1/runtime-manifest", { signal });
   }
   async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal) {
     return (await this.response(`/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply`, {
@@ -520,6 +520,113 @@ export class CoworkerClient {
       body: JSON.stringify({ expected_sequence: sequence }),
     }, 75000)).json() as Promise<AssistantReply>;
   }
+  async streamReplyToConversationMessage(
+    id: string,
+    messageId: string,
+    sequence: number,
+    onDelta: (delta: string) => void,
+    signal?: AbortSignal,
+  ): Promise<AssistantReply> {
+    const response = await this.response(
+      `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply/stream`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        signal,
+        body: JSON.stringify({ expected_sequence: sequence }),
+      },
+      75000,
+    );
+    if (!response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") || !response.body) {
+      throw new WorkspaceError("The AI reply stream is unavailable. Check reply again.", 502);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let eventName = "";
+    let dataLines: string[] = [];
+    let finalReply: AssistantReply | null = null;
+
+    const dispatchFrame = () => {
+      if (!dataLines.length) {
+        eventName = "";
+        return;
+      }
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(dataLines.join("\n")) as Record<string, unknown>;
+      } catch {
+        throw new WorkspaceError("The AI reply stream returned invalid data.", 502);
+      }
+      if (eventName === "delta") {
+        if (typeof payload.delta !== "string") {
+          throw new WorkspaceError("The AI reply stream returned an invalid text chunk.", 502);
+        }
+        if (payload.delta) onDelta(payload.delta);
+      } else if (eventName === "final") {
+        const reply = payload.reply as AssistantReply | undefined;
+        if (!reply || !["generating", "completed", "failed", "interrupted"].includes(reply.state)
+          || typeof reply.text !== "string") {
+          throw new WorkspaceError("The AI reply stream returned an invalid final response.", 502);
+        }
+        finalReply = reply;
+      } else if (eventName === "error") {
+        throw new WorkspaceError(
+          typeof payload.message === "string" ? payload.message : "The AI reply stream failed.",
+          502,
+        );
+      }
+      eventName = "";
+      dataLines = [];
+    };
+
+    const processLine = (line: string) => {
+      if (line === "") {
+        dispatchFrame();
+        return;
+      }
+      if (line.startsWith(":")) return;
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).replace(/^ /, ""));
+      }
+    };
+
+    try {
+      while (!finalReply) {
+        const { value, done } = await reader.read();
+        if (done) {
+          buffer += decoder.decode();
+          if (buffer) processLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
+          if (dataLines.length) dispatchFrame();
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = buffer.indexOf("\n");
+        while (boundary >= 0 && !finalReply) {
+          let line = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 1);
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          processLine(line);
+          boundary = buffer.indexOf("\n");
+        }
+      }
+    } catch (cause) {
+      if (cause instanceof WorkspaceError || signal?.aborted) throw cause;
+      throw new WorkspaceError("The AI reply stream was interrupted. Check reply again.", 502);
+    } finally {
+      try { await reader.cancel(); } catch { /* The stream may already be closed. */ }
+      reader.releaseLock();
+    }
+
+    if (!finalReply) {
+      throw new WorkspaceError("The AI reply stream ended before completion. Check reply again.", 502);
+    }
+    return finalReply;
+  }
+
   workspaceManifest(signal?: AbortSignal) {
     return this.json<WorkspaceManifest>("/api/v1/workspace-manifest", { signal });
   }
