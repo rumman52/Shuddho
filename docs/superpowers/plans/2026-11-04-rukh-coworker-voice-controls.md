@@ -12,7 +12,7 @@ Add optional browser-native dictation and read-aloud controls to the existing Co
 
 - Microphone access starts only after the user presses Dictate.
 - Speech is transcribed into the draft only; it is never sent until the user presses Send/Save.
-- Audio is not uploaded, stored, or logged.
+- Rukh does not upload or persist raw microphone audio. The browser's speech-recognition service may process it under its own privacy settings and policy; only transcript text enters the local draft until the user sends it.
 - Read aloud uses the browser's installed speech synthesis; it is not represented as generated AI audio.
 - Preserve Bangla and English selection, device-language fallback, keyboard/touch access, existing theme tokens, and graceful unsupported-browser states.
 - Stop/abort recognition on user stop, route/thread changes, composer disablement, and unmount.
@@ -34,7 +34,7 @@ Add optional browser-native dictation and read-aloud controls to the existing Co
 - [x] Implement typed browser speech helpers with standard/WebKit feature detection and final-segment deduplication.
 - [x] Add the accessible dictation control to the existing composer.
 - [x] Add Read aloud/Stop controls to completed assistant replies.
-- [x] Add responsive styles using the existing Rukh tokens and 44px touch targets.
+- [x] Add responsive styles using the existing Rukh tokens and 44px touch targets, including read-aloud controls.
 - [ ] Re-run the complete web-editor tests, root test-and-build and mandatory Coworker job on the final exact head.
 - [ ] Review the complete desktop/mobile interaction path on a fresh Vercel preview and test real microphone/TTS behavior. The latest preview is currently blocked by Vercel's daily deployment limit.
 
@@ -44,3 +44,7 @@ Add optional browser-native dictation and read-aloud controls to the existing Co
 - **GREEN (predecessor):** [CI run #41810362794](https://github.com/rumman52/Shuddho/actions/runs/41810362794), implementation commit `3f5fef0ecf27b997d7035661844b131606671086`. The complete `Frontend tests and builds` job passed. Subsequent commits add Bangla TTS locale detection, mobile select sizing and this handoff; exact-head CI remains required.
 - **Deployment limitation:** Vercel's GitHub bot reported the free daily deployment limit (>100) after an earlier preview was ready. The Render staging Postgres database is suspended after expiry on 31 October. No staging or production activation is claimed.
 - **Scope boundary:** browser speech APIs only. No audio upload, persistence, provider-generated audio, backend endpoint, migration, or feature-flag change.
+
+## Privacy clarification
+
+Browser `SpeechRecognition` implementations may process microphone audio through the browser vendor's service under its own privacy policy. Rukh does not upload or persist the raw audio; the UI discloses this while dictation is active. Only the resulting text is added to the local draft, and the user must explicitly send it.
