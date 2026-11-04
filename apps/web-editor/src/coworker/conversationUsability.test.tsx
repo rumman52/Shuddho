@@ -312,3 +312,56 @@ test("failed reply transport preserves the saved message and retries the reply o
     assert.match(JSON.stringify(tree.toJSON()), /Recovered answer/);
   }, data);
 });
+
+
+test("streaming chat renders partial assistant text before the durable final reply", async () => {
+  const data = fixture();
+  let releaseStream: () => void = () => undefined;
+  let notifyStarted: () => void = () => undefined;
+  const started = new Promise<void>(resolve => { notifyStarted = resolve; });
+  const gate = new Promise<void>(resolve => { releaseStream = resolve; });
+  Object.assign(data.client, {
+    runtimeManifest: async () => ({
+      capabilities: { conversation_replies: true, conversation_replies_streaming: true },
+    }),
+    streamReplyToConversationMessage: async (
+      _id: string, _messageId: string, _sequence: number, onDelta: (delta: string) => void,
+    ) => {
+      onDelta("Streaming ");
+      notifyStarted();
+      await gate;
+      onDelta("answer");
+      return { state: "completed", text: "Streaming answer", context_truncated: false };
+    },
+    replyToConversationMessage: async () => {
+      assert.fail("Streaming-capable workspaces must use the SSE reply transport.");
+    },
+  });
+  data.client.appendConversationMessage = async (id, text, key) => {
+    data.calls.messages.push({ id, text, key });
+    const saved = {
+      id: "streamed-message", conversation_id: id, sequence: 1, text,
+      selected_sources: [], resource_links: [], created_at: timestamp,
+    };
+    data.client.conversationHistory = async () => ({ items: [saved] });
+    return saved;
+  };
+
+  await mount(async tree => {
+    await act(async () => tree.root.findByProps({ id: "cw-conversation-message" }).props.onChange({
+      target: { value: "Explain streaming" },
+    }));
+    let submission!: Promise<void>;
+    await act(async () => {
+      submission = tree.root.findByProps({ "aria-label": "Message composer" }).props.onSubmit({
+        preventDefault() {},
+      });
+      await started;
+    });
+    assert.match(JSON.stringify(tree.toJSON()), /Streaming/);
+    assert.doesNotMatch(JSON.stringify(tree.toJSON()), /Streaming answer/);
+    releaseStream();
+    await act(async () => { await submission; });
+    assert.match(JSON.stringify(tree.toJSON()), /Streaming answer/);
+  }, data);
+});
