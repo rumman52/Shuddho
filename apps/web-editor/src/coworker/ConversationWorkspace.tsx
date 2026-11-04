@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
-  CoworkerClient, WorkspaceError, type ConversationRecord,
+  CoworkerClient, WorkspaceError, type ConversationRecord, type AssistantReply,
   type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
 import ConversationReply from "./ConversationReply";
@@ -212,7 +212,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       return next;
     });
     try {
-      let reply;
+      let reply: AssistantReply;
       if (chatAvailable && typeof client.streamReplyToConversationMessage === "function") {
         try {
           reply = await client.streamReplyToConversationMessage(id, item.id, item.sequence, delta => {
