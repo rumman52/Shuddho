@@ -358,3 +358,71 @@ test("text artifact reader rejects binary files before making a request", async 
     assert.equal(requests, 0);
   } finally { globalThis.fetch = original; }
 });
+
+
+test("conversation reply stream uses authenticated fetch and publishes partial replies", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const encoder = new TextEncoder();
+  const snapshot = { state: "generating", text: "", context_truncated: false, started_at: "2026-11-04T10:00:00Z" };
+  const completed = { state: "completed", text: "বাংলা উত্তর", context_truncated: false, completed_at: "2026-11-04T10:00:02Z" };
+  const frames = [
+    `event: snapshot\r\ndata: ${JSON.stringify(snapshot)}\r\n\r\n`,
+    `event: delta\r\ndata: ${JSON.stringify({ delta: "বাংলা " })}\r\n\r\n`,
+    `event: delta\r\ndata: ${JSON.stringify({ delta: "উত্তর" })}\r\n\r\n`,
+    `event: final\r\ndata: ${JSON.stringify(completed)}\r\n\r\n`,
+  ];
+  const bytes = encoder.encode(frames.join(""));
+  const chunks = [bytes.slice(0, 9), bytes.slice(9, 41), bytes.slice(41, 79), bytes.slice(79)];
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); },
+  });
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(body, { headers: { "Content-Type": "text/event-stream; charset=utf-8" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "stream-test-token");
+    const updates: { state: string; text: string }[] = [];
+    const reply = await client.replyToConversationMessageStream(
+      "00000001-0000-4000-8000-000000000000",
+      "00000002-0000-4000-8000-000000000000",
+      3,
+      value => updates.push({ state: value.state, text: value.text }),
+    );
+    assert.equal(reply.state, "completed");
+    assert.equal(reply.text, "বাংলা উত্তর");
+    assert.deepEqual(updates, [
+      { state: "generating", text: "" },
+      { state: "generating", text: "বাংলা " },
+      { state: "generating", text: "বাংলা উত্তর" },
+      { state: "completed", text: "বাংলা উত্তর" },
+    ]);
+    assert.equal(seen[0].url, "/backend/api/v1/conversations/00000001-0000-4000-8000-000000000000/messages/00000002-0000-4000-8000-000000000000/reply/stream");
+    assert.equal(seen[0].options?.method, "POST");
+    const headers = new Headers(seen[0].options?.headers);
+    assert.equal(headers.get("Authorization"), "Bearer stream-test-token");
+    assert.equal(headers.get("Accept"), "text/event-stream");
+    assert.equal(headers.get("Content-Type"), "application/json");
+    assert.equal(seen[0].options?.credentials, "omit");
+    assert.equal(seen[0].options?.redirect, "error");
+    assert.equal(seen[0].options?.cache, "no-store");
+  } finally { globalThis.fetch = original; }
+});
+
+test("conversation reply stream rejects malformed or incomplete events", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(
+    "event: delta\\ndata: {\\"delta\\":\\"orphan\\"}\\n\\n",
+    { headers: { "Content-Type": "text/event-stream" } },
+  )) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "stream-test-token");
+    await assert.rejects(client.replyToConversationMessageStream(
+      "00000001-0000-4000-8000-000000000000",
+      "00000002-0000-4000-8000-000000000000",
+      1,
+      () => undefined,
+    ));
+  } finally { globalThis.fetch = original; }
+});
