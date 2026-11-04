@@ -2,8 +2,9 @@
 from __future__ import annotations
 import asyncio
 import json
-import httpx
 from datetime import datetime, timedelta
+
+import httpx
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 from services.api.shuddho_api.llm_deepseek import DEEPSEEK_ENDPOINT, _post_review
@@ -126,6 +127,8 @@ class DeepSeekReplyModel:
                                 raise ValueError("Malformed provider stream")
                             if not choices:  # Optional usage-only frame.
                                 continue
+                            if finished:
+                                raise ValueError("Provider emitted content after its terminal choice")
                             choice = choices[0]
                             if not isinstance(choice, dict):
                                 raise ValueError("Malformed provider stream")
