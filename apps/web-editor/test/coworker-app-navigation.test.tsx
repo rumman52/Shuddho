@@ -18,8 +18,8 @@ test("Coworker navigation keeps the workspace directory and Web Editor reachable
 test("Coworker sign-in explains the broader persistent-work workspace", () => {
   const html = renderToString(<CoworkerApp />);
 
-  assert.match(html, /A coworker for complex work/);
-  assert.match(html, /conversations, source material and Agent activity/);
-  assert.match(html, /approve external actions/);
-  assert.match(html, /Sign-in is not configured for this environment/);
+  assert.match(html, /Start with a question, a draft, or an idea/);
+  assert.match(html, /Your first message opens a private conversation with Rukh/);
+  assert.match(html, /Account access is not configured for this deployment/);
+  assert.match(html, /Messages are saved only after you sign in and send them/);
 });

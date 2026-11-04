@@ -18,8 +18,10 @@ test("Coworker exposes mobile controls for conversation history and Context", ()
   const html = renderToString(
     <ConversationWorkspace client={{} as CoworkerClient} openAgent={() => undefined} />,
   );
-  assert.match(html, /aria-label="Open conversations"/);
+  assert.match(html, /aria-label="Open navigation"/);
   assert.match(html, /aria-controls="rukh-conversation-list"/);
+  assert.match(html, /href="\/editor"/);
+  assert.match(html, /Projects/);
   assert.match(html, /aria-label="Open workspace context"/);
   assert.match(html, /aria-controls="rukh-context-panel"/);
 });

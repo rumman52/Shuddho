@@ -38,3 +38,14 @@ test("assistant Markdown wraps long Unicode replies and contains code and tables
   assert.match(css, /\.rukh-markdown\s+pre\s*\{[^}]*max-width:\s*100%[^}]*overflow:\s*auto/s);
   assert.match(css, /\.rukh-markdown-table-scroll\s*\{[^}]*max-width:\s*100%[^}]*overflow-x:\s*auto/s);
 });
+
+
+test("Coworker follows the approved palette and keeps its composer outside transcript scrolling", async () => {
+  const css = await readFile(join(cwd, "../coworker/src/styles.css"), "utf8");
+  assert.match(css, /--rukh-bg:\s*#FAFAF7/i);
+  assert.match(css, /--rukh-accent:\s*#245A43/i);
+  assert.match(css, /\.rukh-message-list\s*\{[^}]*flex:\s*1 1 auto[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.rukh-message-composer\s*\{[^}]*position:\s*sticky[^}]*bottom:\s*0/s);
+  assert.match(css, /\.rukh-conversation-list\.rukh-mobile-panel-open/);
+  assert.match(css, /@media\s*\(max-width:\s*900px\)/);
+});

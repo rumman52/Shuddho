@@ -597,3 +597,623 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
   .rukh-user-message { max-width: 94%; padding: 12px 14px; }
   .rukh-chat-answer .rukh-answer-text { font-size: 14px; }
 }
+
+
+/* Rukh approved design package — Coworker-first workspace foundation. */
+:root:not([data-rukh-theme="dark"]) .rukh-coworker-app,
+:root:not([data-rukh-theme="dark"]) .rukh-cw-workspace {
+  --rukh-bg: #FAFAF7;
+  --rukh-surface: #FFFFFF;
+  --rukh-surface-soft: #F1F2ED;
+  --rukh-surface-raised: #FFFFFF;
+  --rukh-border: #DFE3DA;
+  --rukh-border-strong: #CCD4C9;
+  --rukh-text: #20291F;
+  --rukh-muted: #687064;
+  --rukh-accent: #245A43;
+  --rukh-accent-hover: #1D4C38;
+  --rukh-accent-soft: #E6EDE3;
+  --rukh-focus-ring: 0 0 0 3px rgba(36, 90, 67, .22);
+  --cw-accent: #245A43;
+  --cw-accent-soft: #E6EDE3;
+  color: #20291F;
+  background: #FAFAF7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.rukh-coworker-app:has(.rukh-cw-workspace) .rukh-productbar {
+  display: none;
+}
+
+.rukh-cw-workspace.rukh-cw-chat {
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: #FAFAF7;
+}
+
+.rukh-cw-chat > .cw-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 54px;
+  margin: 0;
+  padding: 6px 22px;
+  border-bottom: 1px solid #DFE3DA;
+  background: #FAFAF7;
+}
+
+.rukh-cw-chat > .cw-header > div:first-of-type,
+.rukh-cw-chat > .cw-header > .rukh-mobile-nav-trigger {
+  display: none;
+}
+
+.rukh-cw-shell-chat {
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 0 !important;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rukh-cw-shell-chat > .rukh-cw-content {
+  min-width: 0;
+  width: 100%;
+  min-height: 0;
+}
+
+.rukh-cw-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 4px 18px;
+  color: #20291F;
+}
+
+.rukh-cw-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 12px;
+  background: #245A43;
+  color: #FFFFFF;
+  font-family: Georgia, serif;
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.rukh-cw-brand strong,
+.rukh-cw-brand small {
+  display: block;
+}
+
+.rukh-cw-brand strong {
+  font-size: 16px;
+  letter-spacing: -.02em;
+}
+
+.rukh-cw-brand small {
+  margin-top: 2px;
+  color: #687064;
+  font-size: 11px;
+}
+
+.rukh-cw-primary-nav,
+.rukh-cw-secondary-nav {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 18px;
+}
+
+.rukh-cw-primary-nav .rukh-cw-nav-item,
+.rukh-cw-primary-nav a,
+.rukh-cw-secondary-nav .rukh-cw-nav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  justify-content: flex-start;
+  gap: 10px;
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 11px;
+  text-align: left;
+  text-decoration: none;
+  color: #303A30;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+
+.rukh-cw-primary-nav .rukh-cw-nav-item.is-active,
+.rukh-cw-primary-nav .rukh-cw-nav-item[aria-current="page"] {
+  background: #E6EDE3;
+  color: #245A43;
+  font-weight: 650;
+}
+
+.rukh-cw-primary-nav .rukh-cw-nav-item:disabled {
+  cursor: not-allowed;
+  opacity: .56;
+}
+
+.rukh-cw-primary-nav .rukh-cw-nav-item small {
+  margin-left: auto;
+  color: #687064;
+  font-size: 10px;
+}
+
+.rukh-cw-nav-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rukh-cw-nav-group {
+  margin-top: 12px;
+}
+
+.rukh-cw-nav-label {
+  display: block;
+  padding: 0 10px 6px;
+  color: #7B8277;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.rukh-cw-sidebar {
+  background: #F1F2ED;
+  border-right: 1px solid #DFE3DA;
+}
+
+.rukh-conversation-workspace {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  height: calc(100dvh - 54px);
+  min-height: 560px;
+  max-width: none;
+  margin: 0;
+  background: #FAFAF7;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.rukh-cw-chat:has(> .cw-banner) .rukh-conversation-workspace {
+  height: calc(100dvh - 96px);
+}
+
+.rukh-conversation-workspace.rukh-context-open {
+  grid-template-columns: 248px minmax(0, 1fr) 300px;
+}
+
+.rukh-conversation-list {
+  width: auto;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  overflow-y: auto;
+  border: 0;
+  border-right: 1px solid #DFE3DA;
+  border-radius: 0;
+  background: #F1F2ED;
+  box-shadow: none;
+  padding: 18px 14px;
+}
+
+.rukh-conversation-thread {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #FFFFFF;
+  box-shadow: none;
+  padding: 22px clamp(18px, 3.5vw, 52px) 18px;
+}
+
+.rukh-thread-header {
+  flex: 0 0 auto;
+  align-items: center;
+  border-bottom: 1px solid #E9ECE6;
+  padding: 0 0 16px;
+}
+
+.rukh-thread-title h2 {
+  color: #20291F;
+  font-size: clamp(20px, 2vw, 26px);
+  letter-spacing: -.035em;
+}
+
+.rukh-thread-title .cw-eyebrow {
+  color: #687064;
+}
+
+.rukh-thread-tools {
+  align-items: center;
+  gap: 8px;
+}
+
+.rukh-context-toggle {
+  min-height: 38px;
+  border: 1px solid #DFE3DA;
+  border-radius: 999px;
+  background: #FFFFFF;
+  padding: 8px 12px;
+  color: #334133;
+  font-size: 12px;
+}
+
+.rukh-message-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 0 22px;
+}
+
+.rukh-thread-empty {
+  flex: 1 1 auto;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 10px;
+}
+
+.rukh-thread-empty h3 {
+  color: #20291F;
+  font-size: clamp(24px, 3vw, 34px);
+  letter-spacing: -.04em;
+}
+
+.rukh-thread-empty p {
+  max-width: 560px;
+  color: #687064;
+  line-height: 1.65;
+}
+
+.rukh-prompt-starters {
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rukh-prompt-starters button {
+  min-height: 40px;
+  border: 1px solid #DFE3DA;
+  border-radius: 999px;
+  background: #F4F6F1;
+  color: #334133;
+  padding: 8px 13px;
+}
+
+.rukh-message-composer {
+  position: sticky;
+  z-index: 3;
+  bottom: 0;
+  flex: 0 0 auto;
+  width: min(100%, 920px);
+  align-self: center;
+  margin-top: auto;
+  border: 1px solid #DFE3DA;
+  border-radius: 21px;
+  background: #FFFFFF;
+  padding: 14px 16px 12px;
+  box-shadow: 0 12px 32px rgba(32, 41, 31, .08);
+}
+
+.rukh-message-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 58px;
+  max-height: 220px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #20291F;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.rukh-message-composer textarea:focus-visible {
+  outline: 0;
+}
+
+.rukh-message-composer:focus-within {
+  border-color: #8CA998;
+  box-shadow: 0 0 0 3px rgba(36, 90, 67, .12), 0 12px 32px rgba(32, 41, 31, .08);
+}
+
+.rukh-composer-controls {
+  align-items: center;
+  gap: 10px;
+}
+
+.rukh-composer-controls button[type="submit"] {
+  min-height: 42px;
+  border-radius: 12px;
+  background: #245A43;
+  color: #FFFFFF;
+  padding: 9px 16px;
+}
+
+.rukh-composer-hint {
+  width: min(100%, 920px);
+  align-self: center;
+  margin: 8px auto 0;
+  color: #7A8177;
+  font-size: 11px;
+}
+
+.rukh-context-panel {
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  border: 0;
+  border-left: 1px solid #DFE3DA;
+  border-radius: 0;
+  background: #F4F6F1;
+  box-shadow: none;
+  padding: 18px 16px;
+}
+
+.rukh-context-panel[hidden] {
+  display: none !important;
+}
+
+.rukh-mobile-workspace-tools {
+  display: none;
+}
+
+.rukh-mobile-nav-trigger {
+  display: none;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #DFE3DA;
+  border-radius: 12px;
+  background: #FFFFFF;
+  color: #245A43;
+}
+
+.rukh-mobile-nav-trigger svg {
+  width: 20px;
+  height: 20px;
+}
+
+.rukh-cw-navigation-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .rukh-cw-workspace:not(.rukh-cw-chat) {
+    padding: 12px 14px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .rukh-cw-chat > .cw-header {
+    min-height: 50px;
+    padding: 4px 12px;
+  }
+
+  .rukh-conversation-workspace,
+  .rukh-conversation-workspace.rukh-context-open {
+    display: block;
+    width: 100%;
+    height: calc(100dvh - 50px - env(safe-area-inset-bottom));
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .rukh-cw-chat:has(> .cw-banner) .rukh-conversation-workspace {
+    height: calc(100dvh - 92px - env(safe-area-inset-bottom));
+  }
+
+  .rukh-mobile-workspace-tools {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    gap: 8px;
+    min-height: 58px;
+    padding: 7px 12px;
+    border-bottom: 1px solid #DFE3DA;
+    background: #FAFAF7;
+  }
+
+  .rukh-mobile-workspace-tools button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 44px;
+    flex: 1 1 0;
+    border: 1px solid #DFE3DA;
+    border-radius: 12px;
+    background: #FFFFFF;
+    color: #334133;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .rukh-mobile-workspace-tools svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .rukh-conversation-list {
+    position: fixed;
+    z-index: 80;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(320px, 88vw);
+    height: 100dvh;
+    max-height: none;
+    overflow-y: auto;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform .2s ease, visibility .2s ease;
+    border: 0;
+    border-right: 1px solid #DFE3DA;
+    border-radius: 0 18px 18px 0;
+    box-shadow: 0 24px 60px rgba(20, 30, 22, .18);
+  }
+
+  .rukh-conversation-list.rukh-mobile-panel-open {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .rukh-conversation-thread {
+    width: 100%;
+    height: calc(100% - 58px);
+    min-height: 0;
+    padding: 14px 13px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .rukh-context-panel {
+    position: fixed;
+    z-index: 80;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(340px, 90vw);
+    height: 100dvh;
+    overflow-y: auto;
+    transform: translateX(105%);
+    visibility: hidden;
+    transition: transform .2s ease, visibility .2s ease;
+    border: 0;
+    border-left: 1px solid #DFE3DA;
+    border-radius: 18px 0 0 18px;
+    box-shadow: 0 24px 60px rgba(20, 30, 22, .18);
+  }
+
+  .rukh-context-panel.rukh-mobile-panel-open {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .rukh-context-panel[hidden] {
+    display: block !important;
+    transform: translateX(105%);
+    visibility: hidden;
+  }
+
+  .rukh-mobile-backdrop {
+    display: block;
+    position: fixed;
+    z-index: 70;
+    inset: 0;
+    border: 0;
+    background: rgba(20, 28, 21, .36);
+  }
+
+  .rukh-cw-sidebar {
+    position: fixed;
+    z-index: 80;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 88vw);
+    max-height: 100dvh;
+    overflow-y: auto;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform .2s ease, visibility .2s ease;
+    border: 0;
+    border-right: 1px solid #DFE3DA;
+    border-radius: 0 18px 18px 0;
+    box-shadow: 0 24px 60px rgba(20, 30, 22, .18);
+  }
+
+  .rukh-cw-sidebar.rukh-cw-sidebar-open {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .rukh-mobile-nav-trigger {
+    display: inline-flex;
+  }
+
+  .rukh-cw-navigation-backdrop {
+    display: block;
+    position: fixed;
+    z-index: 70;
+    inset: 0;
+    border: 0;
+    background: rgba(20, 28, 21, .36);
+  }
+
+  .rukh-context-toggle {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .rukh-conversation-thread {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .rukh-thread-header {
+    gap: 10px;
+    padding-bottom: 12px;
+  }
+
+  .rukh-thread-tools {
+    flex-wrap: wrap;
+  }
+
+  .rukh-context-toggle {
+    min-height: 42px;
+  }
+
+  .rukh-message-composer {
+    width: 100%;
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .rukh-message-composer textarea {
+    min-height: 56px;
+    font-size: 16px;
+  }
+
+  .rukh-composer-controls {
+    flex-wrap: wrap;
+  }
+
+  .rukh-composer-controls > span {
+    flex: 1 1 100%;
+    order: 3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rukh-conversation-list,
+  .rukh-context-panel,
+  .rukh-cw-sidebar {
+    transition: none !important;
+  }
+}
