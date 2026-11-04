@@ -10,7 +10,7 @@ export default function ConversationReply({ reply, pending, error, retry, disabl
   const complete = reply?.state === "completed";
   const generating = reply?.state === "generating";
   const hasPartialText = generating && Boolean(reply.text.trim());
-  return <section className="rukh-chat-answer" aria-label="Rukh AI reply" aria-busy={pending || generating}>
+  return <section className="rukh-chat-answer" aria-label="Rukh AI reply" aria-busy={(pending || generating) && !error}>
     <div className="rukh-answer-heading"><span className="rukh-chat-mark" aria-hidden="true">R</span><strong>Rukh AI</strong></div>
     {complete ? <>
       <div className="rukh-answer-text"><MarkdownMessage content={reply.text} /></div>
@@ -23,7 +23,7 @@ export default function ConversationReply({ reply, pending, error, retry, disabl
         <ReadAloudButton text={reply.text} disabled={disabled} />
       </div>
       <span className="rukh-copy-status" role="status">{copyStatus}</span>
-    </> : error ? <><p className="cw-error" role="alert">{error}</p><button type="button" className="cw-text-button" aria-label="Retry AI reply" disabled={disabled} onClick={retry}>Check reply again</button></> :
+    </> : error ? <>{hasPartialText && <div className="rukh-answer-text"><MarkdownMessage content={reply.text} /></div>}<p className="cw-error" role="alert">{error}</p><button type="button" className="cw-text-button" aria-label="Retry AI reply" disabled={disabled} onClick={retry}>Check reply again</button></> :
       hasPartialText ? <>
         <div className="rukh-answer-text"><MarkdownMessage content={reply.text} /></div>
         {reply.context_truncated && <p className="rukh-muted">This answer is using the most recent messages that fit in the conversation context.</p>}

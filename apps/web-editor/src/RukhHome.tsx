@@ -27,7 +27,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
           <span className="rukh-home-brand-copy"><strong>Rukh AI</strong><small>Workspace</small></span>
         </a>
         <nav className="rukh-home-nav" aria-label="Workspace navigation">
-          <a href="/coworker">AI Coworker{!coworkerEnabled && <small> Draft workspace</small>}</a>
+          <a href="/coworker">AI Coworker</a>
           <a href="/editor">Web Editor</a>
         </nav>
         <ThemeToggle />
@@ -50,7 +50,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
           <article className="rukh-home-product rukh-home-product--coworkers">
             <div className="rukh-home-product-top">
               <span className="rukh-home-product-icon"><CoworkerIcon /></span>
-              <span className={coworkerEnabled ? "rukh-home-product-status rukh-home-product-status--active" : "rukh-home-product-status"}>{coworkerEnabled ? "Available" : "Staged release"}</span>
+              <span className={coworkerEnabled ? "rukh-home-product-status rukh-home-product-status--active" : "rukh-home-product-status"}>{coworkerEnabled ? "Available" : "Account required"}</span>
             </div>
             <div className="rukh-home-product-copy">
               <h2>AI Coworker</h2>
@@ -77,8 +77,8 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
               </ol>
             </div>
             <div className="rukh-home-product-footer">
-              <p>{coworkerEnabled ? "Your brief stays connected to the work." : "AI replies are unavailable. Prepare a draft in the workspace."}</p>
-              {coworkerEnabled ? <a className="rukh-home-action" href="/coworker">Open AI Coworker <ArrowIcon /></a> : <a className="rukh-home-action" href="/coworker">Open draft workspace <ArrowIcon /></a>}
+              <p>Sign in to access your conversations and available workspace services.</p>
+              <a className="rukh-home-action" href="/coworker">Open AI Coworker <ArrowIcon /></a>
             </div>
           </article>
 

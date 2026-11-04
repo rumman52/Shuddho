@@ -184,6 +184,9 @@ class Settings:
     task_token_budget: int = 100000
     max_model_attempts: int = 2
     task_timeout_seconds: int = 1200
+    chat_provider: str = "deepseek"
+    gemma_model: str = "gemma-4-26b-a4b-it"
+    gemma_api_key: str = field(default="", repr=False)
     deepseek_model: str = "deepseek-flash"
     deepseek_api_key: str = field(default="", repr=False)
     model_timeout_seconds: int = 90
@@ -362,6 +365,9 @@ class Settings:
             max_agent_parallel_steps=int(os.getenv("SHUDDHO_AGENT_MAX_PARALLEL_STEPS", "2")),
             search_provider=os.getenv("SHUDDHO_SEARCH_PROVIDER", "tavily"),
             search_api_key=os.getenv("TAVILY_API_KEY", ""),
+            chat_provider=os.getenv("SHUDDHO_LLM_PROVIDER", "deepseek").strip().lower(),
+            gemma_model=os.getenv("GEMMA_MODEL", "gemma-4-26b-a4b-it"),
+            gemma_api_key=os.getenv("GOOGLE_API_KEY", ""),
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
             max_daily_tasks=int(os.getenv("SHUDDHO_COWORKER_DAILY_TASKS", "20")),
@@ -378,6 +384,22 @@ class Settings:
         )
         value.validate()
         return value
+
+    @property
+    def chat_provider_configured(self) -> bool:
+        from services.api.shuddho_api.llm_provider import resolve_llm_config
+        if self.chat_provider not in {"deepseek", "gemma"}:
+            return False
+        model = self.gemma_model if self.chat_provider == "gemma" else self.deepseek_model
+        if not model.strip():
+            return False
+        return resolve_llm_config({
+            "SHUDDHO_LLM_PROVIDER": self.chat_provider,
+            "GEMMA_MODEL": self.gemma_model,
+            "GOOGLE_API_KEY": self.gemma_api_key,
+            "DEEPSEEK_MODEL": self.deepseek_model,
+            "DEEPSEEK_API_KEY": self.deepseek_api_key,
+        }).configured
 
     def validate(self) -> None:
         if not 1 <= self.max_conversations <= 1000 or not 1 <= self.max_conversation_messages <= 2000:

@@ -159,13 +159,21 @@ class DeepSeekReplyModel:
 class ConversationReplyService:
     def __init__(self, conversations, settings, model=None):
         self.conversations, self.settings = conversations, settings
-        self.model = model or DeepSeekReplyModel(settings)
+        if model is not None:
+            self.model = model
+        elif settings.chat_provider == "gemma":
+            from .conversation_gemma import GemmaReplyModel
+            self.model = GemmaReplyModel(settings)
+        elif settings.chat_provider == "deepseek":
+            self.model = DeepSeekReplyModel(settings)
+        else:
+            self.model = None  # Unsupported configuration is refused at admission.
         self.sessions = conversations.sessions
         self._stream_tasks = set()
 
     def claim(self, owner, conversation_id, message_id, expected_sequence):
         self.conversations.enabled()
-        if not self.settings.conversation_replies_enabled or not self.settings.deepseek_api_key:
+        if not self.settings.conversation_replies_enabled or not self.settings.chat_provider_configured:
             raise CoworkerError("conversation_replies_unavailable", "AI chat is not enabled for this workspace.", 409)
         with self.sessions.begin() as db:
             self.conversations._lock_account(db, owner)

@@ -19,8 +19,8 @@ test("Rukh opens Coworker by default only when enabled and keeps the workspace d
   assert.equal(getWorkspaceAppRoute("/?from=bookmark", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/unknown", true), "home");
   assert.equal(getWorkspaceAppRoute("/", false), "home");
-  assert.equal(getWorkspaceAppRoute("/coworker", false), "coworker-preview");
-  assert.equal(getWorkspaceAppRoute("/coworker?conversation=abc", false), "coworker-preview");
+  assert.equal(getWorkspaceAppRoute("/coworker", false), "coworker");
+  assert.equal(getWorkspaceAppRoute("/coworker?conversation=abc", false), "coworker");
   assert.equal(getWorkspaceAppRoute("/coworker", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/coworker/conversations/abc", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/workspaces", true), "home");
@@ -32,7 +32,7 @@ test("Rukh opens Coworker by default only when enabled and keeps the workspace d
 });
 
 
-test("provider OAuth callbacks return to Coworker only when Coworker is enabled", () => {
+test("provider OAuth callbacks reach the authenticated Coworker handler regardless of landing preference", () => {
   const callbacks = [
     "/oauth/google/callback",
     "/oauth/microsoft/callback",
@@ -42,6 +42,6 @@ test("provider OAuth callbacks return to Coworker only when Coworker is enabled"
     assert.equal(getStandaloneAppRoute(path), "coworker");
     assert.equal(getWorkspaceAppRoute(path, true), "coworker");
     assert.equal(getWorkspaceAppRoute(path + "?code=callback-code&state=callback-state", true), "coworker");
-    assert.equal(getWorkspaceAppRoute(path, false), "home");
+    assert.equal(getWorkspaceAppRoute(path, false), "coworker");
   }
 });

@@ -110,3 +110,17 @@ test("a streaming reply renders partial Markdown without completion-only actions
     restore();
   }
 });
+
+
+test("a disconnected reply keeps visible partial text and offers recovery without a busy spinner", async () => {
+  let tree: ReactTestRenderer | undefined;
+  try {
+    await act(async () => { tree = create(<ConversationReply
+      reply={{ state: "generating", text: "Partial **answer**", context_truncated: false }}
+      pending={false} error="Connection lost. Check the saved reply."
+      retry={() => undefined} disabled={false} />); });
+    assert.ok(tree!.root.findAllByType("strong").some(node => node.children.join("") === "answer"));
+    assert.equal(tree!.root.findByProps({ "aria-label": "Rukh AI reply" }).props["aria-busy"], false);
+    assert.equal(tree!.root.findByProps({ "aria-label": "Retry AI reply" }).props.disabled, false);
+  } finally { if (tree) await act(async () => { tree!.unmount(); }); }
+});
