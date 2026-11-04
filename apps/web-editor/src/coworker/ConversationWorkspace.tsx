@@ -133,8 +133,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(min-width: 1221px)");
-    const closeOnDesktop = () => { if (media.matches) setMobilePanel(null); };
+    const media = window.matchMedia("(min-width: 901px)");
+    const closeOnDesktop = () => { if (media.matches) { setMobilePanel(null); setContextOpen(false); } };
+    closeOnDesktop();
     if (typeof media.addEventListener === "function") {
       media.addEventListener("change", closeOnDesktop);
       return () => media.removeEventListener("change", closeOnDesktop);
