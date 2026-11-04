@@ -6,7 +6,7 @@ The Coworker chatbox can save a user message, request an authenticated AI text r
 
 - Composer visible on first entry; first message creates a titled conversation. New chat, title search, English/Bangla starters and IME-safe Enter/Shift+Enter remain available.
 - Chat with Rukh and Save only modes appear when the authenticated runtime manifest advertises AI replies. Otherwise users can save a brief and explicitly choose Start task.
-- User bubbles, Rukh answers, pending/error/interrupted states and Copy answer. Answers render as escaped plain text; model-generated HTML is never executed.
+- User bubbles, Rukh answers, pending/error/interrupted states and Copy answer. Replies use the safe Markdown renderer added in PR #617; raw HTML remains inert and unsafe link schemes/credential-bearing URLs are rejected.
 - Recent complete turns form reply context. If older turns do not fit, the reply discloses that limitation.
 - A failed connection offers Check reply again for the same stored message. Definitive failed/interrupted inference requires a new message; it never silently spends another model call.
 - Desktop history/context columns and tablet/phone drawers, keyboard focus return, light/dark mode, latest-answer scrolling, Bengali font fallback and visible composer. Reading older messages does not trigger automatic scrolling on unchanged polls.
@@ -30,7 +30,7 @@ Completed, failed and interrupted claims replay without inference. A generating 
 - The browser script is `apps/coworker/test/chat-browser.mjs`; it uses installed Playwright Chromium or `RUKH_BROWSER_EXECUTABLE`. An optional `RUKH_BROWSER_BENGALI_FONT` supplies the same Noto Serif Bengali webfont on offline test hosts. The ordinary Google Fonts import and device fallback remain the production font path.
 - Read-only agent review found the account-erasure blocker, verified the correction and independently ran all 21 reply tests. No remaining Critical/Important issue was reported. Provider-capacity wording was also corrected to describe manual chat retry.
 
-Live provider responses, production PostgreSQL races, real signed-in browser sessions, exact branch CI and deployed behavior remain unverified. This implements text chat; it does not establish token streaming, rich Markdown rendering, voice/image generation, file-aware chat or full Muse parity.
+Live provider responses, production PostgreSQL races, real signed-in browser sessions and deployed behavior remain unverified. This implements text chat with safe Markdown presentation; it does not establish token streaming, voice/audio, image capabilities, direct file-aware chat or full Muse parity.
 
 ## Repository integration status — 4 November 2026
 
