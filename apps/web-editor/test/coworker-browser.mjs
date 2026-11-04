@@ -31,7 +31,14 @@ await page.route("https://identity.example.test/auth/v1/**", async route => {
 });
 
 try {
+  // Coworker-first is the approved launch behavior when the release flag is enabled.
   await page.goto("http://127.0.0.1:5173/");
+  await page.getByRole("heading", { name: "Move complex work forward, with context." }).waitFor();
+  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
+  await page.screenshot({ path: join(folder, "screenshots/signin.png"), fullPage: true });
+
+  // The workspace directory remains separately reachable for product switching.
+  await page.goto("http://127.0.0.1:5173/workspaces");
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
   await page.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
@@ -43,7 +50,10 @@ try {
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
-  await page.screenshot({ path: join(folder, "screenshots/signin.png"), fullPage: true });
+
+  // Return to the canonical launch route before exercising authenticated work.
+  await page.goto("http://127.0.0.1:5173/");
+  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -68,7 +78,7 @@ try {
   await editorPage.screenshot({ path: join(folder, "screenshots/editor-mobile.png"), fullPage: true });
   await editorPage.setViewportSize({ width: 1365, height: 960 });
   const coworkerPagePromise = context.waitForEvent("page");
-  await editorPage.getByRole("link", { name: "Open Co-workers", exact: true }).click();
+  await editorPage.getByRole("link", { name: "AI Coworker", exact: true }).click();
   const coworkerPage = await coworkerPagePromise;
   coworkerPage.on("pageerror", error => failures.push(error.message));
   await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
