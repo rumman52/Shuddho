@@ -1,5 +1,8 @@
 # Rukh AI workspace home implementation plan
 
+> **Status:** Historical implementation plan for the workspace-directory surface now served at `/workspaces`. The root route is governed by the approved [Coworker-first default-entry plan](2026-11-03-rukh-coworker-default-entry.md); do not restore the chooser as the enabled Coworker root.
+
+
 > **For agentic workers:** Use the repository's existing React/Vite workspaces. Execute each task with a test-first loop and verify the exact branch head before reporting status.
 
 **Goal:** Replace the current default editor landing route with a polished Rukh AI workspace home that presents Co-workers and Web Editor, while preserving the Coworker release gate.
