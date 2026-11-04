@@ -426,7 +426,8 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }
 
   const filteredConversations = conversations.filter(item => item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
-  const composerDisabled = working || uploadingSource || Boolean(replyingId) || disabled || !listReady;
+  const hasGeneratingReply = messages.some(item => item.assistant_reply?.state === "generating");
+  const composerDisabled = working || uploadingSource || Boolean(replyingId) || hasGeneratingReply || disabled || !listReady;
   // Load the newest result eagerly; older histories may contain thousands of runs.
   const latestRunMessageId = [...messages].reverse().find(item => item.resource_links.some(link => link.resource_type === "agent_run"))?.id;
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
