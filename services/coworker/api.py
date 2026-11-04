@@ -1655,21 +1655,34 @@ async def stream_conversation_reply(
     identity: Identity,
     services: Services,
 ):
+    stream = services.conversation_replies.stream_reply(
+        identity.account_id,
+        str(conversation_id),
+        str(message_id),
+        payload.expected_sequence,
+    )
+    # Claim before returning streaming headers so authorization, budget and
+    # feature-gate errors retain their normal HTTP status codes.
+    first_event = await anext(stream)
+
     async def generate():
-        async for event in services.conversation_replies.stream_reply(
-            identity.account_id,
-            str(conversation_id),
-            str(message_id),
-            payload.expected_sequence,
-        ):
-            if await request.is_disconnected():
-                return
-            event_type = event["type"]
-            if event_type == "keepalive":
-                yield ": keepalive\n\n"
-                continue
-            data = {key: value for key, value in event.items() if key != "type"}
-            yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        event = first_event
+        try:
+            while True:
+                if await request.is_disconnected():
+                    return
+                event_type = event["type"]
+                if event_type == "keepalive":
+                    yield ": keepalive\n\n"
+                else:
+                    data = {key: value for key, value in event.items() if key != "type"}
+                    yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                try:
+                    event = await anext(stream)
+                except StopAsyncIteration:
+                    return
+        finally:
+            await stream.aclose()
 
     return StreamingResponse(
         generate(),
