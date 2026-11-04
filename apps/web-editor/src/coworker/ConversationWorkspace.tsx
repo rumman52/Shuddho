@@ -40,6 +40,8 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [editingMemory, setEditingMemory] = useState("");
   const [memoryDraft, setMemoryDraft] = useState("");
   const [chatAvailable, setChatAvailable] = useState(false);
+  const [chatStreamingAvailable, setChatStreamingAvailable] = useState(false);
+  const [streamingReplies, setStreamingReplies] = useState<Record<string, string>>({});
   const [chatMode, setChatMode] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [replyingId, setReplyingId] = useState("");
@@ -179,20 +181,24 @@ export default function ConversationWorkspace({ client, openAgent }: {
     client.runtimeManifest(controller.signal).then(result => {
       if (!controller.signal.aborted) {
         const enabled = result.capabilities.conversation_replies === true;
-        setChatAvailable(enabled); setChatMode(enabled);
+        setChatAvailable(enabled);
+        setChatStreamingAvailable(enabled && result.capabilities.conversation_replies_streaming === true);
+        setChatMode(enabled);
       }
-    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatMode(false); } });
+    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatStreamingAvailable(false); setChatMode(false); } });
     return () => controller.abort();
   }, [client]);
 
   useEffect(() => () => { replyController.current?.abort(); }, [client, selected]);
-  useEffect(() => { setEditingTitle(false); setRenameDraft(""); }, [selected]);
+  useEffect(() => { setEditingTitle(false); setRenameDraft(""); setStreamingReplies({}); }, [selected]);
 
+  const lastMessageId = messages[messages.length - 1]?.id ?? "";
   const lastReply = messages[messages.length - 1]?.assistant_reply;
+  const lastStreamingReply = streamingReplies[lastMessageId] ?? "";
   useEffect(() => {
     const list = messageListRef.current;
     if (list && followLatest.current) list.scrollTop = list.scrollHeight;
-  }, [messages.length, lastReply?.state, lastReply?.text, replyingId]);
+  }, [messages.length, lastReply?.state, lastReply?.text, lastStreamingReply, replyingId]);
 
   async function askForReply(item: ConversationMessageRecord) {
     followLatest.current = true;
@@ -200,15 +206,31 @@ export default function ConversationWorkspace({ client, openAgent }: {
     const controller = new AbortController();
     replyController.current?.abort(); replyController.current = controller;
     setReplyingId(item.id); setReplyErrors(current => ({ ...current, [item.id]: "" }));
+    let streamedText = "";
+    const clearStreamedText = () => setStreamingReplies(current => {
+      if (!(item.id in current)) return current;
+      const next = { ...current };
+      delete next[item.id];
+      return next;
+    });
     try {
-      const reply = await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+      const reply = chatStreamingAvailable && typeof client.streamReplyToConversationMessage === "function"
+        ? await client.streamReplyToConversationMessage(id, item.id, item.sequence, delta => {
+            if (controller.signal.aborted || selectedRef.current !== id) return;
+            streamedText += delta;
+            setStreamingReplies(current => ({ ...current, [item.id]: streamedText }));
+          }, controller.signal)
+        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
       if (!controller.signal.aborted && selectedRef.current === id) {
+        clearStreamedText();
         refreshOrder.current.invalidate();
         setMessages(current => current.map(message => message.id === item.id ? { ...message, assistant_reply: reply } : message));
       }
     } catch (cause) {
-      if (!controller.signal.aborted && selectedRef.current === id)
+      if (!controller.signal.aborted && selectedRef.current === id) {
+        clearStreamedText();
         setReplyErrors(current => ({ ...current, [item.id]: cause instanceof Error ? cause.message : "Could not load the AI reply." }));
+      }
     } finally {
       if (replyController.current === controller) setReplyingId("");
     }
@@ -620,6 +642,12 @@ export default function ConversationWorkspace({ client, openAgent }: {
               const linked = item.resource_links.find(link => link.resource_type === "agent_run");
               const activeRun = run && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state);
               const canDispatch = !linked && item.sequence === selectedConversation?.message_sequence;
+              const streamedText = streamingReplies[item.id];
+              const replyForView = streamedText === undefined ? item.assistant_reply : {
+                ...(item.assistant_reply ?? { state: "generating" as const, text: "" }),
+                state: "generating" as const,
+                text: streamedText,
+              };
               return <li className="rukh-message rukh-chat-turn" key={item.id}>
                 <div className="rukh-user-message">
                 <span className="rukh-message-author">You</span>
@@ -637,7 +665,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
                   {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start task</button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
-                {(item.assistant_reply || replyingId === item.id || replyErrors[item.id]) && <ConversationReply reply={item.assistant_reply}
+                {(replyForView || replyingId === item.id || replyErrors[item.id]) && <ConversationReply reply={replyForView}
                   pending={replyingId === item.id} error={replyErrors[item.id]} disabled={composerDisabled} retry={() => { void askForReply(item); }} />}
                 {linked && <ConversationRunStatus client={client} runId={linked.resource_id} eager={item.id === latestRunMessageId} />}
               </li>;
