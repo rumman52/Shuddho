@@ -9,6 +9,8 @@
 }
 html, body, #root { min-width: 320px; min-height: 100%; }
 body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: var(--rukh-font-ui, system-ui, sans-serif); }
+:where(.rukh-coworker-app) *, :where(.rukh-coworker-app) *::before, :where(.rukh-coworker-app) *::after { box-sizing: border-box; }
+:where(.rukh-coworker-app) button { font-family: inherit; border: 0; }
 .rukh-coworker-app { min-height: 100vh; background: var(--cw-bg); color: var(--cw-text); }
 .rukh-productbar { height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 clamp(16px, 3vw, 36px); background: var(--cw-surface); border-bottom: 1px solid var(--cw-border); }
 .rukh-product-brand { display: inline-flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; }
@@ -471,7 +473,7 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
 [data-rukh-theme="dark"] .rukh-message-composer button { background: var(--rukh-accent); color: var(--rukh-bg); }
 [data-rukh-theme="dark"] .cw-notice { background: var(--rukh-accent-soft); color: var(--rukh-accent); }
 
-@media (max-width: 720px) {
+@media (max-width: 1220px) {
   .rukh-cw-shell { grid-template-columns: minmax(0, 1fr); gap: 11px; }
   .rukh-cw-sidebar {
     position: sticky; top: 60px; z-index: 20; display: flex; flex-direction: row; flex-wrap: nowrap;
@@ -524,4 +526,69 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
 }
 @media (prefers-reduced-motion: reduce) {
   .rukh-conversation-list, .rukh-context-panel, .rukh-mobile-backdrop { transition: none !important; }
+}
+
+/* Chat canvas: distinguish the user's brief from Rukh's answer. */
+.rukh-message.rukh-chat-turn { max-width: 100%; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.rukh-user-message { width: fit-content; max-width: 88%; margin-inline-start: auto; padding: 14px 18px; border-radius: 18px 18px 5px 18px; background: var(--rukh-surface-soft); }
+.rukh-user-message p { font-size: 14px; line-height: 1.75; }
+.rukh-chat-turn > .rukh-message-actions { justify-content: flex-end; }
+.rukh-chat-answer { margin-top: 20px; padding: 6px 4px 20px; }
+.rukh-answer-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; font-size: 13px; }
+.rukh-answer-heading .rukh-chat-mark { width: 30px; height: 30px; font-size: 14px; border-radius: 10px; }
+.rukh-chat-answer .rukh-answer-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.85; }
+.rukh-chat-answer button { min-height: 44px; }
+.rukh-copy-status { font-size: 11px; color: var(--rukh-muted); margin-inline-start: 10px; }
+.rukh-chat-mode { display: inline-flex; align-self: flex-start; gap: 4px; margin: 12px 0 8px; padding: 3px; border: 1px solid var(--rukh-border); border-radius: 12px; background: var(--rukh-surface-soft); }
+.rukh-chat-mode button { min-height: 38px; padding: 8px 14px; border-radius: 9px; color: var(--rukh-muted); background: transparent; font-size: 12px; cursor: pointer; }
+.rukh-chat-mode button[aria-pressed="true"] { color: var(--rukh-text); background: var(--rukh-surface); box-shadow: var(--rukh-shadow-sm); }
+.rukh-reply-pending { color: var(--rukh-muted); }
+.rukh-reply-pending span { letter-spacing: 3px; color: var(--rukh-accent); }
+[data-rukh-theme="dark"] .rukh-message.rukh-chat-turn { background: transparent; }
+
+/* Give the conversation its own scroll area so the composer stays reachable. */
+.rukh-coworker-app:has(.rukh-cw-chat) { display: flex; flex-direction: column; height: 100dvh; min-height: 580px; }
+.rukh-coworker-app:has(.rukh-cw-chat) > .rukh-productbar { flex: 0 0 62px; position: static; }
+.rukh-cw-chat { display: flex; flex: 1 1 0; min-height: 0; flex-direction: column; padding-block: 16px; }
+.rukh-cw-chat > .cw-header { flex: 0 0 auto; margin-bottom: 16px; gap: 8px; }
+.rukh-cw-chat > .cw-header h1 { font-size: 22px; margin: 5px 0 0; }
+.rukh-cw-chat > .cw-header p { display: none; }
+.rukh-cw-chat .rukh-cw-shell { flex: 1 1 0; min-height: 0; align-items: stretch; }
+.rukh-cw-chat .rukh-cw-content { min-height: 0; height: 100%; }
+.rukh-cw-chat .rukh-cw-sidebar { position: static; min-height: 0; max-height: 100%; overflow: auto; }
+.rukh-cw-chat .rukh-conversation-workspace { height: 100%; min-height: 0; }
+.rukh-cw-chat .rukh-conversation-list { max-height: 100%; }
+.rukh-cw-chat .rukh-context-panel { position: static; min-height: 0; max-height: 100%; overflow: auto; }
+.rukh-cw-chat .rukh-conversation-thread { height: 100%; min-height: 0; overflow: hidden; }
+.rukh-cw-chat .rukh-thread-header { flex: 0 0 auto; }
+.rukh-cw-chat .rukh-thread-empty { flex: 1 1 0; min-height: 0; overflow: auto; padding: 16px; }
+.rukh-cw-chat .rukh-message-list { flex: 1 1 0; min-height: 0; overflow: auto; }
+.rukh-cw-chat .rukh-message-composer, .rukh-cw-chat .rukh-chat-mode, .rukh-cw-chat .rukh-composer-hint { flex: 0 0 auto; }
+.rukh-cw-chat .rukh-message-composer textarea { min-height: 64px; max-height: 18dvh; }
+@media (max-width: 1220px) {
+  .rukh-cw-chat .rukh-cw-shell { grid-template-rows: auto minmax(0, 1fr); }
+  .rukh-cw-chat .rukh-conversation-workspace { grid-template-rows: auto minmax(0, 1fr); }
+  .rukh-cw-chat .rukh-conversation-list.rukh-mobile-panel-open,
+  .rukh-cw-chat .rukh-context-panel.rukh-mobile-panel-open { position: fixed; max-height: none; }
+}
+@media (max-width: 720px) {
+  .rukh-coworker-app:has(.rukh-cw-chat) > .rukh-productbar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; }
+  .rukh-coworker-app:has(.rukh-cw-chat) .rukh-product-switcher { width: auto; flex-wrap: nowrap; justify-content: flex-end; }
+  .rukh-coworker-app:has(.rukh-cw-chat) .rukh-product-switch--home { display: none; }
+  .rukh-coworker-app:has(.rukh-cw-chat) .rukh-product-brand { gap: 7px; }
+  .rukh-cw-chat { padding-block: 10px; }
+  .rukh-cw-chat > .cw-header { margin-bottom: 10px; }
+  .rukh-cw-chat > .cw-header { flex-direction: row; align-items: center; }
+  .rukh-cw-chat > .cw-header .cw-eyebrow,
+  .rukh-cw-chat > .cw-header .cw-account > span { display: none; }
+  .rukh-cw-chat > .cw-header h1 { font-size: 19px; }
+  .rukh-cw-chat .rukh-thread-header { padding-bottom: 10px; }
+  .rukh-cw-chat .rukh-thread-header h2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .rukh-cw-chat .rukh-thread-empty { padding: 10px; }
+  .rukh-cw-chat .rukh-thread-empty h3 { font-size: 17px; margin-block: 8px; }
+  .rukh-cw-chat .rukh-thread-empty p { margin-block: 6px; }
+  .rukh-cw-chat .rukh-message-composer textarea { font-size: 16px; }
+  .rukh-chat-mode button { min-height: 44px; }
+  .rukh-user-message { max-width: 94%; padding: 12px 14px; }
+  .rukh-chat-answer .rukh-answer-text { font-size: 14px; }
 }

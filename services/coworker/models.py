@@ -61,6 +61,7 @@ class ConversationMessage(Base):
     text: Mapped[str] = mapped_column(Text)
     selected_sources: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     resource_links: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    assistant_reply: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
         ForeignKeyConstraint(["conversation_id", "owner_id"], ["cw_conversations.id", "cw_conversations.owner_id"]),

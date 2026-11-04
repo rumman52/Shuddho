@@ -262,8 +262,9 @@ jobs:
           path: /tmp/cw10-code-proposals.xml
       - name: Verify durable conversation ownership and PostgreSQL races
         run: |
-          uv run --extra coworker pytest tests/test_conversations.py tests/test_conversation_context.py tests/test_conversation_dispatch.py tests/test_coworker_postgres.py tests/test_coworker.py::test_simple_question_does_not_create_agent_run -q -rs --junitxml=/tmp/conversations.xml
+          uv run --extra coworker pytest tests/test_conversations.py tests/test_conversation_replies.py tests/test_conversation_context.py tests/test_conversation_dispatch.py tests/test_coworker_postgres.py tests/test_coworker.py::test_simple_question_does_not_create_agent_run -q -rs --junitxml=/tmp/conversations.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_conversations
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_conversation_replies
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_conversation_context
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_conversation_dispatch
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/conversations.xml --required-module tests.test_coworker_postgres

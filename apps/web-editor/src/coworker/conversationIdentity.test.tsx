@@ -88,7 +88,8 @@ test("conversation link opens the exact owned run beyond the thirty-run history"
     await act(async () => { button(tree.root, "View Agent run").props.onClick(); });
     const details = tree.root.findByProps({ "aria-label": "Agent run details" });
     assert.equal(details.findByType("h2").children.join(""), "Exact older conversation result");
-    assert.deepEqual(data.requests.runs, ["linked-old-run"]);
+    // One read renders inline progress; the second opens exact full details.
+    assert.deepEqual(data.requests.runs, ["linked-old-run", "linked-old-run"]);
   });
 });
 
@@ -128,7 +129,8 @@ test("a rejected linked run never falls back to unrelated recent work", async ()
     await act(async () => { button(tree.root, "View Agent run").props.onClick(); });
     assert.equal(tree.root.findAllByProps({ "aria-label": "Agent run details" }).length, 0);
     assert.ok(tree.root.findAllByProps({ role: "alert" }).some(item => item.children.includes("Linked run unavailable")));
-    assert.deepEqual(data.requests.runs, ["linked-old-run"]);
+    // One read renders inline progress; the second opens exact full details.
+    assert.deepEqual(data.requests.runs, ["linked-old-run", "linked-old-run"]);
   }, data => {
     data.client.agentRun = async (id: string) => {
       data.requests.runs.push(id);

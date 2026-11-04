@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -46,7 +47,10 @@ class ConversationRepository:
 
     @staticmethod
     def message_dto(row):
-        return {"id": row.id, "conversation_id": row.conversation_id, "sequence": row.sequence, "text": row.text, "selected_sources": row.selected_sources, "resource_links": row.resource_links, "created_at": iso(row.created_at)}
+        reply = row.assistant_reply
+        if reply and reply.get("state") == "generating" and utcnow() > datetime.fromisoformat(reply["started_at"]) + timedelta(seconds=120):
+            reply = {**reply, "state": "interrupted", "error": "The reply was interrupted. Send a new message to try again."}
+        return {"id": row.id, "conversation_id": row.conversation_id, "sequence": row.sequence, "text": row.text, "selected_sources": row.selected_sources, "resource_links": row.resource_links, "assistant_reply": reply, "created_at": iso(row.created_at)}
 
     @staticmethod
     def _audit(db, owner, resource_id, action):
@@ -148,5 +152,6 @@ class ConversationRepository:
             row.deleted, row.title, row.updated_at = True, "", utcnow()
             for message in messages:
                 message.text, message.selected_sources, message.resource_links = "", [], []
+                message.assistant_reply = None
             self._audit(db, owner, row.id, "conversation.deleted")
         return {"id": conversation_id, "deleted": True}

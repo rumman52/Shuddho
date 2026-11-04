@@ -262,3 +262,36 @@
 .cw-history .cw-digest-members { display: block; padding: .75rem 0; }
 .cw-history .cw-digest-members li { display: block; padding: .75rem 0; overflow-wrap: anywhere; }
 .cw-notification-digest > button { margin-top: .75rem; }
+
+/* Conversation entry: one primary canvas, reusable by both Coworker shells. */
+.rukh-thread-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.rukh-thread-tools button { min-height: 44px; }
+.rukh-conversation-search { box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--rukh-border); border-radius: 10px; background: var(--rukh-surface-raised); color: var(--rukh-text); font: inherit; font-size: 12px; }
+.rukh-chat-mark { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; background: var(--rukh-accent-soft); color: var(--rukh-accent); font-size: 20px; font-weight: 700; }
+.rukh-prompt-starters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: min(100%, 460px); margin-top: 16px; }
+.rukh-prompt-starters button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 48px; padding: 12px 14px; border: 1px solid var(--rukh-border); border-radius: 12px; color: var(--rukh-text); background: var(--rukh-surface); text-align: start; font-size: 12px; cursor: pointer; }
+.rukh-prompt-starters button:hover { border-color: var(--rukh-accent); background: var(--rukh-accent-soft); }
+.rukh-prompt-starters button span { color: var(--rukh-accent); }
+.rukh-message-author { display: block; margin-bottom: 8px; color: var(--rukh-muted); font-size: 11px; font-weight: 650; }
+.rukh-composer-hint { margin: 8px 0 0; color: var(--rukh-muted); font-size: 10px; text-align: center; }
+.rukh-inline-run { margin-top: 16px; padding: 16px 0 0; border-top: 1px solid var(--rukh-border); color: var(--rukh-text); }
+.rukh-inline-run-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+.rukh-inline-run-heading .rukh-chat-mark { width: 26px; height: 26px; border-radius: 8px; font-size: 13px; }
+.rukh-inline-run-heading .cw-status { margin-left: auto; }
+.rukh-inline-run .rukh-run-message { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; }
+.rukh-inline-run details { margin-top: 12px; font-size: 12px; }
+.rukh-inline-run summary { min-height: 32px; padding: 6px 0; cursor: pointer; color: var(--rukh-muted); }
+.rukh-inline-run li { margin: 6px 0; overflow-wrap: anywhere; }
+.rukh-inline-run small { display: block; margin-top: 4px; color: var(--rukh-muted); }
+.rukh-inline-run article { margin-top: 12px; }
+.rukh-inline-run pre { max-width: 100%; max-height: 260px; overflow: auto; padding: 12px; border: 1px solid var(--rukh-border); border-radius: 8px; background: var(--rukh-surface); color: var(--rukh-text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.rukh-message-actions button { min-height: 44px; }
+.rukh-message-composer textarea { box-sizing: border-box; }
+@media (max-width: 720px) {
+  .rukh-thread-empty { padding: 24px 4px; min-height: 200px; }
+  .rukh-thread-tools { gap: 4px; }
+  .rukh-thread-tools button { font-size: 11px; }
+  .rukh-prompt-starters { gap: 6px; }
+  .rukh-prompt-starters button { padding: 10px; font-size: 11px; }
+  .rukh-inline-run { padding-top: 12px; }
+}

@@ -16,7 +16,7 @@ PROVIDER_ADMISSION_LOCK = 674231989144703
 
 
 def lease_key(kind: str, resource_id: str, sequence: int) -> str:
-    if kind not in {"draft", "planner"}:
+    if kind not in {"draft", "planner", "chat"}:
         raise ValueError("Unsupported provider lease kind.")
     if not resource_id or sequence < 1:
         raise ValueError("Provider lease resource and sequence are required.")

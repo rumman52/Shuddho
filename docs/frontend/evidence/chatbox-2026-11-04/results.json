@@ -1,0 +1,35 @@
+{
+  "fixture": "synthetic API; real workspace UI",
+  "results": [
+    {
+      "viewport": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "passed": true
+    },
+    {
+      "viewport": "laptop",
+      "width": 1366,
+      "height": 768,
+      "passed": true
+    },
+    {
+      "viewport": "tablet",
+      "width": 1024,
+      "height": 768,
+      "passed": true
+    },
+    {
+      "viewport": "mobile",
+      "width": 390,
+      "height": 844,
+      "passed": true
+    },
+    {
+      "viewport": "small-mobile",
+      "width": 375,
+      "height": 812,
+      "passed": true
+    }
+  ]
+}

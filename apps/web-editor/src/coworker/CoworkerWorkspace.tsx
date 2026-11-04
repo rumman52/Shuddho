@@ -221,7 +221,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     notesInput.current?.focus(); notesInput.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
-  return <main className="cw-workspace rukh-cw-workspace">
+  return <main className={`cw-workspace rukh-cw-workspace${view === "conversations" ? " rukh-cw-chat" : ""}`}>
     <header className="cw-header"><div><span className="cw-eyebrow">RUKH AI / COWORKER</span><h1>What are we working on?</h1><p>A persistent workspace for conversations, focused work and connected tools.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
         setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
