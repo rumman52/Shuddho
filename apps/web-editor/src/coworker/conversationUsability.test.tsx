@@ -296,6 +296,42 @@ test("chat mode saves once and shows the real assistant reply without starting A
   }, data);
 });
 
+test("chat mode applies incremental streamed reply updates without dispatching Agent work", async () => {
+  const data = fixture([record]);
+  const updates: string[] = [];
+  const message = {
+    id: "saved-message", conversation_id: record.id, sequence: 1, text: "Explain recursion",
+    selected_sources: [], resource_links: [], created_at: timestamp,
+  };
+  data.client.conversationHistory = async () => ({ items: [message] });
+  data.client.appendConversationMessage = async (id, text, key) => {
+    data.calls.messages.push({ id, text, key });
+    return message;
+  };
+  Object.assign(data.client, {
+    runtimeManifest: async () => ({ capabilities: { conversation_replies: true } }),
+    replyToConversationMessageStream: async (
+      _id: string, _messageId: string, _sequence: number,
+      onUpdate: (reply: { state: "generating" | "completed"; text: string }) => void,
+    ) => {
+      onUpdate({ state: "generating", text: "Partial " });
+      updates.push("Partial ");
+      onUpdate({ state: "generating", text: "Partial answer" });
+      updates.push("Partial answer");
+      const completed = { state: "completed" as const, text: "Partial answer", context_truncated: false };
+      onUpdate(completed);
+      return completed;
+    },
+  });
+  await mount(async (tree, { calls }) => {
+    await send(tree, "Explain recursion");
+    assert.deepEqual(updates, ["Partial ", "Partial answer"]);
+    assert.equal(calls.messages.length, 1);
+    assert.equal(calls.dispatches, 0);
+    assert.match(JSON.stringify(tree.toJSON()), /Partial answer/);
+  }, data);
+});
+
 test("failed reply transport preserves the saved message and retries the reply only", async () => {
   const data = fixture(); let requests = 0;
   const message = { id: "saved-message", conversation_id: record.id, sequence: 1, text: "Explain recursion", selected_sources: [], resource_links: [], created_at: timestamp };
