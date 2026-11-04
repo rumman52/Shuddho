@@ -19,9 +19,12 @@ test("root opens Coworker only when enabled and all fallback routes remain fail-
   assert.equal(getWorkspaceAppRoute("/?from=bookmark", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/#conversation", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/unknown", true), "home");
+  assert.equal(getWorkspaceAppRoute("/"), "home");
+  assert.equal(getWorkspaceAppRoute("/coworker"), "home");
   assert.equal(getWorkspaceAppRoute("/", false), "home");
   assert.equal(getWorkspaceAppRoute("/?from=bookmark", false), "home");
   assert.equal(getWorkspaceAppRoute("/coworker", false), "home");
+  assert.equal(getWorkspaceAppRoute("/coworker/", false), "home");
   assert.equal(getWorkspaceAppRoute("/coworker?conversation=abc", false), "home");
   assert.equal(getWorkspaceAppRoute("/coworker", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/coworker/conversations/abc", true), "coworker");
