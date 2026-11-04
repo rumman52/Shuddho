@@ -532,6 +532,12 @@ export class CoworkerClient {
       body: JSON.stringify({ title }),
     });
   }
+  renameConversation(id: string, title: string, expectedUpdatedAt: string) {
+    return this.json<ConversationRecord>(`/api/v1/conversations/${identifier(id)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, expected_updated_at: expectedUpdatedAt }),
+    });
+  }
   conversationMessages(id: string, signal?: AbortSignal) {
     return this.json<{ items: ConversationMessageRecord[]; next_cursor: number }>(
       `/api/v1/conversations/${identifier(id)}/messages`, { signal });
