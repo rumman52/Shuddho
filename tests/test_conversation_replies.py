@@ -400,9 +400,9 @@ def test_deepseek_stream_rejects_non_200_and_oversized_output(container):
 
     frames = (
         'data: {"choices":[{"delta":{"content":"' + ("x" * 16001) +
-        '"},"finish_reason":null}]}\\n\\n'
-        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\\n\\n'
-        'data: [DONE]\\n\\n'
+        '"},"finish_reason":null}]}\n\n'
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        'data: [DONE]\n\n'
     )
     oversized = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
         httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "text/event-stream"}, content=frames)))
