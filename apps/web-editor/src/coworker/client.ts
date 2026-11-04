@@ -540,14 +540,14 @@ export class CoworkerClient {
     const processFrame = (frame: string) => {
       let event = "message";
       const data: string[] = [];
-      for (const line of frame.split("\\n")) {
+      for (const line of frame.split("\n")) {
         if (line.startsWith(":")) continue;
         if (line.startsWith("event:")) event = line.slice(6).trim();
         else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
       }
       if (!data.length || event === "keepalive") return;
       let value: unknown;
-      try { value = JSON.parse(data.join("\\n")); }
+      try { value = JSON.parse(data.join("\n")); }
       catch { throw new WorkspaceError("The AI reply stream contained an invalid event."); }
 
       if (event === "snapshot" || event === "final") {
@@ -587,9 +587,9 @@ export class CoworkerClient {
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        buffer = buffer.replace(/\\r\\n/g, "\\n");
+        buffer = buffer.replace(/\r\n/g, "\n");
         let boundary: number;
-        while ((boundary = buffer.indexOf("\\n\\n")) >= 0) {
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           processFrame(buffer.slice(0, boundary));
           buffer = buffer.slice(boundary + 2);
         }
