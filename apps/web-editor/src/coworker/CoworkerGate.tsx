@@ -45,7 +45,7 @@ export default function CoworkerGate() {
     setBusy(true); setError(""); setNotice("");
     try {
       if (mode === "reset") {
-        const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+        const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: new URL("/coworker", window.location.origin).href });
         if (error) throw error;
         setNotice("Check your email for the password reset link.");
       } else if (mode === "recovery") {
@@ -53,7 +53,7 @@ export default function CoworkerGate() {
         if (error) throw error;
         setMode("signin"); setPassword("");
       } else if (mode === "signup") {
-        const { error, data } = await auth.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
+        const { error, data } = await auth.auth.signUp({ email, password, options: { emailRedirectTo: new URL("/coworker", window.location.origin).href } });
         if (error) throw error;
         if (!data.session) setNotice("Check your email to confirm your account, then sign in.");
       } else {

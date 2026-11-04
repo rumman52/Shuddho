@@ -1027,7 +1027,7 @@ def runtime_manifest(
         "artifact_services": settings.artifact_services_enabled,
         "agent_runtime": settings.agent_runtime_enabled,
         "conversations": settings.conversations_enabled,
-        "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and bool(settings.deepseek_api_key),
+        "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,

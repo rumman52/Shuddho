@@ -376,8 +376,13 @@ def test_streamed_reply_discards_late_output_after_conversation_deletion(contain
     assert events[-1][0] == "error"
     assert "no longer available" in events[-1][1]["error"].lower()
     with container.repository.sessions() as db:
-        assert db.get(ConversationMessage, message["id"]) is None
+        # Deletion intentionally retains a redacted row for durable references.
+        deleted = db.get(ConversationMessage, message["id"])
+        assert deleted.text == "" and deleted.assistant_reply is None
+        assert deleted.selected_sources == [] and deleted.resource_links == []
         assert db.scalar(select(ProviderLease)) is None
+    with pytest.raises(CoworkerError):
+        container.conversations.messages(owner, conversation["id"])
 
 
 def test_deepseek_stream_rejects_non_200_and_oversized_output(container):
@@ -403,3 +408,154 @@ def test_deepseek_stream_rejects_non_200_and_oversized_output(container):
         return [part async for part in oversized.stream([{"role": "user", "content": "Hi"}])]
     with pytest.raises(ValueError):
         asyncio.run(collect_oversized())
+
+
+def test_explicit_gemma_chat_uses_its_own_key_and_persists_once(container):
+    data = setup(container)
+    service, model, owner, conversation, message = data
+    settings = replace(service.settings, chat_provider="gemma", gemma_api_key="gemma-test-only", deepseek_api_key="")
+    service.settings = settings
+    result = reply(data)
+    assert result["state"] == "completed"
+    assert reply(data) == result and model.calls == 1
+
+
+def test_chat_provider_does_not_fall_back_to_another_key(container):
+    data = setup(container)
+    service = data[0]
+    service.settings = replace(service.settings, chat_provider="gemma", gemma_api_key="")
+    with pytest.raises(CoworkerError) as error:
+        reply(data)
+    assert error.value.code == "conversation_replies_unavailable"
+    assert data[1].calls == 0
+
+
+def test_chat_provider_configuration_is_loaded_explicitly(monkeypatch):
+    from services.coworker.config import Settings
+    monkeypatch.setenv("SHUDDHO_COWORKER_ENV", "development")
+    monkeypatch.setenv("SHUDDHO_COWORKER_DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("SHUDDHO_AUTH_ISSUER", "https://identity.example.test/auth/v1")
+    monkeypatch.setenv("SHUDDHO_COWORKER_STORAGE", "local")
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "gemma")
+    monkeypatch.setenv("GOOGLE_API_KEY", "gemma-test-only")
+    monkeypatch.setenv("GEMMA_MODEL", "gemma-configured-test")
+    settings = Settings.from_env()
+    assert settings.chat_provider == "gemma"
+    assert settings.gemma_model == "gemma-configured-test"
+    assert settings.chat_provider_configured
+    monkeypatch.setenv("SHUDDHO_LLM_PROVIDER", "unsupported")
+    assert not Settings.from_env().chat_provider_configured
+
+
+def test_gemma_stream_uses_configured_model_roles_and_no_automatic_retries(container):
+    import httpx
+    import json
+    from google import genai
+    from services.coworker.conversation_gemma import GemmaReplyModel
+    calls = []
+    def respond(request):
+        calls.append(request)
+        body = json.loads(request.content)
+        assert body["contents"][0]["role"] == "user"
+        assert body["contents"][1]["role"] == "model"
+        assert body["systemInstruction"]["parts"][0]["text"] == "Policy"
+        assert not body.get("tools")
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=(
+            'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"বাংলা "}]}}]}\n\n'
+            'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"উত্তর"}]},"finishReason":"STOP"}]}\n\n'
+        ))
+    def factory(**kwargs):
+        assert kwargs["http_options"].retry_options.attempts == 1
+        kwargs["http_options"].client_args = {"trust_env": False}
+        kwargs["http_options"].async_client_args = {"transport": httpx.MockTransport(respond), "trust_env": False}
+        return genai.Client(**kwargs)
+    settings = replace(container.settings, chat_provider="gemma", gemma_api_key="gemma-test-only", gemma_model="gemma-configured-test")
+    model = GemmaReplyModel(settings, factory)
+    text = asyncio.run(model.generate([
+        {"role": "system", "content": "Policy"}, {"role": "user", "content": "Question"},
+        {"role": "assistant", "content": "Prior answer"}, {"role": "user", "content": "বাংলায় লিখুন"},
+    ]))
+    assert text == "বাংলা উত্তর" and len(calls) == 1
+    assert "gemma-configured-test:streamGenerateContent" in calls[0].url.path
+
+
+@pytest.mark.parametrize("frame", [
+    {"candidates": [{"content": {"parts": [{"text": "partial"}]}, "finishReason": "MAX_TOKENS"}]},
+    {"candidates": [{"content": {"parts": [{"functionCall": {"name": "send_mail", "args": {}}}]}, "finishReason": "STOP"}]},
+    {"candidates": [{"content": {"parts": [{"text": "unfinished"}]}}]},
+    {"candidates": [{"content": {"parts": [{"text": "x" * 16001}]}, "finishReason": "STOP"}]},
+    {"promptFeedback": {"blockReason": "SAFETY"}},
+    {"candidates": [{"content": {"parts": [{"text": "answer", "toolCall": {"id": "tool1"}}]}, "finishReason": "STOP"}]},
+    {"candidates": [{"content": {"parts": [{"text": "answer", "toolResponse": {"id": "tool1"}}]}, "finishReason": "STOP"}]},
+])
+def test_gemma_stream_refuses_invalid_or_incomplete_output(container, frame):
+    import httpx
+    import json
+    from google import genai
+    from services.coworker.conversation_gemma import GemmaReplyModel
+    calls = []
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content="data: " + json.dumps(frame) + "\n\n")
+    def factory(**kwargs):
+        kwargs["http_options"].client_args = {"trust_env": False}
+        kwargs["http_options"].async_client_args = {"transport": httpx.MockTransport(respond), "trust_env": False}
+        return genai.Client(**kwargs)
+    model = GemmaReplyModel(replace(container.settings, gemma_api_key="gemma-test-only"), factory)
+    with pytest.raises(ValueError):
+        asyncio.run(model.generate([{"role": "system", "content": "Policy"}, {"role": "user", "content": "Hi"}]))
+    assert len(calls) == 1
+
+
+def test_runtime_manifest_uses_selected_chat_provider_not_deepseek_key(container, signed_client):
+    client, headers = signed_client
+    container.settings = replace(container.settings, conversations_enabled=True, conversation_replies_enabled=True,
+        chat_provider="gemma", gemma_api_key="gemma-test-only", deepseek_api_key="")
+    response = client.get("/api/v1/runtime-manifest", headers=headers())
+    assert response.status_code == 200
+    assert response.json()["capabilities"]["conversation_replies"] is True
+    assert "gemma-test-only" not in response.text
+    container.settings = replace(container.settings, gemma_api_key="", deepseek_api_key="unselected-key")
+    assert client.get("/api/v1/runtime-manifest", headers=headers()).json()["capabilities"]["conversation_replies"] is False
+
+
+def test_real_gemma_adapter_streams_through_owned_api_and_persists_history(container, signed_client):
+    import httpx
+    from google import genai
+    from services.coworker.conversation_gemma import GemmaReplyModel
+    data = setup(container)
+    _, _, owner, conversation, message = data
+    settings = replace(data[0].settings, chat_provider="gemma", gemma_api_key="gemma-test-only", deepseek_api_key="")
+    calls = []
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=(
+            'data: {"candidates":[{"content":{"parts":[{"text":"স্থায়ী উত্তর"}]},"finishReason":"STOP"}]}\n\n'
+        ))
+    def factory(**kwargs):
+        kwargs["http_options"].client_args = {"trust_env": False}
+        kwargs["http_options"].async_client_args = {"transport": httpx.MockTransport(respond), "trust_env": False}
+        return genai.Client(**kwargs)
+    service = ConversationReplyService(container.conversations, settings)
+    assert isinstance(service.model, GemmaReplyModel)
+    service.model.client_factory = factory
+    container.conversation_replies = service
+    container.settings = settings
+    client, headers = signed_client
+    path = f'/api/v1/conversations/{conversation["id"]}/messages/{message["id"]}/reply/stream'
+    response = client.post(path, json={"expected_sequence": 1}, headers=headers())
+    assert response.status_code == 200
+    assert "স্থায়ী উত্তর" in response.text and '"state":"completed"' in response.text
+    assert client.post(path, json={"expected_sequence": 1}, headers=headers()).status_code == 200
+    assert len(calls) == 1
+    saved = client.get(f'/api/v1/conversations/{conversation["id"]}/messages', headers=headers())
+    assert saved.json()["items"][0]["assistant_reply"]["text"] == "স্থায়ী উত্তর"
+    assert client.post(path, json={"expected_sequence": 1}, headers=headers("bob")).status_code == 404
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("provider, model", [("gemma", "gemini-2.5-flash"), ("deepseek", "gemma-test"), ("gemma", " ")])
+def test_chat_model_family_matches_editor_policy(container, provider, model):
+    settings = replace(container.settings, chat_provider=provider, gemma_api_key="gemma-test-only", deepseek_api_key="test-only",
+        gemma_model=model if provider == "gemma" else "gemma-test", deepseek_model=model if provider == "deepseek" else "deepseek-flash")
+    assert not settings.chat_provider_configured

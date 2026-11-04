@@ -8,7 +8,6 @@ const outdir = join(root, ".test-dist");
 const tests = [
   "test/app-routes.test.mjs",
   "test/rukh-home.test.tsx",
-  "test/coworker-preview.test.tsx",
   "test/editor-feature-gate.test.tsx",
   "test/coworker-app-navigation.test.tsx",
   "test/editor-workspace-layout.test.tsx",

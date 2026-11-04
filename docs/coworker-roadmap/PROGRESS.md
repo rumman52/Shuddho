@@ -1,3 +1,11 @@
+## Real authenticated chat integration — 4 November 2026
+
+Base `9ebd961c238339051188b2a758ba5df54d10fa1e`; branch `fix/real-chat-provider-integration-20261104`. Replaced draft-only routing with the actual auth/chat app, fixed auth return routes, added explicit Gemma chat streaming alongside default DeepSeek, unified capability/admission with model-family policy, and retained partial UI output on stream connection errors. [Contract, evidence and concrete release dependencies](../frontend/REAL_CHAT_INTEGRATION_2026-11-04.md).
+
+204 frontend tests and all three app builds pass; 92 backend conversation/provider-policy checks pass with zero skips. Review findings on model families and tool parts fixed with regressions; independent re-review approved with 16 focused passes; exact-head CI pending. Existing public auth settings configured for this preview branch only. Production chat mount returns 404; its install omits Coworker extras; production browser auth is absent; old Render staging DB is suspended and Supabase has no application tables. Source integration is implemented/repository-tested; no real provider run, deployed authenticated chat, production qualification or external-action activation claimed. Next: supply/confirm durable server DSN and private storage through hosting secrets, install extras/migrate, qualify matching release and enable only authorized conversation/reply capability.
+
+---
+
 ## Coworker entry recovery — 4 November 2026
 
 Base main `dce675364ce98b16309731e743ce7b8357eef4e6`; branch `fix/rukh-coworker-entry-recovery-20261104`. Live `/coworker` returns the landing page because the deployed frontend manifest has `coworker_enabled: false`, despite current frontend/backend revisions. Repaired disabled navigation with an explicit draft-only workspace, keeping API/auth/execution gates closed. [Contract, requirement matrix, verification and next actions](../frontend/ENTRY_RECOVERY_2026-11-04.md).
