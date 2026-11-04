@@ -1,6 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
-from scripts.coworker_quality_eval import evaluate_offline, live_settings, load_cases, score
+from scripts.coworker_quality_eval import evaluate_offline, live_settings, load_cases, score, strings
 
 CASES=Path("tests/fixtures/coworker_quality_eval_cases.jsonl")
 
@@ -51,3 +51,23 @@ def test_rejects_a_research_quote_not_present_in_the_source():
     c["draft"]["findings"][0]["citations"][0]["quote"]="An invented statement that is not in the source."
     r=score(c,c["draft"])
     assert not r["checks"]["citation_validation"]
+
+
+
+def test_numeric_structured_values_count_as_required_facts():
+    case = deepcopy(next(
+        item for item in loaded()
+        if item["id"] == "spreadsheet-en-regional-orders"
+    ))
+    case["draft"]["rows"][0][1] = 120.0
+    case["draft"]["rows"][1][1] = 80.0
+
+    result = score(case, case["draft"])
+    assert result["checks"]["required_fact_preservation"]
+
+    changed = deepcopy(case["draft"])
+    changed["rows"][0][1] = 121.0
+    changed_result = score(case, changed)
+    assert not changed_result["checks"]["required_fact_preservation"]
+    assert "120" in changed_result["missing_required_terms"]
+    assert strings(True) == []

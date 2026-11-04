@@ -21,9 +21,16 @@ KEYS={"id","skill_id","language","instruction","sources","required_terms","forbi
 
 def norm(v): return unicodedata.normalize("NFKC",v).casefold()
 def strings(v):
-    if isinstance(v,str): return [v]
-    if isinstance(v,dict): return sum((strings(x) for x in v.values()),[])
-    if isinstance(v,list): return sum((strings(x) for x in v),[])
+    if isinstance(v, str):
+        return [v]
+    if isinstance(v, bool) or v is None:
+        return []
+    if isinstance(v, (int, float)):
+        return [format(v, "g")] if math.isfinite(v) else []
+    if isinstance(v, dict):
+        return sum((strings(item) for item in v.values()), [])
+    if isinstance(v, list):
+        return sum((strings(item) for item in v), [])
     return []
 def at(v,path):
     for part in path.split("."):
