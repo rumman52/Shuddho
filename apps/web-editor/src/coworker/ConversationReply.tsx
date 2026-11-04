@@ -8,7 +8,9 @@ export default function ConversationReply({ reply, pending, error, retry, disabl
 }) {
   const [copyStatus, setCopyStatus] = useState("");
   const complete = reply?.state === "completed";
-  return <section className="rukh-chat-answer" aria-label="Rukh AI reply" aria-busy={pending || reply?.state === "generating"}>
+  const generating = reply?.state === "generating";
+  const hasPartialText = generating && Boolean(reply.text.trim());
+  return <section className="rukh-chat-answer" aria-label="Rukh AI reply" aria-busy={pending || generating}>
     <div className="rukh-answer-heading"><span className="rukh-chat-mark" aria-hidden="true">R</span><strong>Rukh AI</strong></div>
     {complete ? <>
       <div className="rukh-answer-text"><MarkdownMessage content={reply.text} /></div>
@@ -22,7 +24,12 @@ export default function ConversationReply({ reply, pending, error, retry, disabl
       </div>
       <span className="rukh-copy-status" role="status">{copyStatus}</span>
     </> : error ? <><p className="cw-error" role="alert">{error}</p><button type="button" className="cw-text-button" aria-label="Retry AI reply" disabled={disabled} onClick={retry}>Check reply again</button></> :
-      pending || reply?.state === "generating" ? <p className="rukh-reply-pending" role="status"><span aria-hidden="true">•••</span> Rukh is replying…</p> :
+      hasPartialText ? <>
+        <div className="rukh-answer-text"><MarkdownMessage content={reply.text} /></div>
+        {reply.context_truncated && <p className="rukh-muted">This answer is using the most recent messages that fit in the conversation context.</p>}
+        <p className="rukh-reply-pending" role="status"><span aria-hidden="true">•••</span> Rukh is replying…</p>
+      </> :
+      pending || generating ? <p className="rukh-reply-pending" role="status"><span aria-hidden="true">•••</span> Rukh is replying…</p> :
       <p className="cw-error" role="alert">{reply?.error ?? "This reply could not be completed. Send a new message to try again."}</p>}
   </section>;
 }

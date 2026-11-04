@@ -467,7 +467,7 @@ export type WorkspaceManifest = {
 export type ConversationRecord = {
   id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
 };
-export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string };
+export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string };
 export type ConversationMessageRecord = {
   assistant_reply?: AssistantReply | null;
   id: string; conversation_id: string; sequence: number; text: string;
@@ -514,6 +514,105 @@ export class CoworkerClient {
   runtimeManifest(signal?: AbortSignal) {
     return this.json<{ capabilities: { conversation_replies?: boolean } }>("/api/v1/runtime-manifest", { signal });
   }
+  async replyToConversationMessageStream(
+    id: string, messageId: string, sequence: number,
+    onUpdate: (reply: AssistantReply) => void, signal?: AbortSignal,
+  ): Promise<AssistantReply> {
+    const response = await this.response(
+      `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply/stream`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        signal,
+        body: JSON.stringify({ expected_sequence: sequence }),
+      },
+      75000,
+    );
+    if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream") || !response.body) {
+      throw new WorkspaceError("The AI reply stream is unavailable. Check the reply again.");
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let current: AssistantReply | null = null;
+    let final: AssistantReply | null = null;
+    let replyBytes = 0;
+
+    const processFrame = (frame: string) => {
+      let event = "message";
+      const data: string[] = [];
+      for (const line of frame.split("\n")) {
+        if (line.startsWith(":")) continue;
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+      }
+      if (!data.length || event === "keepalive") return;
+      let value: unknown;
+      try { value = JSON.parse(data.join("\n")); }
+      catch { throw new WorkspaceError("The AI reply stream contained an invalid event."); }
+
+      if (event === "snapshot" || event === "final") {
+        if (!value || typeof value !== "object") throw new WorkspaceError("The AI reply stream contained an invalid reply.");
+        const reply = value as AssistantReply;
+        if (!["generating", "completed", "failed", "interrupted"].includes(reply.state) ||
+            typeof reply.text !== "string" ||
+            (reply.error !== undefined && reply.error !== null && typeof reply.error !== "string")) {
+          throw new WorkspaceError("The AI reply stream contained an invalid reply.");
+        }
+        replyBytes = new TextEncoder().encode(reply.text).length;
+        if (replyBytes > 16000) throw new WorkspaceError("The AI reply exceeded the allowed size.");
+        if (event === "final" && reply.state === "generating") {
+          throw new WorkspaceError("The AI reply stream ended before completion.");
+        }
+        current = reply;
+        if (event === "final") final = reply;
+        onUpdate(reply);
+        return;
+      }
+      if (event === "delta") {
+        if (!value || typeof value !== "object" || typeof (value as { delta?: unknown }).delta !== "string" ||
+            !current || current.state !== "generating") {
+          throw new WorkspaceError("The AI reply stream contained an unexpected text delta.");
+        }
+        const delta = (value as { delta: string }).delta;
+        replyBytes += new TextEncoder().encode(delta).length;
+        if (replyBytes > 16000) throw new WorkspaceError("The AI reply exceeded the allowed size.");
+        current = { ...current, text: current.text + delta };
+        onUpdate(current);
+        return;
+      }
+      if (event === "error") {
+        const message = value && typeof value === "object" && typeof (value as { error?: unknown }).error === "string"
+          ? (value as { error: string }).error : "The AI reply could not be completed.";
+        throw new WorkspaceError(message);
+      }
+    };
+
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replace(/\r\n/g, "\n");
+        let boundary: number;
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+          const frame = buffer.slice(0, boundary);
+          if (frame.length > 65536) throw new WorkspaceError("The AI reply stream event was too large.");
+          processFrame(frame);
+          buffer = buffer.slice(boundary + 2);
+        }
+        if (buffer.length > 65536) throw new WorkspaceError("The AI reply stream event was too large.");
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) processFrame(buffer);
+      if (!current) throw new WorkspaceError("The AI reply stream ended without a reply.");
+      return final ?? current;
+    } finally {
+      try { await reader.cancel(); } catch { /* The stream may already be closed. */ }
+      reader.releaseLock();
+    }
+  }
+
   async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal) {
     return (await this.response(`/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply`, {
       method: "POST", headers: { "Content-Type": "application/json" }, signal,
