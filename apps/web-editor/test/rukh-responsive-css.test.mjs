@@ -20,7 +20,7 @@ test("Coworker mobile sheets and touch targets are defined", async () => {
 
 test("Coworker task drafts collapse to one column at mobile widths", async () => {
   const css = await readFile(join(cwd, "../coworker/src/styles.css"), "utf8");
-  assert.match(css, /@media\\s*\\(max-width:\\s*680px\\)[\\s\\S]*?\\.cw-layout\\s*\\{\\s*grid-template-columns:\\s*minmax\\(0,\\s*1fr\\)/);
+  assert.match(css, /@media\s*\(max-width:\s*680px\)[\s\S]*?\.cw-layout\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
 });
 
 test("Editor mobile layout removes the fixed desktop-height canvas", async () => {
