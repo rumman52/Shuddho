@@ -45,8 +45,18 @@ export default function ReadAloudButton({ text, disabled }: { text: string; disa
       return;
     }
     const deviceLocale = typeof navigator !== "undefined" ? navigator.language : "en-US";
-    const locale = /[\\u0980-\\u09FF]/u.test(text) ? "bn-BD" : deviceLocale;
-    const utterance = createSpeechUtterance(host, text, resolveSpeechLanguage("device", locale));
+    const containsBangla = Array.from(text).some(character => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint >= 0x0980 && codePoint <= 0x09ff;
+    });
+    const locale = containsBangla ? "bn-BD" : deviceLocale;
+    let utterance: SpeechSynthesisUtterance | null;
+    try {
+      utterance = createSpeechUtterance(host, text, resolveSpeechLanguage("device", locale));
+    } catch {
+      setStatus("Could not start read aloud. Check your device speech settings and try again.");
+      return;
+    }
     if (!utterance) {
       setStatus("Read aloud is not supported in this browser.");
       return;
