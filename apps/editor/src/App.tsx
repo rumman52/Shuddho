@@ -518,11 +518,12 @@ export default function App() {
           <ThemeToggle />
           <a href="/workspaces" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
             {coworkerEnabled && <>
-              <span className="rukh-editor-save-status" role="status">{saveStatus}</span>
+              {saveStatus && <span className="rukh-editor-save-status" role="status">{saveStatus}</span>}
+              {saveError && <span className="rukh-editor-save-error" role="alert">{saveError}</span>}
               <button type="button" className="rukh-save-workspace-button" onClick={() => void saveToWorkspace()}
-                disabled={!editorText.trim() || busy === "save" || (Boolean(savedDocumentId) && saveStatus === "Saved to workspace")}
+                disabled={!editorText.trim() || busy === "save" || saveStatus === "Verifying saved copy…" || (Boolean(savedDocumentId) && saveStatus === "Saved to workspace")}
                 aria-label="Save editor copy to workspace">
-                {busy === "save" ? "Saving…" : savedDocumentId && saveStatus === "Saved to workspace" ? "Saved" : "Save to workspace"}
+                {busy === "save" ? "Saving…" : saveStatus === "Verifying saved copy…" ? "Verifying…" : savedDocumentId && saveStatus === "Saved to workspace" ? "Saved" : "Save to workspace"}
               </button>
               <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
                 {busy === "handoff" ? "Sending…" : "Send to AI Coworker ↗"}
@@ -530,7 +531,6 @@ export default function App() {
               <a href={coworkerReturnUrl} className="rukh-coworker-link">{originConversationId ? "Return to Coworker" : "AI Coworker"}</a>
             </>}
           </div>
-          {saveError && coworkerEnabled && <p className="rukh-editor-save-error" role="alert">{saveError}</p>}
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
           {coworkerEnabled && <aside
