@@ -20,6 +20,7 @@ const tests = [
   "src/coworker/conversationExport.test.ts",
   "src/coworker/markdownMessage.test.tsx",
   "src/coworker/speech.test.ts",
+  "src/coworker/VoiceDictation.test.tsx",
   "src/coworker/ConversationReply.test.tsx",
   "src/coworker/conversationRunStatus.test.tsx",
   "src/coworker/agentSubmissionIdentity.test.tsx",
