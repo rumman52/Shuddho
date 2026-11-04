@@ -1,10 +1,11 @@
 """Text-only, owner-scoped replies with a single durable inference claim."""
 from __future__ import annotations
+
 import asyncio
 import json
+from datetime import datetime, timedelta
 
 import httpx
-from datetime import datetime, timedelta
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 from services.api.shuddho_api.llm_deepseek import _post_review
@@ -220,11 +221,46 @@ class ConversationReplyService:
             self.conversations._audit(db, owner, message_id, "conversation.reply_" + result["state"])
             return result
 
+    async def _settle_stream_claim(self, owner, conversation_id, message_id, result):
+        release_error = None
+        try:
+            await run_in_threadpool(self.release, message_id)
+        except Exception as error:
+            release_error = error
+        settled = await run_in_threadpool(
+            self.finish, owner, conversation_id, message_id, result,
+        )
+        if release_error is not None:
+            raise release_error
+        return settled
+
     async def stream_reply(self, owner, conversation_id, message_id, expected_sequence):
         """Stream a single claimed reply; cancellation is durably recorded as interrupted."""
-        result, messages = await run_in_threadpool(
+        claim_task = asyncio.create_task(run_in_threadpool(
             self.claim, owner, conversation_id, message_id, expected_sequence,
-        )
+        ))
+        try:
+            result, messages = await asyncio.shield(claim_task)
+        except asyncio.CancelledError:
+            # The threadpool transaction may finish after its caller is cancelled.
+            # Wait for its outcome and settle any committed claim before exiting.
+            result, messages = await claim_task
+            if messages is not None:
+                interrupted = {
+                    **result,
+                    "state": "interrupted",
+                    "text": "",
+                    "error": "The reply was interrupted. Send a new message to try again.",
+                }
+                settlement = asyncio.create_task(self._settle_stream_claim(
+                    owner, conversation_id, message_id, interrupted,
+                ))
+                try:
+                    await asyncio.shield(settlement)
+                except asyncio.CancelledError:
+                    await settlement
+            raise
+
         if messages is None:
             yield {"type": "final", "reply": result}
             return
@@ -302,7 +338,7 @@ class ConversationReplyService:
                 if iterator is not None:
                     try:
                         await iterator.aclose()
-                    except Exception:
+                    except BaseException:
                         pass
 
             close_task = asyncio.create_task(close_provider_stream())
@@ -312,25 +348,14 @@ class ConversationReplyService:
                 cancelled = True
                 await close_task
 
-            async def settle_claim():
-                release_error = None
-                try:
-                    await run_in_threadpool(self.release, message_id)
-                except Exception as error:
-                    release_error = error
-                settled = await run_in_threadpool(
-                    self.finish, owner, conversation_id, message_id, result,
-                )
-                if release_error is not None:
-                    raise release_error
-                return settled
-
-            settle_task = asyncio.create_task(settle_claim())
+            settlement = asyncio.create_task(self._settle_stream_claim(
+                owner, conversation_id, message_id, result,
+            ))
             try:
-                final = await asyncio.shield(settle_task)
+                final = await asyncio.shield(settlement)
             except asyncio.CancelledError:
                 cancelled = True
-                await settle_task
+                await settlement
             if cancelled:
                 raise asyncio.CancelledError
 
