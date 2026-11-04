@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
-from .conversation_schemas import ConversationCreate, MessageCreate
+from .conversation_schemas import ConversationCreate, ConversationRename, MessageCreate
 from .errors import CoworkerError
 from .models import Account, AgentRun, Artifact, AuditEvent, Conversation, ConversationMessage, Document, DocumentVersion, utcnow
 from .agent_repository import ACTIVE_RUN_STATES
@@ -85,6 +85,28 @@ class ConversationRepository:
         self.enabled()
         with self.sessions() as db:
             return self._dto(self._conversation(db, owner, conversation_id))
+
+    def rename(self, owner: str, conversation_id: str, request: ConversationRename) -> dict:
+        self.enabled()
+        with self.sessions.begin() as db:
+            self._lock_account(db, owner)
+            row = self._conversation(db, owner, conversation_id, lock=True)
+            if row.title == request.title:
+                return self._dto(row)
+            if iso(row.updated_at) != request.expected_updated_at:
+                raise CoworkerError(
+                    "conversation_revision_conflict",
+                    "This conversation changed elsewhere. Refresh before renaming.",
+                    409,
+                )
+            updated_at = utcnow()
+            if iso(updated_at) <= iso(row.updated_at):
+                from .repository import aware
+                updated_at = aware(row.updated_at) + timedelta(microseconds=1)
+            row.title = request.title
+            row.updated_at = updated_at
+            self._audit(db, owner, row.id, "conversation.renamed")
+            return self._dto(row)
 
     @staticmethod
     def selected_sources(db, owner, resource_ids) -> list[dict]:
