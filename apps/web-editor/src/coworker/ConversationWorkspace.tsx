@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
-  CoworkerClient, WorkspaceError, type ConversationRecord,
+  CoworkerClient, WorkspaceError, type AssistantReply, type ConversationRecord,
   type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
 import ConversationReply from "./ConversationReply";
@@ -200,12 +200,18 @@ export default function ConversationWorkspace({ client, openAgent }: {
     const controller = new AbortController();
     replyController.current?.abort(); replyController.current = controller;
     setReplyingId(item.id); setReplyErrors(current => ({ ...current, [item.id]: "" }));
-    try {
-      const reply = await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+    const applyReply = (reply: AssistantReply) => {
       if (!controller.signal.aborted && selectedRef.current === id) {
         refreshOrder.current.invalidate();
-        setMessages(current => current.map(message => message.id === item.id ? { ...message, assistant_reply: reply } : message));
+        setMessages(current => current.map(message => message.id === item.id
+          ? { ...message, assistant_reply: reply } : message));
       }
+    };
+    try {
+      const reply = typeof client.replyToConversationMessageStream === "function"
+        ? await client.replyToConversationMessageStream(id, item.id, item.sequence, applyReply, controller.signal)
+        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+      applyReply(reply);
     } catch (cause) {
       if (!controller.signal.aborted && selectedRef.current === id)
         setReplyErrors(current => ({ ...current, [item.id]: cause instanceof Error ? cause.message : "Could not load the AI reply." }));
@@ -420,7 +426,8 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }
 
   const filteredConversations = conversations.filter(item => item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
-  const composerDisabled = working || uploadingSource || Boolean(replyingId) || disabled || !listReady;
+  const hasGeneratingReply = messages.some(item => item.assistant_reply?.state === "generating");
+  const composerDisabled = working || uploadingSource || Boolean(replyingId) || hasGeneratingReply || disabled || !listReady;
   // Load the newest result eagerly; older histories may contain thousands of runs.
   const latestRunMessageId = [...messages].reverse().find(item => item.resource_links.some(link => link.resource_type === "agent_run"))?.id;
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
