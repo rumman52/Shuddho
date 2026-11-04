@@ -32,22 +32,28 @@ await page.route("https://identity.example.test/auth/v1/**", async route => {
 
 try {
   await page.goto("http://127.0.0.1:5173/");
-  await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
-  await page.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
-  await page.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/rukh-home-desktop.png"), fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/rukh-home-mobile.png"), fullPage: true });
-  await page.setViewportSize({ width: 1365, height: 960 });
-  await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   await page.screenshot({ path: join(folder, "screenshots/signin.png"), fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  const workspacesPagePromise = context.waitForEvent("page");
+  await page.getByRole("link", { name: "All workspaces", exact: true }).click();
+  const workspacesPage = await workspacesPagePromise;
+  await workspacesPage.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
+  await workspacesPage.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
+  await workspacesPage.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
+  assert.equal(await workspacesPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await workspacesPage.screenshot({ path: join(folder, "screenshots/rukh-home-desktop.png"), fullPage: true });
+  await workspacesPage.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await workspacesPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await workspacesPage.screenshot({ path: join(folder, "screenshots/rukh-home-mobile.png"), fullPage: true });
+  await workspacesPage.close();
   await page.getByRole("button", { name: "Sandbox", exact: true }).click();
   await page.getByRole("heading", { name: "Sandboxed computation", exact: true }).waitFor();
   await page.getByText("Sandbox capability is disabled.", { exact: true }).waitFor();
@@ -68,7 +74,7 @@ try {
   await editorPage.screenshot({ path: join(folder, "screenshots/editor-mobile.png"), fullPage: true });
   await editorPage.setViewportSize({ width: 1365, height: 960 });
   const coworkerPagePromise = context.waitForEvent("page");
-  await editorPage.getByRole("link", { name: "Open Co-workers", exact: true }).click();
+  await editorPage.getByRole("link", { name: "AI Coworker", exact: true }).click();
   const coworkerPage = await coworkerPagePromise;
   coworkerPage.on("pageerror", error => failures.push(error.message));
   await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
