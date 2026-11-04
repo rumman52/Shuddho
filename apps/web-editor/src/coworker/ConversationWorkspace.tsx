@@ -1,12 +1,22 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type ConversationRecord,
   type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
+import { buildConversationJson, buildConversationMarkdown, conversationExportFilename } from "./conversationExport";
+import "./conversation-enhancements.css";
 import { RefreshOrder } from "./refreshOrder";
 import { getInitialConversationId } from "../../../coworker/src/navigation.mjs";
+
+function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifest | null): string {
+  const resourceId = typeof source.resource_id === "string" ? source.resource_id : "";
+  const document = manifest?.documents.find(item => item.version_id === resourceId);
+  if (document) return document.name;
+  const artifact = manifest?.artifacts.find(item => item.artifact_id === resourceId);
+  return artifact?.name ?? "Attached source";
+}
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
 export default function ConversationWorkspace({ client, openAgent }: {
@@ -18,6 +28,10 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [activity, setActivity] = useState<ConversationActivityRecord[]>([]);
   const [manifest, setManifest] = useState<WorkspaceManifest | null>(null);
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [uploadingSource, setUploadingSource] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const [manifestError, setManifestError] = useState("");
   const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
   const [memoryEnabled, setMemoryEnabled] = useState(false);
@@ -170,6 +184,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }, [client]);
 
   useEffect(() => () => { replyController.current?.abort(); }, [client, selected]);
+  useEffect(() => { setEditingTitle(false); setRenameDraft(""); }, [selected]);
 
   const lastReply = messages[messages.length - 1]?.assistant_reply;
   useEffect(() => {
@@ -297,6 +312,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       firstMessage.current = null;
       setMobilePanel(null);
       setTitle("");
+      setEditingTitle(false); setRenameDraft("");
       createKey.current = null;
       setNotice("Private conversation created.");
     } catch (cause) {
@@ -307,6 +323,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
   function startNew() {
     if (working) return;
     setSelected(""); setDraft(""); setSelectedSources([]); setError(""); setNotice("");
+    setEditingTitle(false); setRenameDraft("");
     setMobilePanel(null); messageKey.current = null; firstMessage.current = null;
     composerRef.current?.focus();
   }
@@ -353,7 +370,9 @@ export default function ConversationWorkspace({ client, openAgent }: {
       if (chatMode && sources.length === 0) {
         setNotice("");
         await askForReply(savedMessage);
-      } else setNotice("Message saved. Choose Start task when you are ready.");
+      } else setNotice(sources.length
+        ? "Message saved with attachments. Use Start task to let the Agent read them; direct chat does not read attached files."
+        : "Message saved. Choose Start task when you are ready.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Message could not be saved.");
     } finally { setWorking(false); }
@@ -391,6 +410,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       const response = await client.conversations();
       setConversations(response.items);
       setSelected(response.items[0]?.id ?? "");
+      setEditingTitle(false); setRenameDraft("");
       setNotice("Conversation deleted.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Deletion failed.");
@@ -398,11 +418,101 @@ export default function ConversationWorkspace({ client, openAgent }: {
   }
 
   const filteredConversations = conversations.filter(item => item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
-  const composerDisabled = working || Boolean(replyingId) || disabled || !listReady;
+  const composerDisabled = working || uploadingSource || Boolean(replyingId) || disabled || !listReady;
   // Load the newest result eagerly; older histories may contain thousands of runs.
   const latestRunMessageId = [...messages].reverse().find(item => item.resource_links.some(link => link.resource_type === "agent_run"))?.id;
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
   const selectedConversation = conversations.find(item => item.id === selected);
+
+  function beginRename() {
+    if (!selectedConversation || working) return;
+    setRenameDraft(selectedConversation.title);
+    setEditingTitle(true);
+    setError(""); setNotice("");
+  }
+
+  function cancelRename() {
+    setEditingTitle(false);
+    setRenameDraft("");
+  }
+
+  async function saveConversationTitle(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedConversation || working || !renameDraft.trim()) return;
+    setWorking(true); setError(""); setNotice("");
+    try {
+      const updated = await client.renameConversation(
+        selectedConversation.id, renameDraft.trim(), selectedConversation.updated_at,
+      );
+      setConversations(current => current.map(item => item.id === updated.id ? updated : item));
+      setEditingTitle(false); setRenameDraft("");
+      setNotice("Conversation renamed.");
+    } catch (cause) {
+      if (cause instanceof WorkspaceError && cause.status === 409) {
+        const latest = await client.conversations().catch(() => null);
+        if (latest) setConversations(latest.items);
+        setError("This conversation changed in another tab. Its latest version has been reloaded; review it before renaming again.");
+      } else {
+        setError(cause instanceof Error ? cause.message : "Conversation rename failed.");
+      }
+    } finally { setWorking(false); }
+  }
+
+  async function uploadSource(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    setUploadingSource(true); setUploadError("");
+    try {
+      const uploaded = await client.upload(file);
+      const refreshed = await client.workspaceManifest();
+      setManifest(refreshed);
+      const source = refreshed.documents.find(item => item.document_id === uploaded.id && item.available);
+      if (!source) {
+        setNotice("Uploaded " + uploaded.filename + ". It is not available as a source yet; refresh the context panel and try again.");
+        return;
+      }
+      if (selectedSources.includes(source.version_id) || selectedSources.length < 5) {
+        setSelectedSources(current => current.includes(source.version_id)
+          ? current
+          : current.length < 5 ? [...current, source.version_id] : current);
+        setNotice("Uploaded " + uploaded.filename + ". Use Start task to let the Agent read this untrusted source; direct chat does not read attached files.");
+      } else {
+        setNotice("Uploaded " + uploaded.filename + ". Remove a selected source before attaching another; the limit is five.");
+      }
+    } catch (cause) {
+      setUploadError(cause instanceof Error ? cause.message : "File upload failed.");
+    } finally {
+      setUploadingSource(false);
+      input.value = "";
+    }
+  }
+
+  function toggleSource(resourceId: string, checked: boolean) {
+    setSelectedSources(current => checked
+      ? (current.includes(resourceId) ? current : current.length < 5 ? [...current, resourceId] : current)
+      : current.filter(id => id !== resourceId));
+  }
+
+  function downloadConversation(format: "markdown" | "json") {
+    if (!selectedConversation) return;
+    const exportedAt = new Date().toISOString();
+    const body = format === "markdown"
+      ? buildConversationMarkdown(selectedConversation, messages, source => sourceLabel(source, manifest), exportedAt)
+      : buildConversationJson(selectedConversation, messages, exportedAt);
+    const extension = format === "markdown" ? "md" : "json";
+    const mime = format === "markdown" ? "text/markdown;charset=utf-8" : "application/json;charset=utf-8";
+    const url = URL.createObjectURL(new Blob([body], { type: mime }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = conversationExportFilename(selectedConversation.title, extension);
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   return <section className="rukh-conversation-workspace" aria-label="Private conversations">
     <div className="rukh-mobile-workspace-tools" aria-label="Workspace panels" aria-hidden={mobilePanel !== null ? true : undefined}>
       <button type="button" aria-label="Open conversations" aria-controls="rukh-conversation-list"
@@ -445,7 +555,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
         </form>
         <ul className="rukh-conversation-items">
           {filteredConversations.map(item => <li key={item.id}>
-            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
+            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); setEditingTitle(false); setRenameDraft(""); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
               <span className="rukh-conversation-item-title">{item.title}</span>
               <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
             </button>
@@ -459,10 +569,26 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
     <section aria-hidden={mobilePanel !== null ? true : undefined} className="rukh-conversation-thread" aria-label="Conversation">
       <header className="rukh-thread-header">
-        <div><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Start a conversation"}</h2></div>
+        {editingTitle && selectedConversation ? <form className="rukh-rename-form" aria-label="Rename conversation form" onSubmit={saveConversationTitle}>
+          <label className="rukh-sr-only" htmlFor="cw-conversation-rename">Conversation title</label>
+          <input id="cw-conversation-rename" aria-label="Conversation title" value={renameDraft} maxLength={160}
+            disabled={working} autoFocus onChange={event => setRenameDraft(event.target.value)} />
+          <div className="rukh-rename-actions">
+            <button type="submit" aria-label="Save conversation name" disabled={working || !renameDraft.trim()}>Save</button>
+            <button type="button" aria-label="Cancel conversation rename" disabled={working} onClick={cancelRename}>Cancel</button>
+          </div>
+        </form> : <div className="rukh-thread-title"><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Start a conversation"}</h2></div>}
         <div className="rukh-thread-tools">
           <button type="button" className="cw-text-button" aria-label="New conversation" disabled={composerDisabled} onClick={startNew}>+ New chat</button>
-        {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
+          {selectedConversation && !editingTitle && <button type="button" className="cw-text-button" aria-label="Rename conversation" onClick={beginRename} disabled={working}>Rename</button>}
+          {selectedConversation && <details className="rukh-export-menu">
+            <summary aria-label="Export conversation">Export</summary>
+            <div className="rukh-export-menu-items">
+              <button type="button" onClick={() => downloadConversation("markdown")}>Markdown (.md)</button>
+              <button type="button" onClick={() => downloadConversation("json")}>JSON (.json)</button>
+            </div>
+          </details>}
+          {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
         </div>
       </header>
       {error && <div className="rukh-thread-error"><p className="cw-error" role="alert">{error}</p>
@@ -495,6 +621,9 @@ export default function ConversationWorkspace({ client, openAgent }: {
                 <div className="rukh-user-message">
                 <span className="rukh-message-author">You</span>
                 <p dir="auto">{item.text}</p>
+                {item.selected_sources.length > 0 && <ul className="rukh-message-sources" aria-label="Attached sources">
+                  {item.selected_sources.map((source, sourceIndex) => <li key={String(source.resource_id ?? sourceIndex)}>{sourceLabel(source, manifest)}</li>)}
+                </ul>}
                 <div className="rukh-message-meta"><small>Message {item.sequence} · {new Date(item.created_at).toLocaleString()}</small>
                   {run && <span role="status">Agent {run.state}: {run.detail}</span>}
                 </div>
@@ -526,11 +655,14 @@ export default function ConversationWorkspace({ client, openAgent }: {
               }
             }}
             placeholder="Message your coworker…" />
-          <div><span>{selectedSources.length ? `${selectedSources.length} source(s) attached` : "Your message is saved privately"}</span>
+          <div className="rukh-composer-controls">
+            <button type="button" className="rukh-attach-mobile" aria-label="Attach files" disabled={composerDisabled}
+              onClick={event => openMobilePanel("context", event.currentTarget)}>Attach files</button>
+            <span>{selectedSources.length ? selectedSources.length + " source(s) attached · Start task to use files" : "Your message is saved privately"}</span>
             <button type="submit" disabled={composerDisabled || !draft.trim()}>{replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} <span aria-hidden="true">↗</span></button>
           </div>
         </form>
-        <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · Start task separately</p>
+        <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Direct chat does not read attached files; use Start task." : "Start task separately."}</p>
     </section>
 
     <aside ref={contextPanelRef} id="rukh-context-panel"
@@ -549,21 +681,43 @@ export default function ConversationWorkspace({ client, openAgent }: {
         {!manifest && !manifestError && <p className="rukh-muted">Loading available sources…</p>}
         {manifest && <>
           <p className="rukh-context-revision">Revision <code>{manifest.revision_sha256.slice(0, 12)}</code></p>
+          <div className="rukh-context-upload">
+            <label htmlFor="cw-source-upload">Upload a source file</label>
+            <input id="cw-source-upload" type="file" aria-label="Upload a source file"
+              accept=".txt,.docx,.pdf,.csv,.xlsx,.pptx" disabled={working || uploadingSource}
+              onChange={event => { void uploadSource(event); }} />
+            <small>TXT, DOCX, PDF, CSV, XLSX or PPTX · maximum 8 MB</small>
+          </div>
+          {uploadError && <p className="cw-error" role="alert">{uploadError}</p>}
           {manifest.truncated.documents && <p className="rukh-muted">Only the first document page is shown.</p>}
           {manifest.documents.filter(doc => doc.available).length === 0 ? <p className="rukh-muted">No available documents yet.</p> :
             <div className="rukh-source-list">
               {manifest.documents.filter(doc => doc.available).map(doc =>
                 <label key={doc.version_id}>
-                  <input type="checkbox" checked={selectedSources.includes(doc.version_id)}
-                    disabled={working || (!selectedSources.includes(doc.version_id) && selectedSources.length >= 5)}
-                    onChange={event => setSelectedSources(current => event.target.checked
-                      ? [...current, doc.version_id].slice(0, 5)
-                      : current.filter(id => id !== doc.version_id))} />
+                  <input type="checkbox" aria-label={"Attach source file " + doc.name}
+                    checked={selectedSources.includes(doc.version_id)}
+                    disabled={working || uploadingSource || (!selectedSources.includes(doc.version_id) && selectedSources.length >= 5)}
+                    onChange={event => toggleSource(doc.version_id, event.target.checked)} />
                   <span><strong>{doc.name}</strong><small>Version {doc.version} · {doc.sha256.slice(0, 10)}</small></span>
                 </label>
               )}
             </div>}
-          <p className="rukh-panel-footnote">Selected sources are untrusted inputs, not instructions or permissions. Maximum five per message.</p>
+          {manifest.artifacts.filter(artifact => artifact.available).length > 0 && <>
+            <h4 className="rukh-source-group-heading">Generated artifacts</h4>
+            <div className="rukh-source-list">
+              {manifest.artifacts.filter(artifact => artifact.available).map(artifact =>
+                <label key={artifact.artifact_id}>
+                  <input type="checkbox" aria-label={"Attach generated artifact " + artifact.name}
+                    checked={selectedSources.includes(artifact.artifact_id)}
+                    disabled={working || uploadingSource || (!selectedSources.includes(artifact.artifact_id) && selectedSources.length >= 5)}
+                    onChange={event => toggleSource(artifact.artifact_id, event.target.checked)} />
+                  <span><strong>{artifact.name}</strong><small>Generated artifact · {artifact.sha256.slice(0, 10)}</small></span>
+                </label>
+              )}
+            </div>
+          </>}
+          {manifest.truncated.artifacts && <p className="rukh-muted">Only the first generated-artifact page is shown.</p>}
+          <p className="rukh-panel-footnote">Selected sources are untrusted inputs, not instructions or permissions. Maximum five per message. Direct chat does not read attached files; use Start task to let the Agent process them.</p>
         </>}
       </section>
       <section>
