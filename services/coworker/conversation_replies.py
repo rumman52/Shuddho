@@ -231,7 +231,6 @@ class ConversationReplyService:
     async def stream_events(self, owner, conversation_id, message_id, claim_result, messages):
         """Stream deltas from a strongly referenced producer that survives client disconnect."""
         queue = asyncio.Queue()
-        task = None
 
         async def produce():
             parts = []
@@ -287,9 +286,9 @@ class ConversationReplyService:
             await queue.put(("final", stored))
 
         if messages is not None:
-            task = asyncio.create_task(produce())
-            self._stream_tasks.add(task)
-            task.add_done_callback(self._stream_tasks.discard)
+            producer_task = asyncio.create_task(produce())
+            self._stream_tasks.add(producer_task)
+            producer_task.add_done_callback(self._stream_tasks.discard)
 
         yield "snapshot", claim_result
         if messages is None:
