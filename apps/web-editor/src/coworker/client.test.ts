@@ -413,7 +413,7 @@ test("conversation reply stream uses authenticated fetch and publishes partial r
 test("conversation reply stream rejects malformed or incomplete events", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = (async () => new Response(
-    "event: delta\\ndata: {\\"delta\\":\\"orphan\\"}\\n\\n",
+    ["event: delta", 'data: {"delta":"orphan"}', "", ""].join("\n"),
     { headers: { "Content-Type": "text/event-stream" } },
   )) as typeof fetch;
   try {
