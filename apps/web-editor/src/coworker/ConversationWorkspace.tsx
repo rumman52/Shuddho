@@ -40,7 +40,6 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [editingMemory, setEditingMemory] = useState("");
   const [memoryDraft, setMemoryDraft] = useState("");
   const [chatAvailable, setChatAvailable] = useState(false);
-  const [chatStreamingAvailable, setChatStreamingAvailable] = useState(false);
   const [streamingReplies, setStreamingReplies] = useState<Record<string, string>>({});
   const [chatMode, setChatMode] = useState(false);
   const [dictating, setDictating] = useState(false);
@@ -182,10 +181,9 @@ export default function ConversationWorkspace({ client, openAgent }: {
       if (!controller.signal.aborted) {
         const enabled = result.capabilities.conversation_replies === true;
         setChatAvailable(enabled);
-        setChatStreamingAvailable(enabled && result.capabilities.conversation_replies_streaming === true);
         setChatMode(enabled);
       }
-    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatStreamingAvailable(false); setChatMode(false); } });
+    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatMode(false); } });
     return () => controller.abort();
   }, [client]);
 
@@ -214,13 +212,23 @@ export default function ConversationWorkspace({ client, openAgent }: {
       return next;
     });
     try {
-      const reply = chatStreamingAvailable && typeof client.streamReplyToConversationMessage === "function"
-        ? await client.streamReplyToConversationMessage(id, item.id, item.sequence, delta => {
+      let reply;
+      if (chatAvailable && typeof client.streamReplyToConversationMessage === "function") {
+        try {
+          reply = await client.streamReplyToConversationMessage(id, item.id, item.sequence, delta => {
             if (controller.signal.aborted || selectedRef.current !== id) return;
             streamedText += delta;
             setStreamingReplies(current => ({ ...current, [item.id]: streamedText }));
-          }, controller.signal)
-        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+          }, controller.signal);
+        } catch (cause) {
+          // Older deployed APIs expose the JSON reply route only. A route-level
+          // 404 occurs before a reply claim, so this fallback cannot duplicate inference.
+          if (!(cause instanceof WorkspaceError) || cause.status !== 404) throw cause;
+          reply = await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+        }
+      } else {
+        reply = await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+      }
       if (!controller.signal.aborted && selectedRef.current === id) {
         clearStreamedText();
         refreshOrder.current.invalidate();

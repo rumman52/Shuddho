@@ -361,7 +361,7 @@ def test_public_stream_reply_route_is_owner_scoped_and_not_cacheable(container, 
     assert "event: delta" in response.text and "event: final" in response.text
     manifest = client.get("/api/v1/runtime-manifest", headers=headers())
     assert manifest.status_code == 200
-    assert manifest.json()["capabilities"]["conversation_replies_streaming"] is True
+    assert manifest.json()["capabilities"]["conversation_replies"] is True
     assert client.post(path, json={"expected_sequence": 1}, headers=headers("bob")).status_code == 404
 
 

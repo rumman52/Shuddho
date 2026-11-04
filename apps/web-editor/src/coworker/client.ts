@@ -512,7 +512,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   runtimeManifest(signal?: AbortSignal) {
-    return this.json<{ capabilities: { conversation_replies?: boolean; conversation_replies_streaming?: boolean } }>("/api/v1/runtime-manifest", { signal });
+    return this.json<{ capabilities: { conversation_replies?: boolean } }>("/api/v1/runtime-manifest", { signal });
   }
   async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal) {
     return (await this.response(`/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply`, {

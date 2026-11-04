@@ -322,7 +322,7 @@ test("streaming chat renders partial assistant text before the durable final rep
   const gate = new Promise<void>(resolve => { releaseStream = resolve; });
   Object.assign(data.client, {
     runtimeManifest: async () => ({
-      capabilities: { conversation_replies: true, conversation_replies_streaming: true },
+      capabilities: { conversation_replies: true },
     }),
     streamReplyToConversationMessage: async (
       _id: string, _messageId: string, _sequence: number, onDelta: (delta: string) => void,

@@ -25,7 +25,7 @@ Make direct Coworker chat render assistant text as it arrives, with a durable co
 3. Successful streams persist one completed reply; provider failures persist a redacted failed state with no partial text.
 4. Generator close, client abort and cancellation during the threadpool claim mark committed work interrupted and release provider capacity.
 5. The API emits authenticated `text/event-stream` with `Cache-Control: no-store` and `X-Accel-Buffering: no`; claim errors retain their HTTP status.
-6. Runtime manifest advertises streaming only when the existing conversation-reply feature and provider key are enabled.
+6. Streaming uses the existing authenticated conversation-reply capability; older API deployments fall back to the JSON reply route on a route-level 404, without adding a new release-manifest key.
 7. The client parses split UTF-8 SSE frames, authenticates requests, rejects EOF without a final event and forwards deltas.
 8. The Coworker UI renders partial Markdown progressively, preserves auto-scroll only while following the latest message, and retains JSON fallback when streaming is not advertised.
 9. Backend tests, frontend tests/builds, mandatory Coworker integration, root CI and exact-head verification pass.

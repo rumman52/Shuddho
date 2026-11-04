@@ -1028,7 +1028,6 @@ def runtime_manifest(
         "agent_runtime": settings.agent_runtime_enabled,
         "conversations": settings.conversations_enabled,
         "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and bool(settings.deepseek_api_key),
-        "conversation_replies_streaming": settings.conversations_enabled and settings.conversation_replies_enabled and bool(settings.deepseek_api_key),
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,
