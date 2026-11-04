@@ -31,22 +31,34 @@ await page.route("https://identity.example.test/auth/v1/**", async route => {
 });
 
 try {
+  // The approved product contract is Coworker-first at /. The directory is
+  // optional at /workspaces and must not replace the default entry experience.
   await page.goto("http://127.0.0.1:5173/");
+  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: join(folder, "screenshots/coworker-signin-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: join(folder, "screenshots/coworker-signin-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1365, height: 960 });
+  await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
+  await page.getByLabel("Password", { exact: true }).fill("test-password-only");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+
+  // The workspace directory remains directly available without changing the
+  // Coworker-first root route.
+  await page.goto("http://127.0.0.1:5173/workspaces");
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
   await page.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/rukh-home-desktop.png"), fullPage: true });
+  await page.screenshot({ path: join(folder, "screenshots/rukh-workspaces-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/rukh-home-mobile.png"), fullPage: true });
+  await page.screenshot({ path: join(folder, "screenshots/rukh-workspaces-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
-  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
-  await page.screenshot({ path: join(folder, "screenshots/signin.png"), fullPage: true });
-  await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
-  await page.getByLabel("Password", { exact: true }).fill("test-password-only");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
   await page.getByRole("button", { name: "Sandbox", exact: true }).click();
   await page.getByRole("heading", { name: "Sandboxed computation", exact: true }).waitFor();
