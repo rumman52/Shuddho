@@ -1,3 +1,18 @@
+## Browser-native Coworker voice controls — 4 November 2026 (Asia/Dhaka)
+
+PR #625 is an open draft on `feat/rukh-coworker-voice-controls-20261104`. It adds optional browser-native dictation and read-aloud controls to the existing conversation workspace.
+
+- Dictation requires an explicit microphone-button click, appends only final speech segments to the draft, supports device locale / Bangla / English selection, and never sends the message automatically.
+- Read aloud uses the browser's installed `SpeechSynthesis`; Bangla-script responses request `bn-BD`. This is not generated AI audio or a real-time voice conversation.
+- Audio is not uploaded, persisted, or logged. No provider, backend, schema, feature flag, approval, or production configuration changed.
+- TDD evidence: the test-only commit `a980a09aea31700776f64d59cc603c98ada6b054` produced the expected RED result in [CI run #41809748139](https://github.com/rumman52/Shuddho/actions/runs/41809748139): the new speech-helper and reply-control tests failed before implementation.
+- GREEN evidence: the frontend test/build job passed on predecessor implementation commit `3f5fef0ecf27b997d7035661844b131606671086` in [CI run #41810362794](https://github.com/rumman52/Shuddho/actions/runs/41810362794). The latest source commit adds Bangla TTS locale detection and mobile select sizing; exact-head CI is still pending.
+- Vercel reported the earlier preview deployment ready, then refused subsequent deployments because the free daily deployment limit was exceeded (>100). The connected Vercel API still cannot inspect the project. The Render staging Postgres database is suspended after its 31 October expiry. No current live preview, staging, or production verification is claimed.
+
+**Next:** verify exact-head CI for PR #625, obtain a fresh preview after the Vercel limit resets, and test microphone/TTS behavior on supported desktop and Android browsers. Remaining Muse gaps are token streaming, image capabilities, direct file-aware chat, provider-generated audio/real-time voice, and native integrations.
+
+---
+
 ## Muse-inspired conversation enhancements — 4 November 2026 (Asia/Dhaka)
 
 The approved practical chat enhancement slice is merged to main. Current source: `4db2843e0d43447af5065b04c13b82cf710a1084` (merge of PR #622). The merged implementation chain is #616 (native text replies), #617 (rename/export/Markdown/attachments), #618 (Unicode and attachment-test corrections), #620 (Coworker-first routing) and #622 (server-side five-source limit and final route/browser regressions). See [the feature handoff](../frontend/MUSE_CHAT_ENHANCEMENTS_2026-11-04.md) and [frontend ledger](../frontend/IMPLEMENTATION_LEDGER.md).

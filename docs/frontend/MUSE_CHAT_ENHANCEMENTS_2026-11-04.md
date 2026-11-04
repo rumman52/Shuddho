@@ -72,7 +72,8 @@ The native chat handoff records synthetic-API Chromium checks across five deskto
 This implementation completes the approved Muse-inspired conversation enhancement plan, not every Muse product capability. The following remain separate work:
 
 - Token streaming and incremental assistant output.
-- Voice input/output and audio generation.
+- Browser-native voice controls are a separate frontend-only slice in PR #625: explicit dictation into the draft and browser TTS read-aloud; no audio upload, storage, generated audio or voice-session backend.
+- Provider-generated audio and real-time voice mode; browser-native dictation/read-aloud controls are implemented in PR #625 (draft), but are not merged or deployment-verified.
 - Image understanding and image generation.
 - Direct assistant access to attached document contents; attachments currently feed explicit Agent tasks only.
 - Native mobile, WhatsApp and operating-system integrations.
