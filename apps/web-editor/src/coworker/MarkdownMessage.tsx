@@ -5,7 +5,7 @@ const codeMarker = String.fromCharCode(96);
 const fenceMarker = codeMarker.repeat(3);
 const inlinePattern = new RegExp(
   "(" + codeMarker + "[^" + codeMarker + "\\n]+" + codeMarker +
-  "|\\*\\*[^*\\n]+\\*\\*|__[^_\\n]+__|~~[^~\\n]+~~|\\*[^*\\n]+\\*|_[^_\\n]+" +
+  "|\\*\\*[^*\\n]+\\*\\*|__[^_\\n]+__|~~[^~\\n]+~~|\\*[^*\\n]+\\*|_[^_\\n]+_" +
   "|\\[([^\\]\\n]+)\\]\\(([^)\\s]+)(?:\\s+[\"']([^\"']*)[\"'])?\\))",
   "g",
 );
