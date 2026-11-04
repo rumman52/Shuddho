@@ -310,7 +310,12 @@ def test_streamed_reply_continues_after_browser_stream_disconnect(container):
         first = await anext(events)
         await events.aclose()
         await model.finished.wait()
-        return first
+        for _ in range(100):
+            stored = container.conversations.messages(owner, conversation["id"])["items"][0].get("assistant_reply")
+            if stored and stored["state"] == "completed":
+                return first
+            await asyncio.sleep(0.01)
+        raise AssertionError("stream producer did not persist its completed reply")
 
     first = asyncio.run(disconnect())
     assert first[0] == "snapshot"
@@ -334,3 +339,74 @@ def test_public_stream_reply_route_is_owned_and_not_cacheable(container, signed_
     assert "event: delta" in response.text and "প্রথম " in response.text
     assert "event: final" in response.text
     assert client.post(path, json={"expected_sequence": 1}, headers=headers("bob")).status_code == 404
+
+
+def test_streamed_provider_failure_discards_partial_text_and_releases_lease(container):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+
+    class BrokenStream:
+        async def stream(self, history):
+            yield "partial text"
+            raise RuntimeError("private provider diagnostic")
+
+    service.model = BrokenStream()
+    async def collect():
+        claim, messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        return [event async for event in service.stream_events(
+            owner, conversation["id"], message["id"], claim, messages,
+        )]
+    events = asyncio.run(collect())
+    assert events[-1][0] == "final"
+    assert events[-1][1]["state"] == "failed"
+    assert events[-1][1]["text"] == ""
+    assert "private provider diagnostic" not in str(events)
+    stored = container.conversations.messages(owner, conversation["id"])["items"][0]["assistant_reply"]
+    assert stored["state"] == "failed" and stored["text"] == ""
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ProviderLease)) is None
+
+
+def test_streamed_reply_discards_late_output_after_conversation_deletion(container):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    model = StreamModel()
+    model.callback = lambda: container.conversations.delete(owner, conversation["id"])
+    service.model = model
+
+    async def collect():
+        claim, messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        return [event async for event in service.stream_events(
+            owner, conversation["id"], message["id"], claim, messages,
+        )]
+    events = asyncio.run(collect())
+    assert events[-1][0] == "error"
+    assert "no longer available" in events[-1][1]["error"].lower()
+    with container.repository.sessions() as db:
+        assert db.get(ConversationMessage, message["id"]) is None
+        assert db.scalar(select(ProviderLease)) is None
+
+
+def test_deepseek_stream_rejects_non_200_and_oversized_output(container):
+    import httpx
+    from services.coworker.conversation_replies import DeepSeekReplyModel
+
+    non_200 = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(lambda request: httpx.Response(429)))
+    async def collect_non_200():
+        return [part async for part in non_200.stream([{"role": "user", "content": "Hi"}])]
+    with pytest.raises(ValueError):
+        asyncio.run(collect_non_200())
+
+    frames = (
+        'data: {"choices":[{"delta":{"content":"' + ("x" * 16001) +
+        '"},"finish_reason":null}]}\\n\\n'
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\\n\\n'
+        'data: [DONE]\\n\\n'
+    )
+    oversized = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "text/event-stream"}, content=frames)))
+    async def collect_oversized():
+        return [part async for part in oversized.stream([{"role": "user", "content": "Hi"}])]
+    with pytest.raises(ValueError):
+        asyncio.run(collect_oversized())
