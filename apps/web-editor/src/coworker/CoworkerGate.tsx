@@ -107,6 +107,8 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     if (!authOpen || typeof document === "undefined") return;
     const dialog = authDialogRef.current;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
       'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
     ) ?? []);
@@ -140,6 +142,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
       if (previous?.isConnected) previous.focus();
     };
   }, [authOpen, mode]);
