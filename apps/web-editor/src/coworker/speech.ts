@@ -113,5 +113,6 @@ export function createSpeechUtterance(
 }
 
 export function cancelSpeechSynthesis(host?: SpeechSynthesisHost): void {
-  host?.speechSynthesis?.cancel();
+  try { host?.speechSynthesis?.cancel(); }
+  catch { /* A browser may already have torn down its speech service. */ }
 }

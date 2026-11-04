@@ -52,3 +52,38 @@ test("a completed reply can be read aloud and stopped with browser speech synthe
     restore();
   }
 });
+
+test("unmounting a reply while reading cancels browser speech synthesis", async () => {
+  let cancelCount = 0;
+  const spoken: unknown[] = [];
+  class FakeUtterance {
+    lang = "";
+    onend: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(public text = "") {}
+  }
+  const restore = installWindow({
+    SpeechSynthesisUtterance: FakeUtterance,
+    speechSynthesis: {
+      cancel() { cancelCount += 1; },
+      speak(utterance: FakeUtterance) { spoken.push(utterance); },
+    },
+  });
+  let tree: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      tree = create(<ConversationReply
+        reply={{ state: "completed", text: "Read this answer", context_truncated: false }}
+        pending={false} retry={() => undefined} disabled={false}
+      />);
+    });
+    await act(async () => tree!.root.findByProps({ "aria-label": "Read AI reply aloud" }).props.onClick());
+    assert.equal(spoken.length, 1);
+    tree!.unmount();
+    tree = undefined;
+    assert.ok(cancelCount >= 2);
+  } finally {
+    tree?.unmount();
+    restore();
+  }
+});

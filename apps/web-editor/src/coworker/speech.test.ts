@@ -141,3 +141,10 @@ test("browser read-aloud starts a single utterance, replaces previous speech and
   assert.equal(createSpeechUtterance(host, "   ", "en-US"), null);
   assert.equal(hasBrowserSpeechSynthesis({}), false);
 });
+
+test("speech cancellation tolerates a browser speech-service teardown race", () => {
+  const host = {
+    speechSynthesis: { cancel() { throw new Error("speech service already stopped"); }, speak() {} },
+  } as unknown as SpeechSynthesisHost;
+  assert.doesNotThrow(() => cancelSpeechSynthesis(host));
+});

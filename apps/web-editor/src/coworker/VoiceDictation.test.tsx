@@ -95,3 +95,37 @@ test("unsupported browsers expose a disabled dictation control and a typing fall
     restore();
   }
 });
+
+test("dictation stops when the composer is disabled and aborts when it unmounts", async () => {
+  const instances: FakeRecognition[] = [];
+  class MockRecognition extends FakeRecognition {
+    constructor() { super(); instances.push(this); }
+  }
+  const restore = installWindow({ SpeechRecognition: MockRecognition });
+  let tree: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      tree = create(<VoiceDictation draft="" onDraftChange={() => undefined} disabled={false} />);
+    });
+    await act(async () => tree!.root.findByProps({ "aria-label": "Start voice dictation" }).props.onClick());
+    assert.equal(instances[0].started, true);
+    await act(async () => {
+      tree!.update(<VoiceDictation draft="" onDraftChange={() => undefined} disabled />);
+    });
+    assert.equal(instances[0].stopped, true);
+    tree!.unmount();
+    tree = undefined;
+
+    await act(async () => {
+      tree = create(<VoiceDictation draft="" onDraftChange={() => undefined} disabled={false} />);
+    });
+    await act(async () => tree!.root.findByProps({ "aria-label": "Start voice dictation" }).props.onClick());
+    const active = instances[1];
+    tree!.unmount();
+    tree = undefined;
+    assert.equal(active.aborted, true);
+  } finally {
+    tree?.unmount();
+    restore();
+  }
+});

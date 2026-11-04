@@ -75,30 +75,35 @@ export default function VoiceDictation({ draft, onDraftChange, onListeningChange
       return;
     }
     let recognition: BrowserSpeechRecognition | null = null;
-    recognition = createBrowserSpeechRecognition(host, resolveSpeechLanguage(language, deviceLanguage()), {
-      onTranscript: segment => {
-        if (!recognition || recognitionRef.current !== recognition) return;
-        const current = draftRef.current;
-        const separator = current && !/\s$/.test(current) ? " " : "";
-        const next = current + separator + segment;
-        draftRef.current = next;
-        onDraftChange(next);
-      },
-      onError: message => {
-        if (!recognition || recognitionRef.current !== recognition) return;
-        stopReasonRef.current = "error";
-        recognitionRef.current = null;
-        setListening(false);
-        setStatus(message);
-      },
-      onEnd: () => {
-        if (!recognition || recognitionRef.current !== recognition) return;
-        recognitionRef.current = null;
-        setListening(false);
-        if (stopReasonRef.current === null) setStatus("Dictation finished.");
-        stopReasonRef.current = null;
-      },
-    });
+    try {
+      recognition = createBrowserSpeechRecognition(host, resolveSpeechLanguage(language, deviceLanguage()), {
+        onTranscript: segment => {
+          if (!recognition || recognitionRef.current !== recognition) return;
+          const current = draftRef.current;
+          const separator = current && !/\s$/.test(current) ? " " : "";
+          const next = current + separator + segment;
+          draftRef.current = next;
+          onDraftChange(next);
+        },
+        onError: message => {
+          if (!recognition || recognitionRef.current !== recognition) return;
+          stopReasonRef.current = "error";
+          recognitionRef.current = null;
+          setListening(false);
+          setStatus(message);
+        },
+        onEnd: () => {
+          if (!recognition || recognitionRef.current !== recognition) return;
+          recognitionRef.current = null;
+          setListening(false);
+          if (stopReasonRef.current === null) setStatus("Dictation finished.");
+          stopReasonRef.current = null;
+        },
+      });
+    } catch {
+      setStatus("Browser speech recognition could not start. Check microphone permission and try again.");
+      return;
+    }
     if (!recognition) {
       setStatus("Voice dictation is not supported in this browser. You can continue typing.");
       return;
