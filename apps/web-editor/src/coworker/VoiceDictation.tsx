@@ -107,7 +107,7 @@ export default function VoiceDictation({ draft, onDraftChange, onListeningChange
     recognitionRef.current = recognition;
     stopReasonRef.current = null;
     setListening(true);
-    setStatus("Listening. Speak to add text.");
+    setStatus("Listening. Your browser may process microphone audio; only the transcript enters this draft until you send it.");
     try { recognition.start(); }
     catch {
       recognitionRef.current = null;
@@ -133,7 +133,7 @@ export default function VoiceDictation({ draft, onDraftChange, onListeningChange
     </select>
     <button type="button" aria-label={listening ? "Stop voice dictation" : "Start voice dictation"}
       aria-pressed={listening} disabled={disabled || !supported}
-      title={supported ? (listening ? "Stop dictation" : "Dictate a message") : "Voice dictation is not supported in this browser"}
+      title={supported ? (listening ? "Stop dictation" : "Dictate. Your browser may process microphone audio.") : "Voice dictation is not supported in this browser"}
       onClick={() => { if (listening) stopRecognition(); else startRecognition(); }}>
       <MicrophoneIcon /><span>{listening ? "Stop" : "Dictate"}</span>
     </button>

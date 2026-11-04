@@ -53,6 +53,9 @@ test("dictation appends final Bangla speech to the draft and stops on explicit r
     assert.ok(recognition);
     assert.equal(recognition.lang, "bn-BD");
     assert.equal(recognition.started, true);
+    assert.ok(tree!.root.findAllByProps({ role: "status" }).some(node =>
+      node.children.join("").includes("browser may process microphone audio"),
+    ));
 
     await act(async () => recognition!.onresult?.({
       resultIndex: 0, results: [{ isFinal: false, 0: { transcript: "hello" } }],
