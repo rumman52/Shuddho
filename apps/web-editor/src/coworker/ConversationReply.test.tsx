@@ -48,7 +48,7 @@ test("a completed reply can be read aloud and stopped with browser speech synthe
     assert.ok(cancelCount >= 2);
     assert.ok(tree!.root.findAllByProps({ role: "status" }).some(node => node.children.join("").includes("stopped")));
   } finally {
-    tree?.unmount();
+    await act(async () => { tree?.unmount(); });
     restore();
   }
 });
@@ -79,11 +79,11 @@ test("unmounting a reply while reading cancels browser speech synthesis", async 
     });
     await act(async () => tree!.root.findByProps({ "aria-label": "Read AI reply aloud" }).props.onClick());
     assert.equal(spoken.length, 1);
-    tree!.unmount();
+    await act(async () => { tree!.unmount(); });
     tree = undefined;
     assert.ok(cancelCount >= 2);
   } finally {
-    tree?.unmount();
+    await act(async () => { tree?.unmount(); });
     restore();
   }
 });
