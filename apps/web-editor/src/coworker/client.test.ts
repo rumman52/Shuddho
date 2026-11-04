@@ -358,3 +358,87 @@ test("text artifact reader rejects binary files before making a request", async 
     assert.equal(requests, 0);
   } finally { globalThis.fetch = original; }
 });
+
+
+test("streamed conversation replies parse split UTF-8 SSE frames and keep owner auth", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const controller = new AbortController();
+  const frames = [
+    "event: status",
+    'data: {"state":"generating"}',
+    "",
+    "event: delta",
+    'data: {"delta":"বাংলা "}',
+    "",
+    "event: delta",
+    'data: {"delta":"উত্তর"}',
+    "",
+    "event: final",
+    'data: {"reply":{"state":"completed","text":"বাংলা উত্তর","context_truncated":false}}',
+    "",
+  ].join("\n");
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    const bytes = new TextEncoder().encode(frames);
+    return new Response(new ReadableStream({
+      start(stream) {
+        for (let offset = 0; offset < bytes.length; offset += 3) {
+          stream.enqueue(bytes.slice(offset, offset + 3));
+        }
+        stream.close();
+      },
+    }), { headers: { "Content-Type": "text/event-stream; charset=utf-8" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "stream-owner-token");
+    const deltas: string[] = [];
+    const reply = await client.streamReplyToConversationMessage(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      7,
+      delta => deltas.push(delta),
+      controller.signal,
+    );
+    assert.deepEqual(deltas, ["বাংলা ", "উত্তর"]);
+    assert.equal(reply.state, "completed");
+    assert.equal(reply.text, "বাংলা উত্তর");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, "/backend/api/v1/conversations/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/messages/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/reply/stream");
+    assert.equal(seen[0].options?.method, "POST");
+    assert.deepEqual(JSON.parse(String(seen[0].options?.body)), { expected_sequence: 7 });
+    const headers = new Headers(seen[0].options?.headers);
+    assert.equal(headers.get("Authorization"), "Bearer stream-owner-token");
+    assert.equal(headers.get("Accept"), "text/event-stream");
+    assert.equal(headers.get("Content-Type"), "application/json");
+    assert.equal(seen[0].options?.credentials, "omit");
+    assert.equal(seen[0].options?.redirect, "error");
+    assert.equal(seen[0].options?.cache, "no-store");
+    assert.equal(seen[0].options?.signal, controller.signal);
+  } finally {
+    globalThis.fetch = original;
+    controller.abort();
+  }
+});
+
+test("streamed conversation replies reject an EOF without a durable final event", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(
+    'event: delta\ndata: {"delta":"partial"}\n\n',
+    { headers: { "Content-Type": "text/event-stream" } },
+  )) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "stream-owner-token");
+    await assert.rejects(
+      client.streamReplyToConversationMessage(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        7,
+        () => undefined,
+      ),
+      error => error instanceof WorkspaceError && error.status === 502,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
