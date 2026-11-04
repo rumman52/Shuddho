@@ -308,10 +308,10 @@ def test_deepseek_stream_transport_uses_sse_without_tools_and_requires_clean_com
         assert payload["tool_choice"] == "none"
         assert "tools" not in payload
         body = (
-            'data: {"choices":[{"delta":{"content":"বাংলা "},"finish_reason":null}]}\\n\\n'
-            'data: {"choices":[{"delta":{"content":"answer"},"finish_reason":null}]}\\n\\n'
-            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\\n\\n'
-            'data: [DONE]\\n\\n'
+            'data: {"choices":[{"delta":{"content":"বাংলা "},"finish_reason":null}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"answer"},"finish_reason":null}]}\n\n'
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            'data: [DONE]\n\n'
         )
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
 
@@ -334,7 +334,7 @@ def test_deepseek_stream_rejects_tool_calls_and_incomplete_finish_reasons(contai
     from services.coworker.conversation_replies import DeepSeekReplyModel
 
     def respond(request):
-        body = "data: " + json.dumps(chunk) + "\\n\\n" + "data: [DONE]\\n\\n"
+        body = "data: " + json.dumps(chunk) + "\n\n" + "data: [DONE]\n\n"
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
 
     model = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
