@@ -40,6 +40,16 @@ test("raw HTML is escaped and never becomes executable markup", () => {
   assert.match(html, /&lt;script/);
 });
 
+test("data, file and credential-bearing links are rejected while mail links remain safe", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownMessage content={"[data](data:text/html,hello) [file](file:///etc/passwd) [credentials](https://user:pass@example.com) [mail](mailto:help@example.com)"} />,
+  );
+  assert.doesNotMatch(html, /href="data:/);
+  assert.doesNotMatch(html, /href="file:/);
+  assert.doesNotMatch(html, /user:pass@example\.com/);
+  assert.match(html, /href="mailto:help@example\.com"/);
+});
+
 test("unsafe link schemes are rendered as plain text instead of anchors", () => {
   const html = renderToStaticMarkup(<MarkdownMessage content={"[unsafe](javascript:alert(1)) and [safe](https://example.com/path)"} />);
   assert.doesNotMatch(html, /href="javascript:/i);
