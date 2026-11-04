@@ -1,6 +1,6 @@
 # Rukh AI text chat implementation — 4 November 2026
 
-The Coworker chatbox can save a user message, request an authenticated AI text reply, retain the answer in conversation history, and recover after a lost HTTP response without resending the message or repeating an already claimed inference. The composer stays inside the viewport while history scrolls. Work is on `feat/rukh-conversation-usability-20261104`, continuing local commit `3592fccb` from main `a8385b5a`.
+The Coworker chatbox can save a user message, request an authenticated AI text reply, retain the answer in conversation history, and recover after a lost HTTP response without resending the message or repeating an already claimed inference. The composer stays inside the viewport while history scrolls. The implementation was merged through PR #616 (merge commit `7b20c1c34217fdfe8ac7952fa6b8c40b5dc611c5`); current main is `4db2843e0d43447af5065b04c13b82cf710a1084`.
 
 ## User-visible behavior
 
@@ -32,9 +32,13 @@ Completed, failed and interrupted claims replay without inference. A generating 
 
 Live provider responses, production PostgreSQL races, real signed-in browser sessions, exact branch CI and deployed behavior remain unverified. This implements text chat; it does not establish token streaming, rich Markdown rendering, voice/image generation, file-aware chat or full Muse parity.
 
+## Repository integration status — 4 November 2026
+
+Native text chat is merged in PR #616. The follow-on Muse-inspired chat work (owner-scoped rename, Markdown/JSON export, safe Markdown replies and source attachments) is merged through PRs #617, #618 and #622; Coworker-first routing was corrected in #620. See [the Muse chat handoff](MUSE_CHAT_ENHANCEMENTS_2026-11-04.md) for exact revisions, CI state and capability gaps. This does not establish live provider, staging, production or activation evidence.
+
 ## Release handoff
 
-1. Publish and review this branch, then run required remote CI. Publication is currently blocked by the automatic approval review pending explicit permission to push to the public repository.
+1. The native text-chat implementation is merged through PR #616. Follow-on conversation features and current verification limits are recorded in [MUSE_CHAT_ENHANCEMENTS_2026-11-04.md](MUSE_CHAT_ENHANCEMENTS_2026-11-04.md). The capability remains default-off; do not infer deployment or activation from the merge.
 2. Before starting the new backend version, run `python -m services.coworker.migrate` with the existing `SHUDDHO_COWORKER_DATABASE_URL` to apply migration 0063. The schema must exist even while the new reply feature is off because history queries read the new column.
 3. Deploy the backend and frontend with the existing authentication, API base and Coworker configuration. Keep provider keys exclusively in the backend.
 4. To enable text replies, configure `SHUDDHO_CONVERSATIONS_ENABLED=true`, `SHUDDHO_CONVERSATION_REPLIES_ENABLED=true` and the existing `DEEPSEEK_API_KEY`. Normal Coworker availability/authentication and owner/shared budgets still apply. No new credentials or production settings were changed in this implementation.
