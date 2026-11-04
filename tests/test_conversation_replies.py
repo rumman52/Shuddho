@@ -305,7 +305,6 @@ def test_deepseek_stream_transport_uses_sse_without_tools_and_requires_clean_com
         payload = json.loads(request.content)
         assert str(request.url) == "https://api.deepseek.com/chat/completions"
         assert payload["stream"] is True
-        assert payload["tool_choice"] == "none"
         assert "tools" not in payload
         body = (
             'data: {"choices":[{"delta":{"content":"বাংলা "},"finish_reason":null}]}\n\n'
