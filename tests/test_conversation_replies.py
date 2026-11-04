@@ -194,3 +194,169 @@ def test_model_transport_uses_backend_provider_and_no_tools(container):
         return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": "সঠিক উত্তর"}}]})
     model = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"), httpx.MockTransport(respond))
     assert asyncio.run(model.generate([{"role": "user", "content": "Hi"}])) == "সঠিক উত্তর"
+
+
+class StreamingModel:
+    def __init__(self, chunks=("প্রথম অংশ", " দ্বিতীয় অংশ")):
+        self.calls = 0
+        self.history = None
+        self.chunks = chunks
+
+    async def stream(self, history):
+        self.calls += 1
+        self.history = history
+        for chunk in self.chunks:
+            yield chunk
+
+
+def test_stream_reply_emits_deltas_and_persists_only_the_completed_answer(container):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    model = StreamingModel()
+    service.model = model
+
+    async def collect():
+        return [event async for event in service.stream_reply(owner, conversation["id"], message["id"], 1)]
+
+    events = asyncio.run(collect())
+    assert [event["type"] for event in events] == ["status", "delta", "delta", "final"]
+    assert [event["delta"] for event in events if event["type"] == "delta"] == ["প্রথম অংশ", " দ্বিতীয় অংশ"]
+    final = events[-1]["reply"]
+    assert final["state"] == "completed"
+    assert final["text"] == "প্রথম অংশ দ্বিতীয় অংশ"
+    assert model.calls == 1
+    stored = container.conversations.messages(owner, conversation["id"])["items"][0]
+    assert stored["assistant_reply"] == final
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ProviderLease)) is None
+
+
+def test_stream_reply_replays_the_durable_claim_without_a_second_inference(container):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    model = StreamingModel()
+    service.model = model
+
+    async def collect():
+        return [event async for event in service.stream_reply(owner, conversation["id"], message["id"], 1)]
+
+    first = asyncio.run(collect())
+    second = asyncio.run(collect())
+    assert model.calls == 1
+    assert second == [{"type": "final", "reply": first[-1]["reply"]}]
+
+
+def test_stream_reply_failure_discards_partial_text_and_redacts_provider_error(container):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+
+    class BrokenStream:
+        async def stream(self, history):
+            yield "partial private answer"
+            raise RuntimeError("provider secret and private input")
+
+    service.model = BrokenStream()
+
+    async def collect():
+        return [event async for event in service.stream_reply(owner, conversation["id"], message["id"], 1)]
+
+    events = asyncio.run(collect())
+    assert events[1] == {"type": "delta", "delta": "partial private answer"}
+    final = events[-1]["reply"]
+    assert final["state"] == "failed"
+    assert final["text"] == ""
+    assert "provider secret" not in str(final)
+    assert container.conversations.messages(owner, conversation["id"])["items"][0]["assistant_reply"] == final
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ProviderLease)) is None
+
+
+def test_closing_a_live_reply_stream_marks_it_interrupted_and_releases_capacity(container):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+
+    class BlockingStream:
+        async def stream(self, history):
+            yield "partial"
+            await asyncio.Event().wait()
+
+    service.model = BlockingStream()
+
+    async def close_stream():
+        stream = service.stream_reply(owner, conversation["id"], message["id"], 1).__aiter__()
+        assert (await anext(stream))["type"] == "status"
+        assert (await anext(stream)) == {"type": "delta", "delta": "partial"}
+        await stream.aclose()
+
+    asyncio.run(close_stream())
+    stored = container.conversations.messages(owner, conversation["id"])["items"][0]["assistant_reply"]
+    assert stored["state"] == "interrupted"
+    assert stored["text"] == ""
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ProviderLease)) is None
+
+
+def test_deepseek_stream_transport_uses_sse_without_tools_and_requires_clean_completion(container):
+    import httpx
+    import json
+    from services.coworker.conversation_replies import DeepSeekReplyModel
+
+    def respond(request):
+        payload = json.loads(request.content)
+        assert str(request.url) == "https://api.deepseek.com/chat/completions"
+        assert payload["stream"] is True
+        assert payload["tool_choice"] == "none"
+        assert "tools" not in payload
+        body = (
+            'data: {"choices":[{"delta":{"content":"বাংলা "},"finish_reason":null}]}\\n\\n'
+            'data: {"choices":[{"delta":{"content":"answer"},"finish_reason":null}]}\\n\\n'
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\\n\\n'
+            'data: [DONE]\\n\\n'
+        )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
+
+    model = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(respond))
+
+    async def collect():
+        return [chunk async for chunk in model.stream([{"role": "user", "content": "Explain in Bangla"}])]
+
+    assert asyncio.run(collect()) == ["বাংলা ", "answer"]
+
+
+@pytest.mark.parametrize("chunk", [
+    {"choices": [{"delta": {"tool_calls": [{"index": 0}]}, "finish_reason": None}]},
+    {"choices": [{"delta": {}, "finish_reason": "length"}]},
+])
+def test_deepseek_stream_rejects_tool_calls_and_incomplete_finish_reasons(container, chunk):
+    import httpx
+    import json
+    from services.coworker.conversation_replies import DeepSeekReplyModel
+
+    def respond(request):
+        body = "data: " + json.dumps(chunk) + "\\n\\n" + "data: [DONE]\\n\\n"
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
+
+    model = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(respond))
+
+    async def collect():
+        return [value async for value in model.stream([{"role": "user", "content": "Hi"}])]
+
+    with pytest.raises(ValueError):
+        asyncio.run(collect())
+
+
+def test_public_stream_reply_route_is_owner_scoped_and_not_cacheable(container, signed_client):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    service.model = StreamingModel()
+    client, headers = signed_client
+    path = f'/api/v1/conversations/{conversation["id"]}/messages/{message["id"]}/reply/stream'
+    response = client.post(path, json={"expected_sequence": 1}, headers=headers())
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert "event: delta" in response.text and "event: final" in response.text
+    assert client.post(path, json={"expected_sequence": 1}, headers=headers("bob")).status_code == 404
