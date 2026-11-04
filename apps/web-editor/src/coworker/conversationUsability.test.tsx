@@ -140,7 +140,7 @@ test("lost conversation-create response retries with the identical title request
 test("manual title creation errors remain visible inside an open Conversations drawer", async () => {
   const data = fixture(); data.client.createConversation = async () => { throw new Error("Could not create this conversation"); };
   await mount(async tree => {
-    await act(async () => tree.root.findByProps({ "aria-label": "Open conversations" }).props.onClick({ currentTarget: {} }));
+    await act(async () => tree.root.findByProps({ "aria-label": "Open navigation" }).props.onClick({ currentTarget: {} }));
     await act(async () => tree.root.findByProps({ id: "cw-conversation-title" }).props.onChange({ target: { value: "New title" } }));
     const input = tree.root.findByProps({ id: "cw-conversation-title" });
     await act(async () => input.parent!.props.onSubmit({ preventDefault() {} }));
