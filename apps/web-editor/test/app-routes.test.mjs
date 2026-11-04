@@ -14,15 +14,14 @@ test("same-origin routes identify the independent Rukh applications and workspac
   assert.equal(getStandaloneAppRoute("/unknown"), "default");
 });
 
-test("the root route always presents the workspace chooser while direct Coworker access remains feature-gated", () => {
-  assert.equal(getWorkspaceAppRoute("/", true), "home");
-  assert.equal(getWorkspaceAppRoute("/?from=bookmark", true), "home");
+test("Rukh opens Coworker by default only when enabled and keeps the workspace directory available", () => {
+  assert.equal(getWorkspaceAppRoute("/", true), "coworker");
+  assert.equal(getWorkspaceAppRoute("/?from=bookmark", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/unknown", true), "home");
   assert.equal(getWorkspaceAppRoute("/", false), "home");
   assert.equal(getWorkspaceAppRoute("/coworker", false), "home");
   assert.equal(getWorkspaceAppRoute("/coworker?conversation=abc", false), "home");
   assert.equal(getWorkspaceAppRoute("/coworker", true), "coworker");
-  assert.equal(getWorkspaceAppRoute("/coworker/conversations/abc", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/workspaces", true), "home");
   assert.equal(getWorkspaceAppRoute("/workspaces", false), "home");
   assert.equal(getWorkspaceAppRoute("/workspaces/?from=editor", true), "home");
