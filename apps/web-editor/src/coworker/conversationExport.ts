@@ -56,7 +56,7 @@ export function buildConversationJson(
 export function conversationExportFilename(title: string, extension: "md" | "json"): string {
   const safe = title.normalize("NFKC")
     .replace(/[\/\\\u0000-\u001f\u007f]+/g, "-")
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
   return (safe || "rukh-conversation") + "." + extension;
