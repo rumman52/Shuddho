@@ -74,7 +74,7 @@ test("dictation appends final Bangla speech to the draft and stops on explicit r
     assert.equal(recognition.stopped, true);
     assert.equal(listening[listening.length - 1], false);
   } finally {
-    tree?.unmount();
+    await act(async () => { tree?.unmount(); });
     restore();
   }
 });
@@ -91,7 +91,7 @@ test("unsupported browsers expose a disabled dictation control and a typing fall
       node.children.join("").includes("not supported"),
     ));
   } finally {
-    tree?.unmount();
+    await act(async () => { tree?.unmount(); });
     restore();
   }
 });
@@ -113,7 +113,7 @@ test("dictation stops when the composer is disabled and aborts when it unmounts"
       tree!.update(<VoiceDictation draft="" onDraftChange={() => undefined} disabled />);
     });
     assert.equal(instances[0].stopped, true);
-    tree!.unmount();
+    await act(async () => { tree!.unmount(); });
     tree = undefined;
 
     await act(async () => {
@@ -121,11 +121,11 @@ test("dictation stops when the composer is disabled and aborts when it unmounts"
     });
     await act(async () => tree!.root.findByProps({ "aria-label": "Start voice dictation" }).props.onClick());
     const active = instances[1];
-    tree!.unmount();
+    await act(async () => { tree!.unmount(); });
     tree = undefined;
     assert.equal(active.aborted, true);
   } finally {
-    tree?.unmount();
+    await act(async () => { tree?.unmount(); });
     restore();
   }
 });
