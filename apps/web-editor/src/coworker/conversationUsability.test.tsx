@@ -365,3 +365,37 @@ test("streaming chat renders partial assistant text before the durable final rep
     assert.match(JSON.stringify(tree.toJSON()), /Streaming answer/);
   }, data);
 });
+
+
+test("older Coworker APIs fall back to JSON replies when the SSE route is not deployed", async () => {
+  const data = fixture();
+  let streamAttempts = 0;
+  let jsonAttempts = 0;
+  const message = {
+    id: "legacy-message", conversation_id: record.id, sequence: 1, text: "Explain recursion",
+    selected_sources: [], resource_links: [], created_at: timestamp,
+  };
+  data.client.conversationHistory = async () => ({ items: [message] });
+  data.client.appendConversationMessage = async (id, text, key) => {
+    data.calls.messages.push({ id, text, key });
+    return message;
+  };
+  Object.assign(data.client, {
+    runtimeManifest: async () => ({ capabilities: { conversation_replies: true } }),
+    streamReplyToConversationMessage: async () => {
+      streamAttempts++;
+      throw new WorkspaceError("Streaming route not found", 404);
+    },
+    replyToConversationMessage: async () => {
+      jsonAttempts++;
+      return { state: "completed", text: "Legacy JSON answer" };
+    },
+  });
+  await mount(async (tree, { calls }) => {
+    await send(tree, message.text);
+    assert.equal(streamAttempts, 1);
+    assert.equal(jsonAttempts, 1);
+    assert.equal(calls.messages.length, 1);
+    assert.match(JSON.stringify(tree.toJSON()), /Legacy JSON answer/);
+  }, data);
+});
