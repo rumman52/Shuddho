@@ -82,9 +82,16 @@ export function TaskResult({ task, client, revise, prepareEmail, prepareSocial }
   </section>;
 }
 
-export default function CoworkerWorkspace({ client, email, signOut }: { client: CoworkerClient; email: string; signOut: () => Promise<void> }) {
+export default function CoworkerWorkspace({ client, email, signOut, initialDraft = "", onInitialDraftChange }: {
+  client: CoworkerClient;
+  email: string;
+  signOut: () => Promise<void>;
+  initialDraft?: string;
+  onInitialDraftChange?: (draft: string) => void;
+}) {
   const [view, setView] = useState<"drafts" | "goals" | "automations" | "browser" | "sandbox" | "transactions" | "negotiations" | "actions" | "agent" | "conversations">(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
+    if (initialDraft.trim()) return "conversations";
     if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerView(window.location.search);
     return "conversations";
   });
@@ -250,7 +257,7 @@ export default function CoworkerWorkspace({ client, email, signOut }: { client: 
     {view === "transactions" && workspace && <TransactionWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "negotiations" && workspace && <NegotiationWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
-    {view === "conversations" && workspace && <ConversationWorkspace client={client} openAgent={runId => { setFocusAgentRunId(runId); setView("agent"); }} />}
+    {view === "conversations" && workspace && <ConversationWorkspace client={client} initialDraft={initialDraft} onInitialDraftChange={onInitialDraftChange} openAgent={runId => { setFocusAgentRunId(runId); setView("agent"); }} />}
     {view === "agent" && workspace && <AgentWorkspace key={focusAgentRunId ?? "recent"} client={client} focusRunId={focusAgentRunId} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     <div className="cw-layout" hidden={view !== "drafts"}><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>
