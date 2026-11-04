@@ -78,7 +78,6 @@ class DeepSeekReplyModel:
             "model": self.settings.deepseek_model,
             "messages": messages,
             "stream": True,
-            "tool_choice": "none",
             "thinking": {"type": "disabled"},
             "max_tokens": MAX_OUTPUT_TOKENS,
             "temperature": 0.4,
