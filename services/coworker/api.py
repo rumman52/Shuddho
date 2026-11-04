@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
-from .conversation_schemas import ConversationReplyCreate, ConversationCreate, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
+from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1601,6 +1601,20 @@ def list_conversations(identity: Identity, services: Services, response: Respons
 def get_conversation(conversation_id: UUID, identity: Identity, services: Services, response: Response):
     response.headers["Cache-Control"] = "no-store"
     return services.conversations.get(identity.account_id, str(conversation_id))
+
+
+@router.patch("/conversations/{conversation_id}")
+def rename_conversation(
+    conversation_id: UUID,
+    payload: ConversationRename,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    value = services.conversations.rename(identity.account_id, str(conversation_id), payload)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["ETag"] = f'"{value["updated_at"]}"'
+    return value
 
 
 @router.post("/conversations/{conversation_id}/messages", status_code=201)
