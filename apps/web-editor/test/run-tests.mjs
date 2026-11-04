@@ -14,6 +14,7 @@ const tests = [
   "test/rukh-responsive-ui.test.tsx",
   "test/rukh-responsive-css.test.mjs",
   "src/coworker/client.test.ts",
+  "src/coworker/CoworkerGate.test.tsx",
   "src/coworker/refreshOrder.test.ts",
   "src/coworker/conversationIdentity.test.tsx",
   "src/coworker/conversationUsability.test.tsx",
