@@ -11,9 +11,8 @@ export function getStandaloneAppRoute(pathname) {
 }
 
 export function getWorkspaceAppRoute(pathname, coworkerEnabled = false) {
-  const path = normalizePath(pathname);
-  const route = getStandaloneAppRoute(path);
-  if (route === "default") return path === "/" && coworkerEnabled ? "coworker" : "home";
+  const route = getStandaloneAppRoute(pathname);
+  if (route === "default") return "home";
   if (route === "coworker" && !coworkerEnabled) return "home";
   return route;
 }

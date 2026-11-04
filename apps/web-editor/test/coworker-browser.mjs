@@ -33,7 +33,7 @@ await page.route("https://identity.example.test/auth/v1/**", async route => {
 try {
   await page.goto("http://127.0.0.1:5173/");
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
-  await page.getByRole("heading", { name: "Co-workers", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/rukh-home-desktop.png"), fullPage: true });
@@ -41,7 +41,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/rukh-home-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
-  await page.getByRole("link", { name: "Co-workers", exact: true }).click();
+  await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   await page.screenshot({ path: join(folder, "screenshots/signin.png"), fullPage: true });
   await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
