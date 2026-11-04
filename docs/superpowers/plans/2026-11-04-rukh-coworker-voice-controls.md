@@ -1,7 +1,8 @@
 # Rukh AI Coworker voice controls — implementation plan
 
 **Base:** `main 9811c7179ce0980aac6f49179f1f84f8c01736d1`  
-**Branch:** `feat/rukh-coworker-voice-controls-20261104`
+**Branch:** `feat/rukh-coworker-voice-controls-20261104`  
+**Current PR:** [#626](https://github.com/rumman52/Shuddho/pull/626) (draft)
 
 ## Goal
 
