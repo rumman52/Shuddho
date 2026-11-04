@@ -5,7 +5,7 @@ const codeMarker = String.fromCharCode(96);
 const fenceMarker = codeMarker.repeat(3);
 const inlinePattern = new RegExp(
   "(" + codeMarker + "[^" + codeMarker + "\\n]+" + codeMarker +
-  "|\\*\\*[^*\\n]+\\*\\*|__[^_\\n]+__|~~[^~\\n]+~~|\\*[^*\\n]+\\*|_[^_\\n]+_" +
+  "|\\*\\*[^*\\n]+\\*\\*|__[^_\\n]+__|~~[^~\\n]+~~|\\*[^*\\n]+\\*|_[^_\\n]+" +
   "|\\[([^\\]\\n]+)\\]\\(([^)\\s]+)(?:\\s+[\"']([^\"']*)[\"'])?\\))",
   "g",
 );
@@ -14,7 +14,7 @@ const closingFencePattern = new RegExp("^" + fenceMarker + "\\s*$");
 
 function safeHref(value: string): string | null {
   const candidate = value.trim();
-  if (!candidate || candidate.length > 2048 || /[\\s\\\\\\u0000-\\u001f\\u007f]/.test(candidate)) return null;
+  if (!candidate || candidate.length > 2048 || /[\s\\\u0000-\u001f\u007f]/.test(candidate)) return null;
   try {
     const url = new URL(candidate);
     if (!["http:", "https:", "mailto:"].includes(url.protocol) || url.username || url.password) return null;
@@ -57,7 +57,7 @@ function inlineNodes(value: string): ReactNode[] {
 }
 
 function tableCells(line: string): string[] {
-  return line.trim().replace(/^\\|/, "").replace(/\\|$/, "").split("|").map(cell => cell.trim());
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(cell => cell.trim());
 }
 
 function isTableSeparator(line: string): boolean {
@@ -70,21 +70,21 @@ function isTableAt(lines: string[], index: number): boolean {
 }
 
 function isHorizontalRule(line: string): boolean {
-  return /^(?:-{3,}|_{3,}|\\*{3,})\\s*$/.test(line.trim());
+  return /^(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line.trim());
 }
 
 function isListLine(line: string): boolean {
-  return /^\\s*(?:[-*+]\\s+|\\d+[.)]\\s+)/.test(line);
+  return /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line);
 }
 
 function startsBlock(lines: string[], index: number): boolean {
   const line = lines[index] ?? "";
-  return line.startsWith(fenceMarker) || /^#{1,6}\\s+/.test(line) || /^>\\s?/.test(line) ||
+  return line.startsWith(fenceMarker) || /^#{1,6}\s+/.test(line) || /^>\s?/.test(line) ||
     isHorizontalRule(line) || isListLine(line) || isTableAt(lines, index);
 }
 
 function renderBlocks(source: string, prefix = "block"): ReactNode[] {
-  const lines = source.replace(/\\r\\n?/g, "\\n").split("\\n");
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let index = 0;
   let blockIndex = 0;
@@ -107,11 +107,11 @@ function renderBlocks(source: string, prefix = "block"): ReactNode[] {
       }
       if (index < lines.length) index += 1;
       const className = language ? "language-" + language : undefined;
-      blocks.push(<pre key={prefix + "-code-" + blockIndex++}><code className={className}>{code.join("\\n")}</code></pre>);
+      blocks.push(<pre key={prefix + "-code-" + blockIndex++}><code className={className}>{code.join("\n")}</code></pre>);
       continue;
     }
 
-    const heading = line.match(/^(#{1,6})\\s+(.+?)\\s*#*\\s*$/);
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (heading) {
       const tag = ("h" + heading[1].length) as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
       blocks.push(React.createElement(tag, { key: prefix + "-heading-" + blockIndex++ }, inlineNodes(heading[2])));
@@ -125,25 +125,25 @@ function renderBlocks(source: string, prefix = "block"): ReactNode[] {
       continue;
     }
 
-    if (/^>\\s?/.test(line)) {
+    if (/^>\s?/.test(line)) {
       const quote: string[] = [];
-      while (index < lines.length && /^>\\s?/.test(lines[index])) {
-        quote.push(lines[index].replace(/^>\\s?/, ""));
+      while (index < lines.length && /^>\s?/.test(lines[index])) {
+        quote.push(lines[index].replace(/^>\s?/, ""));
         index += 1;
       }
-      blocks.push(<blockquote key={prefix + "-quote-" + blockIndex++}>{renderBlocks(quote.join("\\n"), prefix + "-quote")}</blockquote>);
+      blocks.push(<blockquote key={prefix + "-quote-" + blockIndex++}>{renderBlocks(quote.join("\n"), prefix + "-quote")}</blockquote>);
       continue;
     }
 
     if (isListLine(line)) {
-      const ordered = /^\\s*\\d+[.)]\\s+/.test(line);
+      const ordered = /^\s*\d+[.)]\s+/.test(line);
       const items: string[] = [];
       let start = 1;
       while (index < lines.length && isListLine(lines[index]) &&
-        /^\\s*\\d+[.)]\\s+/.test(lines[index]) === ordered) {
+        /^\s*\d+[.)]\s+/.test(lines[index]) === ordered) {
         const current = lines[index];
-        if (items.length === 0 && ordered) start = Number(current.match(/^\\s*(\\d+)/)?.[1] ?? 1);
-        items.push(current.replace(/^\\s*(?:[-*+]\\s+|\\d+[.)]\\s+)/, ""));
+        if (items.length === 0 && ordered) start = Number(current.match(/^\s*(\d+)/)?.[1] ?? 1);
+        items.push(current.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, ""));
         index += 1;
       }
       const children = items.map((item, itemIndex) => <li key={prefix + "-item-" + itemIndex}>{inlineNodes(item)}</li>);
