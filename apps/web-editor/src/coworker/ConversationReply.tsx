@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AssistantReply } from "./client";
+import MarkdownMessage from "./MarkdownMessage";
 
 export default function ConversationReply({ reply, pending, error, retry, disabled }: {
   reply?: AssistantReply | null; pending: boolean; error?: string; retry: () => void; disabled: boolean;
@@ -9,7 +10,7 @@ export default function ConversationReply({ reply, pending, error, retry, disabl
   return <section className="rukh-chat-answer" aria-label="Rukh AI reply" aria-busy={pending || reply?.state === "generating"}>
     <div className="rukh-answer-heading"><span className="rukh-chat-mark" aria-hidden="true">R</span><strong>Rukh AI</strong></div>
     {complete ? <>
-      <p className="rukh-answer-text" dir="auto">{reply.text}</p>
+      <div className="rukh-answer-text"><MarkdownMessage content={reply.text} /></div>
       {reply.context_truncated && <p className="rukh-muted">This answer used the most recent messages that fit in the conversation context.</p>}
       <button type="button" className="cw-text-button" aria-label="Copy AI reply" onClick={async () => {
         try { await navigator.clipboard.writeText(reply.text); setCopyStatus("Copied"); }
