@@ -31,7 +31,7 @@ class MessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     text: str = Field(min_length=1, max_length=12000)
     client_request_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
-    selected_resource_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    selected_resource_ids: list[UUID] = Field(default_factory=list, max_length=5)
 
     @field_validator("text")
     @classmethod

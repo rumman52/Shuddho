@@ -115,6 +115,30 @@ def test_public_conversation_routes_replay_and_deny_other_owner(container, signe
     assert client.get(path + "/messages?after=-1", headers=auth).status_code == 422
 
 
+def test_public_conversation_message_rejects_more_than_five_sources(container, signed_client):
+    container.settings = replace(container.settings, conversations_enabled=True)
+    container.conversations.settings = container.settings
+    client, headers = signed_client
+    created = client.post(
+        "/api/v1/conversations",
+        json={"title": "Source limit"},
+        headers=headers() | {"Idempotency-Key": "source-limit-conversation"},
+    )
+    assert created.status_code == 201
+    path = created.headers["location"]
+    response = client.post(
+        path + "/messages",
+        json={
+            "text": "Review these sources",
+            "client_request_key": "source-limit-message",
+            "selected_resource_ids": [str(uuid4()) for _ in range(6)],
+        },
+        headers=headers(),
+    )
+    assert response.status_code == 422
+    assert client.get(path + "/messages", headers=headers()).json()["items"] == []
+
+
 def test_conversation_rename_is_owner_scoped_and_revision_checked(container):
     repo = conversations(container)
     owner, other = account(container), account(container, "other")

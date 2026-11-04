@@ -31,22 +31,40 @@ await page.route("https://identity.example.test/auth/v1/**", async route => {
 });
 
 try {
+  // Coworker is the approved default workspace when the release flag is enabled.
   await page.goto("http://127.0.0.1:5173/");
+  await page.getByRole("heading", { name: "Move complex work forward, with context." }).waitFor();
+  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: join(folder, "screenshots/coworker-signin-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: join(folder, "screenshots/coworker-signin-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1365, height: 960 });
+  await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
+  await page.getByLabel("Password", { exact: true }).fill("test-password-only");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  await page.locator("#cw-conversation-message").waitFor();
+  assert.equal(await page.locator("#cw-conversation-message").isVisible(), true);
+
+  // Confirm an authenticated refresh at / still restores the persistent chat workspace.
+  await page.goto("http://127.0.0.1:5173/");
+  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  await page.locator("#cw-conversation-message").waitFor();
+
+  // The workspace directory is optional and remains available at /workspaces.
+  await page.goto("http://127.0.0.1:5173/workspaces");
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
   await page.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/rukh-home-desktop.png"), fullPage: true });
+  await page.screenshot({ path: join(folder, "screenshots/rukh-workspaces-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/rukh-home-mobile.png"), fullPage: true });
+  await page.screenshot({ path: join(folder, "screenshots/rukh-workspaces-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
-  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
-  await page.screenshot({ path: join(folder, "screenshots/signin.png"), fullPage: true });
-  await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
-  await page.getByLabel("Password", { exact: true }).fill("test-password-only");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
   await page.getByRole("button", { name: "Sandbox", exact: true }).click();
   await page.getByRole("heading", { name: "Sandboxed computation", exact: true }).waitFor();
@@ -68,7 +86,7 @@ try {
   await editorPage.screenshot({ path: join(folder, "screenshots/editor-mobile.png"), fullPage: true });
   await editorPage.setViewportSize({ width: 1365, height: 960 });
   const coworkerPagePromise = context.waitForEvent("page");
-  await editorPage.getByRole("link", { name: "Open Co-workers", exact: true }).click();
+  await editorPage.getByRole("link", { name: "AI Coworker", exact: true }).click();
   const coworkerPage = await coworkerPagePromise;
   coworkerPage.on("pageerror", error => failures.push(error.message));
   await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();

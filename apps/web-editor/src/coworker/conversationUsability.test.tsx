@@ -210,6 +210,50 @@ test("conversation context uploads a source and attaches it only for explicit Ag
   }, data);
 });
 
+test("conversation context reports upload failures without selecting an invalid source", async () => {
+  const data = fixture();
+  data.client.upload = async () => { throw new Error("Storage rejected the upload"); };
+  await mount(async tree => {
+    const input = tree.root.findByProps({ "aria-label": "Upload a source file" });
+    await act(async () => input.props.onChange({
+      currentTarget: { files: [{ name: "blocked.pdf", size: 12 }], value: "" },
+    }));
+    const alert = tree.root.findByProps({ role: "alert" });
+    assert.match(alert.children.join(""), /Storage rejected the upload/);
+    assert.equal(tree.root.findAll(node => node.props["aria-label"]?.startsWith("Attach source file ")).length, 0);
+  }, data);
+});
+
+test("source selection enforces five items across uploaded documents and generated artifacts", async () => {
+  const data = fixture();
+  const documents = Array.from({ length: 4 }, (_, index) => ({
+    document_id: "document-" + index, version_id: "version-" + index,
+    name: "Source " + (index + 1) + ".pdf", version: 1,
+    sha256: String(index).repeat(64), available: true, trust: "untrusted_source" as const,
+  }));
+  const artifacts = Array.from({ length: 2 }, (_, index) => ({
+    artifact_id: "artifact-" + index, name: "Artifact " + (index + 1) + ".docx",
+    sha256: String(index + 4).repeat(64), available: true, trust: "untrusted_source" as const,
+  }));
+  data.client.workspaceManifest = async () => ({
+    schema_version: 1, workspace_id: "workspace-1", workspace_name: "Workspace",
+    revision_sha256: "b".repeat(64), documents, artifacts, memory: [],
+    truncated: { documents: false, artifacts: false, memory: false },
+  });
+  await mount(async tree => {
+    for (const document of documents) {
+      const checkbox = tree.root.findByProps({ "aria-label": "Attach source file " + document.name });
+      await act(async () => checkbox.props.onChange({ target: { checked: true } }));
+    }
+    const fifth = tree.root.findByProps({ "aria-label": "Attach generated artifact Artifact 1.docx" });
+    await act(async () => fifth.props.onChange({ target: { checked: true } }));
+    const sixth = tree.root.findByProps({ "aria-label": "Attach generated artifact Artifact 2.docx" });
+    assert.equal(sixth.props.disabled, true);
+    const selected = tree.root.findAll(node => node.props.type === "checkbox" && node.props.checked === true);
+    assert.equal(selected.length, 5);
+  }, data);
+});
+
 test("saved messages display the names of their attached sources", async () => {
   const data = fixture([record]);
   const document = {
