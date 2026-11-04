@@ -1,12 +1,26 @@
+## Muse-inspired conversation enhancements — 4 November 2026 (Asia/Dhaka)
+
+The approved practical chat enhancement slice is merged to main. Current source: `4db2843e0d43447af5065b04c13b82cf710a1084` (merge of PR #622). The merged implementation chain is #616 (native text replies), #617 (rename/export/Markdown/attachments), #618 (Unicode and attachment-test corrections), #620 (Coworker-first routing) and #622 (server-side five-source limit and final route/browser regressions). See [the feature handoff](../frontend/MUSE_CHAT_ENHANCEMENTS_2026-11-04.md) and [frontend ledger](../frontend/IMPLEMENTATION_LEDGER.md).
+
+- User-visible scope: Coworker-first conversation UI, persisted owner-scoped text replies, rename with optimistic concurrency, Markdown/JSON export, safe Markdown rendering, and owner-scoped untrusted file/artifact attachments limited to five.
+- Safety: saved messages and renames do not dispatch Agent work; direct chat does not read attached file contents; explicit Start task remains required for Agent processing. Native replies remain default-off.
+- Latest main CI #41800917260: `test-and-build=success`, `Frontend tests and builds=success`, `coworker=failure` at the final browser step due to a stale `.workspace-coworker` selector after the Coworker standalone route change, and `governance-audit=failure` because main branch protection is not confirmed. PR #624 corrects the browser scroll target; exact-head rerun pending. Vercel commit status is success, not live UI qualification.
+- Qualification levels: scoped source merged; repository verification partial until the Coworker job completes; staging not freshly verified; production not qualified; activation not performed.
+- Handoff regression coverage now explicitly checks Bangla/long-Unicode Markdown preservation and narrow-panel code/table overflow; exact-head PR CI is pending.
+- Remaining Muse gaps: streaming, voice/audio, image capabilities, direct file-aware chat, native mobile/WhatsApp integrations, and operated qualification of the wider Agent/automation/transaction surfaces.
+- Next: inspect exact-head Coworker CI and this handoff PR's checks. Do not merge or deploy this documentation handoff as a substitute for governance or staging gates.
+
+---
+
 ## Native chatbox continuation — 4 November 2026 (Asia/Dhaka)
 
-The same local branch now implements native assistant text replies through an authenticated, owner-scoped conversation endpoint and migration 0063. The composer remains visible while message history scrolls. [Implementation, evidence and rollout handoff](../frontend/CHATBOX_COMPLETION_2026-11-04.md) supersedes the previous native-chat/browser limitations below.
+The native assistant text-chat implementation is merged through PR #616 (merge commit `7b20c1c34217fdfe8ac7952fa6b8c40b5dc611c5`) and remains default-off. [Implementation, evidence and rollout handoff](../frontend/CHATBOX_COMPLETION_2026-11-04.md) records the backend contract; the follow-on Muse chat implementation and current qualification status are recorded in the new section above.
 
 - Backend conversation/context/dispatch/retention/manifest suite: **92 passed, zero skips**, mandatory gate passed. The final reply-only rerun and independent reviewer run each passed **21 tests**.
 - Full root JavaScript suite passes, including **169 web-editor tests**; web-editor, Coworker and Editor builds pass. Existing Coworker bundle-size warning remains.
 - Real Chromium with a synthetic API passes five desktop/tablet/phone viewports, including first-entry and after-reply composer visibility, send/reply, scroll, history search, drawer keyboard focus, new chat and dark mode.
 - Source review found and verified a fix for active/expired provider leases breaking account erasure. No remaining Critical/Important finding was reported.
-- Publication remains blocked pending explicit approval to push to the public repository. No PR, merge, production migration, deployment, real provider call or feature activation was performed. Native text chat is implemented locally; streaming and full Muse parity remain incomplete.
+- PR #616 is merged. No production migration, deployment, real provider call or feature activation is claimed. Native text chat is implemented in source but remains default-off; streaming and full Muse parity remain incomplete.
 
 ---
 

@@ -1,6 +1,6 @@
 # Rukh AI Muse-inspired conversation enhancements Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Complete the practical conversation features missing from the current Coworker chat UI while preserving the approved Rukh architecture and execution boundaries.
 
@@ -46,12 +46,12 @@
 - Add authenticated `PATCH /api/v1/conversations/{conversation_id}`; return the existing conversation DTO with `Cache-Control: no-store`.
 - Keep the existing owner lock order and use the exact returned `updated_at` string as the concurrency token.
 
-- [ ] Write repository/API tests for successful rename, stale revision conflict, same-title idempotence and foreign-owner 404.
-- [ ] Write a CORS preflight test for PATCH using the existing allowed origin.
-- [ ] Run the focused tests and confirm the new assertions fail before implementation.
-- [ ] Implement the schema, locked repository update, authenticated route and PATCH method in the existing CORSMiddleware allowlist.
-- [ ] Run `python -m pytest tests/test_conversations.py tests/test_api_app.py -q`.
-- [ ] Commit as `feat(coworker): add revision-checked conversation rename`.
+- [x] Write repository/API tests for successful rename, stale revision conflict, same-title idempotence and foreign-owner 404.
+- [x] Write a CORS preflight test for PATCH using the existing allowed origin.
+- [x] Run the focused tests and confirm the new assertions fail before implementation.
+- [x] Implement the schema, locked repository update, authenticated route and PATCH method in the existing CORSMiddleware allowlist.
+- [x] Run `python -m pytest tests/test_conversations.py tests/test_api_app.py -q`.
+- [x] Commit as `feat(coworker): add revision-checked conversation rename`.
 
 ### Task 2: Rename controls and complete conversation export
 
@@ -68,11 +68,11 @@
 - Add pure Markdown and JSON export builders that consume the selected `ConversationRecord` and the fully paginated `ConversationMessageRecord[]`.
 - Provide inline rename with save/cancel and a two-format export menu; downloads stay local to the browser.
 
-- [ ] Add tests for rename success, rename conflict feedback, Markdown export and JSON export.
-- [ ] Run the focused frontend tests and confirm the new assertions fail before implementation.
-- [ ] Implement the client method, inline rename, and complete-history exports.
-- [ ] Run `npm test --workspace @shuddho/web-editor`.
-- [ ] Commit as `feat(frontend): add conversation rename and export`.
+- [x] Add tests for rename success, rename conflict feedback, Markdown export and JSON export.
+- [x] Run the focused frontend tests and confirm the new assertions fail before implementation.
+- [x] Implement the client method, inline rename, and complete-history exports.
+- [x] Run `npm test --workspace @shuddho/web-editor`.
+- [x] Commit as `feat(frontend): add conversation rename and export`.
 
 ### Task 3: Safe Markdown rendering for assistant replies
 
@@ -87,11 +87,11 @@
 - Render headings, paragraphs, ordered/unordered lists, blockquotes, inline emphasis/code, fenced code blocks, horizontal rules and safe external/mail links.
 - Never execute raw HTML. Accept only http, https and mailto link protocols; reject credentials and unsafe schemes.
 
-- [ ] Add renderer tests for supported formatting, Bangla text, code blocks, raw HTML and unsafe links.
-- [ ] Run the focused renderer tests and confirm they fail before implementation.
-- [ ] Implement the renderer without a new runtime dependency and replace the plain-text reply paragraph.
-- [ ] Run `npm test --workspace @shuddho/web-editor` and `npm run build --workspace @shuddho/web-editor`.
-- [ ] Commit as `feat(frontend): render safe Markdown in coworker replies`.
+- [x] Add renderer tests for supported formatting, Bangla text, code blocks, raw HTML and unsafe links.
+- [x] Run the focused renderer tests and confirm they fail before implementation.
+- [x] Implement the renderer without a new runtime dependency and replace the plain-text reply paragraph.
+- [x] Run `npm test --workspace @shuddho/web-editor` and `npm run build --workspace @shuddho/web-editor`.
+- [x] Commit as `feat(frontend): render safe Markdown in coworker replies`.
 
 ### Task 4: First-class file and artifact attachments
 
@@ -105,11 +105,11 @@
 - Allow selecting existing uploaded document versions and generated artifacts, with a maximum of five distinct source IDs.
 - Show selected source labels on saved messages and disclose that attachments are available to explicit Start task dispatch, not direct AI chat.
 
-- [ ] Add tests for upload success/failure, selection limit, attachment labels and chat-vs-task disclosure.
-- [ ] Run focused frontend tests and confirm the new assertions fail before implementation.
-- [ ] Implement upload, source selection, removal and message provenance display.
-- [ ] Run `npm test --workspace @shuddho/web-editor` and `npm run build --workspace @shuddho/web-editor`.
-- [ ] Commit as `feat(frontend): complete conversation source attachments`.
+- [x] Add tests for upload success/failure, selection limit, attachment labels and chat-vs-task disclosure.
+- [x] Run focused frontend tests and confirm the new assertions fail before implementation.
+- [x] Implement upload, source selection, removal and message provenance display.
+- [x] Run `npm test --workspace @shuddho/web-editor` and `npm run build --workspace @shuddho/web-editor`.
+- [x] Commit as `feat(frontend): complete conversation source attachments`.
 
 ### Task 5: Handoff and release evidence
 
@@ -118,8 +118,8 @@
 - Modify: `docs/frontend/IMPLEMENTATION_LEDGER.md`
 - Create: `docs/frontend/MUSE_CHAT_ENHANCEMENTS_2026-11-04.md`
 
-- [ ] Record implemented behavior, tests, commit IDs and any remaining capability gaps.
+- [x] Record implemented behavior, tests, commit IDs and remaining capability gaps in `docs/frontend/MUSE_CHAT_ENHANCEMENTS_2026-11-04.md`.
 - [ ] Run the complete Python and frontend CI checks on the exact branch head.
-- [ ] Review the full diff for owner isolation, unsafe Markdown links, source provenance, mobile layout and explicit Agent dispatch.
-- [ ] Open a review PR; do not merge or deploy.
+- [x] Review the merged source and regression coverage for owner isolation, unsafe Markdown links, source provenance, mobile layout and explicit Agent dispatch.
+- [x] Open a documentation handoff review PR; do not merge or deploy.
 

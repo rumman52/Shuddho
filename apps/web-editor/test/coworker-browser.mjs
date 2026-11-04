@@ -197,7 +197,7 @@ try {
       assert.equal(await page.getByLabel("Source date range").inputValue(), "week");
       await current.locator(".cw-evidence summary").click();
     }
-    await page.locator(".workspace-coworker").evaluate(element => { element.scrollTop = 0; });
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: join(folder, `screenshots/service-${skill}.png`), fullPage: true });
     if (["social", "meeting", "daily_plan", "presentation", "spreadsheet", "research"].includes(skill)) {
       await page.setViewportSize({ width: 390, height: 844 });

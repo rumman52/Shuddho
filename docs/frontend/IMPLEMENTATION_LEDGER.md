@@ -1,25 +1,30 @@
 # Rukh AI frontend implementation ledger
 
-Updated 4 November 2026 (Asia/Dhaka). This supersedes the stale 2 November pending-source checklist. Source base: main `a8385b5a2849afd01486d86106cfa4ea491f46fd`, merged PR #615. Continuation branch: `feat/rukh-conversation-usability-20261104`.
+Updated 4 November 2026 (Asia/Dhaka). Source base: `main 4db2843e0d43447af5065b04c13b82cf710a1084`. Relevant merged work: PRs #615, #616, #617, #618, #620 and #622.
 
 | Workstream | Source status | Evidence / remaining work |
 |---|---|---|
-| Architecture and shared packages | Implemented | `ARCHITECTURE.md`, packages/auth, coworker-client and design-system |
-| Independent Coworker and Editor apps | Implemented; local builds pass | apps/coworker and apps/editor; same-origin live routing/session still needs operated verification |
-| Coworker-first routing and theme | Implemented; base frontend CI passed | PR #615; light/dark, mobile history/context and Editor drawers |
-| First-entry conversation composer | Implemented in continuation | Visible before a titled conversation exists; first-message creation, retry identity, search and starters tested |
-| Inline linked Agent progress | Implemented in continuation | Real owned run message/plan/tool summaries, partial completion, failure/retry and stale response tests |
-| Sources, memory and action approvals | Existing source preserved | Version-bound source selection; reviewable memory; explicit Agent start and external-action approval |
-| Cross-app document handoff | Existing source preserved | Owner-bound upload/manifest/artifact contracts; no fresh live auth/storage/provider run claimed |
-| Local JavaScript qualification | Passing | Full root npm test; web-editor 169 tests, standalone Coworker 4 and Editor 1, plus gateway/shared/NLP/production API checks |
-| Local frontend builds | Passing | TypeScript + Vite: web-editor, Coworker and Editor; Coworker retains >500 kB chunk warning |
-| Exact continuation-head CI | Pending | Inspect PR checks after publication |
-| Desktop/mobile browser verification | Passing with synthetic API | Real Chromium and real workspace components at 1440×1000, 1366×768, 1024×768, 390×844 and 375×812; composer visibility, send/reply, scroll, history search, drawer focus, new chat and dark mode |
-| Live deployment | Not verified by continuation | Base Vercel commit status reports success; that alone does not prove auth, routes, visible chat or current code deployment |
-| Native assistant text chat | Implemented; default off | Owned authenticated endpoint, persisted answers, bounded context, duplicate protection, daily/shared model budgets, interrupted recovery; migration 0063 required |
-| Full Muse feature parity | Incomplete | Streaming, image/audio generation, native-device products and remaining operated Agent/automation/transaction qualification are outside this text-chat implementation |
+| Architecture and shared packages | Implemented | `docs/frontend/ARCHITECTURE.md`, `packages/auth`, `packages/coworker-client` and `packages/design-system` |
+| Independent Coworker and Editor apps | Implemented | `apps/coworker` and `apps/editor`; same-origin live routing/session still needs operated verification |
+| Coworker-first routing and theme | Implemented | PR #615 and route/browser correction #620; root opens Coworker when enabled, Editor remains at `/editor` |
+| First-entry conversation composer | Implemented | First-message creation, stable retry identity, history search, prompt starters and IME-safe keyboard submission |
+| Inline linked Agent progress | Implemented | Real owned run message/plan/tool summaries, partial completion, failure/retry and stale-response isolation |
+| Native assistant text chat | Implemented; default off | PR #616; owner-scoped persisted replies, bounded context, duplicate-claim protection, budget reservations and interrupted recovery; migration 0063 and existing backend configuration required |
+| Conversation rename | Implemented | PR #617; authenticated owner-scoped PATCH, optimistic `updated_at` revision, stale conflict and CORS preflight |
+| Conversation export | Implemented | PR #617/#618; complete paginated history to local Markdown or JSON, including replies, source labels and provenance; Unicode-safe filenames |
+| Safe Markdown replies | Implemented | PR #617; inert raw HTML, safe HTTP/HTTPS/mailto links, headings, lists, tables, blockquotes and code; PR #624 adds explicit Bangla/long-Unicode preservation and narrow-panel overflow regressions (CI pending) |
+| Source attachments | Implemented | PR #617/#618/#622; existing upload/manifest APIs, five-source limit enforced in UI and schema, owner-scoped untrusted inputs; direct chat does not read files |
+| Sources, memory and action approvals | Existing source preserved | Version-bound source selection, reviewable memory and explicit Agent start/external-action approval remain canonical |
+| Cross-app document handoff | Existing source preserved | Owner-bound upload/manifest/artifact contracts; fresh live auth/storage/provider run not claimed |
+| Frontend CI on latest main | Passing | CI run #41800917260: `Frontend tests and builds` succeeded |
+| Python `test-and-build` on latest main | Passing | CI run #41800917260: `test-and-build` succeeded |
+| Mandatory Coworker CI on latest main | Failed; test-harness fix in PR #624 | CI run #41800917260 failed only at the final browser step: stale `.workspace-coworker` selector after standalone Coworker routing. PR #624 replaces wrapper scrolling with `window.scrollTo`; exact-head rerun pending |
+| Governance audit | Failing | CI run #41800917260 reports main branch protection is not confirmed; this is separate from the chat UI and test-harness changes |
+| Browser evidence | Synthetic API checks recorded | Native chat Chromium evidence covers five viewports and composer/send/reply/history/drawer/theme behavior; no real signed-in production session claimed |
+| Live deployment | Not verified | Vercel commit status is success; that alone does not verify current routes, auth, API or provider behavior |
+| Full Muse parity | Incomplete | Streaming, voice/audio, image capabilities, direct file-aware chat, native integrations and operated Agent/automation/transaction qualification remain separate work |
 
-[Continuation contract, capability matrix and validation limits](CONVERSATION_USABILITY_2026-11-04.md).
-[Native chat implementation and release handoff](CHATBOX_COMPLETION_2026-11-04.md) supersedes the earlier native-chat and browser limitations.
+[Native text-chat contract and rollout requirements](CHATBOX_COMPLETION_2026-11-04.md).
+[Muse-inspired enhancement scope, evidence and remaining gaps](MUSE_CHAT_ENHANCEMENTS_2026-11-04.md).
 
-No production environment or database was changed. No provider activation, paid infrastructure or deployment promotion occurred. The new capability defaults off. The full roadmap and production qualification remain incomplete.
+No production environment, database, auth configuration, provider credential, alias or deployment was changed. Native replies remain default-off. The full roadmap and production qualification remain incomplete.

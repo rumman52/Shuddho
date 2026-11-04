@@ -42,7 +42,7 @@ export async function verifyActions(page, folder) {
   await area.getByRole("button", { name: "Review action", exact: true }).click();
   await review.getByRole("heading", { name: "Needs your approval" }).waitFor();
   assert.notEqual(await area.locator(".cw-action-content").innerText(), first);
-  await page.locator(".workspace-coworker").evaluate(element => { element.scrollTop = 0; });
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(folder, "screenshots/actions-email-preview.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
@@ -78,7 +78,7 @@ export async function verifyActions(page, folder) {
   await review.getByRole("heading", { name: "Needs your approval" }).waitFor();
   await area.getByText(day + " 10:00:00+06:00", { exact: true }).waitFor();
   await area.getByText("15 minutes before start", { exact: true }).waitFor();
-  await page.locator(".workspace-coworker").evaluate(element => { element.scrollTop = 0; });
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(folder, "screenshots/actions-calendar-preview.png"), fullPage: true });
   await review.getByRole("checkbox").check();
   await review.getByRole("button", { name: "Approve & create event" }).click();
