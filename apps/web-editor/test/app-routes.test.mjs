@@ -30,3 +30,18 @@ test("Rukh opens Coworker by default only when enabled and keeps the workspace d
   assert.equal(getWorkspaceAppRoute("/editor", false), "editor");
   assert.equal(getWorkspaceAppRoute("/editor", true), "editor");
 });
+
+
+test("provider OAuth callbacks return to Coworker only when Coworker is enabled", () => {
+  const callbacks = [
+    "/oauth/google/callback",
+    "/oauth/microsoft/callback",
+    "/oauth/linkedin/callback",
+  ];
+  for (const path of callbacks) {
+    assert.equal(getStandaloneAppRoute(path), "coworker");
+    assert.equal(getWorkspaceAppRoute(path, true), "coworker");
+    assert.equal(getWorkspaceAppRoute(path + "?code=callback-code&state=callback-state", true), "coworker");
+    assert.equal(getWorkspaceAppRoute(path, false), "home");
+  }
+});
