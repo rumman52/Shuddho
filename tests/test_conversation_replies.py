@@ -404,3 +404,15 @@ def test_cancel_during_threadpool_claim_settles_any_committed_stream_claim(conta
     assert stored["text"] == ""
     with container.repository.sessions() as db:
         assert db.scalar(select(ProviderLease)) is None
+
+
+def test_stream_route_preserves_feature_gate_http_status_before_sse_headers(container, signed_client):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    service.settings = replace(service.settings, conversation_replies_enabled=False)
+    client, headers = signed_client
+    path = f'/api/v1/conversations/{conversation["id"]}/messages/{message["id"]}/reply/stream'
+    response = client.post(path, json={"expected_sequence": 1}, headers=headers())
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["error"]["code"] == "conversation_replies_unavailable"
