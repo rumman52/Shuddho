@@ -1666,10 +1666,10 @@ async def stream_conversation_reply(
                 return
             event_type = event["type"]
             if event_type == "keepalive":
-                yield ": keepalive\\n\\n"
+                yield ": keepalive\n\n"
                 continue
             data = {key: value for key, value in event.items() if key != "type"}
-            yield f"event: {event_type}\\ndata: {json.dumps(data, ensure_ascii=False)}\\n\\n"
+            yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
