@@ -363,3 +363,44 @@ def test_public_stream_reply_route_is_owner_scoped_and_not_cacheable(container, 
     assert manifest.status_code == 200
     assert manifest.json()["capabilities"]["conversation_replies_streaming"] is True
     assert client.post(path, json={"expected_sequence": 1}, headers=headers("bob")).status_code == 404
+
+
+def test_cancel_during_threadpool_claim_settles_any_committed_stream_claim(container):
+    import threading
+
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    claimed = threading.Event()
+    continue_claim = threading.Event()
+    original_claim = service.claim
+
+    def delayed_claim(owner_id, conversation_id, message_id, expected_sequence):
+        result = original_claim(owner_id, conversation_id, message_id, expected_sequence)
+        claimed.set()
+        if not continue_claim.wait(timeout=5):
+            raise TimeoutError("test did not release claim")
+        return result
+
+    service.claim = delayed_claim
+
+    async def cancel_during_claim():
+        async def consume():
+            async for _event in service.stream_reply(owner, conversation["id"], message["id"], 1):
+                pass
+
+        task = asyncio.create_task(consume())
+        ready = await asyncio.to_thread(claimed.wait, 5)
+        if not ready:
+            continue_claim.set()
+            raise AssertionError("claim did not reach its committed boundary")
+        task.cancel()
+        continue_claim.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_during_claim())
+    stored = container.conversations.messages(owner, conversation["id"])["items"][0]["assistant_reply"]
+    assert stored["state"] == "interrupted"
+    assert stored["text"] == ""
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ProviderLease)) is None
