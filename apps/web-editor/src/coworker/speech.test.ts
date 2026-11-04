@@ -77,16 +77,17 @@ test("speech recognition prefers the standard API and emits only final transcrip
 });
 
 test("speech recognition falls back to the prefixed browser API and reports unsupported browsers", () => {
-  const instance = new FakeRecognition();
+  const instances: FakeRecognition[] = [];
   const host: SpeechRecognitionHost = {
     webkitSpeechRecognition: class extends FakeRecognition {
-      constructor() { super(); return instance; }
+      constructor() { super(); instances.push(this); }
     },
   };
   assert.equal(hasBrowserSpeechRecognition(host), true);
-  assert.equal(createBrowserSpeechRecognition(host, "en-US", {
+  const recognition = createBrowserSpeechRecognition(host, "en-US", {
     onTranscript: () => undefined, onError: () => undefined, onEnd: () => undefined,
-  }), instance);
+  });
+  assert.equal(recognition, instances[0]);
   assert.equal(hasBrowserSpeechRecognition({}), false);
   assert.equal(createBrowserSpeechRecognition(undefined, "en-US", {
     onTranscript: () => undefined, onError: () => undefined, onEnd: () => undefined,
