@@ -370,10 +370,8 @@ def test_streamed_reply_discards_late_output_after_conversation_deletion(contain
     service.model = model
 
     async def collect():
-        claim, messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
-        return [event async for event in service.stream_events(
-            owner, conversation["id"], message["id"], claim, messages,
-        )]
+        claim, queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        return [event async for event in service.stream_events(claim, queue)]
     events = asyncio.run(collect())
     assert events[-1][0] == "error"
     assert "no longer available" in events[-1][1]["error"].lower()
