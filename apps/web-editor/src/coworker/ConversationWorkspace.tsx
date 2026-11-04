@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
-  CoworkerClient, WorkspaceError, type ConversationRecord,
+  CoworkerClient, WorkspaceError, type AssistantReply, type ConversationRecord,
   type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
 } from "./client";
 import ConversationReply from "./ConversationReply";
@@ -200,12 +200,18 @@ export default function ConversationWorkspace({ client, openAgent }: {
     const controller = new AbortController();
     replyController.current?.abort(); replyController.current = controller;
     setReplyingId(item.id); setReplyErrors(current => ({ ...current, [item.id]: "" }));
-    try {
-      const reply = await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+    const applyReply = (reply: AssistantReply) => {
       if (!controller.signal.aborted && selectedRef.current === id) {
         refreshOrder.current.invalidate();
-        setMessages(current => current.map(message => message.id === item.id ? { ...message, assistant_reply: reply } : message));
+        setMessages(current => current.map(message => message.id === item.id
+          ? { ...message, assistant_reply: reply } : message));
       }
+    };
+    try {
+      const reply = typeof client.replyToConversationMessageStream === "function"
+        ? await client.replyToConversationMessageStream(id, item.id, item.sequence, applyReply, controller.signal)
+        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+      applyReply(reply);
     } catch (cause) {
       if (!controller.signal.aborted && selectedRef.current === id)
         setReplyErrors(current => ({ ...current, [item.id]: cause instanceof Error ? cause.message : "Could not load the AI reply." }));
