@@ -1,5 +1,8 @@
 # Rukh AI workspace home — design specification
 
+> **Status:** Historical design for the optional `/workspaces` directory. Its original root-chooser behavior was superseded by the approved [Coworker-first default-entry design](2026-11-03-rukh-coworker-default-entry-design.md). When `VITE_COWORKER_ENABLED=true`, `/` opens Coworker; when disabled, `/` opens this workspace directory.
+
+
 ## Brief
 
 - **Audience:** Professionals who need a focused place to write and a reliable AI teammate for multi-step work.
