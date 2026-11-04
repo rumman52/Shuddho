@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "@rukh/design-system/tokens.css";
 import "../../web-editor/src/coworker/workspace.css";
+import "../../web-editor/src/coworker/coworker-entry.css";
 import "./styles.css";
 import App from "./App";
 import { initializeRukhTheme } from "../../web-editor/src/lib/theme";

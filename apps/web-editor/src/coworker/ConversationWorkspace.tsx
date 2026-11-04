@@ -20,8 +20,11 @@ function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifes
 }
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
-export default function ConversationWorkspace({ client, openAgent }: {
-  client: CoworkerClient; openAgent: (runId: string) => void;
+export default function ConversationWorkspace({ client, openAgent, initialDraft = "", onInitialDraftChange }: {
+  client: CoworkerClient;
+  openAgent: (runId: string) => void;
+  initialDraft?: string;
+  onInitialDraftChange?: (draft: string) => void;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [selected, setSelected] = useState(() => typeof window !== "undefined" ? getInitialConversationId(window.location.search) ?? "" : "");
@@ -53,7 +56,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const followLatest = useRef(true);
   const firstMessage = useRef<{ fingerprint: string; key: string; conversation: ConversationRecord | null } | null>(null);
   const [title, setTitle] = useState("");
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -330,7 +333,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
   function startNew() {
     if (working) return;
-    setSelected(""); setDraft(""); setSelectedSources([]); setError(""); setNotice("");
+    setSelected(""); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setError(""); setNotice("");
     setEditingTitle(false); setRenameDraft("");
     setMobilePanel(null); messageKey.current = null; firstMessage.current = null;
     composerRef.current?.focus();
@@ -370,6 +373,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       }
       firstMessage.current = null;
       setDraft("");
+      onInitialDraftChange?.("");
       setSelectedSources([]);
       messageKey.current = null;
       const currentManifest = await client.workspaceManifest().catch(() => null);
@@ -565,7 +569,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
         </form>
         <ul className="rukh-conversation-items">
           {filteredConversations.map(item => <li key={item.id}>
-            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); setSelectedSources([]); setEditingTitle(false); setRenameDraft(""); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
+            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setEditingTitle(false); setRenameDraft(""); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
               <span className="rukh-conversation-item-title">{item.title}</span>
               <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
             </button>
@@ -657,7 +661,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
         <form className="rukh-message-composer" aria-label="Message composer" onSubmit={send}>
           <label className="rukh-sr-only" htmlFor="cw-conversation-message">New message</label>
           <textarea ref={composerRef} id="cw-conversation-message" dir="auto" value={draft} minLength={1} maxLength={12000}
-            rows={3} disabled={composerDisabled || dictating} required onChange={event => setDraft(event.target.value)}
+            rows={3} disabled={composerDisabled || dictating} required onChange={event => { setDraft(event.target.value); onInitialDraftChange?.(event.target.value); }}
             onKeyDown={event => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                 event.preventDefault();
