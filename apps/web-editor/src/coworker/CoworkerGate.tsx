@@ -1,12 +1,19 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
+import CoworkerEntry from "./CoworkerEntry";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { CoworkerClient } from "./client";
 
+export type CoworkerGateProps = {
+  authClientFactory?: typeof getRukhAuthClient;
+};
 
-export default function CoworkerGate() {
-  const auth = useMemo(() => getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY), []);
+export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: CoworkerGateProps = {}) {
+  const auth = useMemo(
+    () => authClientFactory(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY),
+    [authClientFactory],
+  );
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(Boolean(auth));
   const [mode, setMode] = useState<"signin" | "signup" | "reset" | "recovery">("signin");
@@ -15,6 +22,11 @@ export default function CoworkerGate() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [draft, setDraft] = useState("");
+  const [entryError, setEntryError] = useState("");
+  const [authOpen, setAuthOpen] = useState(false);
+  const authDialogRef = useRef<HTMLElement | null>(null);
+
   const client = useMemo(() => auth && session ? new CoworkerClient(
     import.meta.env.VITE_COWORKER_API_BASE_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8000" : "/backend"),
     async () => {
@@ -24,25 +36,120 @@ export default function CoworkerGate() {
   ) : null, [auth, session?.user.id]);
 
   useEffect(() => {
-    if (!auth) return;
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
     let alive = true;
     auth.auth.getSession().then(({ data, error: failure }) => {
       if (!alive) return;
-      setSession(data.session); setLoading(false);
-      if (failure) setError("Please sign in again to open your workspace.");
-    }).catch(() => { if (alive) { setLoading(false); setError("Sign-in could not be reached. Please try again."); } });
+      setSession(data.session);
+      setLoading(false);
+      if (failure) setEntryError("Please sign in again to open your workspace.");
+    }).catch(() => {
+      if (alive) {
+        setLoading(false);
+        setEntryError("Sign-in could not be reached. Please try again.");
+      }
+    });
     const { data } = auth.auth.onAuthStateChange((event, next) => {
       if (!alive) return;
-      setSession(next); setLoading(false); setPassword("");
-      if (event === "PASSWORD_RECOVERY") setMode("recovery");
+      setSession(next);
+      setLoading(false);
+      setPassword("");
+      if (event === "PASSWORD_RECOVERY") {
+        setMode("recovery");
+        setAuthOpen(true);
+      } else if (next) {
+        setAuthOpen(false);
+        setError("");
+        setNotice("");
+        setEntryError("");
+      }
     });
     return () => { alive = false; data.subscription.unsubscribe(); };
   }, [auth]);
 
+  function openAuth() {
+    if (!auth) {
+      setEntryError("Sign-in is not configured for this deployment. Your draft has not been sent.");
+      return;
+    }
+    setEntryError("");
+    setError("");
+    setNotice("");
+    if (mode !== "recovery") setMode("signin");
+    setAuthOpen(true);
+  }
+
+  function requestFirstMessage() {
+    if (!draft.trim() || loading) return;
+    if (!auth) {
+      setEntryError("Sign-in is not configured for this deployment. Your draft has not been sent.");
+      return;
+    }
+    setEntryError("");
+    setError("");
+    setNotice("");
+    setMode("signin");
+    setAuthOpen(true);
+  }
+
+  function closeAuth() {
+    setAuthOpen(false);
+    setPassword("");
+    setError("");
+    setNotice("");
+    if (mode !== "recovery") setMode("signin");
+  }
+
+  useEffect(() => {
+    if (!authOpen || typeof document === "undefined") return;
+    const dialog = authDialogRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    ) ?? []);
+    const first = dialog?.querySelector<HTMLElement>("input:not([disabled])") ?? getFocusable()[0];
+    (first ?? dialog)?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeAuth();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (!focusable.length) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+      const firstFocusable = focusable[0];
+      const lastFocusable = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === firstFocusable) {
+        event.preventDefault();
+        lastFocusable.focus();
+      } else if (!event.shiftKey && document.activeElement === lastFocusable) {
+        event.preventDefault();
+        firstFocusable.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [authOpen, mode]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!auth || busy) return;
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true);
+    setError("");
+    setNotice("");
     try {
       if (mode === "reset") {
         const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: new URL("/coworker", window.location.origin).href });
@@ -51,7 +158,9 @@ export default function CoworkerGate() {
       } else if (mode === "recovery") {
         const { error } = await auth.auth.updateUser({ password });
         if (error) throw error;
-        setMode("signin"); setPassword("");
+        setMode("signin");
+        setPassword("");
+        setAuthOpen(false);
       } else if (mode === "signup") {
         const { error, data } = await auth.auth.signUp({ email, password, options: { emailRedirectTo: new URL("/coworker", window.location.origin).href } });
         if (error) throw error;
@@ -60,39 +169,98 @@ export default function CoworkerGate() {
         const { error } = await auth.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Sign-in could not finish. Please try again."); }
-    finally { setBusy(false); }
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Sign-in could not finish. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  if (loading) return <p className="cw-loading" role="status">Opening your workspace…</p>;
-  if (session && client && mode !== "recovery") return <CoworkerWorkspace key={session.user.id} client={client} email={session.user.email ?? "Your account"}
-    signOut={async () => {
-      const { error } = await auth!.auth.signOut({ scope: "local" });
-      if (error) throw error;
-      setSession(null); setNotice("");
-    }} />;
-  return <main className="cw-auth">
-    <div className="cw-auth-story"><span className="cw-eyebrow">A coworker for complex work.</span>
-      <h1>Move complex work<br />forward, with context.</h1>
-      <p>Keep conversations, source material and Agent activity in one private workspace. Rukh helps you organize the work, prepare deliverables and review the next step.</p>
-      <div className="cw-auth-output"><span>01</span><div><strong>Context that stays together</strong><p>Your brief, files and decisions stay connected.</p></div></div>
-      <div className="cw-auth-output"><span>02</span><div><strong>Work you can review</strong><p>Track Agent progress and approve external actions.</p></div></div>
-    </div>
-    <section className="cw-auth-card" aria-label="Account access">
-      {!auth ? <><h2>Sign-in is not configured for this environment.</h2><p>The Coworker account service is unavailable in this deployment. You can still open Web Editor or contact your workspace administrator.</p></> : <>
-        <span className="cw-eyebrow">Your personal workspace</span>
-        <h2>{mode === "signup" ? "Make room for better work." : mode === "reset" ? "Reset your password." : mode === "recovery" ? "Choose a new password." : "Welcome back."}</h2>
-        <form onSubmit={submit}>
-          {mode !== "recovery" && <label>Email<input type="email" autoComplete="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} /></label>}
-          {mode !== "reset" && <label>Password<input type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} minLength={mode === "signin" ? 1 : 12} required maxLength={128} value={password} onChange={event => setPassword(event.target.value)} />{mode !== "signin" && <small>Use at least 12 characters.</small>}</label>}
-          <button className="cw-primary" disabled={busy} type="submit">{busy ? "Please wait…" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : mode === "recovery" ? "Save password" : "Sign in"}</button>
-        </form>
-        {error && <p className="cw-error" role="alert">{error}</p>}{notice && <p className="cw-notice" role="status">{notice}</p>}
-        {mode !== "recovery" && <div className="cw-auth-links">
-          <button onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setError(""); setNotice(""); }}>{mode === "signup" ? "Already have an account? Sign in" : "Create an account"}</button>
-          <button onClick={() => { setMode(mode === "reset" ? "signin" : "reset"); setError(""); setNotice(""); }}>{mode === "reset" ? "Back to sign in" : "Forgot password?"}</button>
-        </div>}
-      </>}
-    </section>
-  </main>;
+  if (session && client && mode !== "recovery") {
+    return (
+      <CoworkerWorkspace
+        key={session.user.id}
+        client={client}
+        email={session.user.email ?? "Your account"}
+        initialDraft={draft}
+        onInitialDraftChange={setDraft}
+        signOut={async () => {
+          const { error } = await auth!.auth.signOut({ scope: "local" });
+          if (error) throw error;
+          setSession(null);
+          setNotice("");
+          setEntryError("");
+          setAuthOpen(false);
+        }}
+      />
+    );
+  }
+
+  return (
+    <>
+      <div aria-hidden={authOpen ? true : undefined}>
+        <CoworkerEntry
+          authConfigured={Boolean(auth)}
+          loading={loading}
+          draft={draft}
+          error={entryError}
+          onDraftChange={value => { setDraft(value); setEntryError(""); }}
+          onSubmit={requestFirstMessage}
+          onOpenSignIn={openAuth}
+        />
+      </div>
+
+      {authOpen && auth && (
+        <div
+          className="rukh-auth-overlay"
+          onMouseDown={event => { if (event.target === event.currentTarget) closeAuth(); }}
+        >
+          <section
+            ref={authDialogRef}
+            className="cw-auth-card rukh-auth-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rukh-auth-dialog-title"
+            aria-describedby="rukh-auth-dialog-description"
+            tabIndex={-1}
+          >
+            <button type="button" className="rukh-auth-dialog-close" aria-label="Close sign-in" onClick={closeAuth}>×</button>
+            <span className="cw-eyebrow">Your personal workspace</span>
+            <h2 id="rukh-auth-dialog-title">
+              {mode === "signup" ? "Make room for better work." : mode === "reset" ? "Reset your password." : mode === "recovery" ? "Choose a new password." : "Welcome back."}
+            </h2>
+            <p id="rukh-auth-dialog-description">Your draft stays in the composer. It will not be sent until you press Send in your conversation.</p>
+            <form aria-label="Account access" onSubmit={submit}>
+              {mode !== "recovery" && (
+                <label>Email
+                  <input type="email" autoComplete="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} />
+                </label>
+              )}
+              {mode !== "reset" && (
+                <label>Password
+                  <input type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} minLength={mode === "signin" ? 1 : 12} required maxLength={128} value={password} onChange={event => setPassword(event.target.value)} />
+                  {mode !== "signin" && <small>Use at least 12 characters.</small>}
+                </label>
+              )}
+              <button className="cw-primary" disabled={busy} type="submit">
+                {busy ? "Please wait…" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : mode === "recovery" ? "Save password" : "Sign in"}
+              </button>
+            </form>
+            {error && <p className="cw-error" role="alert">{error}</p>}
+            {notice && <p className="cw-notice" role="status">{notice}</p>}
+            {mode !== "recovery" && (
+              <div className="cw-auth-links">
+                <button type="button" onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setError(""); setNotice(""); }}>
+                  {mode === "signup" ? "Already have an account? Sign in" : "Create an account"}
+                </button>
+                <button type="button" onClick={() => { setMode(mode === "reset" ? "signin" : "reset"); setError(""); setNotice(""); }}>
+                  {mode === "reset" ? "Back to sign in" : "Forgot password?"}
+                </button>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </>
+  );
 }
