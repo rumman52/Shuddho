@@ -1659,11 +1659,11 @@ async def stream_reply_to_conversation_message(
             identity.account_id, str(conversation_id), str(message_id), claim_result, messages,
         ):
             if event == "keepalive":
-                yield ": keepalive\\n\\n"
+                yield ": keepalive\n\n"
                 continue
             yield (
-                f"event: {event}\\n"
-                f"data: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}\\n\\n"
+                f"event: {event}\n"
+                f"data: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}\n\n"
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
