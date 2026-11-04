@@ -1028,6 +1028,7 @@ def runtime_manifest(
         "agent_runtime": settings.agent_runtime_enabled,
         "conversations": settings.conversations_enabled,
         "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and bool(settings.deepseek_api_key),
+        "conversation_replies_streaming": settings.conversations_enabled and settings.conversation_replies_enabled and bool(settings.deepseek_api_key),
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,
@@ -1643,6 +1644,38 @@ async def reply_to_conversation_message(conversation_id: UUID, message_id: UUID,
     payload: ConversationReplyCreate, identity: Identity, services: Services, response: Response):
     response.headers["Cache-Control"] = "no-store"
     return await services.conversation_replies.reply(identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence)
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/reply/stream")
+async def stream_conversation_reply(
+    conversation_id: UUID,
+    message_id: UUID,
+    payload: ConversationReplyCreate,
+    request: Request,
+    identity: Identity,
+    services: Services,
+):
+    async def generate():
+        async for event in services.conversation_replies.stream_reply(
+            identity.account_id,
+            str(conversation_id),
+            str(message_id),
+            payload.expected_sequence,
+        ):
+            if await request.is_disconnected():
+                return
+            event_type = event["type"]
+            if event_type == "keepalive":
+                yield ": keepalive\\n\\n"
+                continue
+            data = {key: value for key, value in event.items() if key != "type"}
+            yield f"event: {event_type}\\ndata: {json.dumps(data, ensure_ascii=False)}\\n\\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/conversations/{conversation_id}/messages/{message_id}/dispatch", status_code=202)
