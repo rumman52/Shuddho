@@ -1,6 +1,6 @@
 # Rukh AI staging qualification — 4 November 2026
 
-<badge>NOT QUALIFIED</badge>
+**NOT QUALIFIED**
 
 No Render service or database was queried or changed during this task. Workspace discovery returned one workspace, `Rumman` (ID `tea-d6ok4okhg0os73erkdv0`), but the workspace must be explicitly confirmed by the user before service-level inspection.
 
