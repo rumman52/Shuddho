@@ -34,12 +34,12 @@ function fixture(initial = [] as typeof record[]) {
   };
   return { client, calls };
 }
-async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>, data = fixture()) {
+async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>, data = fixture(), extraProps: Record<string, unknown> = {}) {
   const previous = globalThis.window;
   globalThis.window = { location: { search: "" }, setInterval, clearInterval } as unknown as Window & typeof globalThis;
   let tree!: ReactTestRenderer;
   try {
-    await act(async () => { tree = create(<ConversationWorkspace client={data.client as unknown as CoworkerClient} openAgent={() => undefined} />); });
+    await act(async () => { tree = create(<ConversationWorkspace client={data.client as unknown as CoworkerClient} openAgent={() => undefined} {...extraProps} />); });
     await run(tree, data);
   } finally { if (tree) await act(async () => tree.unmount()); globalThis.window = previous; }
 }
@@ -372,4 +372,35 @@ test("failed reply transport preserves the saved message and retries the reply o
     assert.equal(requests, 2); assert.equal(calls.messages.length, 1);
     assert.match(JSON.stringify(tree.toJSON()), /Recovered answer/);
   }, data);
+});
+
+test("authenticated conversation composer receives and synchronizes the pre-auth draft", async () => {
+  const data = fixture();
+  let latestDraft = "first prompt";
+  await mount(async tree => {
+    const textarea = tree.root.findByProps({ id: "cw-conversation-message" });
+    assert.equal(textarea.props.value, "first prompt");
+    await act(async () => textarea.props.onChange({ target: { value: "edited prompt" } }));
+    assert.equal(latestDraft, "edited prompt");
+    await act(async () => tree.root.findByProps({ "aria-label": "Message composer" }).props.onSubmit({ preventDefault() {} }));
+    assert.equal(data.calls.messages[0].text, "edited prompt");
+    assert.equal(latestDraft, "");
+  }, data, {
+    initialDraft: "first prompt",
+    onInitialDraftChange: (value: string) => { latestDraft = value; },
+  });
+});
+
+test("failed first-message admission keeps the pre-auth draft available for retry", async () => {
+  const data = fixture();
+  data.client.appendConversationMessage = async () => { throw new Error("Temporary network failure"); };
+  let latestDraft = "keep this draft";
+  await mount(async tree => {
+    await act(async () => tree.root.findByProps({ "aria-label": "Message composer" }).props.onSubmit({ preventDefault() {} }));
+    assert.equal(tree.root.findByProps({ id: "cw-conversation-message" }).props.value, "keep this draft");
+    assert.equal(latestDraft, "keep this draft");
+  }, data, {
+    initialDraft: "keep this draft",
+    onInitialDraftChange: (value: string) => { latestDraft = value; },
+  });
 });
