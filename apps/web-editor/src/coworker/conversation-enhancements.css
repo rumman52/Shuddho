@@ -1,0 +1,161 @@
+.rukh-thread-header { align-items: flex-start; gap: 12px; }
+.rukh-thread-title { flex: 1 1 220px; min-width: 0; }
+.rukh-thread-title h2 { max-width: 100%; overflow-wrap: anywhere; }
+.rukh-thread-tools { align-items: center; }
+.rukh-rename-form {
+  display: flex;
+  align-items: center;
+  flex: 1 1 280px;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.rukh-rename-form input {
+  box-sizing: border-box;
+  flex: 1 1 180px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 10px;
+  background: var(--rukh-surface-raised);
+  color: var(--rukh-text);
+  font: inherit;
+  font-size: 13px;
+}
+.rukh-rename-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rukh-rename-actions button {
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 999px;
+  background: var(--rukh-surface);
+  color: var(--rukh-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rukh-rename-actions button[type="submit"] {
+  border-color: var(--rukh-accent);
+  background: var(--rukh-accent);
+  color: white;
+}
+.rukh-export-menu { position: relative; }
+.rukh-export-menu summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 999px;
+  background: var(--rukh-surface);
+  color: var(--rukh-text);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.rukh-export-menu summary::-webkit-details-marker { display: none; }
+.rukh-export-menu[open] summary { border-color: var(--rukh-accent); }
+.rukh-export-menu-items {
+  position: absolute;
+  z-index: 40;
+  inset-inline-end: 0;
+  top: calc(100% + 6px);
+  display: grid;
+  min-width: 176px;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 12px;
+  background: var(--rukh-surface-raised);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, .14);
+}
+.rukh-export-menu-items button {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rukh-text);
+  text-align: start;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rukh-export-menu-items button:hover { background: var(--rukh-accent-soft); }
+.rukh-message-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.rukh-message-sources li {
+  max-width: 100%;
+  padding: 4px 9px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 999px;
+  background: var(--rukh-surface);
+  color: var(--rukh-muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.rukh-context-upload {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px dashed var(--rukh-border);
+  border-radius: 12px;
+  background: var(--rukh-surface);
+}
+.rukh-context-upload label { color: var(--rukh-text); font-size: 12px; font-weight: 650; }
+.rukh-context-upload input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  color: var(--rukh-text);
+  font: inherit;
+  font-size: 11px;
+}
+.rukh-context-upload small { color: var(--rukh-muted); font-size: 10px; line-height: 1.5; }
+.rukh-source-group-heading { margin: 14px 0 8px; color: var(--rukh-text); font-size: 12px; }
+.rukh-composer-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.rukh-composer-controls > span { flex: 1 1 140px; min-width: 0; }
+.rukh-attach-mobile {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 999px;
+  background: var(--rukh-surface);
+  color: var(--rukh-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.rukh-rename-form :focus-visible,
+.rukh-rename-actions button:focus-visible,
+.rukh-export-menu summary:focus-visible,
+.rukh-export-menu-items button:focus-visible,
+.rukh-context-upload input:focus-visible,
+.rukh-attach-mobile:focus-visible {
+  outline: 2px solid var(--rukh-accent);
+  outline-offset: 2px;
+}
+@media (max-width: 1220px) {
+  .rukh-attach-mobile { display: inline-flex; }
+}
+@media (max-width: 720px) {
+  .rukh-thread-header { align-items: stretch; }
+  .rukh-thread-tools { justify-content: flex-start; }
+  .rukh-rename-form { width: 100%; }
+  .rukh-rename-form input { flex-basis: 100%; }
+  .rukh-export-menu-items { inset-inline-start: 0; inset-inline-end: auto; }
+  .rukh-context-upload { padding: 10px; }
+  .rukh-message-sources li { font-size: 10px; }
+}
