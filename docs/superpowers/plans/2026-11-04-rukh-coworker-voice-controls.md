@@ -29,10 +29,17 @@ Add optional browser-native dictation and read-aloud controls to the existing Co
 
 ## Tasks
 
-- [ ] Add failing tests for recognition, language selection, error recovery and read-aloud lifecycle.
-- [ ] Implement typed browser speech helpers.
-- [ ] Add the accessible dictation control to the existing composer.
-- [ ] Add Read aloud/Stop controls to completed assistant replies.
-- [ ] Add responsive styles using the existing Rukh tokens.
-- [ ] Run focused tests, all web-editor tests, and relevant builds.
-- [ ] Review the complete desktop/mobile interaction path and record exact-head CI evidence.
+- [x] Add behavior tests for recognition, language selection, error recovery and read-aloud lifecycle; verify RED on test-only commit `a980a09` in CI run #41809748139.
+- [x] Implement typed browser speech helpers with standard/WebKit feature detection and final-segment deduplication.
+- [x] Add the accessible dictation control to the existing composer.
+- [x] Add Read aloud/Stop controls to completed assistant replies.
+- [x] Add responsive styles using the existing Rukh tokens and 44px touch targets.
+- [ ] Re-run the complete web-editor tests, root test-and-build and mandatory Coworker job on the final exact head.
+- [ ] Review the complete desktop/mobile interaction path on a fresh Vercel preview and test real microphone/TTS behavior. The latest preview is currently blocked by Vercel's daily deployment limit.
+
+## Verification record
+
+- **RED:** [CI run #41809748139](https://github.com/rumman52/Shuddho/actions/runs/41809748139), test-only commit `a980a09aea31700776f64d59cc603c98ada6b054`. The frontend test step failed on the expected new speech-helper assertions and the missing read-aloud control before production implementation was present.
+- **GREEN (predecessor):** [CI run #41810362794](https://github.com/rumman52/Shuddho/actions/runs/41810362794), implementation commit `3f5fef0ecf27b997d7035661844b131606671086`. The complete `Frontend tests and builds` job passed. Subsequent commits add Bangla TTS locale detection, mobile select sizing and this handoff; exact-head CI remains required.
+- **Deployment limitation:** Vercel's GitHub bot reported the free daily deployment limit (>100) after an earlier preview was ready. The Render staging Postgres database is suspended after expiry on 31 October. No staging or production activation is claimed.
+- **Scope boundary:** browser speech APIs only. No audio upload, persistence, provider-generated audio, backend endpoint, migration, or feature-flag change.
