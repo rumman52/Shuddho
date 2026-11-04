@@ -305,6 +305,7 @@ def test_streamed_reply_continues_after_browser_stream_disconnect(container):
     service.model = model
 
     async def disconnect():
+        model.finished = asyncio.Event()
         claim, messages = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
         events = service.stream_events(owner, conversation["id"], message["id"], claim, messages)
         first = await anext(events)
