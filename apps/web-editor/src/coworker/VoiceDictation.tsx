@@ -44,13 +44,20 @@ export default function VoiceDictation({ draft, onDraftChange, onListeningChange
 
   function stopRecognition() {
     const recognition = recognitionRef.current;
-    if (!recognition) return;
-    recognitionRef.current = null;
+    if (!recognition || stopReasonRef.current === "user") return;
     stopReasonRef.current = "user";
-    try { recognition.stop(); }
-    catch { try { recognition.abort(); } catch { /* Browser already stopped. */ } }
-    setListening(false);
-    setStatus("Dictation stopped.");
+    setStatus("Stopping dictation…");
+    try {
+      // Keep the instance active until onend: stop() may still emit one final
+      // result event, and that transcript must be appended to the draft.
+      recognition.stop();
+    } catch {
+      try { recognition.abort(); } catch { /* Browser already stopped. */ }
+      if (recognitionRef.current === recognition) recognitionRef.current = null;
+      stopReasonRef.current = null;
+      setListening(false);
+      setStatus("Dictation stopped.");
+    }
   }
 
   useEffect(() => {
@@ -96,7 +103,7 @@ export default function VoiceDictation({ draft, onDraftChange, onListeningChange
           if (!recognition || recognitionRef.current !== recognition) return;
           recognitionRef.current = null;
           setListening(false);
-          if (stopReasonRef.current === null) setStatus("Dictation finished.");
+          setStatus(stopReasonRef.current === "user" ? "Dictation stopped." : "Dictation finished.");
           stopReasonRef.current = null;
         },
       });
