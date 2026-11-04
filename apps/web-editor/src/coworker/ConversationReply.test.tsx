@@ -33,7 +33,7 @@ test("a completed reply can be read aloud and stopped with browser speech synthe
   try {
     await act(async () => {
       tree = create(<ConversationReply
-        reply={{ state: "completed", text: "A useful answer", context_truncated: false }}
+        reply={{ state: "completed", text: "বাংলায় উত্তর", context_truncated: false }}
         pending={false}
         retry={() => undefined}
         disabled={false}
@@ -41,7 +41,8 @@ test("a completed reply can be read aloud and stopped with browser speech synthe
     });
     await act(async () => tree!.root.findByProps({ "aria-label": "Read AI reply aloud" }).props.onClick());
     assert.equal(spoken.length, 1);
-    assert.equal(spoken[0].text, "A useful answer");
+    assert.equal(spoken[0].text, "বাংলায় উত্তর");
+    assert.equal(spoken[0].lang, "bn-BD");
 
     await act(async () => tree!.root.findByProps({ "aria-label": "Stop reading aloud" }).props.onClick());
     assert.ok(cancelCount >= 2);

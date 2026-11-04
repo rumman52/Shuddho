@@ -264,6 +264,6 @@
 }
 @media (max-width: 720px) {
   .rukh-voice-controls { gap: 6px; }
-  .rukh-voice-controls select { max-width: 124px; }
+  .rukh-voice-controls select { max-width: 124px; font-size: 16px; }
   .rukh-speech-actions { gap: 6px; }
 }

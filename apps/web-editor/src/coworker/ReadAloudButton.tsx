@@ -44,7 +44,8 @@ export default function ReadAloudButton({ text, disabled }: { text: string; disa
       setStatus("Reading stopped.");
       return;
     }
-    const locale = typeof navigator !== "undefined" ? navigator.language : "en-US";
+    const deviceLocale = typeof navigator !== "undefined" ? navigator.language : "en-US";
+    const locale = /[\\u0980-\\u09FF]/u.test(text) ? "bn-BD" : deviceLocale;
     const utterance = createSpeechUtterance(host, text, resolveSpeechLanguage("device", locale));
     if (!utterance) {
       setStatus("Read aloud is not supported in this browser.");
