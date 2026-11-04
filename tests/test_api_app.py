@@ -383,6 +383,22 @@ def test_cors_preflight_allows_vercel_frontend_origin() -> None:
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://shuddho-web-editor.vercel.app"
 
+def test_cors_preflight_allows_patch_for_conversation_rename() -> None:
+    response = client.options(
+        "/api/v1/conversations/00000000-0000-0000-0000-000000000001",
+        headers={
+            "Origin": "https://shuddho-web-editor.vercel.app",
+            "Access-Control-Request-Method": "PATCH",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://shuddho-web-editor.vercel.app"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+    assert "PATCH" in response.headers["access-control-allow-methods"]
+
+
 def test_api_check_validation_returns_json_422_not_asgi_500() -> None:
     response = client.post("/api/check", json={"text": ""})
     assert response.status_code == 422

@@ -16,6 +16,17 @@ class ConversationCreate(BaseModel):
         return _safe_text(value)
 
 
+class ConversationRename(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=160)
+    expected_updated_at: str = Field(min_length=1, max_length=64)
+
+    @field_validator("title")
+    @classmethod
+    def safe_title(cls, value: str) -> str:
+        return _safe_text(value)
+
+
 class MessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     text: str = Field(min_length=1, max_length=12000)

@@ -8,7 +8,7 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 from test_coworker import account, container, signed_client
 from services.coworker.conversation_repository import ConversationRepository
-from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+from services.coworker.conversation_schemas import ConversationCreate, ConversationRename, MessageCreate
 from services.coworker.errors import CoworkerError
 from services.coworker.models import AuditEvent
 from sqlalchemy import select
@@ -113,6 +113,77 @@ def test_public_conversation_routes_replay_and_deny_other_owner(container, signe
     assert client.post(path + "/messages", json=request, headers=headers("bob")).status_code == 404
     assert client.get(path + "/messages?after=1", headers=auth).json()["items"] == []
     assert client.get(path + "/messages?after=-1", headers=auth).status_code == 422
+
+
+def test_conversation_rename_is_owner_scoped_and_revision_checked(container):
+    repo = conversations(container)
+    owner, other = account(container), account(container, "other")
+    conversation, _ = repo.create(owner, ConversationCreate(title="Original"), "rename-key")
+    original_revision = conversation["updated_at"]
+
+    renamed = repo.rename(
+        owner,
+        conversation["id"],
+        ConversationRename(title="Renamed", expected_updated_at=original_revision),
+    )
+    assert renamed["title"] == "Renamed"
+    assert renamed["updated_at"] != original_revision
+
+    replay = repo.rename(
+        owner,
+        conversation["id"],
+        ConversationRename(title="Renamed", expected_updated_at=original_revision),
+    )
+    assert replay == renamed
+
+    with pytest.raises(CoworkerError) as stale:
+        repo.rename(
+            owner,
+            conversation["id"],
+            ConversationRename(title="Overwritten", expected_updated_at=original_revision),
+        )
+    assert stale.value.code == "conversation_revision_conflict"
+    assert stale.value.status_code == 409
+
+    with pytest.raises(CoworkerError) as hidden:
+        repo.rename(
+            other,
+            conversation["id"],
+            ConversationRename(title="Foreign rename", expected_updated_at=renamed["updated_at"]),
+        )
+    assert hidden.value.code == "not_found"
+
+
+def test_public_conversation_rename_route_checks_owner_and_revision(container, signed_client):
+    container.settings = replace(container.settings, conversations_enabled=True)
+    container.conversations.settings = container.settings
+    client, headers = signed_client
+    auth = headers() | {"Idempotency-Key": "conversation-rename-api"}
+    created = client.post("/api/v1/conversations", json={"title": "Original"}, headers=auth)
+    assert created.status_code == 201
+    path = created.headers["location"]
+    original_revision = created.json()["updated_at"]
+
+    renamed = client.patch(
+        path,
+        json={"title": "Renamed", "expected_updated_at": original_revision},
+        headers=headers(),
+    )
+    assert renamed.status_code == 200
+    assert renamed.headers["cache-control"] == "no-store"
+    assert renamed.json()["title"] == "Renamed"
+
+    stale = client.patch(
+        path,
+        json={"title": "Overwritten", "expected_updated_at": original_revision},
+        headers=headers(),
+    )
+    assert stale.status_code == 409
+    assert client.patch(
+        path,
+        json={"title": "Foreign", "expected_updated_at": renamed.json()["updated_at"]},
+        headers=headers("bob"),
+    ).status_code == 404
 
 
 def test_source_selection_binds_owned_uploaded_version_and_rejects_deleted_source(container):

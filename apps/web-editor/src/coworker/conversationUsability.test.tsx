@@ -3,21 +3,32 @@ import test from "node:test";
 import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import ConversationWorkspace from "./ConversationWorkspace";
-import { WorkspaceError, type CoworkerClient, type ConversationMessageRecord, type AgentRun } from "./client";
+import { WorkspaceError, type CoworkerClient, type ConversationMessageRecord, type AgentRun, type WorkspaceManifest } from "./client";
 
 const timestamp = "2026-11-04T00:00:00Z";
 const record = { id: "conversation-1", title: "Research brief", message_sequence: 0, created_at: timestamp, updated_at: timestamp };
 function fixture(initial = [] as typeof record[]) {
   let items = [...initial];
-  const calls = { reads: [] as string[], titles: [] as string[], creates: [] as string[], messages: [] as { id: string; text: string; key: string }[], dispatches: 0 };
+  const calls = { reads: [] as string[], titles: [] as string[], creates: [] as string[], messages: [] as { id: string; text: string; key: string }[], renames: [] as { id: string; title: string; expectedUpdatedAt: string }[], dispatches: 0 };
   const client = {
     conversations: async () => ({ items }),
-    workspaceManifest: async () => ({ documents: [], artifacts: [], memory: [], revision_sha256: "a".repeat(64), truncated: {} }),
+    workspaceManifest: async (): Promise<WorkspaceManifest> => ({
+      schema_version: 1, workspace_id: "workspace-1", workspace_name: "Workspace",
+      documents: [], artifacts: [], memory: [], revision_sha256: "a".repeat(64),
+      truncated: { documents: false, artifacts: false, memory: false },
+    }),
+    upload: async (file: File) => ({ id: "document-1", filename: file.name, state: "uploaded", byte_size: file.size }),
     memory: async () => ({ enabled: false, facts: [] }),
     conversationHistory: async () => ({ items: [] as ConversationMessageRecord[] }),
     agentRun: async (id: string) => { calls.reads.push(id); return { id, state: "completed", final_state: "completed", message: "Ready", plan: [], tool_results: [] } as unknown as AgentRun; },
     conversationActivityHistory: async () => ({ items: [] }),
     createConversation: async (title: string, key: string) => { calls.creates.push(key); calls.titles.push(title); const next = { ...record, title }; items = [next]; return next; },
+    renameConversation: async (id: string, title: string, expectedUpdatedAt: string) => {
+      calls.renames.push({ id, title, expectedUpdatedAt });
+      const next = { ...record, id, title, updated_at: "2026-11-04T00:01:00Z" };
+      items = items.map(item => item.id === id ? next : item);
+      return next;
+    },
     appendConversationMessage: async (id: string, text: string, key: string) => { calls.messages.push({ id, text, key }); return {}; },
     dispatchConversationMessage: async () => { calls.dispatches++; },
   };
@@ -158,6 +169,66 @@ test("a mature conversation loads only its newest run eagerly and expands older 
     assert.deepEqual(calls.reads, ["run-19"]);
     await act(async () => tree.root.findAllByProps({ "aria-label": "Show coworker progress" })[0].props.onClick());
     assert.deepEqual(calls.reads, ["run-19", "run-0"]);
+  }, data);
+});
+
+test("selected conversation can be renamed with its current revision", async () => {
+  const data = fixture([record]);
+  await mount(async (tree, { calls }) => {
+    await act(async () => tree.root.findByProps({ "aria-label": "Rename conversation" }).props.onClick());
+    const input = tree.root.findByProps({ id: "cw-conversation-rename" });
+    await act(async () => input.props.onChange({ target: { value: "Updated title" } }));
+    const form = tree.root.findByProps({ "aria-label": "Rename conversation form" });
+    await act(async () => form.props.onSubmit({ preventDefault() {} }));
+    assert.deepEqual(calls.renames, [{ id: record.id, title: "Updated title", expectedUpdatedAt: timestamp }]);
+    assert.ok(tree.root.findAllByType("h2").some(node => node.children.includes("Updated title")));
+  }, data);
+});
+
+test("conversation context uploads a source and attaches it only for explicit Agent tasks", async () => {
+  const data = fixture();
+  const document = {
+    document_id: "document-1", version_id: "version-1", name: "brief.pdf",
+    version: 1, sha256: "a".repeat(64), available: true, trust: "untrusted_source" as const,
+  };
+  data.client.workspaceManifest = async () => ({
+    schema_version: 1, workspace_id: "workspace-1", workspace_name: "Workspace",
+    revision_sha256: "b".repeat(64), documents: [document], artifacts: [],
+    memory: [], truncated: { documents: false, artifacts: false, memory: false },
+  });
+  data.client.upload = async (file: File) => ({
+    id: "document-1", filename: file.name, state: "uploaded", byte_size: file.size,
+  });
+  await mount(async tree => {
+    const input = tree.root.findByProps({ "aria-label": "Upload a source file" });
+    await act(async () => input.props.onChange({
+      currentTarget: { files: [{ name: "brief.pdf", size: 12 }], value: "" },
+    }));
+    const checkbox = tree.root.findByProps({ "aria-label": "Attach source file brief.pdf" });
+    assert.equal(checkbox.props.checked, true);
+    assert.match(JSON.stringify(tree.toJSON()), /direct chat does not read attached files/i);
+  }, data);
+});
+
+test("saved messages display the names of their attached sources", async () => {
+  const data = fixture([record]);
+  const document = {
+    document_id: "document-1", version_id: "version-1", name: "brief.pdf",
+    version: 1, sha256: "a".repeat(64), available: true, trust: "untrusted_source" as const,
+  };
+  data.client.workspaceManifest = async () => ({
+    schema_version: 1, workspace_id: "workspace-1", workspace_name: "Workspace",
+    revision_sha256: "b".repeat(64), documents: [document], artifacts: [],
+    memory: [], truncated: { documents: false, artifacts: false, memory: false },
+  });
+  data.client.conversationHistory = async () => ({ items: [{
+    id: "message-with-source", conversation_id: record.id, sequence: 1, text: "Review this file",
+    selected_sources: [{ resource_type: "document_version", resource_id: "version-1", document_id: "document-1", version: 1, sha256: "a".repeat(64), trust: "untrusted_source" }],
+    resource_links: [], created_at: timestamp,
+  }] });
+  await mount(async tree => {
+    const attached = tree.root.findByProps({ className: "rukh-message-sources" });
+    assert.match(JSON.stringify(attached.toJSON()), /brief\.pdf/);
   }, data);
 });
 
