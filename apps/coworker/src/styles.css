@@ -51,6 +51,11 @@ body { margin: 0; background: var(--cw-bg); color: var(--cw-text); font-family: 
 .rukh-cw-private-dot { width: 7px; height: 7px; margin-top: 3px; border-radius: 50%; background: #31946b; box-shadow: 0 0 0 3px #31946b1a; }
 .rukh-cw-content { min-width: 0; }
 .cw-layout { grid-template-columns: minmax(280px, .9fr) minmax(0, 1.2fr); gap: 16px; }
+@media (max-width: 680px) {
+  /* This stylesheet is loaded after workspace.css; repeat its mobile override here. */
+  .cw-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .cw-layout > * { min-width: 0; }
+}
 .cw-compose, .cw-result, .cw-empty, .cw-card { border-color: var(--cw-border); border-radius: 16px; box-shadow: var(--rukh-shadow-sm); }
 .cw-compose, .cw-result, .cw-card { background: var(--cw-surface); }
 .cw-empty { background: var(--rukh-surface); }
