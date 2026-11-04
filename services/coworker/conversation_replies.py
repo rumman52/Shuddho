@@ -1,6 +1,9 @@
 """Text-only, owner-scoped replies with a single durable inference claim."""
 from __future__ import annotations
+import asyncio
 import json
+
+import httpx
 from datetime import datetime, timedelta
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
@@ -66,6 +69,88 @@ class DeepSeekReplyModel:
             raise ValueError("Reply too long")
         return text.strip()
 
+
+    async def stream(self, messages):
+        """Yield validated UTF-8 text deltas from DeepSeek's SSE chat-completion stream."""
+        timeout_seconds = min(60, self.settings.model_timeout_seconds)
+        payload = {
+            "model": self.settings.deepseek_model,
+            "messages": messages,
+            "stream": True,
+            "tool_choice": "none",
+            "thinking": {"type": "disabled"},
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "temperature": 0.4,
+        }
+        output_bytes = 0
+        finish_reason = None
+        saw_content = False
+        received_done = False
+        async with asyncio.timeout(timeout_seconds):
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds, connect=min(5.0, timeout_seconds)),
+                transport=self.transport,
+                follow_redirects=False,
+            ) as client:
+                async with client.stream(
+                    "POST",
+                    "https://api.deepseek.com/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.deepseek_api_key}",
+                        "Accept": "text/event-stream",
+                    },
+                    json=payload,
+                ) as response:
+                    if response.status_code != 200:
+                        raise ValueError("Provider unavailable")
+                    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                    if content_type != "text/event-stream":
+                        raise ValueError("Invalid reply stream")
+                    async for line in response.aiter_lines():
+                        if not line or line.startswith(":") or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data:
+                            continue
+                        if data == "[DONE]":
+                            received_done = True
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except (TypeError, ValueError, UnicodeError):
+                            raise ValueError("Invalid reply stream") from None
+                        if not isinstance(chunk, dict):
+                            raise ValueError("Invalid reply stream")
+                        choices = chunk.get("choices")
+                        if not isinstance(choices, list):
+                            raise ValueError("Invalid reply stream")
+                        if not choices:
+                            continue
+                        if len(choices) != 1 or not isinstance(choices[0], dict):
+                            raise ValueError("Invalid reply stream")
+                        choice = choices[0]
+                        delta = choice.get("delta") or {}
+                        if not isinstance(delta, dict):
+                            raise ValueError("Invalid reply stream")
+                        if delta.get("tool_calls") or delta.get("function_call") or delta.get("refusal"):
+                            raise ValueError("Invalid reply stream")
+                        value = delta.get("content")
+                        if value is not None:
+                            if not isinstance(value, str):
+                                raise ValueError("Invalid reply stream")
+                            if value:
+                                output_bytes += len(value.encode("utf-8"))
+                                if output_bytes > 16000:
+                                    raise ValueError("Reply too long")
+                                saw_content = True
+                                yield value
+                        reason = choice.get("finish_reason")
+                        if reason is not None:
+                            finish_reason = reason
+                            if reason != "stop":
+                                raise ValueError("Incomplete reply")
+        if not received_done or finish_reason != "stop" or not saw_content:
+            raise ValueError("Incomplete reply")
 
 class ConversationReplyService:
     def __init__(self, conversations, settings, model=None):
@@ -134,6 +219,122 @@ class ConversationReplyService:
             row.assistant_reply = result
             self.conversations._audit(db, owner, message_id, "conversation.reply_" + result["state"])
             return result
+
+    async def stream_reply(self, owner, conversation_id, message_id, expected_sequence):
+        """Stream a single claimed reply; cancellation is durably recorded as interrupted."""
+        result, messages = await run_in_threadpool(
+            self.claim, owner, conversation_id, message_id, expected_sequence,
+        )
+        if messages is None:
+            yield {"type": "final", "reply": result}
+            return
+
+        # If the client disconnects or the process closes this generator, the
+        # safe default is interrupted. Only a validated complete stream replaces it.
+        result = {
+            **result,
+            "state": "interrupted",
+            "text": "",
+            "error": "The reply was interrupted. Send a new message to try again.",
+        }
+        iterator = None
+        next_task = None
+        final = None
+        cancelled = False
+        try:
+            yield {"type": "status", "state": "generating"}
+            stream_method = getattr(self.model, "stream", None)
+            if not callable(stream_method):
+                raise ValueError("Streaming is unavailable")
+            iterator = stream_method(messages).__aiter__()
+            chunks = []
+            output_bytes = 0
+            next_task = asyncio.create_task(anext(iterator))
+            while True:
+                ready, _ = await asyncio.wait({next_task}, timeout=15)
+                if not ready:
+                    yield {"type": "keepalive"}
+                    continue
+                try:
+                    delta = next_task.result()
+                except StopAsyncIteration:
+                    next_task = None
+                    break
+                next_task = None
+                if not isinstance(delta, str):
+                    raise ValueError("Invalid reply stream")
+                if delta:
+                    output_bytes += len(delta.encode("utf-8"))
+                    if output_bytes > 16000:
+                        raise ValueError("Reply too long")
+                    chunks.append(delta)
+                    yield {"type": "delta", "delta": delta}
+                next_task = asyncio.create_task(anext(iterator))
+            text = "".join(chunks).strip()
+            if not text:
+                raise ValueError("Empty reply")
+            result = {
+                **result,
+                "state": "completed",
+                "text": text,
+                "error": None,
+                "completed_at": iso(utcnow()),
+            }
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Provider diagnostics may contain private input or credentials.
+            result = {
+                **result,
+                "state": "failed",
+                "text": "",
+                "error": "The AI reply could not be completed. Send a new message to try again.",
+            }
+        finally:
+            async def close_provider_stream():
+                if next_task is not None and not next_task.done():
+                    next_task.cancel()
+                if next_task is not None:
+                    try:
+                        await next_task
+                    except BaseException:
+                        pass
+                if iterator is not None:
+                    try:
+                        await iterator.aclose()
+                    except Exception:
+                        pass
+
+            close_task = asyncio.create_task(close_provider_stream())
+            try:
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                await close_task
+
+            async def settle_claim():
+                release_error = None
+                try:
+                    await run_in_threadpool(self.release, message_id)
+                except Exception as error:
+                    release_error = error
+                settled = await run_in_threadpool(
+                    self.finish, owner, conversation_id, message_id, result,
+                )
+                if release_error is not None:
+                    raise release_error
+                return settled
+
+            settle_task = asyncio.create_task(settle_claim())
+            try:
+                final = await asyncio.shield(settle_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                await settle_task
+            if cancelled:
+                raise asyncio.CancelledError
+
+        yield {"type": "final", "reply": final}
 
     async def reply(self, owner, conversation_id, message_id, expected_sequence):
         result, messages = await run_in_threadpool(self.claim, owner, conversation_id, message_id, expected_sequence)
