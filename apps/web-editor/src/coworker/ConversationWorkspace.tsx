@@ -451,6 +451,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
       if (cause instanceof WorkspaceError && cause.status === 409) {
         const latest = await client.conversations().catch(() => null);
         if (latest) setConversations(latest.items);
+        setEditingTitle(false); setRenameDraft("");
         setError("This conversation changed in another tab. Its latest version has been reloaded; review it before renaming again.");
       } else {
         setError(cause instanceof Error ? cause.message : "Conversation rename failed.");
