@@ -536,6 +536,7 @@ export class CoworkerClient {
     let buffer = "";
     let current: AssistantReply | null = null;
     let final: AssistantReply | null = null;
+    let replyBytes = 0;
 
     const processFrame = (frame: string) => {
       let event = "message";
@@ -558,6 +559,8 @@ export class CoworkerClient {
             (reply.error !== undefined && reply.error !== null && typeof reply.error !== "string")) {
           throw new WorkspaceError("The AI reply stream contained an invalid reply.");
         }
+        replyBytes = new TextEncoder().encode(reply.text).length;
+        if (replyBytes > 16000) throw new WorkspaceError("The AI reply exceeded the allowed size.");
         if (event === "final" && reply.state === "generating") {
           throw new WorkspaceError("The AI reply stream ended before completion.");
         }
@@ -571,7 +574,10 @@ export class CoworkerClient {
             !current || current.state !== "generating") {
           throw new WorkspaceError("The AI reply stream contained an unexpected text delta.");
         }
-        current = { ...current, text: current.text + (value as { delta: string }).delta };
+        const delta = (value as { delta: string }).delta;
+        replyBytes += new TextEncoder().encode(delta).length;
+        if (replyBytes > 16000) throw new WorkspaceError("The AI reply exceeded the allowed size.");
+        current = { ...current, text: current.text + delta };
         onUpdate(current);
         return;
       }
@@ -590,7 +596,9 @@ export class CoworkerClient {
         buffer = buffer.replace(/\r\n/g, "\n");
         let boundary: number;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-          processFrame(buffer.slice(0, boundary));
+          const frame = buffer.slice(0, boundary);
+          if (frame.length > 65536) throw new WorkspaceError("The AI reply stream event was too large.");
+          processFrame(frame);
           buffer = buffer.slice(boundary + 2);
         }
         if (buffer.length > 65536) throw new WorkspaceError("The AI reply stream event was too large.");
