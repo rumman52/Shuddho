@@ -228,7 +228,7 @@ test("saved messages display the names of their attached sources", async () => {
   }] });
   await mount(async tree => {
     const attached = tree.root.findByProps({ className: "rukh-message-sources" });
-    assert.match(JSON.stringify(attached.toJSON()), /brief\.pdf/);
+    assert.deepEqual(attached.findAllByType("li").map(item => item.children.join("")), ["brief.pdf"]);
   }, data);
 });
 
