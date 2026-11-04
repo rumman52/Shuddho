@@ -30,12 +30,12 @@ Add optional browser-native dictation and read-aloud controls to the existing Co
 
 ## Tasks
 
-- [x] Add behavior tests for recognition, language selection, error recovery and read-aloud lifecycle; verify RED on test-only commit `a980a09` in CI run #41809748139.
+- [x] Add behavior tests for recognition, language selection, error recovery, duplicate suppression, disabled/unmount cleanup and read-aloud lifecycle; verify RED on test-only commit `a980a09` in CI run #41809748139.
 - [x] Implement typed browser speech helpers with standard/WebKit feature detection and final-segment deduplication.
 - [x] Add the accessible dictation control to the existing composer.
 - [x] Add Read aloud/Stop controls to completed assistant replies.
 - [x] Add responsive styles using the existing Rukh tokens and 44px touch targets, including read-aloud controls.
-- [ ] Re-run the complete web-editor tests, root test-and-build and mandatory Coworker job on the final exact head.
+- [ ] Re-run the complete web-editor tests, root test-and-build and mandatory Coworker job on the final exact head (the latest run is pending).
 - [ ] Review the complete desktop/mobile interaction path on a fresh Vercel preview and test real microphone/TTS behavior. The latest preview is currently blocked by Vercel's daily deployment limit.
 
 ## Verification record
