@@ -226,11 +226,13 @@ class ConversationReplyService:
             return result
 
     async def prepare_stream(self, owner, conversation_id, message_id, expected_sequence):
-        """Perform admission before HTTP headers are committed to an SSE response."""
-        return await run_in_threadpool(self.claim, owner, conversation_id, message_id, expected_sequence)
+        """Claim and start the producer before HTTP headers or client reads can race it."""
+        claim_result, messages = await run_in_threadpool(
+            self.claim, owner, conversation_id, message_id, expected_sequence,
+        )
+        if messages is None:
+            return claim_result, None
 
-    async def stream_events(self, owner, conversation_id, message_id, claim_result, messages):
-        """Stream deltas from a strongly referenced producer that survives client disconnect."""
         queue = asyncio.Queue()
 
         async def produce():
@@ -286,13 +288,15 @@ class ConversationReplyService:
                 return
             await queue.put(("final", stored))
 
-        if messages is not None:
-            producer_task = asyncio.create_task(produce())
-            self._stream_tasks.add(producer_task)
-            producer_task.add_done_callback(self._stream_tasks.discard)
+        producer_task = asyncio.create_task(produce())
+        self._stream_tasks.add(producer_task)
+        producer_task.add_done_callback(self._stream_tasks.discard)
+        return claim_result, queue
 
+    async def stream_events(self, claim_result, queue):
+        """Yield the snapshot and queued deltas; the producer survives client disconnect."""
         yield "snapshot", claim_result
-        if messages is None:
+        if queue is None:
             if claim_result.get("state") != "generating":
                 yield "final", claim_result
             return
