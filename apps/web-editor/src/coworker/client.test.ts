@@ -77,6 +77,35 @@ test("owned API uses a fresh token, forbids redirects, and preserves the submiss
   } finally { globalThis.fetch = original; }
 });
 
+test("conversation rename uses an authenticated PATCH and the exact optimistic revision", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(JSON.stringify({
+      id, title: "Renamed", message_sequence: 3,
+      created_at: "2026-11-04T00:00:00Z", updated_at: "2026-11-04T00:01:00Z",
+    }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "rename-owner-token");
+    const updated = await client.renameConversation(id, "Renamed", "2026-11-04T00:00:00Z");
+    assert.equal(updated.title, "Renamed");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, `/backend/api/v1/conversations/${id}`);
+    assert.equal(seen[0].options?.method, "PATCH");
+    assert.deepEqual(JSON.parse(String(seen[0].options?.body)), {
+      title: "Renamed", expected_updated_at: "2026-11-04T00:00:00Z",
+    });
+    assert.equal(new Headers(seen[0].options?.headers).get("Authorization"), "Bearer rename-owner-token");
+    assert.equal(seen[0].options?.credentials, "omit");
+    assert.equal(seen[0].options?.redirect, "error");
+    assert.throws(() => client.renameConversation("../another-owner", "Foreign", "revision"));
+    assert.equal(seen.length, 1);
+  } finally { globalThis.fetch = original; }
+});
+
 test("signed-out requests never reach the network", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = (async () => { throw new Error("must not reach fetch"); }) as typeof fetch;
