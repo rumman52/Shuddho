@@ -55,3 +55,14 @@ test("unsafe link schemes are rendered as plain text instead of anchors", () => 
   assert.doesNotMatch(html, /href="javascript:/i);
   assert.match(html, /href="https:\/\/example\.com\/path"/);
 });
+
+test("preserves Bangla text and long unbroken Unicode replies without truncation", () => {
+  const bangla = "বাংলা ভাষায় উত্তর: কৃত্রিম বুদ্ধিমত্তা মানুষের সহায়ক।";
+  const longUnicode = "ক".repeat(2048) + "🙂".repeat(64);
+  const html = renderToStaticMarkup(
+    <MarkdownMessage content={bangla + "\n\n" + longUnicode} />,
+  );
+  assert.ok(html.includes(bangla));
+  assert.ok(html.includes(longUnicode));
+  assert.match(html, /dir="auto"/);
+});
