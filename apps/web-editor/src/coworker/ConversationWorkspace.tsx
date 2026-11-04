@@ -5,6 +5,7 @@ import {
 } from "./client";
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
+import VoiceDictation from "./VoiceDictation";
 import { buildConversationJson, buildConversationMarkdown, conversationExportFilename } from "./conversationExport";
 import "./conversation-enhancements.css";
 import { RefreshOrder } from "./refreshOrder";
@@ -40,6 +41,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
   const [memoryDraft, setMemoryDraft] = useState("");
   const [chatAvailable, setChatAvailable] = useState(false);
   const [chatMode, setChatMode] = useState(false);
+  const [dictating, setDictating] = useState(false);
   const [replyingId, setReplyingId] = useState("");
   const [replyErrors, setReplyErrors] = useState<Record<string, string>>({});
   const replyController = useRef<AbortController | null>(null);
@@ -330,7 +332,7 @@ export default function ConversationWorkspace({ client, openAgent }: {
 
   async function send(event: FormEvent) {
     event.preventDefault();
-    if (!listReady || disabled || working || !draft.trim()) return;
+    if (!listReady || disabled || working || dictating || !draft.trim()) return;
     setWorking(true); setError(""); setNotice("");
     try {
       const text = draft.trim();
@@ -648,19 +650,21 @@ export default function ConversationWorkspace({ client, openAgent }: {
         <form className="rukh-message-composer" aria-label="Message composer" onSubmit={send}>
           <label className="rukh-sr-only" htmlFor="cw-conversation-message">New message</label>
           <textarea ref={composerRef} id="cw-conversation-message" dir="auto" value={draft} minLength={1} maxLength={12000}
-            rows={3} disabled={composerDisabled} required onChange={event => setDraft(event.target.value)}
+            rows={3} disabled={composerDisabled || dictating} required onChange={event => setDraft(event.target.value)}
             onKeyDown={event => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                 event.preventDefault();
-                if (!composerDisabled && draft.trim()) event.currentTarget.form?.requestSubmit();
+                if (!composerDisabled && !dictating && draft.trim()) event.currentTarget.form?.requestSubmit();
               }
             }}
             placeholder="Message your coworker…" />
           <div className="rukh-composer-controls">
+            <VoiceDictation key={selected} draft={draft} onDraftChange={setDraft}
+              onListeningChange={setDictating} disabled={composerDisabled} />
             <button type="button" className="rukh-attach-mobile" aria-label="Attach files" disabled={composerDisabled}
               onClick={event => openMobilePanel("context", event.currentTarget)}>Attach files</button>
             <span>{selectedSources.length ? selectedSources.length + " source(s) attached · Start task to use files" : "Your message is saved privately"}</span>
-            <button type="submit" disabled={composerDisabled || !draft.trim()}>{replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} <span aria-hidden="true">↗</span></button>
+            <button type="submit" disabled={composerDisabled || dictating || !draft.trim()}>{replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} <span aria-hidden="true">↗</span></button>
           </div>
         </form>
         <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Direct chat does not read attached files; use Start task." : "Start task separately."}</p>
