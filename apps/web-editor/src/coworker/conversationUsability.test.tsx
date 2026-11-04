@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import ConversationWorkspace from "./ConversationWorkspace";
-import { WorkspaceError, type CoworkerClient, type ConversationMessageRecord, type AgentRun } from "./client";
+import { WorkspaceError, type CoworkerClient, type ConversationMessageRecord, type AgentRun, type WorkspaceManifest } from "./client";
 
 const timestamp = "2026-11-04T00:00:00Z";
 const record = { id: "conversation-1", title: "Research brief", message_sequence: 0, created_at: timestamp, updated_at: timestamp };
@@ -12,7 +12,12 @@ function fixture(initial = [] as typeof record[]) {
   const calls = { reads: [] as string[], titles: [] as string[], creates: [] as string[], messages: [] as { id: string; text: string; key: string }[], renames: [] as { id: string; title: string; expectedUpdatedAt: string }[], dispatches: 0 };
   const client = {
     conversations: async () => ({ items }),
-    workspaceManifest: async () => ({ documents: [], artifacts: [], memory: [], revision_sha256: "a".repeat(64), truncated: {} }),
+    workspaceManifest: async (): Promise<WorkspaceManifest> => ({
+      schema_version: 1, workspace_id: "workspace-1", workspace_name: "Workspace",
+      documents: [], artifacts: [], memory: [], revision_sha256: "a".repeat(64),
+      truncated: { documents: false, artifacts: false, memory: false },
+    }),
+    upload: async (file: File) => ({ id: "document-1", filename: file.name, state: "uploaded", byte_size: file.size }),
     memory: async () => ({ enabled: false, facts: [] }),
     conversationHistory: async () => ({ items: [] as ConversationMessageRecord[] }),
     agentRun: async (id: string) => { calls.reads.push(id); return { id, state: "completed", final_state: "completed", message: "Ready", plan: [], tool_results: [] } as unknown as AgentRun; },
