@@ -27,7 +27,7 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
           <span className="rukh-home-brand-copy"><strong>Rukh AI</strong><small>Workspace</small></span>
         </a>
         <nav className="rukh-home-nav" aria-label="Workspace navigation">
-          {coworkerEnabled ? <a href="/coworker">AI Coworker</a> : <span className="rukh-home-nav-disabled" aria-disabled="true">Co-workers <small>Preview</small></span>}
+          <a href="/coworker">AI Coworker{!coworkerEnabled && <small> Draft workspace</small>}</a>
           <a href="/editor">Web Editor</a>
         </nav>
         <ThemeToggle />
@@ -77,8 +77,8 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
               </ol>
             </div>
             <div className="rukh-home-product-footer">
-              <p>{coworkerEnabled ? "Your brief stays connected to the work." : "Access is limited while the staged release continues."}</p>
-              {coworkerEnabled ? <a className="rukh-home-action" href="/coworker">Open AI Coworker <ArrowIcon /></a> : <button className="rukh-home-action rukh-home-action--disabled" type="button" disabled>Private preview</button>}
+              <p>{coworkerEnabled ? "Your brief stays connected to the work." : "AI replies are unavailable. Prepare a draft in the workspace."}</p>
+              {coworkerEnabled ? <a className="rukh-home-action" href="/coworker">Open AI Coworker <ArrowIcon /></a> : <a className="rukh-home-action" href="/coworker">Open draft workspace <ArrowIcon /></a>}
             </div>
           </article>
 

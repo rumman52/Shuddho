@@ -1,3 +1,11 @@
+## Coworker entry recovery — 4 November 2026
+
+Base main `dce675364ce98b16309731e743ce7b8357eef4e6`; branch `fix/rukh-coworker-entry-recovery-20261104`. Live `/coworker` returns the landing page because the deployed frontend manifest has `coworker_enabled: false`, despite current frontend/backend revisions. Repaired disabled navigation with an explicit draft-only workspace, keeping API/auth/execution gates closed. [Contract, requirement matrix, verification and next actions](../frontend/ENTRY_RECOVERY_2026-11-04.md).
+
+Web Editor suite: 204 passed, zero skips; all three frontend builds pass, existing Coworker chunk warning retained. Independent reviewer found no Critical/Important issues; Minor draft-overwrite issue fixed. New-layout browser checks remain blocked by local Chromium download failure. Source implemented/unit-tested, exact-head CI pending; not deployed, live verified, production-qualified or activated. Real authenticated chat, provider/storage persistence, Editor handoff and full prompt completion remain unverified/incomplete.
+
+---
+
 ## Browser-native Coworker voice controls — 4 November 2026 (Asia/Dhaka)
 
 PR #625 was closed after its pull-request snapshot stopped following the updated branch ref; PR #626 is the current draft for the same branch and contains the full 18-commit change set.
