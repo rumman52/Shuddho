@@ -17,6 +17,8 @@ export function getWorkspaceAppRoute(pathname, coworkerEnabled = false) {
   const path = normalizePath(pathname);
   const route = getStandaloneAppRoute(path);
   if (route === "default") return path === "/" && coworkerEnabled ? "coworker" : "home";
-  if (route === "coworker" && !coworkerEnabled) return "home";
+  // Keep the execution rollout closed while making the requested workspace
+  // discoverable. OAuth callbacks never enter the public draft surface.
+  if (route === "coworker" && !coworkerEnabled) return path.startsWith("/coworker") ? "coworker-preview" : "home";
   return route;
 }
