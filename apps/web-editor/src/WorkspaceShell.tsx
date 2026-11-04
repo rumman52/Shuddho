@@ -3,6 +3,7 @@ import RukhHome from "./RukhHome";
 import "./rukh-home.css";
 import { getWorkspaceAppRoute } from "./appRoutes.mjs";
 import "./coworker/workspace.css";
+import "./coworker/coworker-entry.css";
 import "../../coworker/src/styles.css";
 import "../../../packages/design-system/src/tokens.css";
 
