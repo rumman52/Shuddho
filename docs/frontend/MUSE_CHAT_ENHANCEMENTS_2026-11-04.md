@@ -31,6 +31,7 @@
 - Saving or renaming a message does not dispatch an Agent run.
 - Agent dispatch, cancellation and consequential external actions retain their existing explicit controls and approvals.
 - Uploaded files and generated artifacts are owner-scoped, version/provenance bound and marked untrusted.
+- Browser dictation does not send raw microphone audio to Rukh; the browser's speech service may process audio under its own privacy policy. Only transcript text enters the draft. Read aloud uses browser speech synthesis without a provider call.
 - No new provider, streaming protocol, image/audio endpoint, approval authority or alternate execution ledger was introduced by this slice.
 - The existing native text-reply capability remains default-off. Migration `0063` and the backend-only provider configuration are still required before enabling it.
 - No production environment variables, database, authentication configuration, aliases, deployment promotion or provider activation were changed.
@@ -72,7 +73,8 @@ The native chat handoff records synthetic-API Chromium checks across five deskto
 This implementation completes the approved Muse-inspired conversation enhancement plan, not every Muse product capability. The following remain separate work:
 
 - Token streaming and incremental assistant output.
-- Voice input/output and audio generation.
+- Browser-native voice controls are a separate frontend-only slice in PR #626: explicit dictation into the draft and browser TTS read-aloud; no audio upload, storage, generated audio or voice-session backend.
+- Provider-generated audio and real-time voice mode; browser-native dictation/read-aloud controls are implemented in PR #626 (draft), but are not merged or deployment-verified.
 - Image understanding and image generation.
 - Direct assistant access to attached document contents; attachments currently feed explicit Agent tasks only.
 - Native mobile, WhatsApp and operating-system integrations.
