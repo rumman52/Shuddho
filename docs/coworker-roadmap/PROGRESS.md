@@ -1,3 +1,24 @@
+## Rukh AI repository recovery checkpoint — 4 November 2026
+
+This checkpoint supersedes stale publication and branch-state statements above. Evidence was refreshed from GitHub, Supabase, Vercel and PostHog during the current recovery. It is a bounded source/quality repair, not a production release qualification.
+
+- **Repository state:** `main` was `56b1678ec92233df45b7a95911808c2fca222ccf` when audited. PR [#617](https://github.com/rumman52/Shuddho/pull/617), “feat(frontend): complete Muse-inspired Coworker chat interactions,” merged at 03:14:25 UTC. PR [#618](https://github.com/rumman52/Shuddho/pull/618), the attachment/Unicode export correction, merged at 03:38:48 UTC. This means the native Coworker conversation UI/reply work is already on main; do not recreate it.
+- **Current recovery branch:** [draft PR #619](https://github.com/rumman52/Shuddho/pull/619), `fix/rukh-quality-eval-numeric-facts-20261104`, based on the audited main SHA. It adds a regression for numeric structured facts, fixes the offline evaluator's numeric-leaf handling, and corrects one inconsistent image-prompt reference draft. No threshold or schema was weakened.
+- **TDD evidence:** the new numeric regression failed on the pre-fix evaluator in CI run [#41780272070](https://github.com/rumman52/Shuddho/actions/runs/41780272070): the existing 0.8333 fixture gate and the new numeric-preservation regression both failed, while 1,741 tests passed. The run was later cancelled by a newer PR-head run.
+- **Latest exact-head CI at this checkpoint:** run [#41780778140](https://github.com/rumman52/Shuddho/actions/runs/41780778140) has **Frontend tests and builds = success** and **test-and-build = success**; the latter reports **1,743 passed, 73 skipped, 6 warnings**. The heavy `coworker` job is still running; the merge gate and final independent review are not yet complete. Do not call the whole PR green yet.
+- **Coworker entry:** the standalone Coworker workspace initializes to conversations after authentication. The root workspace route still respects `VITE_COWORKER_ENABLED`; when disabled, the root route falls back to the workspace home. No production feature flag was changed. Rukh Editor remains a separate route/application.
+- **Conversation contract:** authenticated create/list/read/rename/delete/message/reply/dispatch/cancel/activity endpoints exist. Direct assistant replies use a non-streaming provider request (`stream: false`); task progress has a separate SSE path. Do not simulate token streaming or claim it is implemented.
+- **Supabase:** connected project `shuddho-staging` is `ACTIVE_HEALTHY`; the public schema returned no tables and both security/performance advisors returned no lints. No migration or schema write was performed.
+- **PostHog:** active project 675660 reports `ingested_event=false`; the event catalog reports no events seen in the last 30 days. No event instrumentation, token changes or analytics settings were changed.
+- **Vercel:** the connected Vercel team context did not list a Shuddho-linked project; a deployment-history query for `shuddho-web-editor` returned zero records. GitHub's main-commit Vercel status was success, but this is not a browser smoke test. PR #618's Vercel bot reported the Hobby daily deployment limit; preview qualification remains unverified.
+- **Render:** workspace discovery returned the single workspace `Rumman` (ID `tea-d6ok4okhg0os73erkdv0`). No service/database query was made because the workspace has not yet been confirmed by the user.
+- **Governance:** main CI run [#41768410772](https://github.com/rumman52/Shuddho/actions/runs/41768410772) failed the governance audit with “main branch protection is not confirmed.” This is an administrative repository control, not a code-test failure.
+- **Safety:** no production deployment, production environment change, database migration, restore, paid provisioning, secret change, feature activation or merge was performed.
+
+**Evidence level:** bounded quality-evaluator source fix is under exact-head CI; frontend code checks pass; heavy Coworker CI is pending; staging/live UI and production qualification are not verified; activation is not authorized.
+
+---
+
 ## Native chatbox continuation — 4 November 2026 (Asia/Dhaka)
 
 The same local branch now implements native assistant text replies through an authenticated, owner-scoped conversation endpoint and migration 0063. The composer remains visible while message history scrolls. [Implementation, evidence and rollout handoff](../frontend/CHATBOX_COMPLETION_2026-11-04.md) supersedes the previous native-chat/browser limitations below.

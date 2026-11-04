@@ -38,10 +38,10 @@
 - Consumes: `score(case, draft_value)` and the existing `spreadsheet-en-regional-orders` fixture.
 - Produces: regression coverage proving that numeric JSON leaves count as required facts and mismatched values are rejected.
 
-- [ ] Add `test_numeric_structured_values_count_as_required_facts`.
-- [ ] Convert the fixture's 120 and 80 numeric cells to integral floats in a deep copy and assert required-fact preservation passes.
-- [ ] Change the North value to 121.0 and assert `"120"` appears in `missing_required_terms`.
-- [ ] Run `uv run pytest tests/test_coworker_quality_eval.py::test_numeric_structured_values_count_as_required_facts -q` and confirm it fails because numeric leaves are ignored.
+- [x] Add `test_numeric_structured_values_count_as_required_facts`.
+- [x] Convert the fixture's 120 and 80 numeric cells to integral floats in a deep copy and assert required-fact preservation passes.
+- [x] Change the North value to 121.0 and assert `"120"` appears in `missing_required_terms`.
+- [x] Confirmed RED in PR CI run #41780272070: numeric regression failed at required-fact preservation before implementation.
 
 ### Task 2: Fix numeric fact extraction and fixture consistency
 
@@ -53,11 +53,11 @@
 - Consumes: JSON-compatible draft values traversed by `strings(value)`.
 - Produces: strings from textual and numeric leaves, with booleans excluded and integral floats rendered without a trailing `.0`.
 
-- [ ] Extend `strings` to include `int` and `float` leaves while excluding `bool`.
-- [ ] Normalize integral floats to their integer-form text; preserve a stable representation for non-integral values.
-- [ ] Update the image-prompt fixture draft to include the exact required phrase `No text or logos`; do not change the required-term list.
-- [ ] Run the focused quality-evaluation test module and verify all cases pass.
-- [ ] Run the complete Python suite `uv run pytest -q`; record all failures, skips and warnings without changing gates.
+- [x] Extend `strings` to include `int` and `float` leaves while excluding `bool`.
+- [x] Normalize integral floats to their integer-form text; preserve a stable representation for non-integral values.
+- [x] Update the image-prompt fixture draft to include the exact required phrase `No text or logos`; do not change the required-term list.
+- [x] Included in exact-head `uv run pytest -q`: 1,743 passed, 73 skipped, 6 warnings.
+- [x] Exact-head `uv run pytest -q`: 1,743 passed, 73 skipped, 6 warnings. Heavy Coworker job still in progress.
 
 ### Task 3: Record evidence and review the bounded patch
 
@@ -77,3 +77,12 @@
 - [ ] Run `uv run pytest tests/test_coworker_quality_eval.py -q` and the complete Python suite after the final change.
 - [ ] Keep production unchanged; do not deploy, migrate, enable feature flags or merge.
 
+
+
+## Execution evidence — 4 November 2026
+
+- Base main: `56b1678ec92233df45b7a95911808c2fca222ccf`.
+- Regression RED: run [#41780272070](https://github.com/rumman52/Shuddho/actions/runs/41780272070), test-and-build failed on the new numeric regression and the existing 0.8333 quality fixture; 1,741 passed.
+- Fix head: `944b18ec56ab3faee69b028b0485c4904c4415c8`.
+- Exact-head run [#41780778140](https://github.com/rumman52/Shuddho/actions/runs/41780778140): frontend passed; full lightweight Python suite passed 1,743 tests with 73 skips and 6 warnings; heavy Coworker suite still running at this checkpoint.
+- Review: author self-review pending final CI; no independent review or merge claimed.
