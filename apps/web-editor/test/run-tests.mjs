@@ -19,6 +19,8 @@ const tests = [
   "src/coworker/conversationUsability.test.tsx",
   "src/coworker/conversationExport.test.ts",
   "src/coworker/markdownMessage.test.tsx",
+  "src/coworker/speech.test.ts",
+  "src/coworker/ConversationReply.test.tsx",
   "src/coworker/conversationRunStatus.test.tsx",
   "src/coworker/agentSubmissionIdentity.test.tsx",
   "src/coworker/goalRunIdentity.test.tsx",
