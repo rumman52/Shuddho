@@ -22,7 +22,10 @@ export default function ConversationReply({ reply, pending, error, retry, disabl
       </div>
       <span className="rukh-copy-status" role="status">{copyStatus}</span>
     </> : error ? <><p className="cw-error" role="alert">{error}</p><button type="button" className="cw-text-button" aria-label="Retry AI reply" disabled={disabled} onClick={retry}>Check reply again</button></> :
-      pending || reply?.state === "generating" ? <p className="rukh-reply-pending" role="status"><span aria-hidden="true">•••</span> Rukh is replying…</p> :
+      pending || reply?.state === "generating" ? <>
+        {reply?.text?.trim() && <div className="rukh-answer-text" aria-live="polite"><MarkdownMessage content={reply.text} /></div>}
+        <p className="rukh-reply-pending" role="status"><span aria-hidden="true">•••</span> Rukh is replying…</p>
+      </> :
       <p className="cw-error" role="alert">{reply?.error ?? "This reply could not be completed. Send a new message to try again."}</p>}
   </section>;
 }
