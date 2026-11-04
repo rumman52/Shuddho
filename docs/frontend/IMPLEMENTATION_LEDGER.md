@@ -14,7 +14,7 @@ Updated 4 November 2026 (Asia/Dhaka). Source base: `main 4db2843e0d43447af5065b0
 | Conversation export | Implemented | PR #617/#618; complete paginated history to local Markdown or JSON, including replies, source labels and provenance; Unicode-safe filenames |
 | Safe Markdown replies | Implemented | PR #617; inert raw HTML, safe HTTP/HTTPS/mailto links, headings, lists, tables, blockquotes and code; PR #624 adds explicit Bangla/long-Unicode preservation and narrow-panel overflow regressions (CI pending) |
 | Source attachments | Implemented | PR #617/#618/#622; existing upload/manifest APIs, five-source limit enforced in UI and schema, owner-scoped untrusted inputs; direct chat does not read files |
-| Browser voice controls | Implemented in PR #625 draft; not merged | Browser-native dictation into the draft only, Bangla/English/device locale, final-segment deduplication, permission/error/unsupported states, and browser speech-synthesis read-aloud with Bangla-script locale detection. No audio upload/storage or provider-generated audio; exact-head CI and current preview verification pending |
+| Browser voice controls | Implemented in PR #626 draft; not merged | Browser-native dictation into the draft only, Bangla/English/device locale, final-segment deduplication, permission/error/unsupported states, and browser speech-synthesis read-aloud with Bangla-script locale detection. No audio upload/storage or provider-generated audio; exact-head CI and current preview verification pending |
 | Sources, memory and action approvals | Existing source preserved | Version-bound source selection, reviewable memory and explicit Agent start/external-action approval remain canonical |
 | Cross-app document handoff | Existing source preserved | Owner-bound upload/manifest/artifact contracts; fresh live auth/storage/provider run not claimed |
 | Frontend CI on latest main | Passing | CI run #41800917260: `Frontend tests and builds` succeeded |
@@ -28,4 +28,4 @@ Updated 4 November 2026 (Asia/Dhaka). Source base: `main 4db2843e0d43447af5065b0
 [Native text-chat contract and rollout requirements](CHATBOX_COMPLETION_2026-11-04.md).
 [Muse-inspired enhancement scope, evidence and remaining gaps](MUSE_CHAT_ENHANCEMENTS_2026-11-04.md).
 
-No production environment, database, auth configuration, provider credential, alias or deployment was changed. Native replies remain default-off. Browser voice controls are limited to the unmerged PR #625 source; full Muse parity and production qualification remain incomplete.
+No production environment, database, auth configuration, provider credential, alias or deployment was changed. Native replies remain default-off. Browser voice controls are limited to the unmerged PR #626 source; full Muse parity and production qualification remain incomplete.
