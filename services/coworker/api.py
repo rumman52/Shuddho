@@ -1650,14 +1650,12 @@ async def stream_reply_to_conversation_message(
     conversation_id: UUID, message_id: UUID, payload: ConversationReplyCreate,
     identity: Identity, services: Services,
 ):
-    claim_result, messages = await services.conversation_replies.prepare_stream(
+    claim_result, queue = await services.conversation_replies.prepare_stream(
         identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence,
     )
 
     async def generate():
-        async for event, value in services.conversation_replies.stream_events(
-            identity.account_id, str(conversation_id), str(message_id), claim_result, messages,
-        ):
+        async for event, value in services.conversation_replies.stream_events(claim_result, queue):
             if event == "keepalive":
                 yield ": keepalive\n\n"
                 continue
