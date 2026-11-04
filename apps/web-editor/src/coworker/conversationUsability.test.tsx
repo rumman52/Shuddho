@@ -34,7 +34,7 @@ function fixture(initial = [] as typeof record[]) {
   };
   return { client, calls };
 }
-async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>, data = fixture(), extraProps: Record<string, unknown> = {}) {
+async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>, data = fixture(), extraProps: Partial<React.ComponentProps<typeof ConversationWorkspace>> = {}) {
   const previous = globalThis.window;
   globalThis.window = { location: { search: "" }, setInterval, clearInterval } as unknown as Window & typeof globalThis;
   let tree!: ReactTestRenderer;
