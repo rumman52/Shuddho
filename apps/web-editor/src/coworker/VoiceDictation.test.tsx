@@ -72,7 +72,26 @@ test("dictation appends final Bangla speech to the draft and stops on explicit r
 
     await act(async () => tree!.root.findByProps({ "aria-label": "Stop voice dictation" }).props.onClick());
     assert.equal(recognition.stopped, true);
+    assert.ok(tree!.root.findAllByProps({ role: "status" }).some(node =>
+      node.children.join("").includes("Stopping dictation"),
+    ));
+
+    // The browser may deliver its final result after stop() is called but
+    // before onend. That last segment must not be discarded.
+    await act(async () => recognition!.onresult?.({
+      resultIndex: 1,
+      results: [
+        { isFinal: true, 0: { transcript: "হ্যালো" } },
+        { isFinal: true, 0: { transcript: "বিদায়" } },
+      ],
+    }));
+    assert.deepEqual(changes, ["Existing note হ্যালো", "Existing note হ্যালো বিদায়"]);
+
+    await act(async () => recognition!.onend?.());
     assert.equal(listening[listening.length - 1], false);
+    assert.ok(tree!.root.findAllByProps({ role: "status" }).some(node =>
+      node.children.join("").includes("Dictation stopped"),
+    ));
   } finally {
     if (tree) await act(async () => { tree!.unmount(); });
     restore();
