@@ -87,3 +87,26 @@ test("unmounting a reply while reading cancels browser speech synthesis", async 
     restore();
   }
 });
+
+
+test("a streaming reply renders partial Markdown without completion-only actions", async () => {
+  const restore = installWindow({});
+  let tree: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      tree = create(<ConversationReply
+        reply={{ state: "generating", text: "Partial **answer**", context_truncated: false }}
+        pending={true} retry={() => undefined} disabled={false}
+      />);
+    });
+    assert.ok(tree!.root.findAllByProps({ role: "status" }).some(node =>
+      node.children.join("").includes("Rukh is replying"),
+    ));
+    assert.ok(tree!.root.findAllByType("strong").some(node => node.children.join("") === "answer"));
+    assert.equal(tree!.root.findAllByProps({ "aria-label": "Copy AI reply" }).length, 0);
+    assert.equal(tree!.root.findAllByProps({ "aria-label": "Read AI reply aloud" }).length, 0);
+  } finally {
+    if (tree) await act(async () => { tree!.unmount(); });
+    restore();
+  }
+});

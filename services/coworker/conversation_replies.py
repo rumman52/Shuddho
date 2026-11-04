@@ -1,10 +1,14 @@
 """Text-only, owner-scoped replies with a single durable inference claim."""
 from __future__ import annotations
+import asyncio
 import json
 from datetime import datetime, timedelta
+
+import httpx
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
-from services.api.shuddho_api.llm_deepseek import _post_review
+
+from services.api.shuddho_api.llm_deepseek import DEEPSEEK_ENDPOINT, _post_review
 from .errors import CoworkerError
 from .models import ConversationMessage, DailyUsage, utcnow
 from .provider_capacity import acquire_provider_lease, release_provider_lease
@@ -20,6 +24,8 @@ SYSTEM = (
 )
 MAX_CONTEXT_BYTES = 32000
 MAX_OUTPUT_TOKENS = 1024
+MAX_OUTPUT_BYTES = 16000
+MAX_STREAM_RESPONSE_BYTES = 1_048_576
 
 
 def build_reply_messages(history):
@@ -66,12 +72,96 @@ class DeepSeekReplyModel:
             raise ValueError("Reply too long")
         return text.strip()
 
+    async def stream(self, messages):
+        """Yield validated text deltas from a bounded, tool-free DeepSeek SSE response."""
+        timeout_seconds = min(60, self.settings.model_timeout_seconds)
+        payload = {
+            "model": self.settings.deepseek_model, "messages": messages,
+            "stream": True, "thinking": {"type": "disabled"},
+            "max_tokens": MAX_OUTPUT_TOKENS, "temperature": 0.4,
+        }
+        response_bytes = 0
+        output_bytes = 0
+        finished = False
+        done = False
+        data_lines = []
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(timeout_seconds, connect=min(5.0, timeout_seconds)),
+                    transport=self.transport, follow_redirects=False,
+                ) as client:
+                    async with client.stream(
+                        "POST", DEEPSEEK_ENDPOINT,
+                        headers={
+                            "Authorization": f"Bearer {self.settings.deepseek_api_key}",
+                            "Accept": "text/event-stream",
+                        },
+                        json=payload,
+                    ) as response:
+                        if response.status_code != 200:
+                            raise ValueError("Provider unavailable")
+                        if "text/event-stream" not in response.headers.get("content-type", "").lower():
+                            raise ValueError("Unexpected provider stream")
+                        async for line in response.aiter_lines():
+                            response_bytes += len(line.encode("utf-8")) + 1
+                            if response_bytes > MAX_STREAM_RESPONSE_BYTES:
+                                raise ValueError("Provider stream too large")
+                            if line.startswith("data:"):
+                                data_lines.append(line[5:].lstrip())
+                                continue
+                            if line or not data_lines:
+                                continue
+                            data = "\n".join(data_lines)
+                            data_lines.clear()
+                            if data == "[DONE]":
+                                done = True
+                                break
+                            try:
+                                envelope = json.loads(data)
+                            except (TypeError, ValueError, UnicodeError) as error:
+                                raise ValueError("Malformed provider stream") from error
+                            if not isinstance(envelope, dict):
+                                raise ValueError("Malformed provider stream")
+                            choices = envelope.get("choices")
+                            if not isinstance(choices, list) or len(choices) not in (0, 1):
+                                raise ValueError("Malformed provider stream")
+                            if not choices:  # Optional usage-only frame.
+                                continue
+                            if finished:
+                                raise ValueError("Provider emitted content after its terminal choice")
+                            choice = choices[0]
+                            if not isinstance(choice, dict):
+                                raise ValueError("Malformed provider stream")
+                            delta = choice.get("delta") or {}
+                            if not isinstance(delta, dict) or delta.get("tool_calls") or delta.get("refusal"):
+                                raise ValueError("Unsafe provider stream")
+                            content = delta.get("content")
+                            if content is not None:
+                                if not isinstance(content, str):
+                                    raise ValueError("Malformed provider delta")
+                                if content:
+                                    output_bytes += len(content.encode("utf-8"))
+                                    if output_bytes > MAX_OUTPUT_BYTES:
+                                        raise ValueError("Provider output too large")
+                                    yield content
+                            finish_reason = choice.get("finish_reason")
+                            if finish_reason is not None:
+                                if finish_reason != "stop":
+                                    raise ValueError("Incomplete provider output")
+                                finished = True
+        except (TimeoutError, httpx.TimeoutException, httpx.RequestError) as error:
+            raise ValueError("Provider unavailable") from error
+        if not done or not finished:
+            raise ValueError("Provider stream did not complete")
+
 
 class ConversationReplyService:
     def __init__(self, conversations, settings, model=None):
         self.conversations, self.settings = conversations, settings
         self.model = model or DeepSeekReplyModel(settings)
         self.sessions = conversations.sessions
+        self._stream_tasks = set()
 
     def claim(self, owner, conversation_id, message_id, expected_sequence):
         self.conversations.enabled()
@@ -134,6 +224,92 @@ class ConversationReplyService:
             row.assistant_reply = result
             self.conversations._audit(db, owner, message_id, "conversation.reply_" + result["state"])
             return result
+
+    async def prepare_stream(self, owner, conversation_id, message_id, expected_sequence):
+        """Claim and start the producer before HTTP headers or client reads can race it."""
+        claim_result, messages = await run_in_threadpool(
+            self.claim, owner, conversation_id, message_id, expected_sequence,
+        )
+        if messages is None:
+            return claim_result, None
+
+        queue = asyncio.Queue()
+
+        async def produce():
+            parts = []
+            output_bytes = 0
+            try:
+                stream_method = getattr(self.model, "stream", None)
+                if callable(stream_method):
+                    async for part in stream_method(messages):
+                        if not isinstance(part, str):
+                            raise ValueError("Invalid model delta")
+                        output_bytes += len(part.encode("utf-8"))
+                        if output_bytes > MAX_OUTPUT_BYTES:
+                            raise ValueError("Reply too large")
+                        if part:
+                            parts.append(part)
+                            await queue.put(("delta", {"delta": part}))
+                else:
+                    # Compatibility for injected deterministic models and older adapters.
+                    part = await self.model.generate(messages)
+                    if not isinstance(part, str) or len(part.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                        raise ValueError("Invalid model output")
+                    if part:
+                        parts.append(part)
+                        await queue.put(("delta", {"delta": part}))
+                text = "".join(parts).strip()
+                if not text:
+                    raise ValueError("Empty model output")
+                result = {
+                    **claim_result, "state": "completed", "text": text,
+                    "completed_at": iso(utcnow()),
+                }
+            except Exception:
+                # Provider diagnostics may contain private input or credentials.
+                result = {
+                    **claim_result, "state": "failed", "text": "",
+                    "error": "The AI reply could not be completed. Send a new message to try again.",
+                }
+            finally:
+                try:
+                    await run_in_threadpool(self.release, message_id)
+                except Exception:
+                    pass
+            try:
+                stored = await run_in_threadpool(
+                    self.finish, owner, conversation_id, message_id, result,
+                )
+            except CoworkerError:
+                await queue.put(("error", {"error": "This conversation is no longer available."}))
+                return
+            except Exception:
+                await queue.put(("error", {"error": "The AI reply could not be saved. Reload the conversation."}))
+                return
+            await queue.put(("final", stored))
+
+        producer_task = asyncio.create_task(produce())
+        self._stream_tasks.add(producer_task)
+        producer_task.add_done_callback(self._stream_tasks.discard)
+        return claim_result, queue
+
+    async def stream_events(self, claim_result, queue):
+        """Yield the snapshot and queued deltas; the producer survives client disconnect."""
+        yield "snapshot", claim_result
+        if queue is None:
+            if claim_result.get("state") != "generating":
+                yield "final", claim_result
+            return
+
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15)
+            except TimeoutError:
+                yield "keepalive", {}
+                continue
+            yield event
+            if event[0] in {"final", "error"}:
+                break
 
     async def reply(self, owner, conversation_id, message_id, expected_sequence):
         result, messages = await run_in_threadpool(self.claim, owner, conversation_id, message_id, expected_sequence)
