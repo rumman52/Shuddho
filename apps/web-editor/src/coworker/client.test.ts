@@ -426,3 +426,30 @@ test("conversation reply stream rejects malformed or incomplete events", async (
     ));
   } finally { globalThis.fetch = original; }
 });
+
+
+test("conversation reply stream enforces the 16 KB UTF-8 response limit", async () => {
+  const original = globalThis.fetch;
+  const snapshot = { state: "generating", text: "", context_truncated: false };
+  const body = [
+    "event: snapshot",
+    `data: ${JSON.stringify(snapshot)}`,
+    "",
+    "event: delta",
+    `data: ${JSON.stringify({ delta: "x".repeat(16001) })}`,
+    "",
+    "",
+  ].join("\n");
+  globalThis.fetch = (async () => new Response(body, {
+    headers: { "Content-Type": "text/event-stream" },
+  })) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "stream-test-token");
+    await assert.rejects(client.replyToConversationMessageStream(
+      "00000001-0000-4000-8000-000000000000",
+      "00000002-0000-4000-8000-000000000000",
+      1,
+      () => undefined,
+    ));
+  } finally { globalThis.fetch = original; }
+});
