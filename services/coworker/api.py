@@ -1645,6 +1645,34 @@ async def reply_to_conversation_message(conversation_id: UUID, message_id: UUID,
     return await services.conversation_replies.reply(identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence)
 
 
+@router.post("/conversations/{conversation_id}/messages/{message_id}/reply/stream")
+async def stream_reply_to_conversation_message(
+    conversation_id: UUID, message_id: UUID, payload: ConversationReplyCreate,
+    identity: Identity, services: Services,
+):
+    claim_result, messages = await services.conversation_replies.prepare_stream(
+        identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence,
+    )
+
+    async def generate():
+        async for event, value in services.conversation_replies.stream_events(
+            identity.account_id, str(conversation_id), str(message_id), claim_result, messages,
+        ):
+            if event == "keepalive":
+                yield ": keepalive\\n\\n"
+                continue
+            yield (
+                f"event: {event}\\n"
+                f"data: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}\\n\\n"
+            )
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
 @router.post("/conversations/{conversation_id}/messages/{message_id}/dispatch", status_code=202)
 def dispatch_conversation_message(
     conversation_id: UUID, message_id: UUID, payload: ConversationDispatchCreate,
