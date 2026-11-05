@@ -3,4 +3,5 @@ export type CoworkerNavigationItem = { id: string; label: string; icon: string; 
 export const coworkerNavigation: readonly CoworkerNavigationItem[];
 export function getCoworkerView(id: string): CoworkerView;
 export function getInitialCoworkerView(search: string): CoworkerView;
+export function getInitialCoworkerViewFromLocation(pathname: string, search: string): CoworkerView;
 export function getInitialConversationId(search: string): string | null;

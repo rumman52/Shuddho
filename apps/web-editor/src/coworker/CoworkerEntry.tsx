@@ -11,9 +11,11 @@ type CoworkerEntryProps = {
   onDraftChange: (value: string) => void;
   onSubmit: () => void;
   onOpenSignIn: () => void;
+  workspaceIntent?: "coworker" | "fly";
 };
 
-export default function CoworkerEntry({ authConfigured, loading, draft, error, onDraftChange, onSubmit, onOpenSignIn }: CoworkerEntryProps) {
+export default function CoworkerEntry({ authConfigured, loading, draft, error, onDraftChange, onSubmit, onOpenSignIn, workspaceIntent = "coworker" }: CoworkerEntryProps) {
+  const flyIntent = workspaceIntent === "fly";
   const formRef = useRef<HTMLFormElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
@@ -53,7 +55,7 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
   function accountAccess() { setNavigationOpen(false); onOpenSignIn(); }
   function starter(prompt: string) { onDraftChange(prompt); composerRef.current?.focus(); }
 
-  return <main className="rukh-entry rukh-design-entry" aria-label="Rukh AI Coworker">
+  return <main className="rukh-entry rukh-design-entry" aria-label={flyIntent ? "Rukh AI Fly" : "Rukh AI Coworker"}>
     {navigationOpen && <button type="button" className="rukh-design-backdrop" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />}
     <aside ref={drawerRef} id="rukh-entry-navigation" className={"rukh-design-sidebar" + (navigationOpen ? " is-open" : "")}
       role={navigationOpen ? "dialog" : undefined} aria-modal={navigationOpen ? true : undefined} aria-label="Workspace navigation">
@@ -61,7 +63,9 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
       <button type="button" className="rukh-design-new" aria-label="New chat" onClick={newChat}>+ New chat</button>
       <nav aria-label="Primary workspace navigation">
         <button type="button" className="rukh-design-nav-link is-active" aria-current="page" onClick={() => setNavigationOpen(false)}><NavigationIcon name="chat" />Coworker</button>
+        <a href="/fly" className="rukh-design-nav-link"><NavigationIcon name="terminal" />Fly</a>
         <a href="/editor" className="rukh-design-nav-link"><NavigationIcon name="layout" />Web Editor</a>
+        <a href="/writing" className="rukh-design-nav-link"><NavigationIcon name="file-text" />Writing Assistant</a>
         <button type="button" className="rukh-design-nav-link" disabled title="Projects are not available yet"><NavigationIcon name="folder" />Projects<small>Unavailable</small></button>
         <button type="button" className="rukh-design-nav-link" onClick={accountAccess}><NavigationIcon name="grid" />Plugins</button>
       </nav>
@@ -76,24 +80,33 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
     <section className="rukh-design-main" aria-hidden={navigationOpen ? true : undefined}>
       <header className="rukh-design-header">
         <button ref={menuRef} type="button" className="rukh-design-menu" aria-label="Open navigation" aria-controls="rukh-entry-navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><NavigationIcon name="menu" /></button>
-        <strong>Coworker</strong>
+        <strong>{flyIntent ? "Fly" : "Coworker"}</strong>
         <button type="button" className="rukh-design-context" onClick={onOpenSignIn} aria-label="Activity and context"><span>Activity &amp; context</span><NavigationIcon name="sliders" /></button>
       </header>
       <div className="rukh-entry-inner">
-        <CoworkerWelcome disabled={loading} onChoose={starter} />
-        <div className="rukh-entry-bottom">
+        {flyIntent ? <section className="rukh-fly-entry-welcome" aria-labelledby="rukh-fly-entry-title">
+          <span className="rukh-fly-entry-kicker">RUKH AI / FLY</span>
+          <h1 id="rukh-fly-entry-title">Build, run and review code.</h1>
+          <p>Open a focused development workspace for source files, supported execution, isolated HTML previews and Rukh code review.</p>
           {error && <p className="rukh-entry-error" role="alert">{error}</p>}
-          <form ref={formRef} className="rukh-entry-composer" aria-label="Start a conversation" onSubmit={submit}>
-            <label className="rukh-entry-sr-only" htmlFor="rukh-first-message">Message Rukh AI</label>
-            <textarea ref={composerRef} id="rukh-first-message" aria-label="Message Rukh AI" dir="auto" rows={2} maxLength={12000} value={draft} disabled={loading} placeholder="Ask Rukh to do something…" onChange={event => onDraftChange(event.target.value)} onKeyDown={handleKeyDown} />
-            <div className="rukh-entry-composer-footer">
-              <button type="button" className="rukh-entry-attach" aria-label="Attach files" onClick={onOpenSignIn} disabled={loading}><NavigationIcon name="plus" /><span>Attach files</span></button>
-              <button type="button" className="rukh-entry-tools" onClick={onOpenSignIn} disabled={loading}>Tools <span aria-hidden="true">›</span></button>
-              <button className="rukh-entry-send" type="submit" aria-label="Continue to sign in" disabled={loading || !draft.trim()}><NavigationIcon name="arrow" /></button>
-            </div>
-          </form>
-          <p className="rukh-entry-hint" role="status" aria-live="polite">{loading ? "Checking your account…" : authConfigured ? "Sign in to send. Rukh asks before taking important actions." : "Account access is not configured for this deployment."}</p>
-        </div>
+          <button type="button" className="rukh-fly-entry-primary" onClick={onOpenSignIn} disabled={loading}>Sign in to open Fly</button>
+          <p className="rukh-entry-hint" role="status">{loading ? "Checking your account…" : authConfigured ? "Sign in to open your private coding workspace." : "Account access is not configured for this deployment."}</p>
+        </section> : <>
+          <CoworkerWelcome disabled={loading} onChoose={starter} />
+          <div className="rukh-entry-bottom">
+            {error && <p className="rukh-entry-error" role="alert">{error}</p>}
+            <form ref={formRef} className="rukh-entry-composer" aria-label="Start a conversation" onSubmit={submit}>
+              <label className="rukh-entry-sr-only" htmlFor="rukh-first-message">Message Rukh AI</label>
+              <textarea ref={composerRef} id="rukh-first-message" aria-label="Message Rukh AI" dir="auto" rows={2} maxLength={12000} value={draft} disabled={loading} placeholder="Ask Rukh to do something…" onChange={event => onDraftChange(event.target.value)} onKeyDown={handleKeyDown} />
+              <div className="rukh-entry-composer-footer">
+                <button type="button" className="rukh-entry-attach" aria-label="Attach files" onClick={onOpenSignIn} disabled={loading}><NavigationIcon name="plus" /><span>Attach files</span></button>
+                <button type="button" className="rukh-entry-tools" onClick={onOpenSignIn} disabled={loading}>Tools <span aria-hidden="true">›</span></button>
+                <button className="rukh-entry-send" type="submit" aria-label="Continue to sign in" disabled={loading || !draft.trim()}><NavigationIcon name="arrow" /></button>
+              </div>
+            </form>
+            <p className="rukh-entry-hint" role="status" aria-live="polite">{loading ? "Checking your account…" : authConfigured ? "Sign in to send. Rukh asks before taking important actions." : "Account access is not configured for this deployment."}</p>
+          </div>
+        </>}
       </div>
     </section>
   </main>;

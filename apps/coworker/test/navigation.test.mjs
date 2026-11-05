@@ -1,16 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { coworkerNavigation, getCoworkerView, getInitialCoworkerView, getInitialConversationId } from "../src/navigation.mjs";
+import { coworkerNavigation, getCoworkerView, getInitialCoworkerView, getInitialCoworkerViewFromLocation, getInitialConversationId } from "../src/navigation.mjs";
 
 test("Coworker navigation maps only implemented workspace surfaces", () => {
   const ids = coworkerNavigation.map(item => item.id);
-  assert.deepEqual(ids, ["home", "projects", "library", "settings", "agent", "goals", "automations", "browser", "files", "approvals", "sandbox", "transactions", "negotiations"]);
+  assert.deepEqual(ids, ["home", "projects", "library", "settings", "agent", "goals", "automations", "browser", "files", "approvals", "fly", "transactions", "negotiations"]);
   assert.equal(getCoworkerView("home"), "conversations");
   assert.equal(getCoworkerView("projects"), "projects");
   assert.equal(getCoworkerView("library"), "library");
   assert.equal(getCoworkerView("settings"), "settings");
   assert.equal(getCoworkerView("files"), "drafts");
   assert.equal(getCoworkerView("approvals"), "actions");
+  assert.equal(getCoworkerView("fly"), "sandbox");
+  assert.equal(coworkerNavigation.find(item => item.id === "fly")?.label, "Fly");
   assert.equal(getCoworkerView("goals"), "goals");
   assert.equal(getCoworkerView("unknown"), "conversations");
 });
@@ -18,6 +20,9 @@ test("Coworker navigation maps only implemented workspace surfaces", () => {
 test("Coworker initial view accepts only implemented routes", () => {
   assert.equal(getInitialCoworkerView("?view=agent"), "agent");
   assert.equal(getInitialCoworkerView("?view=files"), "drafts");
+  assert.equal(getInitialCoworkerView("?view=fly"), "sandbox");
+  assert.equal(getInitialCoworkerViewFromLocation("/fly", ""), "sandbox");
+  assert.equal(getInitialCoworkerViewFromLocation("/coworker", "?view=fly"), "sandbox");
   assert.equal(getInitialCoworkerView("?view=unknown"), "conversations");
   assert.equal(getInitialCoworkerView(""), "conversations");
   assert.equal(coworkerNavigation[0].label, "Coworker");

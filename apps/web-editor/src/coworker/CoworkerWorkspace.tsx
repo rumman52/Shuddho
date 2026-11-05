@@ -13,14 +13,14 @@ import { RukhCompanionMark } from "./CoworkerWelcome";
 import GoalWorkspace from "./GoalWorkspace";
 import AutomationWorkspace from "./AutomationWorkspace";
 import BrowserWorkspace from "./BrowserWorkspace";
-import SandboxWorkspace from "./SandboxWorkspace";
+import FlyWorkspace from "./FlyWorkspace";
 import NegotiationWorkspace from "./NegotiationWorkspace";
 import TransactionWorkspace from "./TransactionWorkspace";
 import { hasPendingGoogleCallback } from "./googleCallback";
 import { hasPendingMicrosoftCallback } from "./microsoftCallback";
 import { hasPendingLinkedInCallback } from "./linkedinCallback";
 import { requestedNotificationView } from "./pushNavigation";
-import { getInitialCoworkerView } from "../../../coworker/src/navigation.mjs";
+import { getInitialCoworkerViewFromLocation } from "../../../coworker/src/navigation.mjs";
 
 
 const originalService: WorkSkill = {
@@ -85,7 +85,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   const [view, setView] = useState<CoworkerView>(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
     if (initialDraft.trim()) return "conversations";
-    if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerView(window.location.search);
+    if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search);
     return "conversations";
   });
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
@@ -252,7 +252,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   return <main className={`cw-workspace rukh-cw-workspace${view === "conversations" ? " rukh-cw-chat" : " rukh-cw-sections"}`}>
     <header className="cw-header"><button ref={navigationTriggerRef} className="rukh-mobile-nav-trigger" type="button"
       aria-label="Open workspace navigation" aria-controls="rukh-cw-sidebar" aria-expanded={navigationOpen}
-      onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div><span className="cw-eyebrow">RUKH AI / COWORKER</span><h1>{view === "conversations" ? "What are we working on?" : ({ projects: "Projects", library: "Files", settings: "Settings", actions: "Plugins", goals: "Goals", automations: "Automations", drafts: "Files & drafts", agent: "Agent activity", browser: "Browser", sandbox: "Sandbox", transactions: "Transactions", negotiations: "Negotiations" } as Record<string, string>)[view]}</h1><p>A persistent workspace for conversations, focused work and connected tools.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
+      onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div><span className="cw-eyebrow">{view === "sandbox" ? "RUKH AI / FLY" : "RUKH AI / COWORKER"}</span><h1>{view === "conversations" ? "What are we working on?" : ({ projects: "Projects", library: "Files", settings: "Settings", actions: "Plugins", goals: "Goals", automations: "Automations", drafts: "Files & drafts", agent: "Agent activity", browser: "Browser", sandbox: "Fly", transactions: "Transactions", negotiations: "Negotiations" } as Record<string, string>)[view]}</h1><p>{view === "sandbox" ? "A coding workspace for source files, isolated Python execution, HTML previews and AI code review. Git and other language runtimes are not connected yet." : "A persistent workspace for conversations, focused work and connected tools."}</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
         setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
       }}>Sign out</button></div>
@@ -270,14 +270,14 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
           <div className="rukh-cw-sidebar-foot"><span className="rukh-cw-private-dot" aria-hidden="true" /><div><strong>Private workspace</strong><small>External actions require review.</small></div></div>
         </aside>
       </>}
-      <section className="rukh-cw-content" aria-label="Coworker workspace">
+      <section className="rukh-cw-content" aria-label={view === "sandbox" ? "Fly workspace" : "Coworker workspace"}>
     {view === "library" && <FilesWorkspace client={client} />}
     {view === "settings" && <SettingsWorkspace client={client} email={email} />}
     {view === "projects" && <ProjectWorkspace client={client} />}
     {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); setView("agent"); }} openAutomations={() => setView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
-    {view === "sandbox" && workspace && <SandboxWorkspace client={client} />}
+    {view === "sandbox" && workspace && <FlyWorkspace client={client} accountId={workspace.account_id} />}
     {view === "transactions" && workspace && <TransactionWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "negotiations" && workspace && <NegotiationWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "actions" && workspace && <PluginsWorkspace client={client}>{onConnectionsChanged => <ActionWorkspace onConnectionsChanged={onConnectionsChanged} client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}</PluginsWorkspace>}
