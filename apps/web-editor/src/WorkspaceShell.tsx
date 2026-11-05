@@ -13,7 +13,7 @@ const CoworkerStandalone = lazy(() => import("../../coworker/src/App"));
 const EditorStandalone = lazy(() => import("../../editor/src/App"));
 
 export default function WorkspaceShell() {
-  const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED === "true";
+  const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";
   const route = getWorkspaceAppRoute(
     typeof window === "undefined" ? "/" : window.location.pathname,
     coworkerEnabled,
