@@ -212,3 +212,5 @@
   .rukh-login-story-copy > section { margin-top: 32px; }
   .rukh-login-form-panel { padding-top: 76px; padding-bottom: 28px; }
 }
+.rukh-login-password-group { display: grid; gap: 8px; }
+.rukh-login-password-group > small { color: var(--rukh-muted, #687064); font-size: 11px; }
