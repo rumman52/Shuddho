@@ -8,7 +8,7 @@ type AuthCallback = (event: string, session: unknown) => void;
 
 function authFixture() {
   let listener: AuthCallback | undefined;
-  const calls = { signIns: 0 };
+  const calls = { signIns: 0, oauthProviders: [] as string[] };
   const client = {
     auth: {
       getSession: async () => ({ data: { session: null }, error: null }),
@@ -17,6 +17,7 @@ function authFixture() {
         return { data: { subscription: { unsubscribe() {} } } };
       },
       signInWithPassword: async () => { calls.signIns++; return { error: null }; },
+      signInWithOAuth: async ({ provider }: { provider: string }) => { calls.oauthProviders.push(provider); return { error: null }; },
       signUp: async () => ({ error: null, data: { session: null } }),
       resetPasswordForEmail: async () => ({ error: null }),
       updateUser: async () => ({ error: null }),
@@ -67,17 +68,29 @@ test("missing public auth configuration blocks send without clearing the draft",
   });
 });
 
-test("configured auth opens a sign-in dialog and closing it preserves the typed message", async () => {
+test("configured auth opens the Figma split-screen sign-in and returning preserves the typed message", async () => {
   await withGate(() => ({}), async (tree, auth) => {
     const input = tree.root.findByProps({ id: "rukh-first-message" });
     await act(async () => input.props.onChange({ target: { value: "Keep this draft through sign-in" } }));
     await act(async () => tree.root.findByProps({ "aria-label": "Start a conversation" }).props.onSubmit({ preventDefault() {} }));
-    const dialog = tree.root.findByProps({ role: "dialog" });
-    assert.equal(String(dialog.props["aria-modal"]), "true");
-    assert.equal(tree.root.findByProps({ id: "rukh-first-message" }).props.value, "Keep this draft through sign-in");
-    await act(async () => tree.root.findByProps({ "aria-label": "Close sign-in" }).props.onClick());
+    assert.ok(tree.root.findByProps({ className: "rukh-login-page" }));
+    assert.ok(tree.root.findByProps({ id: "rukh-login-title" }));
+    assert.ok(tree.root.findByProps({ "aria-label": "Account access" }));
+    assert.equal(tree.root.findByProps({ id: "rukh-login-email" }).props.value, "");
+    await act(async () => tree.root.findByProps({ className: "rukh-login-back" }).props.onClick());
     assert.equal(tree.root.findByProps({ id: "rukh-first-message" }).props.value, "Keep this draft through sign-in");
     assert.equal(auth!.calls.signIns, 0);
+  });
+});
+
+test("Google sign-in uses the configured Supabase OAuth provider", async () => {
+  await withGate(() => ({}), async (tree, auth) => {
+    const input = tree.root.findByProps({ id: "rukh-first-message" });
+    await act(async () => input.props.onChange({ target: { value: "Open my workspace" } }));
+    await act(async () => tree.root.findByProps({ "aria-label": "Start a conversation" }).props.onSubmit({ preventDefault() {} }));
+    await act(async () => tree.root.findByProps({ className: "rukh-login-google" }).props.onClick());
+    assert.deepEqual(auth!.calls.oauthProviders, ["google"]);
+    assert.equal(tree.root.findByProps({ id: "rukh-login-email" }).props.value, "");
   });
 });
 
