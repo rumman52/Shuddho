@@ -137,6 +137,7 @@ try {
   await page.getByText("Preferences saved.",{exact:true}).waitFor();
   await navigateWorkspace(page,"Plugins");
   await page.getByRole("heading",{name:"Plugins",exact:true}).last().waitFor();
+  await page.getByText("Connections, permissions & approvals",{exact:true}).click();
   await page.getByRole("region",{name:"Email and calendar actions",exact:true}).waitFor();
   await navigateWorkspace(page,"Files");
   await page.getByRole("heading",{name:"Your work, all together.",exact:true}).waitFor();
