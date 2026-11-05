@@ -68,3 +68,15 @@ The supervisor starts the guarded test-only API and Vite in the same network nam
 3. Qualify a matching backend with durable application storage, private file storage, the configured provider, and the existing capability/cohort gates. Migration 0064 is additive but is not run against a live database by this work.
 4. After an authorized rollout, validate real account login, provider SSE response, refresh/reopen, project/file isolation, editor save and mobile behavior on the actual preview.
 5. Only then perform an authorized merge/promotion and verify the production alias/revision and normal root/login journey. Until that happens, production is **not verified**.
+
+## Delivery checkpoint
+
+- PR: https://github.com/rumman52/Shuddho/pull/635
+- Implementation commit: `816700f8e9fb88eb2382915d88e9759255e09cd7`; the PR branch also contains the browser-navigation compatibility follow-up.
+- Branch: `fix/rukh-figma-visual-parity-20261105`.
+- Existing Vercel preview: https://shuddho-web-editor-git-fix-rukh-figma-302c79-rumman52s-projects.vercel.app — navigate to `/coworker`.
+- Initial preview deployment: `dpl_93Efq44kmzPZDSvz1aUwahqsh2bG`, reported Ready by Vercel's GitHub status for the implementation commit.
+- Hosted verification: browser redirected to Vercel sign-in; authenticated connector fetch returned 403 because the Rukh project/team is not authorized to that connection. No deployment-protection setting was disabled.
+- Exact implementation-head GitHub frontend and general test/build jobs passed; the wider Coworker job was still running. The follow-up's checks must be read from the current PR head, not inferred from the previous run.
+- Latest local web-editor suite: 217 passed; browser acceptance also traverses Settings, Plugins permissions, Files and section → New chat. The wider browser suite uses the new navigation and opens advanced controls through their visible disclosures.
+- Next action: authorize the existing Rukh Vercel project to the connection, then verify the preview contents/revision and the real auth/provider/backend journeys before any production promotion.

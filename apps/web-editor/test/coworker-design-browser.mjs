@@ -1,3 +1,4 @@
+import { navigateWorkspace } from "./coworker-navigation-browser.mjs";
 // Local design acceptance: real app/API/database with synthetic identity/model.
 import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
@@ -123,6 +124,19 @@ try {
   await page.screenshot({ path:join(evidence,"website-editor-mobile.png") });
   await page.getByRole("link", { name:"← Back to Coworker", exact:true }).click();
   await page.locator("#cw-conversation-message").waitFor();
+  await page.setViewportSize({width:1440,height:900});
+  await navigateWorkspace(page, "Settings");
+  await page.getByLabel("Preferred language",{exact:true}).selectOption("en");
+  await page.getByRole("button",{name:"Save preferences",exact:true}).click();
+  await page.getByText("Preferences saved.",{exact:true}).waitFor();
+  await navigateWorkspace(page,"Plugins");
+  await page.getByRole("heading",{name:"Connect the tools you work with.",exact:true}).waitFor();
+  await page.getByRole("region",{name:"Email and calendar actions",exact:true}).waitFor();
+  await navigateWorkspace(page,"Files");
+  await page.getByRole("heading",{name:"Your work, all together.",exact:true}).waitFor();
+  await page.getByRole("button",{name:"+ New chat",exact:true}).click();
+  await page.getByRole("heading",{name:"What shall we work on today?",exact:true}).waitFor();
+  await page.setViewportSize({width:390,height:844});
   await page.route("**/api/v1/me", route => route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:{code:"fixture_profile_unavailable",message:"Workspace profile unavailable"}})}));
   await page.reload();
   await page.locator("#cw-conversation-message").waitFor();

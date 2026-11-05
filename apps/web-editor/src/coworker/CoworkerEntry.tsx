@@ -71,7 +71,7 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
       </nav>
       <a className="rukh-design-directory" href="/workspaces">All workspaces</a>
       <section className="rukh-design-history" aria-label="Recent chats"><span className="rukh-design-section-label">RECENT CHATS</span><p>Sign in to see your conversations.</p></section>
-      <div className="rukh-design-account"><button type="button" onClick={accountAccess} disabled={loading}><span className="rukh-design-account-avatar">R</span><span><strong>Sign in</strong><small>Your personal workspace</small></span></button><ThemeToggle /></div>
+      <div className="rukh-design-account"><button type="button" aria-label="Sign in" onClick={accountAccess} disabled={loading}><span className="rukh-design-account-avatar">R</span><span><strong>Sign in</strong><small>Your personal workspace</small></span></button><ThemeToggle /></div>
     </aside>
     <section className="rukh-design-main" aria-hidden={navigationOpen ? true : undefined}>
       <header className="rukh-design-header">

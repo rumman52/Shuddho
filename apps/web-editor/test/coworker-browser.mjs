@@ -1,3 +1,4 @@
+import { navigateWorkspace } from "./coworker-navigation-browser.mjs";
 import assert from "node:assert/strict";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,12 +73,10 @@ try {
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
   await page.locator("#cw-conversation-message").waitFor();
-  await page.getByText("More tools", { exact:true }).click();
-  await page.getByRole("button", { name: "Sandbox", exact: true }).click();
+  await navigateWorkspace(page, "Sandbox");
   await page.getByRole("heading", { name: "Sandboxed computation", exact: true }).waitFor();
   await page.getByText("Sandbox capability is disabled.", { exact: true }).waitFor();
-  await page.getByText("More tools", { exact:true }).click();
-  await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
+  await navigateWorkspace(page, "Files & drafts");
   await page.getByLabel("Your notes").fill("The team completed 12 reviews on 10 September 2026.");
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });
   await page.getByRole("button", { name: "Remove meeting.txt from this task" }).waitFor();
@@ -104,7 +103,7 @@ try {
   await editorPage.close();
   await coworkerPage.close();
   await page.reload();
-  await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
+  await navigateWorkspace(page, "Files & drafts");
   const result = page.getByRole("region", { name: "Task result" });
   await result.getByText("Ready", { exact: true }).waitFor({ timeout: 60000 });
   await result.getByRole("heading", { name: "প্রকল্পের অগ্রগতি", exact: true }).first().waitFor();
@@ -182,7 +181,7 @@ try {
       await current.getByText("Copied.", { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "দলটি ১২টি পর্যালোচনা সম্পন্ন করেছে।");
       await page.reload();
-      await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
+      await navigateWorkspace(page, "Files & drafts");
       await page.locator(`.cw-result[data-task-id="${created.id}"]`).getByText("Ready", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Use these sources for a new draft" }).click();
       assert.equal(await page.getByLabel("Work service", { exact: true }).inputValue(), "social");
@@ -197,7 +196,7 @@ try {
       assert.equal(await current.locator("blockquote p").textContent(), "The team completed 12 reviews.");
       await downloaded.saveAs(join(folder, "screenshots", filename));
       await page.reload();
-      await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
+      await navigateWorkspace(page, "Files & drafts");
       await current.getByText("Ready", { exact: true }).waitFor();
       await page.getByRole("button", { name: "Use these sources for a new draft" }).click();
       assert.equal(await page.getByLabel("Work service", { exact: true }).inputValue(), "research");
@@ -220,17 +219,18 @@ try {
   await verifyAgentProposals(page, folder);
   await verifyNotificationDigests(page, folder);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   assert.equal(await page.getByText("প্রকল্পের অগ্রগতি", { exact: true }).count(), 0);
   await page.getByLabel("Email", { exact: true }).fill("bob@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.locator("#cw-conversation-message").waitFor();
-  await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
+  await navigateWorkspace(page, "Files & drafts");
   await page.getByRole("button", { name: "Create report & email draft" }).waitFor();
   assert.equal(await page.locator(".cw-history li").count(), 0);
   assert.equal(await page.locator(".cw-file-chips li").count(), 0);
-  await page.getByRole("button", { name: "Approvals & integrations", exact: true }).click();
+  await navigateWorkspace(page, "Plugins");
   await page.getByRole("button", { name: "Connect Gmail", exact: true }).waitFor();
   assert.equal(await page.locator(".cw-actions .cw-history li").count(), 0);
   assert.equal(await page.getByRole("button", { name: "Disconnect Calendar", exact: true }).count(), 0);

@@ -33,6 +33,6 @@ export default function PluginsWorkspace({ client, children }: { client: Coworke
       return <button key={item.name} className="rukh-project-card" onClick={() => setSelected(item.name)}><span className="rukh-welcome-icon"><NavigationIcon name={item.icon} /></span><strong>{item.name}</strong><p>{item.description}</p><small>{loading ? "Checking…" : error ? "Status unavailable" : connected ? "Connected" : available ? "Not connected" : "Unavailable in this workspace"}</small></button>;
     })}</div>
     {selected && <section className="rukh-plugin-detail"><h2>{selected}</h2><p>Use the connection controls below to review permissions and connect or disconnect your account. A connection alone does not approve external actions.</p><button className="cw-text-button" onClick={() => setSelected("")}>Close details</button></section>}
-    <details className="rukh-plugin-management" open={Boolean(selected)}><summary>Connections, permissions &amp; approvals</summary>{children(setConnections)}</details>
+    <details className="rukh-plugin-management" open><summary>Connections, permissions &amp; approvals</summary>{children(setConnections)}</details>
   </section>;
 }

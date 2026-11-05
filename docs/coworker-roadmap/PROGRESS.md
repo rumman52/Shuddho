@@ -1,6 +1,6 @@
 ## Approved Figma frontend implementation — 5 November 2026 (Asia/Dhaka)
 
-Branch `fix/rukh-figma-visual-parity-20261105`, base `065dedfe73a95ddd36d331336e11297d75aa25db`. [Implementation, root causes, requirement mapping, verification and release blockers](../frontend/FIGMA_IMPLEMENTATION_2026-11-05.md).
+PR [#635](https://github.com/rumman52/Shuddho/pull/635), implementation commit `816700f8e9fb88eb2382915d88e9759255e09cd7`. Branch `fix/rukh-figma-visual-parity-20261105`, base `065dedfe73a95ddd36d331336e11297d75aa25db`. [Implementation, root causes, requirement mapping, verification and release blockers](../frontend/FIGMA_IMPLEMENTATION_2026-11-05.md).
 
 Implements the approved Coworker home/sidebar/mobile composer, owner-scoped Projects with additive migration 0064 (default off), real Files/Settings/Plugins surfaces, and a sandboxed website editor alongside the existing writing editor. Project/chat/editor links preserve context; saved status requires persistence verification. Local API/identity/model browser fixtures are explicitly identified as synthetic.
 
