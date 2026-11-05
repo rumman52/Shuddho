@@ -6,6 +6,8 @@ import CoworkerEntry from "./CoworkerEntry";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { CoworkerClient } from "./client";
 
+const ENTRY_DRAFT_STORAGE_KEY = "rukh-coworker-entry-draft:v1";
+
 export type CoworkerGateProps = {
   authClientFactory?: typeof getRukhAuthClient;
 };
@@ -24,7 +26,10 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => {
+    try { return typeof window === "undefined" ? "" : window.sessionStorage.getItem(ENTRY_DRAFT_STORAGE_KEY) ?? ""; }
+    catch { return ""; }
+  });
   const [entryError, setEntryError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
 
@@ -70,6 +75,13 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     });
     return () => { alive = false; data.subscription.unsubscribe(); };
   }, [auth]);
+
+  useEffect(() => {
+    try {
+      if (draft) window.sessionStorage.setItem(ENTRY_DRAFT_STORAGE_KEY, draft);
+      else window.sessionStorage.removeItem(ENTRY_DRAFT_STORAGE_KEY);
+    } catch { /* Session storage is optional; the in-memory draft remains available. */ }
+  }, [draft]);
 
   function openAuth() {
     if (!auth) {
