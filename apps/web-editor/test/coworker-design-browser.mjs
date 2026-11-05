@@ -102,6 +102,9 @@ try {
   await page.getByRole("region", { name:"Writing editor" }).waitFor();
   assert.ok(new URL(page.url()).searchParams.get("conversation"));
   assert.ok(new URL(page.url()).searchParams.get("project"));
+  await page.getByRole("button", { name:"Activity & context", exact:true }).click();
+  await page.getByRole("complementary", { name:"Activity and context", exact:true }).waitFor();
+  await page.getByRole("button", { name:"Close activity and context", exact:true }).click();
   await page.getByRole("button", { name:"← Website editor", exact:true }).click();
   await page.getByRole("heading", { name:"Rukh landing page", exact:true }).waitFor();
   await page.getByLabel("Layout gap", { exact:true }).waitFor();
