@@ -550,3 +550,5 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 @media (max-width: 900px) {
   .rukh-editor-sidebar-brand .rukh-library-close { display: inline-flex; align-items: center; justify-content: center; }
 }
+.rukh-workspace-home { display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border: 1px solid var(--rukh-border); border-radius: 9px; color: var(--rukh-text); font-size: 12px; font-weight: 650; text-decoration: none; }
+.rukh-workspace-home:hover { background: var(--rukh-surface-soft); border-color: var(--rukh-border-strong); }
