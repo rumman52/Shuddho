@@ -32,8 +32,8 @@ export default function PluginsWorkspace({ client, children }: { client: Coworke
     {loading && <p role="status">Loading connections…</p>}
     {(() => {
       const filtered = catalog.filter(item => item.name.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
-      const primary = filtered.filter(item => item.featured);
-      const additional = filtered.filter(item => !item.featured);
+      const primary = search ? filtered : filtered.filter(item => item.featured);
+      const additional = search ? [] : filtered.filter(item => !item.featured);
       const card = (item: typeof catalog[number]) => {
         const connected = connections.some(value => value.provider === item.provider && value.capability === item.capability && value.active);
         const available = item.supported && enabled && (item.provider !== "microsoft" || import.meta.env.VITE_MICROSOFT_ACTIONS_ENABLED === "true") && (item.provider !== "linkedin" || socialEnabled);
