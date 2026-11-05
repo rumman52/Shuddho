@@ -580,7 +580,10 @@ export default function App() {
             aria-modal={mobileLibraryOpen ? true : undefined}
             aria-labelledby="rukh-editor-recent-chats-title"
           >
-            <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
+            <div className="rukh-editor-sidebar-brand">
+              <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
+              <button className="rukh-library-close" ref={mobileLibraryCloseRef} type="button" aria-label="Close navigation" onClick={() => setMobileLibraryOpen(false)}>×</button>
+            </div>
             <a href="/coworker" className="rukh-design-new rukh-editor-new-chat">+ New chat</a>
             <WorkspaceNavigation active="editor" editorHref="/editor" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
             <section className="rukh-editor-recent-chats" aria-labelledby="rukh-editor-recent-chats-title">
@@ -602,7 +605,6 @@ export default function App() {
                 <div><span>WORKSPACE</span><h2 id="rukh-library-title">Recent files</h2></div>
                 <div className="rukh-library-actions">
                   <button className="rukh-library-refresh" type="button" aria-label="Refresh recent files" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
-                  <button className="rukh-library-close" ref={mobileLibraryCloseRef} type="button" aria-label="Close navigation" onClick={() => setMobileLibraryOpen(false)}>×</button>
                 </div>
               </div>
               {!auth && <div className="rukh-library-empty"><p>Connect your Rukh AI account to browse saved Coworker files.</p><a href={coworkerUrl}>Open AI Coworker</a></div>}
@@ -637,7 +639,7 @@ export default function App() {
             </div>
           </section>
         </div>
-        {editorContextOpen && <button className="rukh-editor-context-backdrop" type="button" aria-label="Close activity and context" onClick={() => setEditorContextOpen(false)} />}
+        {editorContextOpen && <button className="rukh-editor-context-backdrop" type="button" aria-label="Dismiss activity and context panel" onClick={() => setEditorContextOpen(false)} />}
         <aside id="rukh-editor-context" className={"rukh-editor-context-panel" + (editorContextOpen ? " is-open" : "")} aria-label="Activity and context" hidden={!editorContextOpen}>
           <header><h2>Activity &amp; context</h2><button type="button" aria-label="Close activity and context" onClick={() => setEditorContextOpen(false)}>×</button></header>
           <section><span>WORKSPACE</span><strong>{session?.user.email ?? "Personal workspace"}</strong><p>Your editor work stays in your private workspace.</p></section>
