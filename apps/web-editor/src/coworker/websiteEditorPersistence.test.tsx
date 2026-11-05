@@ -29,7 +29,7 @@ test("website history survives an unavailable manifest and is verified on a heal
     const healthy={workspaceManifest:async () => ({documents:[{document_id:"document-1",sha256:await digest(source),available:true}]})} as unknown as CoworkerClient;
     await act(async () => { tree=create(<WebsiteEditor client={healthy} userId="alice" conversationId={null} projectId={null}/>); await new Promise(resolve=>setTimeout(resolve,5)); });
     await act(async () => { await new Promise(resolve=>setTimeout(resolve,5)); });
-    assert.equal(tree!.root.findByProps({role:"status"}).children.join(""),"Saved to workspace");
+    assert.equal(tree!.root.findByProps({role:"status"}).children.join(""),"Draft saved");
     assert.equal(JSON.parse(storage.getItem("rukh-website-draft:v1:alice")!).versions.length,1);
   } finally { if(tree) await act(async()=>tree!.unmount()); globalThis.sessionStorage=previous; }
 });
@@ -89,12 +89,12 @@ test("late restoration verification cannot overwrite a newly saved website versi
     await act(async()=>tree!.root.findAllByType("button").find(button=>button.children.join("")==="Code")!.props.onClick());
     await act(async()=>tree!.root.findByProps({"aria-label":"Website source"}).props.onChange({target:{value:newSource}}));
     await act(async()=>tree!.root.findAllByType("button").find(button=>button.children.join("")==="Save to workspace")!.props.onClick());
-    for(let i=0;i<100&&tree!.root.findByProps({role:"status"}).children.join("")!=="Saved to workspace";i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1));});
-    assert.equal(tree!.root.findByProps({role:"status"}).children.join(""),"Saved to workspace");
+    for(let i=0;i<100&&tree!.root.findByProps({role:"status"}).children.join("")!=="Draft saved";i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,1));});
+    assert.equal(tree!.root.findByProps({role:"status"}).children.join(""),"Draft saved");
     await act(async()=>{release({documents:[{document_id:"old-file",sha256:oldSha,available:true}]});await new Promise(resolve=>setTimeout(resolve,5));});
     const record=JSON.parse(storage.getItem("rukh-website-draft:v1:alice")!);
     assert.equal(record.savedSource,newSource);
     assert.ok(record.versions.some((item:{documentId:string})=>item.documentId==="new-file"));
-    assert.equal(tree!.root.findByProps({role:"status"}).children.join(""),"Saved to workspace");
+    assert.equal(tree!.root.findByProps({role:"status"}).children.join(""),"Draft saved");
   }finally{if(tree)await act(async()=>tree!.unmount());globalThis.sessionStorage=previous;}
 });

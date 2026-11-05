@@ -15,7 +15,7 @@ const manifest = {
   schema_version: 1,
   app: "shuddho-web-editor",
   source_revision: revision,
-  coworker_enabled: flag("VITE_COWORKER_ENABLED"),
+  coworker_enabled: String(process.env.VITE_COWORKER_ENABLED ?? "true").toLowerCase() !== "false",
   microsoft_actions_enabled: flag("VITE_MICROSOFT_ACTIONS_ENABLED"),
 };
 

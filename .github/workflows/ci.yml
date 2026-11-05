@@ -81,6 +81,8 @@ jobs:
           if (value.schema_version !== 1) throw new Error("Unexpected rollout manifest version");
           if (value.app !== "shuddho-web-editor") throw new Error("Unexpected rollout manifest app");
           if (value.source_revision !== process.env.GITHUB_SHA) throw new Error("Rollout manifest revision mismatch");
+          const expectedCoworker = String(process.env.VITE_COWORKER_ENABLED ?? "true").toLowerCase() !== "false";
+          if (value.coworker_enabled !== expectedCoworker) throw new Error("Coworker rollout manifest must match the default-on frontend route unless explicitly rolled back");
           if (value.microsoft_actions_enabled !== false) throw new Error("Microsoft frontend rollout must default off in CI");
           NODE
 

@@ -28,7 +28,7 @@ test("Coworker exposes mobile controls for conversation history and Context", ()
 
 test("Web Editor exposes a mobile Recent files drawer control", () => {
   const html = renderToString(<Editor />);
-  assert.match(html, /aria-label="Open recent files"/);
+  assert.match(html, /aria-label="Open navigation"/);
   assert.match(html, /aria-controls="rukh-editor-library"/);
   assert.match(html, /aria-expanded="false"/);
 });

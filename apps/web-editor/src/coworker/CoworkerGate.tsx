@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
 import { RukhCompanionMark } from "./CoworkerWelcome";
 import CoworkerEntry from "./CoworkerEntry";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { CoworkerClient } from "./client";
+
+const ENTRY_DRAFT_STORAGE_KEY = "rukh-coworker-entry-draft:v1";
 
 export type CoworkerGateProps = {
   authClientFactory?: typeof getRukhAuthClient;
@@ -20,13 +22,16 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
   const [mode, setMode] = useState<"signin" | "signup" | "reset" | "recovery">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => {
+    try { return typeof window === "undefined" ? "" : window.sessionStorage.getItem(ENTRY_DRAFT_STORAGE_KEY) ?? ""; }
+    catch { return ""; }
+  });
   const [entryError, setEntryError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
-  const authDialogRef = useRef<HTMLElement | null>(null);
 
   const client = useMemo(() => auth && session ? new CoworkerClient(
     import.meta.env.VITE_COWORKER_API_BASE_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8000" : "/backend"),
@@ -71,6 +76,13 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     return () => { alive = false; data.subscription.unsubscribe(); };
   }, [auth]);
 
+  useEffect(() => {
+    try {
+      if (draft) window.sessionStorage.setItem(ENTRY_DRAFT_STORAGE_KEY, draft);
+      else window.sessionStorage.removeItem(ENTRY_DRAFT_STORAGE_KEY);
+    } catch { /* Session storage is optional; the in-memory draft remains available. */ }
+  }, [draft]);
+
   function openAuth() {
     if (!auth) {
       setEntryError("Sign-in is not configured for this deployment. Your draft has not been sent.");
@@ -99,54 +111,29 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
   function closeAuth() {
     setAuthOpen(false);
     setPassword("");
+    setShowPassword(false);
     setError("");
     setNotice("");
     if (mode !== "recovery") setMode("signin");
   }
 
-  useEffect(() => {
-    if (!authOpen || typeof document === "undefined") return;
-    const dialog = authDialogRef.current;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-    ) ?? []);
-    const first = dialog?.querySelector<HTMLElement>("input:not([disabled])") ?? getFocusable()[0];
-    (first ?? dialog)?.focus();
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeAuth();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = getFocusable();
-      if (!focusable.length) {
-        event.preventDefault();
-        dialog?.focus();
-        return;
-      }
-      const firstFocusable = focusable[0];
-      const lastFocusable = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === firstFocusable) {
-        event.preventDefault();
-        lastFocusable.focus();
-      } else if (!event.shiftKey && document.activeElement === lastFocusable) {
-        event.preventDefault();
-        firstFocusable.focus();
-      }
+  async function signInWithGoogle() {
+    if (!auth || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const { error } = await auth.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: new URL("/coworker", window.location.origin).href },
+      });
+      if (error) throw error;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Google sign-in could not start. Please use email instead.");
+    } finally {
+      setBusy(false);
     }
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousBodyOverflow;
-      if (previous?.isConnected) previous.focus();
-    };
-  }, [authOpen, mode]);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -200,74 +187,86 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     );
   }
 
-  return (
-    <>
-      <div aria-hidden={authOpen ? true : undefined}>
-        <CoworkerEntry
-          authConfigured={Boolean(auth)}
-          loading={loading}
-          draft={draft}
-          error={entryError}
-          onDraftChange={value => { setDraft(value); setEntryError(""); }}
-          onSubmit={requestFirstMessage}
-          onOpenSignIn={openAuth}
-        />
-      </div>
-
-      {authOpen && auth && (
-        <div
-          className="rukh-auth-overlay"
-          onMouseDown={event => { if (event.target === event.currentTarget) closeAuth(); }}
-        >
-          <section
-            ref={authDialogRef}
-            className="cw-auth-card rukh-auth-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rukh-auth-dialog-title"
-            aria-describedby="rukh-auth-dialog-description"
-            tabIndex={-1}
-          >
-            <button type="button" className="rukh-auth-dialog-close" aria-label="Close sign-in" onClick={closeAuth}>×</button>
-            <aside className="rukh-auth-story"><RukhCompanionMark /><strong>rukh AI</strong><h2>A little less busy.<br />A lot more possible.</h2><p>Your ideas, your projects, your AI coworker. One calm place to move things forward.</p><div><h3>One conversation. Real progress.</h3><p>Start with a message. Rukh helps you plan, create, and follow through — with you in control.</p></div></aside>
-            <div className="rukh-auth-form-content">
-            <span className="cw-eyebrow">Your personal workspace</span>
-            <h2 id="rukh-auth-dialog-title">
-              {mode === "signup" ? "Make room for better work." : mode === "reset" ? "Reset your password." : mode === "recovery" ? "Choose a new password." : "Welcome back."}
+  if (authOpen && auth) {
+    return (
+      <main className="rukh-login-page" aria-label="Rukh AI sign in">
+        <aside className="rukh-login-story">
+          <div className="rukh-login-brand"><RukhCompanionMark /><strong>rukh AI</strong></div>
+          <div className="rukh-login-story-copy">
+            <h1>A little less busy.<br />A lot more possible.</h1>
+            <p>Your ideas, your projects, your AI coworker. One calm place to move things forward.</p>
+            <section>
+              <h2>One conversation. Real progress.</h2>
+              <p>Start with a message. Rukh helps you plan, create, and follow through — with you in control.</p>
+            </section>
+          </div>
+          <p className="rukh-login-story-footer">Designed around the way you work.</p>
+        </aside>
+        <section className="rukh-login-form-panel">
+          {mode !== "recovery" && <button type="button" className="rukh-login-back" onClick={closeAuth}>← Back to Coworker</button>}
+          <div className="rukh-login-form-content">
+            <h2 id="rukh-login-title">
+              {mode === "signup" ? "Create your account" : mode === "reset" ? "Reset your password" : mode === "recovery" ? "Choose a new password" : "Welcome back"}
             </h2>
-            <p id="rukh-auth-dialog-description">Your draft stays in the composer. It will not be sent until you press Send in your conversation.</p>
-            <form aria-label="Account access" onSubmit={submit}>
+            <p id="rukh-login-description">
+              {mode === "signup" ? "Create an account to open your personal AI workspace." : mode === "reset" ? "Enter your email and we will send you a password reset link." : mode === "recovery" ? "Choose a new password for your Rukh account." : "Sign in to your AI coworker."}
+            </p>
+            {mode === "signin" && (
+              <>
+                <button type="button" className="rukh-login-google" disabled={busy} onClick={() => void signInWithGoogle()}>
+                  <svg className="rukh-google-mark" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.7-.4-4H24v7.5h11a9.4 9.4 0 0 1-4.1 6.2v5h6.6c3.9-3.6 6.1-8.9 6.1-14.7Z"/><path fill="#34A853" d="M24 44c5.5 0 10.1-1.8 13.5-4.8l-6.6-5c-1.8 1.2-4 2-6.9 2-5.3 0-9.8-3.6-11.4-8.4H5.8v5.2C9.2 39.6 16 44 24 44Z"/><path fill="#FBBC05" d="M12.6 27.8a12 12 0 0 1 0-7.6V15H5.8a20 20 0 0 0 0 18l6.8-5.2Z"/><path fill="#EA4335" d="M24 11.8c3 0 5.6 1 7.7 3l5.8-5.8C34 5.7 29.5 4 24 4 16 4 9.2 8.4 5.8 15l6.8 5.2c1.6-4.8 6.1-8.4 11.4-8.4Z"/></svg> Continue with Google
+                </button>
+                <div className="rukh-login-divider"><span>or use email</span></div>
+              </>
+            )}
+            <form aria-label="Account access" aria-describedby="rukh-login-description" onSubmit={submit}>
               {mode !== "recovery" && (
-                <label>Email
-                  <input type="email" autoComplete="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} />
+                <label htmlFor="rukh-login-email">Email address
+                  <input id="rukh-login-email" type="email" autoComplete="email" placeholder="you@example.com" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} autoFocus />
                 </label>
               )}
               {mode !== "reset" && (
-                <label>Password
-                  <input type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} minLength={mode === "signin" ? 1 : 12} required maxLength={128} value={password} onChange={event => setPassword(event.target.value)} />
+                <div className="rukh-login-password-group">
+                  <label htmlFor="rukh-login-password">Password</label>
+                  <span className="rukh-login-password-field">
+                    <input id="rukh-login-password" type={showPassword ? "text" : "password"} autoComplete={mode === "signin" ? "current-password" : "new-password"} placeholder={mode === "signin" ? "Enter your password" : "Choose a password"} minLength={mode === "signin" ? 1 : 12} required maxLength={128} value={password} onChange={event => setPassword(event.target.value)} />
+                    <button type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword(value => !value)}>{showPassword ? "Hide" : "Show"}</button>
+                  </span>
                   {mode !== "signin" && <small>Use at least 12 characters.</small>}
-                </label>
+                </div>
               )}
-              <button className="cw-primary" disabled={busy} type="submit">
-                {busy ? "Please wait…" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : mode === "recovery" ? "Save password" : "Sign in"}
+              <button className="cw-primary rukh-login-submit" aria-label={mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : "Save password"} disabled={busy} type="submit">
+                {busy ? "Please wait…" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : mode === "recovery" ? "Save password" : "Sign in →"}
               </button>
             </form>
             {error && <p className="cw-error" role="alert">{error}</p>}
             {notice && <p className="cw-notice" role="status">{notice}</p>}
             {mode !== "recovery" && (
-              <div className="cw-auth-links">
+              <div className="rukh-login-links">
                 <button type="button" onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setError(""); setNotice(""); }}>
-                  {mode === "signup" ? "Already have an account? Sign in" : "Create an account"}
+                  {mode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
                 </button>
                 <button type="button" onClick={() => { setMode(mode === "reset" ? "signin" : "reset"); setError(""); setNotice(""); }}>
                   {mode === "reset" ? "Back to sign in" : "Forgot password?"}
                 </button>
               </div>
             )}
-            </div>
-          </section>
-        </div>
-      )}
-    </>
+            <p className="rukh-login-legal">By continuing, you agree to our Terms and Privacy Policy.</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <CoworkerEntry
+      authConfigured={Boolean(auth)}
+      loading={loading}
+      draft={draft}
+      error={entryError}
+      onDraftChange={value => { setDraft(value); setEntryError(""); }}
+      onSubmit={requestFirstMessage}
+      onOpenSignIn={openAuth}
+    />
   );
 }

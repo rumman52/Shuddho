@@ -52,11 +52,11 @@ try {
   assert.equal(await page.getByRole("button", { name: "Open navigation", exact: true }).getAttribute("aria-expanded"), "false");
   await page.getByLabel("Message Rukh AI", { exact: true }).fill("Keep this draft through sign-in.");
   await page.getByRole("button", { name: "Continue to sign in" }).click();
-  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
-  await page.getByRole("button", { name: "Close sign-in" }).click();
+  await page.getByRole("heading", { name: "Welcome back", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Back to Coworker", exact: true }).click();
   assert.equal(await page.getByLabel("Message Rukh AI", { exact: true }).inputValue(), "Keep this draft through sign-in.");
   await page.getByRole("button", { name: "Continue to sign in" }).click();
-  await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
+  await page.getByLabel("Email address", { exact: true }).fill("alice@example.test");
   await page.getByLabel("Password", { exact: true }).fill("fixture-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.locator("#cw-conversation-message").waitFor();
@@ -80,7 +80,7 @@ try {
   await page.getByRole("button", { name:"Close conversations", exact:true }).click();
   await page.setViewportSize({ width:1440,height:900 });
   await page.getByRole("button", { name:"Projects", exact:true }).click();
-  await page.getByRole("heading", { name:"Give every idea a place to grow." }).waitFor();
+  await page.getByRole("heading", { name:"Projects", exact:true }).last().waitFor();
   await page.getByRole("button", { name:"+ New project", exact:true }).click();
   await page.getByLabel("Project name", { exact:true }).fill("Browser acceptance project");
   await page.getByLabel("Project description", { exact:true }).fill("Synthetic acceptance fixture");
@@ -102,14 +102,20 @@ try {
   await page.getByRole("region", { name:"Writing editor" }).waitFor();
   assert.ok(new URL(page.url()).searchParams.get("conversation"));
   assert.ok(new URL(page.url()).searchParams.get("project"));
-  await page.getByRole("button", { name:"Website", exact:true }).click();
+  await page.getByRole("button", { name:"Activity & context", exact:true }).click();
+  await page.getByRole("complementary", { name:"Activity and context", exact:true }).waitFor();
+  await page.getByRole("button", { name:"Close activity and context", exact:true }).click();
+  await page.getByRole("button", { name:"← Website editor", exact:true }).click();
+  await page.getByRole("heading", { name:"Rukh landing page", exact:true }).waitFor();
+  await page.getByLabel("Layout gap", { exact:true }).waitFor();
+  await page.getByLabel("Typography size", { exact:true }).waitFor();
   await page.getByRole("button", { name:"Code", exact:true }).click();
   const websiteSource = '<!doctype html><html><head><style>body{font-family:system-ui;padding:32px}</style></head><body><section data-layer="hero"><h1>Acceptance website</h1><p>বাংলা website draft</p></section><svg xmlns="http://www.w3.org/2000/svg"><a xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://preview-navigation.invalid/"><text x="5" y="25">External SVG link</text></a></svg><script>parent.document.body.dataset.websiteScriptRan="yes"</script></body></html>';
   await page.getByLabel("Website source", { exact:true }).fill(websiteSource);
   await page.getByRole("button", { name:"Save to workspace", exact:true }).click();
-  await page.getByText("Saved to workspace", { exact:true }).waitFor();
+  await page.getByText("Draft saved", { exact:true }).waitFor();
   await page.reload();
-  await page.getByRole("button", { name:"Website", exact:true }).click();
+  await page.getByRole("button", { name:"← Website editor", exact:true }).click();
   await page.getByRole("button", { name:"Code", exact:true }).click();
   assert.equal(await page.getByLabel("Website source", { exact:true }).inputValue(), websiteSource);
   await page.getByRole("button", { name:"Design", exact:true }).click();
@@ -130,7 +136,15 @@ try {
   await page.getByRole("button",{name:"Save preferences",exact:true}).click();
   await page.getByText("Preferences saved.",{exact:true}).waitFor();
   await navigateWorkspace(page,"Plugins");
-  await page.getByRole("heading",{name:"Connect the tools you work with.",exact:true}).waitFor();
+  await page.getByRole("heading",{name:"Plugins",exact:true}).last().waitFor();
+  for (const name of ["Google Drive", "GitHub", "Google Calendar", "Gmail", "Notion", "Slack"]) {
+    await page.getByRole("button", { name: new RegExp(name) }).waitFor();
+  }
+  assert.equal(await page.getByText("Coming soon", { exact:true }).count(), 3);
+  await page.getByText("More integrations", { exact:true }).click();
+  await page.getByRole("button", { name:/Microsoft 365/ }).waitFor();
+  await page.getByRole("button", { name:/LinkedIn/ }).waitFor();
+  await page.getByText("Connections, permissions & approvals",{exact:true}).click();
   await page.getByRole("region",{name:"Email and calendar actions",exact:true}).waitFor();
   await navigateWorkspace(page,"Files");
   await page.getByRole("heading",{name:"Your work, all together.",exact:true}).waitFor();

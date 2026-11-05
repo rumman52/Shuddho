@@ -80,7 +80,7 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
     finally { setBusy(false); }
   }
   return <section className="rukh-designed-page" aria-label="Projects">
-    <header className="rukh-page-heading"><div><h1>{project ? project.name : "Give every idea a place to grow."}</h1><p>{project ? project.description || "Keep conversations and files together." : "Keep your conversations, files, and work together."}</p></div>
+    <header className="rukh-page-heading"><div><h1>{project ? project.name : "Projects"}</h1><p>{project ? project.description || "Keep conversations and files together." : "Give every idea a place to grow."}</p></div>
       {!editing && (project ? <button className="cw-secondary" disabled={busy} onClick={() => edit(project)}>Edit project</button> : <button className="cw-primary" disabled={loading || Boolean(error)} onClick={() => edit(null)}>+ New project</button>)}
     </header>
     {error && <div className="cw-error" role="alert">{error}<button className="cw-text-button" onClick={() => { if (project) void open(project.id); else setRevision(value => value + 1); }}>Refresh</button></div>}
@@ -105,7 +105,7 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
         </select></label><button className="cw-secondary" disabled={busy || !resource} onClick={() => { void link(); }}>Add to project</button>
       </section>
     </> : !loading && !error && <>
-      <label className="rukh-page-search"><NavigationIcon name="search" /><input type="search" aria-label="Search projects" placeholder="Search projects" value={search} onChange={event => setSearch(event.target.value)} /></label>
+      <label className="rukh-page-search"><NavigationIcon name="search" /><input type="search" aria-label="Search projects" placeholder="Search projects…" value={search} onChange={event => setSearch(event.target.value)} /></label>
       <div className="rukh-project-grid">{projects.filter(item => item.name.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(item => <button type="button" className="rukh-project-card" key={item.id} disabled={busy} onClick={() => { void open(item.id); }}><span className="rukh-welcome-icon"><NavigationIcon name="folder" /></span><strong>{item.name}</strong><p>{item.description || "Conversations and files for your work."}</p><small>Updated {new Date(item.updated_at).toLocaleDateString()}</small></button>)}</div>
       {projects.length === 0 && <p className="rukh-page-empty">Your projects will appear here. Create your first project to get started.</p>}
     </>}

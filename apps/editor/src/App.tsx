@@ -8,7 +8,7 @@ import { RukhCompanionMark } from "../../web-editor/src/coworker/CoworkerWelcome
 import WritingAssistant from "../../web-editor/src/App";
 import ThemeToggle from "../../web-editor/src/components/ThemeToggle";
 import { ErrorBoundary } from "../../web-editor/src/components/ErrorBoundary";
-import { CoworkerClient, isTextArtifact, type Artifact, type CoworkerTask, type SourceDocument } from "../../web-editor/src/coworker/client";
+import { CoworkerClient, isTextArtifact, type Artifact, type CoworkerTask, type ConversationRecord, type SourceDocument } from "../../web-editor/src/coworker/client";
 import { clearEditorDraft, persistEditorCopy, readEditorDraft, writeEditorDraft, type EditorDraftRecord } from "./persistence.mjs";
 
 type ArtifactItem = { artifact: Artifact; task: CoworkerTask };
@@ -30,13 +30,14 @@ export default function App() {
     const query = new URLSearchParams(window.location.search);
     return query.has("artifact_id") || query.has("conversation") || query.get("mode") === "writing" ? "writing" : "website";
   });
-  const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED === "true";
+  const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";
   const auth = useMemo(() => coworkerEnabled
     ? getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
     : null, [coworkerEnabled]);
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(Boolean(auth));
   const [tasks, setTasks] = useState<CoworkerTask[]>([]);
+  const [recentConversations, setRecentConversations] = useState<ConversationRecord[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState("");
   const [notice, setNotice] = useState("");
@@ -45,6 +46,7 @@ export default function App() {
   const [initialText, setInitialText] = useState<string | undefined>();
   const [openedArtifact, setOpenedArtifact] = useState("");
   const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
+  const [editorContextOpen, setEditorContextOpen] = useState(false);
   const mobileLibraryTriggerRef = useRef<HTMLButtonElement | null>(null);
   const mobileLibraryCloseRef = useRef<HTMLButtonElement | null>(null);
   const mobileLibraryPanelRef = useRef<HTMLElement | null>(null);
@@ -206,6 +208,26 @@ export default function App() {
     });
     return () => controller.abort();
   }, [client, reload]);
+
+  useEffect(() => {
+    if (!client) { setRecentConversations([]); return; }
+    const controller = new AbortController();
+    client.conversations(controller.signal).then(({ items }) => {
+      if (!controller.signal.aborted) setRecentConversations(items.slice(0, 3));
+    }).catch(() => {
+      if (!controller.signal.aborted) setRecentConversations([]);
+    });
+    return () => controller.abort();
+  }, [client, reload]);
+
+  useEffect(() => {
+    if (!editorContextOpen) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setEditorContextOpen(false);
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [editorContextOpen]);
 
   useEffect(() => {
     if (!client || !pendingSavedDocument || editorText !== pendingSavedDocument.text) return;
@@ -512,23 +534,20 @@ export default function App() {
     <ErrorBoundary>
       <div className="rukh-editor-app">
         <header className="rukh-editor-topbar" aria-hidden={mobileLibraryOpen ? true : undefined}>
-          <a className="rukh-editor-brand" href="/" aria-label="Rukh AI workspace home" target="_blank" rel="noreferrer">
-            <RukhCompanionMark />
-            <span><strong>Web Editor</strong></span>
-          </a>
+          <div className="rukh-editor-topbar-heading">
+            {coworkerEnabled && <button
+              ref={mobileLibraryTriggerRef}
+              className="rukh-editor-mobile-files"
+              type="button"
+              aria-label="Open navigation"
+              aria-controls="rukh-editor-library"
+              aria-expanded={mobileLibraryOpen}
+              onClick={() => { setEditorContextOpen(false); setMobileLibraryOpen(true); }}
+            ><span aria-hidden="true">☰</span></button>}
+            <strong>Web Editor</strong>
+          </div>
           <div className="rukh-editor-top-actions">
             {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
-            {coworkerEnabled && <button
-            ref={mobileLibraryTriggerRef}
-            className="rukh-editor-mobile-files"
-            type="button"
-            aria-label="Open recent files"
-            aria-controls="rukh-editor-library"
-            aria-expanded={mobileLibraryOpen}
-            onClick={() => setMobileLibraryOpen(true)}
-          >Recent files</button>}
-          <ThemeToggle />
-          <a href="/workspaces" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
             {coworkerEnabled && editorMode === "writing" && <>
               {saveStatus && <span className="rukh-editor-save-status" role="status">{saveStatus}</span>}
               {saveError && <span className="rukh-editor-save-error" role="alert">{saveError}</span>}
@@ -542,6 +561,14 @@ export default function App() {
               </button>
               <a href={coworkerReturnUrl} className="rukh-coworker-link">{originConversationId ? "Return to Coworker" : "AI Coworker"}</a>
             </>}
+            {coworkerEnabled && <button
+              type="button"
+              className="rukh-editor-context-trigger"
+              aria-controls="rukh-editor-context"
+              aria-expanded={editorContextOpen}
+              onClick={() => { setMobileLibraryOpen(false); setEditorContextOpen(value => !value); }}
+            >Activity &amp; context</button>}
+            {!coworkerEnabled && <a className="rukh-workspace-home" href="/workspaces" target="_blank" rel="noreferrer">All workspaces</a>}
           </div>
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
@@ -549,47 +576,81 @@ export default function App() {
             ref={mobileLibraryPanelRef}
             id="rukh-editor-library"
             className={"rukh-editor-library" + (mobileLibraryOpen ? " rukh-editor-library--open" : "")}
-            aria-label="Recent AI Coworker files"
+            aria-label="Workspace navigation"
             role={mobileLibraryOpen ? "dialog" : undefined}
             aria-modal={mobileLibraryOpen ? true : undefined}
-            aria-labelledby="rukh-library-title"
+            aria-labelledby="rukh-editor-recent-chats-title"
           >
-            <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
+            <div className="rukh-editor-sidebar-brand">
+              <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
+              <button className="rukh-library-close" ref={mobileLibraryCloseRef} type="button" aria-label="Close navigation" onClick={() => setMobileLibraryOpen(false)}>×</button>
+            </div>
             <a href="/coworker" className="rukh-design-new rukh-editor-new-chat">+ New chat</a>
             <WorkspaceNavigation active="editor" editorHref="/editor" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
-            <div className="rukh-library-heading">
-              <div><span>WORKSPACE</span><h2 id="rukh-library-title">Recent files</h2></div>
-              <div className="rukh-library-actions">
-                <button className="rukh-library-refresh" type="button" aria-label="Refresh recent files" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
-                <button className="rukh-library-close" ref={mobileLibraryCloseRef} type="button" aria-label="Close recent files" onClick={() => setMobileLibraryOpen(false)}>×</button>
+            <section className="rukh-editor-recent-chats" aria-labelledby="rukh-editor-recent-chats-title">
+              <div className="rukh-editor-sidebar-heading">
+                <span id="rukh-editor-recent-chats-title">RECENT CHATS</span>
+                <a href="/coworker" aria-label="Open all conversations">⌕</a>
               </div>
+              {!client && <p className="rukh-editor-sidebar-empty">Sign in to see your conversations.</p>}
+              {client && recentConversations.length === 0 && <p className="rukh-editor-sidebar-empty">Your recent conversations will appear here.</p>}
+              {recentConversations.length > 0 && <ul className="rukh-editor-chat-list">
+                {recentConversations.map(item => <li key={item.id}>
+                  <a href={"/coworker?conversation=" + encodeURIComponent(item.id)} title={item.title}>{item.title}</a>
+                </li>)}
+              </ul>}
+            </section>
+            <details className="rukh-editor-recent-files">
+              <summary>Recent files</summary>
+              <div className="rukh-library-heading">
+                <div><span>WORKSPACE</span><h2 id="rukh-library-title">Recent files</h2></div>
+                <div className="rukh-library-actions">
+                  <button className="rukh-library-refresh" type="button" aria-label="Refresh recent files" onClick={() => setReload(value => value + 1)} disabled={!client || libraryLoading}>↻</button>
+                </div>
+              </div>
+              {!auth && <div className="rukh-library-empty"><p>Connect your Rukh AI account to browse saved Coworker files.</p><a href={coworkerUrl}>Open AI Coworker</a></div>}
+              {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to AI Coworker to see recent files and send drafts.</p><a href={coworkerUrl}>Sign in to AI Coworker</a></div>}
+              {authLoading && <p className="rukh-library-muted">Restoring your workspace session…</p>}
+              {libraryError && <p className="rukh-library-error" role="alert">{libraryError}</p>}
+              {notice && <p className="rukh-library-notice" role="status">{notice}</p>}
+              {client && libraryLoading && <p className="rukh-library-muted">Loading recent files…</p>}
+              {client && !libraryLoading && artifacts.length === 0 && !libraryError && <div className="rukh-library-empty"><p>No generated files yet. Completed Coworker work will appear here.</p></div>}
+              {client && artifacts.length > 0 && <ul className="rukh-artifact-list">
+                {artifacts.map(item => <li key={item.artifact.id}>
+                  <div><strong>{item.artifact.filename}</strong><small>{item.task.instruction} · {new Date(item.artifact.created_at ?? item.task.created_at).toLocaleDateString()}</small></div>
+                  <button type="button" disabled={Boolean(busy)} onClick={() => void openArtifact(item)}>
+                    {busy === item.artifact.id ? "Opening…" : isTextArtifact(item.artifact) ? "Open" : "Download"}
+                  </button>
+                </li>)}
+              </ul>}
+              <p className="rukh-library-footnote">Text and Markdown previews use the owner-authenticated route and are checked against their saved SHA-256 digest. Other file types download.</p>
+            </details>
+            <div className="rukh-design-account">
+              <div><span className="rukh-design-account-avatar">{(session?.user.email?.[0] ?? "R").toUpperCase()}</span><span><strong title={session?.user.email ?? "Personal workspace"}>{session?.user.email ?? "Personal workspace"}</strong><small>Personal workspace</small></span></div>
+              <ThemeToggle />
+              <a href="/coworker?view=settings" aria-label="Settings" className="rukh-editor-settings-link">⚙</a>
             </div>
-            {!auth && <div className="rukh-library-empty"><p>Connect your Rukh AI account to browse saved Coworker files.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Open AI Coworker</a></div>}
-            {auth && !session && !authLoading && <div className="rukh-library-empty"><p>Sign in to AI Coworker to see recent files and send drafts.</p><a href={coworkerUrl} target="_blank" rel="noreferrer">Sign in to AI Coworker ↗</a></div>}
-            {authLoading && <p className="rukh-library-muted">Restoring your workspace session…</p>}
-            {libraryError && <p className="rukh-library-error" role="alert">{libraryError}</p>}
-            {notice && <p className="rukh-library-notice" role="status">{notice}</p>}
-            {client && libraryLoading && <p className="rukh-library-muted">Loading recent files…</p>}
-            {client && !libraryLoading && artifacts.length === 0 && !libraryError && <div className="rukh-library-empty"><p>No generated files yet. Completed Coworker work will appear here.</p></div>}
-            {client && artifacts.length > 0 && <ul className="rukh-artifact-list">
-              {artifacts.map(item => <li key={item.artifact.id}>
-                <div><strong>{item.artifact.filename}</strong><small>{item.task.instruction} · {new Date(item.artifact.created_at ?? item.task.created_at).toLocaleDateString()}</small></div>
-                <button type="button" disabled={Boolean(busy)} onClick={() => void openArtifact(item)}>
-                  {busy === item.artifact.id ? "Opening…" : isTextArtifact(item.artifact) ? "Open" : "Download"}
-                </button>
-              </li>)}
-            </ul>}
-            <p className="rukh-library-footnote">Text and Markdown previews use the owner-authenticated route and are checked against their saved SHA-256 digest. Other file types download.</p>
           </aside>}
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
-          <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
-            <nav className="rukh-editor-mode" aria-label="Editor mode"><button aria-pressed={editorMode === "website"} onClick={() => setEditorMode("website")}>Website</button><button aria-pressed={editorMode === "writing"} onClick={() => setEditorMode("writing")}>Writing</button></nav>
+          <section className="rukh-editor-canvas" aria-label={editorMode === "website" ? "Website editor" : "Writing editor"} aria-hidden={mobileLibraryOpen ? true : undefined}>
+            {editorMode === "writing" && <nav className="rukh-editor-mode" aria-label="Editor mode"><button type="button" onClick={() => setEditorMode("website")}>← Website editor</button></nav>}
             {editorMode === "website" && <WebsiteEditor key={session?.user.id ?? "signed-out"} client={client} userId={session?.user.id ?? null} conversationId={originConversationId} projectId={originProjectId} />}
             <div className="rukh-writing-mode" hidden={editorMode !== "writing"}>
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
             </div>
           </section>
         </div>
+        {coworkerEnabled && editorContextOpen && <button className="rukh-editor-context-backdrop" type="button" aria-label="Dismiss activity and context panel" onClick={() => setEditorContextOpen(false)} />}
+        {coworkerEnabled && <aside id="rukh-editor-context" className={"rukh-editor-context-panel" + (editorContextOpen ? " is-open" : "")} aria-label="Activity and context" hidden={!editorContextOpen}>
+          <header><h2>Activity &amp; context</h2><button type="button" aria-label="Close activity and context" onClick={() => setEditorContextOpen(false)}>×</button></header>
+          <section><span>WORKSPACE</span><strong>{session?.user.email ?? "Personal workspace"}</strong><p>Your editor work stays in your private workspace.</p></section>
+          <section><span>PROJECT CONTEXT</span><p>{originProjectId ? "This editor is linked to a project." : "No project is linked to this draft."}</p></section>
+          <section><span>COWORKER CONVERSATION</span><p>{originConversationId ? "This editor was opened from a Coworker conversation." : "No Coworker conversation is linked yet."}</p><a href={coworkerReturnUrl}>Open Coworker</a></section>
+          <section><span>RECENT OUTPUTS</span>
+            {artifacts.length === 0 ? <p>No generated outputs are available yet.</p> : <ul>{artifacts.slice(0, 3).map(item => <li key={item.artifact.id}><button type="button" disabled={Boolean(busy)} onClick={() => void openArtifact(item)}>{item.artifact.filename}</button></li>)}</ul>}
+          </section>
+          <p className="rukh-editor-context-note">Website preview runs in an isolated sandbox. Saving stores a private source file; it does not publish the website.</p>
+        </aside>}
       </div>
     </ErrorBoundary>
   );

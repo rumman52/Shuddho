@@ -5,7 +5,7 @@ import { persistEditorCopy, sha256Hex } from "./persistence.mjs";
 
 const starter = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;color:#20291F;background:#fff}header,footer{padding:24px 30px}header{display:flex;justify-content:space-between;border-bottom:1px solid #DFE3DA}header strong{font-size:24px}main{padding:32px}h1{font-size:36px;line-height:1.4;max-width:520px;margin:16px 0}p{color:#687064;line-height:1.7}button{padding:14px 20px;border:0;border-radius:10px;background:#245A43;color:white;font:inherit}section[data-layer=features]{margin-top:48px;padding:24px;background:#F4F6F1;border-radius:14px}footer{font-size:12px;color:#687064}</style></head>
+<style>*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;color:#20291F;background:#fff}header,footer{padding:24px 30px}header{display:flex;justify-content:space-between;border-bottom:1px solid #DFE3DA}header strong{font-size:24px}main{padding:32px}h1{font-size:34px;line-height:1.4;max-width:520px;margin:0}p{color:#687064;line-height:1.7}button{padding:14px 20px;border:0;border-radius:10px;background:#245A43;color:white;font:inherit}section[data-layer=hero]{display:flex;flex-direction:column;gap:24px;padding:32px}section[data-layer=features]{margin-top:48px;padding:24px;background:#F4F6F1;border-radius:14px}footer{font-size:12px;color:#687064}</style></head>
 <body><header data-layer="header"><strong>rukh</strong><span>Get started ↗</span></header><main>
 <section data-layer="hero"><h1>Make room for<br>your best work.</h1><p>An AI coworker for ideas, projects, and everything in between.</p><button>Meet your coworker</button></section>
 <section data-layer="features"><strong>Think. Create. Follow through.</strong><p>Start with a conversation.</p></section>
@@ -38,6 +38,9 @@ export default function WebsiteEditor({ client, userId, conversationId, projectI
   const [layer, setLayer] = useState("hero");
   const [padding, setPadding] = useState(32);
   const [background, setBackground] = useState("#FFFFFF");
+  const [layoutGap, setLayoutGap] = useState(24);
+  const [fontSize, setFontSize] = useState(34);
+  const [fontFamily, setFontFamily] = useState("Inter");
   const [versions, setVersions] = useState<SavedVersion[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -96,7 +99,17 @@ export default function WebsiteEditor({ client, userId, conversationId, projectI
     const document = new DOMParser().parseFromString(source, "text/html");
     const target = layer === "page" ? document.body : document.querySelector<HTMLElement>(`[data-layer="${layer}"]`);
     if (!target) { setError("This source does not contain the selected layer. Edit the source in Code."); return; }
-    target.style.setProperty(property, value);
+    if (property === "gap") {
+      target.style.display = "flex";
+      target.style.flexDirection = "column";
+      target.style.setProperty(property, value);
+    } else if (property === "font-size" || property === "font-family") {
+      const textTarget = target.matches("h1,h2,h3,p") ? target : target.querySelector<HTMLElement>("h1,h2,h3,p");
+      if (!textTarget) { setError("This layer has no editable text. Select a text layer or edit the source in Code."); return; }
+      textTarget.style.setProperty(property, value);
+    } else {
+      target.style.setProperty(property, value);
+    }
     setSource("<!doctype html>\n" + document.documentElement.outerHTML); setError("");
   }
   async function save() {
@@ -143,13 +156,13 @@ export default function WebsiteEditor({ client, userId, conversationId, projectI
     finally { if (current()) setBusy(false); }
   }
   return <section className="rukh-website-editor" aria-label="Website editor">
-    <header className="rukh-website-title"><strong>My website</strong><span role="status">{busy ? "Saving…" : source === savedSource ? "Saved to workspace" : "Unsaved draft"}</span><button className="cw-secondary" onClick={() => setView("design")}>Preview</button><button className="cw-primary" disabled={busy} onClick={() => { void perform(); }}>{busy ? "Saving…" : "Save to workspace"}</button></header>
+    <header className="rukh-website-title"><strong>Rukh landing page</strong><span role="status">{busy ? "Saving…" : source === savedSource ? "Draft saved" : "Unsaved draft"}</span><button className="cw-secondary" type="button" onClick={() => setView("design")}>Preview</button><button className="cw-primary" type="button" disabled={busy} onClick={() => { void perform(); }}>{busy ? "Saving…" : "Save to workspace"}</button></header>
     {error && <p className="cw-error" role="alert">{error}</p>}
     <nav className="rukh-website-tabs" aria-label="Website views">{["design", "code", "history"].map(value => <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value as typeof view)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</nav>
     {view === "code" ? <label className="rukh-website-code-label">Website source<textarea aria-label="Website source" value={source} disabled={busy} onChange={event => setSource(event.target.value)} spellCheck={false} /></label> : view === "history" ? <section className="rukh-website-history"><h2>Saved versions</h2><p>Versions from this tab, verified against available workspace files.</p>{versions.length === 0 ? <p>No saved versions yet.</p> : versions.map(item => <button key={item.documentId} disabled={busy} onClick={() => { setSource(item.source); setView("design"); }}>Restore {new Date(item.at).toLocaleString()}</button>)}</section> : <div className="rukh-website-layout">
       <aside className="rukh-website-layers" aria-label="Website layers"><strong>LAYERS</strong>{["page", "header", "hero", "features", "footer"].map(value => <button key={value} aria-pressed={layer === value} onClick={() => setLayer(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}</aside>
       <iframe title="Website preview" className="rukh-website-preview" sandbox="" srcDoc={preview} />
-      <aside className="rukh-website-inspector"><h2>Design</h2><p>Selected: {layer}</p><label>Background<input aria-label="Section background" type="color" value={background} disabled={busy} onChange={event => { setBackground(event.target.value); updateStyle("background-color", event.target.value); }} /></label><label>Spacing<input aria-label="Section spacing" type="number" min={0} max={200} value={padding} disabled={busy} onChange={event => { const value = Math.max(0, Math.min(200, Number(event.target.value))); setPadding(value); updateStyle("padding", value + "px"); }} /></label><p className="rukh-website-preview-note">Scripts and external content are blocked in this preview.</p></aside>
+      <aside className="rukh-website-inspector"><h2>Design</h2><p>Selected: {layer === "hero" ? "Hero section" : layer[0].toUpperCase() + layer.slice(1)}</p><section><h3>Layout</h3><label>Stack gap<input aria-label="Layout gap" type="number" min={0} max={96} value={layoutGap} disabled={busy} onChange={event => { const value = Math.max(0, Math.min(96, Number(event.target.value))); setLayoutGap(value); updateStyle("gap", value + "px"); }} /></label></section><section><h3>Typography</h3><label>Font family<select aria-label="Font family" value={fontFamily} disabled={busy} onChange={event => { setFontFamily(event.target.value); updateStyle("font-family", event.target.value); }}><option value="Inter">Inter</option><option value="Arial">Arial</option><option value="Georgia">Georgia</option><option value="system-ui">System UI</option></select></label><label>Font size<input aria-label="Typography size" type="number" min={12} max={96} value={fontSize} disabled={busy} onChange={event => { const value = Math.max(12, Math.min(96, Number(event.target.value))); setFontSize(value); updateStyle("font-size", value + "px"); }} /></label></section><section><h3>Background</h3><label>Color<input aria-label="Section background" type="color" value={background} disabled={busy} onChange={event => { setBackground(event.target.value); updateStyle("background-color", event.target.value); }} /></label></section><section><h3>Spacing</h3><label>Padding<input aria-label="Section spacing" type="number" min={0} max={200} value={padding} disabled={busy} onChange={event => { const value = Math.max(0, Math.min(200, Number(event.target.value))); setPadding(value); updateStyle("padding", value + "px"); }} /></label></section><p className="rukh-website-preview-note">Scripts and external content are blocked in this preview.</p></aside>
     </div>}
     <footer className="rukh-website-footer"><a className="cw-secondary" href={"/coworker" + (conversationId || projectId ? "?" + new URLSearchParams({ ...(conversationId ? { conversation: conversationId } : {}), ...(projectId ? { project: projectId } : {}) }) : "")}>← Back to Coworker</a><button className="cw-primary" disabled={busy} onClick={() => { void perform(true); }}>Review with Rukh</button></footer>
   </section>;
