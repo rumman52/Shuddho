@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
+import { RukhCompanionMark } from "./CoworkerWelcome";
 import CoworkerEntry from "./CoworkerEntry";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { CoworkerClient } from "./client";
@@ -228,6 +229,8 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
             tabIndex={-1}
           >
             <button type="button" className="rukh-auth-dialog-close" aria-label="Close sign-in" onClick={closeAuth}>×</button>
+            <aside className="rukh-auth-story"><RukhCompanionMark /><strong>rukh AI</strong><h2>A little less busy.<br />A lot more possible.</h2><p>Your ideas, your projects, your AI coworker. One calm place to move things forward.</p><div><h3>One conversation. Real progress.</h3><p>Start with a message. Rukh helps you plan, create, and follow through — with you in control.</p></div></aside>
+            <div className="rukh-auth-form-content">
             <span className="cw-eyebrow">Your personal workspace</span>
             <h2 id="rukh-auth-dialog-title">
               {mode === "signup" ? "Make room for better work." : mode === "reset" ? "Reset your password." : mode === "recovery" ? "Choose a new password." : "Welcome back."}
@@ -261,6 +264,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
                 </button>
               </div>
             )}
+            </div>
           </section>
         </div>
       )}

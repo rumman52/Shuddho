@@ -4,7 +4,12 @@ import DraftPreview, { draftTitle } from "./DraftPreview";
 import ActionWorkspace from "./ActionWorkspace";
 import AgentWorkspace from "./AgentWorkspace";
 import ConversationWorkspace from "./ConversationWorkspace";
-import NavigationIcon from "./WorkspaceNavigationIcon";
+import WorkspaceNavigation from "./WorkspaceNavigation";
+import PluginsWorkspace from "./PluginsWorkspace";
+import ProjectWorkspace from "./ProjectWorkspace";
+import FilesWorkspace from "./FilesWorkspace";
+import SettingsWorkspace from "./SettingsWorkspace";
+import { RukhCompanionMark } from "./CoworkerWelcome";
 import GoalWorkspace from "./GoalWorkspace";
 import AutomationWorkspace from "./AutomationWorkspace";
 import BrowserWorkspace from "./BrowserWorkspace";
@@ -15,7 +20,7 @@ import { hasPendingGoogleCallback } from "./googleCallback";
 import { hasPendingMicrosoftCallback } from "./microsoftCallback";
 import { hasPendingLinkedInCallback } from "./linkedinCallback";
 import { requestedNotificationView } from "./pushNavigation";
-import { coworkerNavigation, getInitialCoworkerView } from "../../../coworker/src/navigation.mjs";
+import { getInitialCoworkerView } from "../../../coworker/src/navigation.mjs";
 
 
 const originalService: WorkSkill = {
@@ -76,6 +81,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   initialDraft?: string;
   onInitialDraftChange?: (draft: string) => void;
 }) {
+  const [newChatRevision, setNewChatRevision] = useState(0);
   const [view, setView] = useState<CoworkerView>(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
     if (initialDraft.trim()) return "conversations";
@@ -243,10 +249,10 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     };
   }, [navigationOpen]);
 
-  return <main className={`cw-workspace rukh-cw-workspace${view === "conversations" ? " rukh-cw-chat" : ""}`}>
+  return <main className={`cw-workspace rukh-cw-workspace${view === "conversations" ? " rukh-cw-chat" : " rukh-cw-sections"}`}>
     <header className="cw-header"><button ref={navigationTriggerRef} className="rukh-mobile-nav-trigger" type="button"
       aria-label="Open workspace navigation" aria-controls="rukh-cw-sidebar" aria-expanded={navigationOpen}
-      onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div><span className="cw-eyebrow">RUKH AI / COWORKER</span><h1>What are we working on?</h1><p>A persistent workspace for conversations, focused work and connected tools.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
+      onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div><span className="cw-eyebrow">RUKH AI / COWORKER</span><h1>{view === "conversations" ? "What are we working on?" : ({ projects: "Projects", library: "Files", settings: "Settings", actions: "Plugins", goals: "Goals", automations: "Automations", drafts: "Files & drafts", agent: "Agent activity", browser: "Browser", sandbox: "Sandbox", transactions: "Transactions", negotiations: "Negotiations" } as Record<string, string>)[view]}</h1><p>A persistent workspace for conversations, focused work and connected tools.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
         setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
       }}>Sign out</button></div>
@@ -258,33 +264,24 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
         {navigationOpen && <button className="rukh-cw-navigation-backdrop" type="button" aria-label="Close workspace navigation" onClick={() => setNavigationOpen(false)} />}
         <aside ref={navigationRef} id="rukh-cw-sidebar" className={"rukh-cw-sidebar" + (navigationOpen ? " rukh-cw-sidebar-open" : "")}
           aria-label="Coworker navigation" role={navigationOpen ? "dialog" : undefined} aria-modal={navigationOpen ? true : undefined}>
-          <div className="rukh-cw-brand"><span className="rukh-cw-brand-mark" aria-hidden="true">r</span><span><strong>Rukh AI</strong><small>AI coworker</small></span></div>
-          <nav className="rukh-cw-primary-nav" aria-label="Primary workspace navigation">
-            <button type="button" className="rukh-cw-nav-item" onClick={() => { setView("conversations"); setNavigationOpen(false); }}><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="home" /></span><span>Coworker</span></button>
-            <a className="rukh-cw-nav-item" href="/editor"><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="file-text" /></span><span>Web Editor</span></a>
-            <button type="button" className="rukh-cw-nav-item" disabled title="Project storage is not available in the current Coworker API."><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="folder" /></span><span>Projects</span><small>Unavailable</small></button>
-          </nav>
-          {["Workspace", "Tools", "Manage"].map(group => <div className="rukh-cw-nav-group" key={group}>
-            <span className="rukh-cw-nav-label">{group}</span>
-            {coworkerNavigation.filter(item => item.group === group && item.view !== "conversations").map(item =>
-              <button key={item.id} type="button" className="rukh-cw-nav-item" aria-pressed={view === item.view}
-                onClick={() => { if (item.view === "agent") setFocusAgentRunId(null); setView(item.view as CoworkerView); setNavigationOpen(false); }}>
-                <span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name={item.icon} /></span><span>{item.label}</span>
-              </button>
-            )}
-          </div>)}
+          <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
+          <button type="button" className="rukh-design-new" onClick={() => { onInitialDraftChange?.(""); setNewChatRevision(value => value + 1); setView("conversations"); setNavigationOpen(false); }}>+ New chat</button>
+          <WorkspaceNavigation active={view} onNavigate={nextView => { if (nextView === "agent") setFocusAgentRunId(null); setView(nextView); setNavigationOpen(false); }} />
           <div className="rukh-cw-sidebar-foot"><span className="rukh-cw-private-dot" aria-hidden="true" /><div><strong>Private workspace</strong><small>External actions require review.</small></div></div>
         </aside>
       </>}
       <section className="rukh-cw-content" aria-label="Coworker workspace">
+    {view === "library" && <FilesWorkspace client={client} />}
+    {view === "settings" && <SettingsWorkspace client={client} email={email} />}
+    {view === "projects" && <ProjectWorkspace client={client} />}
     {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); setView("agent"); }} openAutomations={() => setView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
     {view === "sandbox" && workspace && <SandboxWorkspace client={client} />}
     {view === "transactions" && workspace && <TransactionWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "negotiations" && workspace && <NegotiationWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
-    {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
-    {view === "conversations" && <ConversationWorkspace client={client} initialDraft={initialDraft} onInitialDraftChange={onInitialDraftChange} onNavigate={nextView => setView(nextView)} openAgent={runId => { setFocusAgentRunId(runId); setView("agent"); }} />}
+    {view === "actions" && workspace && <PluginsWorkspace client={client}>{onConnectionsChanged => <ActionWorkspace onConnectionsChanged={onConnectionsChanged} client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}</PluginsWorkspace>}
+    {view === "conversations" && <ConversationWorkspace key={newChatRevision} startEmpty={newChatRevision > 0} client={client} email={email} signOut={async () => { try { await signOut(); } catch (error) { setError(message(error)); } }} initialDraft={initialDraft} onInitialDraftChange={onInitialDraftChange} onNavigate={nextView => setView(nextView)} openAgent={runId => { setFocusAgentRunId(runId); setView("agent"); }} />}
     {view === "agent" && workspace && <AgentWorkspace key={focusAgentRunId ?? "recent"} client={client} focusRunId={focusAgentRunId} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     <div className="cw-layout" hidden={view !== "drafts"}><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>

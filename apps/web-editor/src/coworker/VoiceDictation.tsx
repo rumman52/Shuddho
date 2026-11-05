@@ -24,7 +24,8 @@ function MicrophoneIcon() {
   </svg>;
 }
 
-export default function VoiceDictation({ draft, onDraftChange, onListeningChange, disabled }: {
+export default function VoiceDictation({ draft, onDraftChange, onListeningChange, disabled, compact = false }: {
+  compact?: boolean;
   draft: string;
   onDraftChange: (value: string) => void;
   onListeningChange?: (listening: boolean) => void;
@@ -135,14 +136,22 @@ export default function VoiceDictation({ draft, onDraftChange, onListeningChange
     setStatus("");
   }
 
-  return <div className="rukh-voice-controls">
-    <label className="rukh-sr-only" htmlFor="cw-dictation-language">Dictation language</label>
+  return <div className={"rukh-voice-controls" + (compact ? " rukh-voice-compact" : "")}>
+    {compact ? <details className="rukh-voice-language"><summary aria-label="Dictation language options">⌄</summary>    <label className="rukh-sr-only" htmlFor="cw-dictation-language">Dictation language</label>
     <select id="cw-dictation-language" aria-label="Dictation language" value={language}
       disabled={disabled || listening} onChange={changeLanguage}>
       <option value="device">Device language</option>
       <option value="bn-BD">বাংলা</option>
       <option value="en-US">English</option>
     </select>
+</details> : <>    <label className="rukh-sr-only" htmlFor="cw-dictation-language">Dictation language</label>
+    <select id="cw-dictation-language" aria-label="Dictation language" value={language}
+      disabled={disabled || listening} onChange={changeLanguage}>
+      <option value="device">Device language</option>
+      <option value="bn-BD">বাংলা</option>
+      <option value="en-US">English</option>
+    </select>
+</>}
     <button type="button" aria-label={listening ? "Stop voice dictation" : "Start voice dictation"}
       aria-pressed={listening} disabled={disabled || !supported}
       title={supported ? (listening ? "Stop dictation" : "Dictate. Your browser may process microphone audio.") : "Voice dictation is not supported in this browser"}
@@ -150,6 +159,6 @@ export default function VoiceDictation({ draft, onDraftChange, onListeningChange
       <MicrophoneIcon /><span>{listening ? "Stop" : "Dictate"}</span>
     </button>
     {status ? <span className="rukh-voice-status" role="status" aria-live="polite">{status}</span> :
-      !supported ? <span className="rukh-voice-status" role="status">Voice dictation is not supported in this browser.</span> : null}
+      !supported && !compact ? <span className="rukh-voice-status" role="status">Voice dictation is not supported in this browser.</span> : null}
   </div>;
 }

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
+import WorkspaceNavigation from "../../web-editor/src/coworker/WorkspaceNavigation";
+import WebsiteEditor from "./WebsiteEditor";
+import { RukhCompanionMark } from "../../web-editor/src/coworker/CoworkerWelcome";
 import WritingAssistant from "../../web-editor/src/App";
 import ThemeToggle from "../../web-editor/src/components/ThemeToggle";
 import { ErrorBoundary } from "../../web-editor/src/components/ErrorBoundary";
@@ -22,6 +25,11 @@ type SavedEditorRecord = { text: string; documentId: string; sha256: string; nam
 type PendingSavedDocument = { id: string; sha256: string; text: string; name: string };
 
 export default function App() {
+  const [editorMode, setEditorMode] = useState<"website" | "writing">(() => {
+    if (typeof window === "undefined") return "writing";
+    const query = new URLSearchParams(window.location.search);
+    return query.has("artifact_id") || query.has("conversation") || query.get("mode") === "writing" ? "writing" : "website";
+  });
   const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED === "true";
   const auth = useMemo(() => coworkerEnabled
     ? getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
@@ -391,6 +399,10 @@ export default function App() {
     setSaveError("");
     try {
       const saved = await persistEditorCopy(client, editorText, filename, attempt);
+      if (originProjectId) {
+        const project = await client.project(originProjectId);
+        await client.linkProjectResource(project.id, "document", saved.documentId, project.revision);
+      }
       const record: SavedEditorRecord = { text: editorText, ...saved };
       lastSavedRecord.current = record;
       pendingSavedDocumentRef.current = null;
@@ -501,8 +513,8 @@ export default function App() {
       <div className="rukh-editor-app">
         <header className="rukh-editor-topbar" aria-hidden={mobileLibraryOpen ? true : undefined}>
           <a className="rukh-editor-brand" href="/" aria-label="Rukh AI workspace home" target="_blank" rel="noreferrer">
-            <span className="rukh-brand-mark" aria-hidden="true">r</span>
-            <span><strong>Rukh AI</strong><small>Web Editor</small></span>
+            <RukhCompanionMark />
+            <span><strong>Web Editor</strong></span>
           </a>
           <div className="rukh-editor-top-actions">
             {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
@@ -517,7 +529,7 @@ export default function App() {
           >Recent files</button>}
           <ThemeToggle />
           <a href="/workspaces" className="rukh-workspace-home" target="_blank" rel="noreferrer">All workspaces</a>
-            {coworkerEnabled && <>
+            {coworkerEnabled && editorMode === "writing" && <>
               {saveStatus && <span className="rukh-editor-save-status" role="status">{saveStatus}</span>}
               {saveError && <span className="rukh-editor-save-error" role="alert">{saveError}</span>}
               <button type="button" className="rukh-save-workspace-button" onClick={() => void saveToWorkspace()}
@@ -542,6 +554,9 @@ export default function App() {
             aria-modal={mobileLibraryOpen ? true : undefined}
             aria-labelledby="rukh-library-title"
           >
+            <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
+            <a href="/coworker" className="rukh-design-new rukh-editor-new-chat">+ New chat</a>
+            <WorkspaceNavigation active="editor" editorHref="/editor" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
             <div className="rukh-library-heading">
               <div><span>WORKSPACE</span><h2 id="rukh-library-title">Recent files</h2></div>
               <div className="rukh-library-actions">
@@ -568,7 +583,11 @@ export default function App() {
           </aside>}
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
           <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
+            <nav className="rukh-editor-mode" aria-label="Editor mode"><button aria-pressed={editorMode === "website"} onClick={() => setEditorMode("website")}>Website</button><button aria-pressed={editorMode === "writing"} onClick={() => setEditorMode("writing")}>Writing</button></nav>
+            {editorMode === "website" && <WebsiteEditor key={session?.user.id ?? "signed-out"} client={client} userId={session?.user.id ?? null} conversationId={originConversationId} projectId={originProjectId} />}
+            <div className="rukh-writing-mode" hidden={editorMode !== "writing"}>
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
+            </div>
           </section>
         </div>
       </div>

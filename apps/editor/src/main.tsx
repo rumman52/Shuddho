@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "@rukh/design-system/tokens.css";
 import "../../web-editor/src/styles.css";
 import "./styles.css";
+import "../../web-editor/src/coworker/approved-design.css";
 import App from "./App";
 import { initializeRukhTheme } from "../../web-editor/src/lib/theme";
 

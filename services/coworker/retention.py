@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy import delete, select
 
 from .errors import CoworkerError
-from .models import Conversation, ConversationMessage
+from .models import Conversation, ConversationMessage, Project, ProjectResource
 from .models import (
     Account, ActionProposal, ActionRecipient, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
@@ -216,6 +216,8 @@ class RetentionService:
             notification_ids = list(db.scalars(select(Notification.id).where(Notification.owner_id == owner)).all())
 
             db.execute(delete(BrowserPushDelivery).where(BrowserPushDelivery.owner_id == owner))
+            db.execute(delete(ProjectResource).where(ProjectResource.owner_id == owner))
+            db.execute(delete(Project).where(Project.owner_id == owner))
             db.execute(delete(ConversationMessage).where(ConversationMessage.owner_id == owner))
             db.execute(delete(Conversation).where(Conversation.owner_id == owner))
             db.execute(delete(BrowserPushSubscription).where(BrowserPushSubscription.owner_id == owner))

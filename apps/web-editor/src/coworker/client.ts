@@ -1,7 +1,7 @@
 import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "needs_input" | "failed" | "cancelled";
-export type CoworkerView = "drafts" | "goals" | "automations" | "browser" | "sandbox" | "transactions" | "negotiations" | "actions" | "agent" | "conversations";
+export type CoworkerView = "drafts" | "goals" | "automations" | "browser" | "sandbox" | "transactions" | "negotiations" | "actions" | "agent" | "conversations" | "projects" | "library" | "settings";
 export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string; created_at?: string };
 
 const TEXT_ARTIFACT_TYPES = new Set(["text/plain", "text/markdown"]);
@@ -379,8 +379,11 @@ export type CoworkerTask = {
   sources: ResearchSource[];
   research?: (ResearchOptions & { retrieved_at: string; skipped_results: number }) | null;
 };
+export type ProjectResource = { resource_type: "conversation" | "document"; resource_id: string; title: string };
+export type ProjectRecord = { id: string; name: string; description: string; revision: number; created_at: string; updated_at: string };
+export type ProjectDetail = ProjectRecord & { resources: ProjectResource[] };
 export type Workspace = {
-  account_id: string; workspace_name: string; preferences: { language?: string };
+  account_id: string; workspace_name: string; preferences: { language?: string; writing_goal?: string; tone_goal?: string; personal_dictionary?: string[] };
   usage: { tasks_today: number }; limits: { daily_tasks: number; upload_bytes: number };
 };
 export type SourceDocument = { id: string; filename: string; state: string; byte_size: number };
@@ -513,7 +516,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   runtimeManifest(signal?: AbortSignal) {
-    return this.json<{ capabilities: { conversation_replies?: boolean } }>("/api/v1/runtime-manifest", { signal });
+    return this.json<{ capabilities: { conversation_replies?: boolean; projects?: boolean } }>("/api/v1/runtime-manifest", { signal });
   }
   async replyToConversationMessageStream(
     id: string, messageId: string, sequence: number,
@@ -623,6 +626,23 @@ export class CoworkerClient {
   workspaceManifest(signal?: AbortSignal) {
     return this.json<WorkspaceManifest>("/api/v1/workspace-manifest", { signal });
   }
+  projects(signal?: AbortSignal) { return this.json<{ items: ProjectRecord[] }>("/api/v1/projects", { signal }); }
+  project(id: string, signal?: AbortSignal) { return this.json<ProjectDetail>(`/api/v1/projects/${identifier(id)}`, { signal }); }
+  createProject(name: string, description: string, key: string) {
+    return this.json<ProjectRecord>("/api/v1/projects", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ name, description }) });
+  }
+  editProject(id: string, name: string, description: string, revision: number) {
+    return this.json<ProjectRecord>(`/api/v1/projects/${identifier(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, description, expected_revision: revision }) });
+  }
+  linkProjectResource(id: string, resourceType: "conversation" | "document", resourceId: string, revision: number) {
+    return this.json<ProjectDetail>(`/api/v1/projects/${identifier(id)}/resources`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource_type: resourceType, resource_id: identifier(resourceId), expected_revision: revision }) });
+  }
+  unlinkProjectResource(id: string, resourceType: "conversation" | "document", resourceId: string, revision: number) {
+    return this.json<ProjectDetail>(`/api/v1/projects/${identifier(id)}/resources/${resourceType}/${identifier(resourceId)}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }) });
+  }
+  deleteProject(id: string, revision: number) {
+    return this.json<{ message: string }>(`/api/v1/projects/${identifier(id)}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expected_revision: revision }) });
+  }
   conversations(signal?: AbortSignal) {
     return this.json<{ items: ConversationRecord[] }>("/api/v1/conversations", { signal });
   }
@@ -702,6 +722,9 @@ export class CoworkerClient {
   deleteConversation(id: string) {
     return this.json<{ id: string; deleted: boolean }>(
       `/api/v1/conversations/${identifier(id)}`, { method: "DELETE" });
+  }
+  savePreferences(value: { language: string; writing_goal: string; tone_goal: string; personal_dictionary: string[] }) {
+    return this.json<{ language: string; writing_goal: string; tone_goal: string; personal_dictionary: string[] }>("/api/v1/preferences", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) });
   }
   me(signal?: AbortSignal) { return this.json<Workspace>("/api/v1/me", { signal }); }
   skills(signal?: AbortSignal) { return this.json<{ skills: WorkSkill[]; upload_formats?: string[] }>("/api/v1/skills", { signal }); }

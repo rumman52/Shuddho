@@ -1,3 +1,13 @@
+## Approved Figma frontend implementation — 5 November 2026 (Asia/Dhaka)
+
+PR [#635](https://github.com/rumman52/Shuddho/pull/635), implementation commit `816700f8e9fb88eb2382915d88e9759255e09cd7`. Branch `fix/rukh-figma-visual-parity-20261105`, base `065dedfe73a95ddd36d331336e11297d75aa25db`. [Implementation, root causes, requirement mapping, verification and release blockers](../frontend/FIGMA_IMPLEMENTATION_2026-11-05.md).
+
+Implements the approved Coworker home/sidebar/mobile composer, owner-scoped Projects with additive migration 0064 (default off), real Files/Settings/Plugins surfaces, and a sandboxed website editor alongside the existing writing editor. Project/chat/editor links preserve context; saved status requires persistence verification. Local API/identity/model browser fixtures are explicitly identified as synthetic.
+
+Combined backend checks: 108 passed, zero skips. Frontend tests and browser measurements are recorded in the linked handoff. No live database migration, production promotion, paid provisioning or provider qualification is claimed. Public sign-in config and matching backend/hosting access remain release blockers. Main, backend data, and release gates are preserved.
+
+---
+
 ## Real authenticated chat integration — 4 November 2026
 
 Base `9ebd961c238339051188b2a758ba5df54d10fa1e`; branch `fix/real-chat-provider-integration-20261104`. Replaced draft-only routing with the actual auth/chat app, fixed auth return routes, added explicit Gemma chat streaming alongside default DeepSeek, unified capability/admission with model-family policy, and retained partial UI output on stream connection errors. [Contract, evidence and concrete release dependencies](../frontend/REAL_CHAT_INTEGRATION_2026-11-04.md).

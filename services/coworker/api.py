@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
+from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
 from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
@@ -1004,6 +1005,47 @@ def delete_memory(fact_id: UUID, identity: Identity, services: Services):
     return services.memory.delete(identity.account_id, str(fact_id))
 
 
+@router.get("/projects")
+def list_projects(identity: Identity, services: Services):
+    return {"items": services.projects.list(identity.account_id)}
+
+
+@router.post("/projects", status_code=201)
+def create_project(payload: ProjectCreate, identity: Identity, services: Services, response: Response,
+                   idempotency_key: Annotated[str, Header(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")]):
+    value, created = services.projects.create(identity.account_id, payload, idempotency_key)
+    response.status_code = 201 if created else 200
+    response.headers["Location"] = f'/api/v1/projects/{value["id"]}'
+    response.headers["Idempotent-Replayed"] = "false" if created else "true"
+    return value
+
+
+@router.get("/projects/{project_id}")
+def get_project(project_id: UUID, identity: Identity, services: Services):
+    return services.projects.get(identity.account_id, str(project_id))
+
+
+@router.patch("/projects/{project_id}")
+def edit_project(project_id: UUID, payload: ProjectEdit, identity: Identity, services: Services):
+    return services.projects.edit(identity.account_id, str(project_id), payload)
+
+
+@router.delete("/projects/{project_id}")
+def delete_project(project_id: UUID, payload: ProjectRevision, identity: Identity, services: Services):
+    return services.projects.delete(identity.account_id, str(project_id), payload.expected_revision)
+
+
+@router.post("/projects/{project_id}/resources")
+def link_project_resource(project_id: UUID, payload: ProjectLink, identity: Identity, services: Services):
+    return services.projects.link(identity.account_id, str(project_id), payload)
+
+
+@router.delete("/projects/{project_id}/resources/{resource_type}/{resource_id}")
+def unlink_project_resource(project_id: UUID, resource_type: Annotated[str, Path(pattern="^(conversation|document)$")], resource_id: UUID,
+                            payload: ProjectRevision, identity: Identity, services: Services):
+    return services.projects.unlink(identity.account_id, str(project_id), resource_type, str(resource_id), payload.expected_revision)
+
+
 @router.get("/runtime-manifest")
 def runtime_manifest(
     response: Response,
@@ -1027,6 +1069,7 @@ def runtime_manifest(
         "artifact_services": settings.artifact_services_enabled,
         "agent_runtime": settings.agent_runtime_enabled,
         "conversations": settings.conversations_enabled,
+        "projects": settings.projects_enabled and settings.conversations_enabled,
         "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,

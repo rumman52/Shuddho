@@ -1,4 +1,13 @@
 const iconPaths: Record<string, string[]> = {
+  chat: ["M4 4h16v12H9l-5 4V4Z"],
+  layout: ["M3 4h18v16H3z", "M3 9h18", "M9 9v11"],
+  search: ["M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Z", "m16 16 5 5"],
+  grid: ["M3 3h6v6H3z", "M15 3h6v6h-6z", "M3 15h6v6H3z", "M15 15h6v6h-6z"],
+  clock: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M12 7v5l3 2"],
+  menu: ["M4 6h16", "M4 12h16", "M4 18h16"],
+  sliders: ["M7 3v18", "M17 3v18", "M3 8h8", "M13 16h8"],
+  plus: ["M12 4v16", "M4 12h16"],
+  arrow: ["M12 20V4", "m5 11 7-7 7 7"],
   home: ["M3 10.5 12 3l9 7.5", "M5 9v11h14V9", "M9 20v-6h6v6"],
   activity: ["M3 12h4l3-8 4 16 3-8h4"],
   target: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z", "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"],

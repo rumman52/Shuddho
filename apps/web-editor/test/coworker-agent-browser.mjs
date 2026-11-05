@@ -1,8 +1,9 @@
+import { navigateWorkspace } from "./coworker-navigation-browser.mjs";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 
 export async function verifyAgentProposals(page, folder) {
-  await page.getByRole("button", { name: "Approvals & integrations", exact: true }).click();
+  await navigateWorkspace(page, "Plugins");
   const actions = page.getByRole("region", { name: "Email and calendar actions", exact: true });
   if (await actions.getByRole("button", { name: "Connect Gmail", exact: true }).count()) {
     await actions.getByRole("button", { name: "Connect Gmail", exact: true }).click();
@@ -10,7 +11,7 @@ export async function verifyAgentProposals(page, folder) {
   }
 
   const before = await (await page.request.get("http://127.0.0.1:8000/fixture/actions/counts")).json();
-  await page.getByRole("button", { name: "Agent activity", exact: true }).click();
+  await navigateWorkspace(page, "Agent activity");
   const agent = page.getByRole("region", { name: "Agent workspace", exact: true });
   await agent.getByLabel("Goal").fill(
     "Draft a project update and suggest an email to recipient@example.org with subject Agent project update and body The project is ready for review."

@@ -6,11 +6,14 @@ import {
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
 import NavigationIcon from "./WorkspaceNavigationIcon";
+import CoworkerWelcome, { RukhCompanionMark } from "./CoworkerWelcome";
+import ThemeToggle from "../components/ThemeToggle";
+import WorkspaceNavigation from "./WorkspaceNavigation";
 import VoiceDictation from "./VoiceDictation";
 import { buildConversationJson, buildConversationMarkdown, conversationExportFilename } from "./conversationExport";
 import "./conversation-enhancements.css";
 import { RefreshOrder } from "./refreshOrder";
-import { coworkerNavigation, getInitialConversationId } from "../../../coworker/src/navigation.mjs";
+import { getInitialConversationId } from "../../../coworker/src/navigation.mjs";
 
 function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifest | null): string {
   const resourceId = typeof source.resource_id === "string" ? source.resource_id : "";
@@ -21,15 +24,20 @@ function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifes
 }
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
-export default function ConversationWorkspace({ client, openAgent, initialDraft = "", onInitialDraftChange, onNavigate }: {
+export default function ConversationWorkspace({ client, openAgent, initialDraft = "", onInitialDraftChange, onNavigate, email, signOut, startEmpty = false }: {
+  startEmpty?: boolean;
+  email?: string;
+  signOut?: () => void;
   client: CoworkerClient;
   openAgent: (runId: string) => void;
   initialDraft?: string;
   onInitialDraftChange?: (draft: string) => void;
   onNavigate?: (view: CoworkerView) => void;
 }) {
+  const projectId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("project") : null;
+  const projectNewChat = useRef(Boolean(projectId && !getInitialConversationId(typeof window !== "undefined" ? window.location.search : "")));
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
-  const [selected, setSelected] = useState(() => typeof window !== "undefined" ? getInitialConversationId(window.location.search) ?? "" : "");
+  const [selected, setSelected] = useState(() => startEmpty ? "" : typeof window !== "undefined" ? getInitialConversationId(window.location.search) ?? "" : "");
   const [messages, setMessages] = useState<ConversationMessageRecord[]>([]);
   const [activity, setActivity] = useState<ConversationActivityRecord[]>([]);
   const [manifest, setManifest] = useState<WorkspaceManifest | null>(null);
@@ -152,7 +160,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       setDisabled(false);
       setListReady(true);
       setConversations(items);
-      setSelected(current => items.some(item => item.id === current) ? current : (items[0]?.id ?? ""));
+      setSelected(current => items.some(item => item.id === current) ? current : (startEmpty || projectNewChat.current ? "" : items[0]?.id ?? ""));
     }).catch(cause => {
       if (controller.signal.aborted) return;
       setDisabled(cause instanceof WorkspaceError && [403, 404, 409].includes(cause.status));
@@ -320,6 +328,12 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     return () => { controller.abort(); window.clearInterval(timer); refreshOrder.current.invalidate(); };
   }, [client, selected]);
 
+  async function linkProjectConversation(conversationId: string) {
+    if (!projectId) return;
+    const project = await client.project(projectId);
+    await client.linkProjectResource(project.id, "conversation", conversationId, project.revision);
+  }
+
   async function create(event: FormEvent) {
     event.preventDefault();
     if (!listReady || disabled || working || !title.trim()) return;
@@ -329,6 +343,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       if (createKey.current?.fingerprint !== normalizedTitle)
         createKey.current = { fingerprint: normalizedTitle, key: crypto.randomUUID() };
       const record = await client.createConversation(normalizedTitle, createKey.current.key);
+      await linkProjectConversation(record.id);
       const response = await client.conversations();
       setConversations(response.items);
       setSelected(record.id);
@@ -370,6 +385,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         }
         conversationId = pending.conversation.id;
       }
+      if (!selected) await linkProjectConversation(conversationId);
       const fingerprint = JSON.stringify({ conversation: conversationId, text, sources });
       if (messageKey.current?.fingerprint !== fingerprint)
         messageKey.current = { fingerprint, key: crypto.randomUUID() };
@@ -545,13 +561,13 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         aria-expanded={mobilePanel === "conversations"}
         onClick={event => openMobilePanel("conversations", event.currentTarget)}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4.5h14M3 9.9h14M3 15.3h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-        Menu
+        <strong>Coworker</strong>
       </button>
       <button type="button" aria-label="Open workspace context" aria-controls="rukh-context-panel"
         aria-expanded={mobilePanel === "context"}
         onClick={event => openMobilePanel("context", event.currentTarget)}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 5h12M4 10h8M4 15h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="15" cy="10" r="2" stroke="currentColor" strokeWidth="1.3"/></svg>
-        Context
+        <span className="rukh-sr-only">Activity &amp; context</span>
       </button>
     </div>
     <aside ref={conversationPanelRef} id="rukh-conversation-list"
@@ -561,22 +577,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       aria-modal={mobilePanel === "conversations" ? true : undefined}
       aria-labelledby="rukh-conversations-heading"
       aria-hidden={mobilePanel === "context" ? true : undefined}>
-      <div className="rukh-cw-brand"><span className="rukh-cw-brand-mark" aria-hidden="true">r</span><span><strong>Rukh AI</strong><small>AI coworker</small></span></div>
-      <nav className="rukh-cw-primary-nav" aria-label="Primary workspace navigation">
-        <button type="button" className="rukh-cw-nav-item is-active" aria-current="page" aria-pressed="true"><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="home" /></span><span>Coworker</span></button>
-        <a className="rukh-cw-nav-item" href={selected ? `/editor?conversation=${encodeURIComponent(selected)}` : "/editor"}><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="file-text" /></span><span>Web Editor</span></a>
-        <button type="button" className="rukh-cw-nav-item" disabled title="Project storage is not available in the current Coworker API."><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="folder" /></span><span>Projects</span><small>Unavailable</small></button>
-      </nav>
-      <nav className="rukh-cw-secondary-nav" aria-label="Coworker tools">
-        {["Workspace", "Tools", "Manage"].map(group => <div className="rukh-cw-nav-group" key={group}>
-          <span className="rukh-cw-nav-label">{group}</span>
-          {coworkerNavigation.filter(item => item.group === group && item.view !== "conversations").map(item =>
-            <button key={item.id} type="button" className="rukh-cw-nav-item" onClick={() => { onNavigate?.(item.view as CoworkerView); setMobilePanel(null); }}>
-              <span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name={item.icon} /></span><span>{item.label}</span>
-            </button>
-          )}
-        </div>)}
-      </nav>
+      <div className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></div>
+      <button type="button" className="rukh-design-new" aria-label="New chat" disabled={composerDisabled} onClick={startNew}>+ New chat</button>
+      <WorkspaceNavigation active="conversations" editorHref={selected || projectId ? "/editor?" + new URLSearchParams({ ...(selected ? { conversation: selected } : {}), ...(projectId ? { project: projectId } : {}) }) : "/editor"} onNavigate={view => { onNavigate?.(view); setMobilePanel(null); }} />
       <div className="rukh-panel-heading"><div><span className="cw-eyebrow">HISTORY</span><h2 id="rukh-conversations-heading">Conversations</h2></div>
         <div className="rukh-panel-heading-actions"><span className="rukh-count">{conversations.length}</span>
           <button className="rukh-mobile-panel-close" ref={mobilePanel === "conversations" ? mobilePanelCloseRef : null}
@@ -606,11 +609,12 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         {search.trim() && filteredConversations.length === 0 && <p className="rukh-muted" role="status">No conversations match your search.</p>}
         {conversations.length === 0 && <p className="rukh-muted">Your private conversations will appear here.</p>}
       </>}
-      <p className="rukh-panel-footnote">Messages are private workspace records. Saving a message does not start Agent work.</p>
+      <p className="rukh-panel-footnote">Messages are private. Agent work starts only when you choose Start task.</p>
+      {email && <div className="rukh-design-account"><div><span className="rukh-design-account-avatar">{email[0].toUpperCase()}</span><span><strong title={email}>{email}</strong><small>Personal workspace</small></span></div><ThemeToggle />{signOut && <button type="button" className="cw-text-button" onClick={signOut}>Sign out</button>}</div>}
     </aside>
 
     <section aria-hidden={mobilePanel !== null ? true : undefined} className="rukh-conversation-thread" aria-label="Conversation">
-      <header className="rukh-thread-header">
+      <header className={"rukh-thread-header" + (!selectedConversation ? " is-new" : "")}>
         {editingTitle && selectedConversation ? <form className="rukh-rename-form" aria-label="Rename conversation form" onSubmit={saveConversationTitle}>
           <label className="rukh-sr-only" htmlFor="cw-conversation-rename">Conversation title</label>
           <input id="cw-conversation-rename" aria-label="Conversation title" value={renameDraft} maxLength={160}
@@ -619,7 +623,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
             <button type="submit" aria-label="Save conversation name" disabled={working || !renameDraft.trim()}>Save</button>
             <button type="button" aria-label="Cancel conversation rename" disabled={working} onClick={cancelRename}>Cancel</button>
           </div>
-        </form> : <div className="rukh-thread-title"><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Start a conversation"}</h2></div>}
+        </form> : <div className="rukh-thread-title"><span className="cw-eyebrow">YOUR COWORKER</span><h2>{selectedConversation?.title ?? "Coworker"}</h2></div>}
         <div className="rukh-thread-tools">
           <button type="button" className="cw-text-button" aria-label="New conversation" disabled={composerDisabled} onClick={startNew}>+ New chat</button>
           {selectedConversation && !editingTitle && <button type="button" className="cw-text-button" aria-label="Rename conversation" onClick={beginRename} disabled={working}>Rename</button>}
@@ -639,20 +643,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       </div>}
       {notice && <p className="cw-notice" role="status">{notice}</p>}
       {disabled && <p className="rukh-muted" role="status">Conversations are not enabled for this workspace. Contact your workspace administrator.</p>}
-      {messages.length === 0 ? <div className="rukh-thread-empty">
-        <span className="rukh-chat-mark" aria-hidden="true">R</span>
-        <h3>What should we work on?</h3>
-        <p>{chatAvailable ? "Ask a question, explore an idea, or write something together." : "Save a brief here, then choose Start task. AI chat is not enabled in this workspace."}</p>
-        <div className="rukh-prompt-starters" aria-label="Conversation starters">
-          {[
-            ["research brief", "Research a topic", "Research this topic and summarize the findings with sources: "],
-            ["writing draft", "Write something", "Help me write a clear, professional draft about: "],
-            ["work plan", "Make a plan", "Break this goal into a practical plan with next steps: "],
-            ["Bangla draft", "বাংলায় লিখুন", "এই বিষয়ে বাংলায় একটি খসড়া তৈরি করুন: "],
-          ].map(([id, label, prompt]) => <button type="button" key={id} disabled={composerDisabled}
-            aria-label={`Start with a ${id}`} onClick={() => { setDraft(prompt); composerRef.current?.focus(); }}>{label}<span aria-hidden="true">↗</span></button>)}
-        </div>
-      </div> :
+      {messages.length === 0 ? <CoworkerWelcome disabled={composerDisabled} onChoose={prompt => { setDraft(prompt); onInitialDraftChange?.(prompt); composerRef.current?.focus(); }} /> :
           <ol ref={messageListRef} className="rukh-message-list" aria-label="Conversation messages"
             onScroll={event => { const list = event.currentTarget; followLatest.current = list.scrollHeight - list.scrollTop - list.clientHeight < 96; }}>
             {messages.map(item => {
@@ -683,28 +674,30 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
               </li>;
             })}
           </ol>}
-        {chatAvailable && <div className="rukh-chat-mode" aria-label="Message mode">
-          <button type="button" aria-pressed={chatMode} disabled={composerDisabled} onClick={() => setChatMode(true)}>Chat with Rukh</button>
-          <button type="button" aria-pressed={!chatMode} disabled={composerDisabled} onClick={() => setChatMode(false)}>Save only</button>
-        </div>}
         <form className="rukh-message-composer" aria-label="Message composer" onSubmit={send}>
           <label className="rukh-sr-only" htmlFor="cw-conversation-message">New message</label>
           <textarea ref={composerRef} id="cw-conversation-message" dir="auto" value={draft} minLength={1} maxLength={12000}
-            rows={3} disabled={composerDisabled || dictating} required onChange={event => { setDraft(event.target.value); onInitialDraftChange?.(event.target.value); }}
+            rows={2} disabled={composerDisabled || dictating} required onChange={event => { setDraft(event.target.value); onInitialDraftChange?.(event.target.value); }}
             onKeyDown={event => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                 event.preventDefault();
                 if (!composerDisabled && !dictating && draft.trim()) event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder="Message your coworker…" />
+            placeholder="Ask Rukh to do something…" />
           <div className="rukh-composer-controls">
-            <VoiceDictation key={selected} draft={draft} onDraftChange={setDraft}
-              onListeningChange={setDictating} disabled={composerDisabled} />
-            <button type="button" className="rukh-attach-mobile" aria-label="Attach files" disabled={composerDisabled}
-              onClick={event => openMobilePanel("context", event.currentTarget)}>Attach files</button>
-            <span>{selectedSources.length ? selectedSources.length + " source(s) attached · Start task to use files" : "Your message is saved privately"}</span>
-            <button type="submit" disabled={composerDisabled || dictating || !draft.trim()}>{replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} <span aria-hidden="true">↗</span></button>
+            <button type="button" className="rukh-design-attach" aria-label="Attach files" disabled={composerDisabled} onClick={toggleContext}><NavigationIcon name="plus" /><span>Attach files</span></button>
+            {selectedSources.length > 0 && <span className="rukh-selected-source-count">{selectedSources.length} attached · Start task to use files</span>}
+            <details className="rukh-composer-tools"><summary>Tools</summary><div>
+              {chatAvailable && <div className="rukh-chat-mode" aria-label="Message mode">
+                <button type="button" aria-pressed={chatMode} disabled={composerDisabled} onClick={() => setChatMode(true)}>Chat with Rukh</button>
+                <button type="button" aria-pressed={!chatMode} disabled={composerDisabled} onClick={() => setChatMode(false)}>Save only</button>
+              </div>}
+              <p>Start task separately to use attached files.</p>
+            </div></details>
+            <VoiceDictation key={selected} draft={draft} onDraftChange={setDraft} onListeningChange={setDictating} disabled={composerDisabled} compact />
+            {replyingId && <button type="button" className="rukh-stop-stream" onClick={() => { replyController.current?.abort(); setNotice("Stopped receiving the response. A saved reply may still finish; reopen this conversation to recover it."); }}>Stop response</button>}
+            <button className="rukh-design-send" type="submit" aria-label={replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} disabled={composerDisabled || dictating || !draft.trim()}><NavigationIcon name="arrow" /></button>
           </div>
         </form>
         <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Direct chat does not read attached files; use Start task." : "Start task separately."}</p>
