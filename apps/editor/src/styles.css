@@ -544,3 +544,9 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
   .rukh-website-inspector { display: block; }
   .rukh-website-inspector > section { margin-top: 14px; }
 }
+.rukh-editor-sidebar-brand { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.rukh-editor-sidebar-brand .rukh-design-brand { min-width: 0; margin-bottom: 28px; }
+.rukh-editor-sidebar-brand .rukh-library-close { flex: 0 0 32px; }
+@media (max-width: 900px) {
+  .rukh-editor-sidebar-brand .rukh-library-close { display: inline-flex; align-items: center; justify-content: center; }
+}
