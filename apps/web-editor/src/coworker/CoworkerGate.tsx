@@ -191,7 +191,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
           <p className="rukh-login-story-footer">Designed around the way you work.</p>
         </aside>
         <section className="rukh-login-form-panel">
-          <button type="button" className="rukh-login-back" onClick={closeAuth}>← Back to Coworker</button>
+          {mode !== "recovery" && <button type="button" className="rukh-login-back" onClick={closeAuth}>← Back to Coworker</button>}
           <div className="rukh-login-form-content">
             <h2 id="rukh-login-title">
               {mode === "signup" ? "Create your account" : mode === "reset" ? "Reset your password" : mode === "recovery" ? "Choose a new password" : "Welcome back"}
@@ -214,13 +214,14 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
                 </label>
               )}
               {mode !== "reset" && (
-                <label htmlFor="rukh-login-password">Password
+                <div className="rukh-login-password-group">
+                  <label htmlFor="rukh-login-password">Password</label>
                   <span className="rukh-login-password-field">
                     <input id="rukh-login-password" type={showPassword ? "text" : "password"} autoComplete={mode === "signin" ? "current-password" : "new-password"} placeholder={mode === "signin" ? "Enter your password" : "Choose a password"} minLength={mode === "signin" ? 1 : 12} required maxLength={128} value={password} onChange={event => setPassword(event.target.value)} />
                     <button type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword(value => !value)}>{showPassword ? "Hide" : "Show"}</button>
                   </span>
                   {mode !== "signin" && <small>Use at least 12 characters.</small>}
-                </label>
+                </div>
               )}
               <button className="cw-primary rukh-login-submit" aria-label={mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : "Save password"} disabled={busy} type="submit">
                 {busy ? "Please wait…" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : mode === "recovery" ? "Save password" : "Sign in →"}
