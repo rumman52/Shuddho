@@ -113,7 +113,7 @@ try {
   const websiteSource = '<!doctype html><html><head><style>body{font-family:system-ui;padding:32px}</style></head><body><section data-layer="hero"><h1>Acceptance website</h1><p>বাংলা website draft</p></section><svg xmlns="http://www.w3.org/2000/svg"><a xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://preview-navigation.invalid/"><text x="5" y="25">External SVG link</text></a></svg><script>parent.document.body.dataset.websiteScriptRan="yes"</script></body></html>';
   await page.getByLabel("Website source", { exact:true }).fill(websiteSource);
   await page.getByRole("button", { name:"Save to workspace", exact:true }).click();
-  await page.getByText("Saved to workspace", { exact:true }).waitFor();
+  await page.getByText("Draft saved", { exact:true }).waitFor();
   await page.reload();
   await page.getByRole("button", { name:"← Website editor", exact:true }).click();
   await page.getByRole("button", { name:"Code", exact:true }).click();
