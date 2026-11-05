@@ -137,6 +137,13 @@ try {
   await page.getByText("Preferences saved.",{exact:true}).waitFor();
   await navigateWorkspace(page,"Plugins");
   await page.getByRole("heading",{name:"Plugins",exact:true}).last().waitFor();
+  for (const name of ["Google Drive", "GitHub", "Google Calendar", "Gmail", "Notion", "Slack"]) {
+    await page.getByRole("button", { name: new RegExp(name) }).waitFor();
+  }
+  assert.equal(await page.getByText("Coming soon", { exact:true }).count(), 3);
+  await page.getByText("More integrations", { exact:true }).click();
+  await page.getByRole("button", { name:/Microsoft 365/ }).waitFor();
+  await page.getByRole("button", { name:/LinkedIn/ }).waitFor();
   await page.getByText("Connections, permissions & approvals",{exact:true}).click();
   await page.getByRole("region",{name:"Email and calendar actions",exact:true}).waitFor();
   await navigateWorkspace(page,"Files");
