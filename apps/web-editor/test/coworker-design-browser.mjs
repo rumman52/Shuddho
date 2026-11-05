@@ -56,7 +56,7 @@ try {
   await page.getByRole("button", { name: "Back to Coworker", exact: true }).click();
   assert.equal(await page.getByLabel("Message Rukh AI", { exact: true }).inputValue(), "Keep this draft through sign-in.");
   await page.getByRole("button", { name: "Continue to sign in" }).click();
-  await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
+  await page.getByLabel("Email address", { exact: true }).fill("alice@example.test");
   await page.getByLabel("Password", { exact: true }).fill("fixture-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.locator("#cw-conversation-message").waitFor();
