@@ -631,8 +631,8 @@ export default function App() {
             </div>
           </aside>}
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
-          <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
-            <nav className="rukh-editor-mode" aria-label="Editor mode"><button aria-pressed={editorMode === "website"} onClick={() => setEditorMode("website")}>Website</button><button aria-pressed={editorMode === "writing"} onClick={() => setEditorMode("writing")}>Writing</button></nav>
+          <section className="rukh-editor-canvas" aria-label={editorMode === "website" ? "Website editor" : "Writing editor"} aria-hidden={mobileLibraryOpen ? true : undefined}>
+            {editorMode === "writing" && <nav className="rukh-editor-mode" aria-label="Editor mode"><button type="button" onClick={() => setEditorMode("website")}>← Website editor</button></nav>}
             {editorMode === "website" && <WebsiteEditor key={session?.user.id ?? "signed-out"} client={client} userId={session?.user.id ?? null} conversationId={originConversationId} projectId={originProjectId} />}
             <div className="rukh-writing-mode" hidden={editorMode !== "writing"}>
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
