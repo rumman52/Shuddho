@@ -139,7 +139,7 @@
   font-weight: 600;
   cursor: pointer;
 }
-.rukh-login-google > span { color: #4285F4; font-size: 18px; font-weight: 800; }
+.rukh-login-google > .rukh-google-mark { width: 18px; height: 18px; flex: 0 0 18px; }
 .rukh-login-google:hover:not(:disabled) { border-color: var(--rukh-border-strong, #CCD4C9); background: #FCFCFA; }
 .rukh-login-google:disabled { opacity: .55; cursor: wait; }
 .rukh-login-divider { display: flex; align-items: center; gap: 14px; margin: 18px 0 24px; color: var(--rukh-muted, #687064); font-size: 12px; }
