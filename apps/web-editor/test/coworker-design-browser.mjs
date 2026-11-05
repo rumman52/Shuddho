@@ -80,7 +80,7 @@ try {
   await page.getByRole("button", { name:"Close conversations", exact:true }).click();
   await page.setViewportSize({ width:1440,height:900 });
   await page.getByRole("button", { name:"Projects", exact:true }).click();
-  await page.getByRole("heading", { name:"Give every idea a place to grow." }).waitFor();
+  await page.getByRole("heading", { name:"Projects", exact:true }).last().waitFor();
   await page.getByRole("button", { name:"+ New project", exact:true }).click();
   await page.getByLabel("Project name", { exact:true }).fill("Browser acceptance project");
   await page.getByLabel("Project description", { exact:true }).fill("Synthetic acceptance fixture");
@@ -136,7 +136,7 @@ try {
   await page.getByRole("button",{name:"Save preferences",exact:true}).click();
   await page.getByText("Preferences saved.",{exact:true}).waitFor();
   await navigateWorkspace(page,"Plugins");
-  await page.getByRole("heading",{name:"Connect the tools you work with.",exact:true}).waitFor();
+  await page.getByRole("heading",{name:"Plugins",exact:true}).last().waitFor();
   await page.getByRole("region",{name:"Email and calendar actions",exact:true}).waitFor();
   await navigateWorkspace(page,"Files");
   await page.getByRole("heading",{name:"Your work, all together.",exact:true}).waitFor();
