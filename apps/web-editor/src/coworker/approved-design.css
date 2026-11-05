@@ -272,3 +272,13 @@
 }
 
 .rukh-coworker-app .rukh-cw-workspace { font-family: Inter,"Noto Sans Bengali",system-ui,sans-serif; }
+
+/* Figma plugin catalogue: six primary integrations and a quiet overflow section. */
+.rukh-plugin-additional { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--rukh-border); }
+.rukh-plugin-additional > summary { width: fit-content; padding: 8px 0; color: var(--rukh-muted); font-size: 12px; font-weight: 650; cursor: pointer; }
+.rukh-plugin-additional .rukh-project-grid { margin-top: 16px; }
+.rukh-plugin-detail { margin-top: 22px; padding: 20px; border: 1px solid var(--rukh-border); border-radius: 14px; background: var(--rukh-surface); }
+.rukh-plugin-detail p { max-width: 680px; color: var(--rukh-muted); font-size: 13px; line-height: 1.65; }
+.rukh-plugin-management { margin-top: 26px; padding: 16px 18px; border: 1px solid var(--rukh-border); border-radius: 12px; background: var(--rukh-surface); }
+.rukh-plugin-management > summary { color: var(--rukh-text); font-size: 13px; font-weight: 650; cursor: pointer; }
+.rukh-plugin-management[open] > summary { margin-bottom: 16px; }
