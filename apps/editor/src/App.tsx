@@ -30,7 +30,7 @@ export default function App() {
     const query = new URLSearchParams(window.location.search);
     return query.has("artifact_id") || query.has("conversation") || query.get("mode") === "writing" ? "writing" : "website";
   });
-  const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED === "true";
+  const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";
   const auth = useMemo(() => coworkerEnabled
     ? getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
     : null, [coworkerEnabled]);
