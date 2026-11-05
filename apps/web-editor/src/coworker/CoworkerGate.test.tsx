@@ -31,8 +31,14 @@ const TestableGate = CoworkerGate as unknown as React.ComponentType<{ authClient
 
 async function withGate(factory: (() => unknown) | undefined, run: (tree: ReactTestRenderer, auth: ReturnType<typeof authFixture> | null) => Promise<void>) {
   const previousWindow = globalThis.window;
+  const sessionValues = new Map<string, string>();
   globalThis.window = {
     location: { origin: "https://rukh.test" },
+    sessionStorage: {
+      getItem: (key: string) => sessionValues.get(key) ?? null,
+      setItem: (key: string, value: string) => { sessionValues.set(key, value); },
+      removeItem: (key: string) => { sessionValues.delete(key); },
+    },
     setTimeout,
     clearTimeout,
   } as unknown as Window & typeof globalThis;
@@ -65,6 +71,14 @@ test("missing public auth configuration blocks send without clearing the draft",
     await act(async () => tree.root.findByProps({ "aria-label": "Start a conversation" }).props.onSubmit({ preventDefault() {} }));
     assert.equal(tree.root.findByProps({ id: "rukh-first-message" }).props.value, "My first Rukh message");
     assert.match(tree.root.findByProps({ role: "alert" }).children.join(""), /not configured/i);
+  });
+});
+
+test("unsent Coworker drafts are preserved in the current tab session for OAuth returns", async () => {
+  await withGate(undefined, async tree => {
+    const input = tree.root.findByProps({ id: "rukh-first-message" });
+    await act(async () => input.props.onChange({ target: { value: "Preserve this across Google sign-in" } }));
+    assert.equal(globalThis.window.sessionStorage.getItem("rukh-coworker-entry-draft:v1"), "Preserve this across Google sign-in");
   });
 });
 
