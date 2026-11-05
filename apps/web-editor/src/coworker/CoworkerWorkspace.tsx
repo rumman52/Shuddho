@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, WorkspaceError, terminal, type CoworkerTask, type EmailDraft, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
+import { CoworkerClient, WorkspaceError, isTextArtifact, terminal, type CoworkerTask, type CoworkerView, type EmailDraft, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
 import DraftPreview, { draftTitle } from "./DraftPreview";
 import ActionWorkspace from "./ActionWorkspace";
 import AgentWorkspace from "./AgentWorkspace";
 import ConversationWorkspace from "./ConversationWorkspace";
+import NavigationIcon from "./WorkspaceNavigationIcon";
 import GoalWorkspace from "./GoalWorkspace";
 import AutomationWorkspace from "./AutomationWorkspace";
 import BrowserWorkspace from "./BrowserWorkspace";
@@ -16,23 +17,6 @@ import { hasPendingLinkedInCallback } from "./linkedinCallback";
 import { requestedNotificationView } from "./pushNavigation";
 import { coworkerNavigation, getInitialCoworkerView } from "../../../coworker/src/navigation.mjs";
 
-const navigationIconPaths: Record<string, string[]> = {
-  home: ["M3 10.5 12 3l9 7.5", "M5 9v11h14V9", "M9 20v-6h6v6"],
-  activity: ["M3 12h4l3-8 4 16 3-8h4"],
-  target: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z", "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"],
-  calendar: ["M4 5h16v16H4z", "M8 3v4", "M16 3v4", "M4 10h16"],
-  globe: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M3 12h18", "M12 3a15 15 0 0 1 0 18", "M12 3a15 15 0 0 0 0 18"],
-  "file-text": ["M6 3h8l4 4v14H6z", "M14 3v5h4", "M9 12h6", "M9 16h6"],
-  shield: ["M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z", "m9 12 2 2 4-4"],
-  terminal: ["M4 5h16v14H4z", "m8 9 3 3-3 3", "M13 15h3"],
-  wallet: ["M4 6h16v14H4z", "M6 6l2-3h10", "M15 12h5", "M16.5 12h.01"],
-  handshake: ["M3 12h5l2-2 4 4 3-2 4 2", "m3 12 3 5 4-2", "m13 14 3 3 4-2"],
-};
-function NavigationIcon({ name }: { name: string }) {
-  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {(navigationIconPaths[name] ?? []).map((path, index) => <path d={path} key={index} />)}
-  </svg>;
-}
 
 const originalService: WorkSkill = {
   id: "report_email", name: "Report & email", description: "Turn your sources into a report and an email draft.",
@@ -72,11 +56,14 @@ export function TaskResult({ task, client, revise, prepareEmail, prepareSocial }
       {task.research && <p className="cw-fineprint">Search: <bdi>{task.research.query}</bdi> · Date range: {task.research.time_range === "any" ? "Any time" : `Past ${task.research.time_range}`}. {task.research.skipped_results > 0 && `${task.research.skipped_results} results were excluded because usable evidence was unavailable, duplicated, or outside the date range.`}</p>}
       <p className="cw-fineprint">{task.skill_id === "research" ? "Review each finding against its evidence. Source dates are estimates of publication or update; retrieval today does not establish current accuracy." : "Review the facts and wording before using these drafts. Source references point to your provided material."}</p>
     </>}
-    {task.artifacts.length > 0 && <div className="cw-downloads" aria-label="Downloads">{task.artifacts.map(artifact => <button type="button" className="cw-secondary" key={artifact.id} disabled={Boolean(downloading)} onClick={async () => {
-      setDownloadError(""); setDownloading(artifact.id);
-      try { await client.download(artifact); } catch (error) { setDownloadError(message(error)); }
-      finally { setDownloading(""); }
-    }}><span aria-hidden="true">↓ </span>{downloading === artifact.id ? "Preparing…" : artifact.filename}</button>)}</div>}
+    {task.artifacts.length > 0 && <div className="cw-downloads" aria-label="Downloads">{task.artifacts.map(artifact => <div className="cw-download-item" key={artifact.id}>
+      <button type="button" className="cw-secondary" disabled={Boolean(downloading)} onClick={async () => {
+        setDownloadError(""); setDownloading(artifact.id);
+        try { await client.download(artifact); } catch (error) { setDownloadError(message(error)); }
+        finally { setDownloading(""); }
+      }}><span aria-hidden="true">↓ </span>{downloading === artifact.id ? "Preparing…" : artifact.filename}</button>
+      {isTextArtifact(artifact) && <a className="cw-secondary cw-open-editor-link" href={`/editor?artifact_id=${encodeURIComponent(artifact.id)}`}>Open in Web Editor</a>}
+    </div>)}</div>}
     {downloadError && <p className="cw-error" role="alert">{downloadError}</p>}
     {terminal(task.state) && task.input && <button type="button" className="cw-text-button" onClick={revise}>Use these sources for a new draft</button>}
   </section>;
@@ -89,7 +76,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   initialDraft?: string;
   onInitialDraftChange?: (draft: string) => void;
 }) {
-  const [view, setView] = useState<"drafts" | "goals" | "automations" | "browser" | "sandbox" | "transactions" | "negotiations" | "actions" | "agent" | "conversations">(() => {
+  const [view, setView] = useState<CoworkerView>(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
     if (initialDraft.trim()) return "conversations";
     if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerView(window.location.search);
@@ -99,6 +86,9 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   const [socialActionDraft, setSocialActionDraft] = useState<string | null>(null);
   const [focusAgentRunId, setFocusAgentRunId] = useState<string | null>(null);
   const [focusActionId, setFocusActionId] = useState<string | null>(null);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationRef = useRef<HTMLElement | null>(null);
+  const navigationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [skills, setSkills] = useState<WorkSkill[]>([originalService]);
   const [uploadFormats, setUploadFormats] = useState(["txt", "docx", "pdf"]);
@@ -228,27 +218,64 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     notesInput.current?.focus(); notesInput.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
+  useEffect(() => {
+    if (!navigationOpen || typeof document === "undefined" || typeof window === "undefined") return;
+    const panel = navigationRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => Array.from(panel?.querySelectorAll<HTMLElement>("a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex='-1'])") ?? []);
+    const frame = window.requestAnimationFrame(() => focusable()[0]?.focus());
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") { event.preventDefault(); setNavigationOpen(false); return; }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0]; const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => navigationTriggerRef.current?.focus());
+    };
+  }, [navigationOpen]);
+
   return <main className={`cw-workspace rukh-cw-workspace${view === "conversations" ? " rukh-cw-chat" : ""}`}>
-    <header className="cw-header"><div><span className="cw-eyebrow">RUKH AI / COWORKER</span><h1>What are we working on?</h1><p>A persistent workspace for conversations, focused work and connected tools.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
+    <header className="cw-header"><button ref={navigationTriggerRef} className="rukh-mobile-nav-trigger" type="button"
+      aria-label="Open workspace navigation" aria-controls="rukh-cw-sidebar" aria-expanded={navigationOpen}
+      onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div><span className="cw-eyebrow">RUKH AI / COWORKER</span><h1>What are we working on?</h1><p>A persistent workspace for conversations, focused work and connected tools.</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
         setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
       }}>Sign out</button></div>
     </header>
     {error && <div className="cw-error cw-banner" role="alert">{error} {!workspace && <button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
-    <div className="rukh-cw-shell">
-      <aside className="rukh-cw-sidebar" aria-label="Coworker navigation">
-        {["Workspace", "Tools", "Manage"].map(group => <div className="rukh-cw-nav-group" key={group}>
-          <span className="rukh-cw-nav-label">{group}</span>
-          {coworkerNavigation.filter(item => item.group === group).map(item =>
-            <button key={item.id} type="button" className="rukh-cw-nav-item" aria-pressed={view === item.view}
-              onClick={() => { if (item.view === "agent") setFocusAgentRunId(null); setView(item.view); }}>
-              <span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name={item.icon} /></span><span>{item.label}</span>
-            </button>
-          )}
-        </div>)}
-        <div className="rukh-cw-sidebar-foot"><span className="rukh-cw-private-dot" aria-hidden="true" /><div><strong>Private workspace</strong><small>External actions require review.</small></div></div>
-      </aside>
+    <div className={"rukh-cw-shell" + (view === "conversations" ? " rukh-cw-shell-chat" : "")}>
+      {view !== "conversations" && <>
+        {navigationOpen && <button className="rukh-cw-navigation-backdrop" type="button" aria-label="Close workspace navigation" onClick={() => setNavigationOpen(false)} />}
+        <aside ref={navigationRef} id="rukh-cw-sidebar" className={"rukh-cw-sidebar" + (navigationOpen ? " rukh-cw-sidebar-open" : "")}
+          aria-label="Coworker navigation" role={navigationOpen ? "dialog" : undefined} aria-modal={navigationOpen ? true : undefined}>
+          <div className="rukh-cw-brand"><span className="rukh-cw-brand-mark" aria-hidden="true">r</span><span><strong>Rukh AI</strong><small>AI coworker</small></span></div>
+          <nav className="rukh-cw-primary-nav" aria-label="Primary workspace navigation">
+            <button type="button" className="rukh-cw-nav-item" onClick={() => { setView("conversations"); setNavigationOpen(false); }}><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="home" /></span><span>Coworker</span></button>
+            <a className="rukh-cw-nav-item" href="/editor"><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="file-text" /></span><span>Web Editor</span></a>
+            <button type="button" className="rukh-cw-nav-item" disabled title="Project storage is not available in the current Coworker API."><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="folder" /></span><span>Projects</span><small>Unavailable</small></button>
+          </nav>
+          {["Workspace", "Tools", "Manage"].map(group => <div className="rukh-cw-nav-group" key={group}>
+            <span className="rukh-cw-nav-label">{group}</span>
+            {coworkerNavigation.filter(item => item.group === group && item.view !== "conversations").map(item =>
+              <button key={item.id} type="button" className="rukh-cw-nav-item" aria-pressed={view === item.view}
+                onClick={() => { if (item.view === "agent") setFocusAgentRunId(null); setView(item.view as CoworkerView); setNavigationOpen(false); }}>
+                <span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name={item.icon} /></span><span>{item.label}</span>
+              </button>
+            )}
+          </div>)}
+          <div className="rukh-cw-sidebar-foot"><span className="rukh-cw-private-dot" aria-hidden="true" /><div><strong>Private workspace</strong><small>External actions require review.</small></div></div>
+        </aside>
+      </>}
       <section className="rukh-cw-content" aria-label="Coworker workspace">
     {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); setView("agent"); }} openAutomations={() => setView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
@@ -257,7 +284,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     {view === "transactions" && workspace && <TransactionWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "negotiations" && workspace && <NegotiationWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "actions" && workspace && <ActionWorkspace client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}
-    {view === "conversations" && workspace && <ConversationWorkspace client={client} initialDraft={initialDraft} onInitialDraftChange={onInitialDraftChange} openAgent={runId => { setFocusAgentRunId(runId); setView("agent"); }} />}
+    {view === "conversations" && <ConversationWorkspace client={client} initialDraft={initialDraft} onInitialDraftChange={onInitialDraftChange} onNavigate={nextView => setView(nextView)} openAgent={runId => { setFocusAgentRunId(runId); setView("agent"); }} />}
     {view === "agent" && workspace && <AgentWorkspace key={focusAgentRunId ?? "recent"} client={client} focusRunId={focusAgentRunId} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     <div className="cw-layout" hidden={view !== "drafts"}><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>

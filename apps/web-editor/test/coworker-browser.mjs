@@ -32,15 +32,21 @@ await page.route("https://identity.example.test/auth/v1/**", async route => {
 
 try {
   // Coworker is the approved default workspace when the release flag is enabled.
+  // The unauthenticated entry exposes the first-message composer; sign-in opens
+  // only after the user chooses to continue, preserving the unsent draft.
   await page.goto("http://127.0.0.1:5173/");
-  await page.getByRole("heading", { name: "Move complex work forward, with context." }).waitFor();
-  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
+  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
+  await page.locator("#rukh-first-message").waitFor();
+  assert.equal(await page.locator("#rukh-first-message").isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/coworker-signin-desktop.png"), fullPage: true });
+  await page.screenshot({ path: join(folder, "screenshots/coworker-entry-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.screenshot({ path: join(folder, "screenshots/coworker-signin-mobile.png"), fullPage: true });
+  await page.screenshot({ path: join(folder, "screenshots/coworker-entry-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
+  await page.locator("#rukh-first-message").fill("Please help me prepare a short project update.");
+  await page.getByRole("button", { name: "Continue to sign in" }).click();
+  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
   await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();

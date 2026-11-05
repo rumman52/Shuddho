@@ -1,6 +1,7 @@
 import { fetchWithTimeout } from "../lib/fetchWithTimeout";
 
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "needs_input" | "failed" | "cancelled";
+export type CoworkerView = "drafts" | "goals" | "automations" | "browser" | "sandbox" | "transactions" | "negotiations" | "actions" | "agent" | "conversations";
 export type Artifact = { id: string; filename: string; content_type: string; byte_size: number; sha256: string; created_at?: string };
 
 const TEXT_ARTIFACT_TYPES = new Set(["text/plain", "text/markdown"]);

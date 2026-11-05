@@ -1,11 +1,11 @@
 export const coworkerNavigation = Object.freeze([
-  { id: "home", label: "Conversations", icon: "home", group: "Workspace", view: "conversations" },
+  { id: "home", label: "Coworker", icon: "home", group: "Workspace", view: "conversations" },
   { id: "agent", label: "Agent activity", icon: "activity", group: "Workspace", view: "agent" },
   { id: "goals", label: "Goals & ideas", icon: "target", group: "Workspace", view: "goals" },
   { id: "automations", label: "Automations", icon: "calendar", group: "Workspace", view: "automations" },
   { id: "browser", label: "Browser", icon: "globe", group: "Tools", view: "browser" },
   { id: "files", label: "Files & drafts", icon: "file-text", group: "Tools", view: "drafts" },
-  { id: "approvals", label: "Approvals & integrations", icon: "shield", group: "Manage", view: "actions" },
+  { id: "approvals", label: "Plugins & approvals", icon: "shield", group: "Manage", view: "actions" },
   { id: "sandbox", label: "Sandbox", icon: "terminal", group: "Tools", view: "sandbox" },
   { id: "transactions", label: "Transactions", icon: "wallet", group: "Manage", view: "transactions" },
   { id: "negotiations", label: "Negotiations", icon: "handshake", group: "Manage", view: "negotiations" },

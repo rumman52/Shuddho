@@ -73,7 +73,7 @@ test("configured auth opens a sign-in dialog and closing it preserves the typed 
     await act(async () => input.props.onChange({ target: { value: "Keep this draft through sign-in" } }));
     await act(async () => tree.root.findByProps({ "aria-label": "Start a conversation" }).props.onSubmit({ preventDefault() {} }));
     const dialog = tree.root.findByProps({ role: "dialog" });
-    assert.equal(dialog.props["aria-modal"], true);
+    assert.equal(String(dialog.props["aria-modal"]), "true");
     assert.equal(tree.root.findByProps({ id: "rukh-first-message" }).props.value, "Keep this draft through sign-in");
     await act(async () => tree.root.findByProps({ "aria-label": "Close sign-in" }).props.onClick());
     assert.equal(tree.root.findByProps({ id: "rukh-first-message" }).props.value, "Keep this draft through sign-in");

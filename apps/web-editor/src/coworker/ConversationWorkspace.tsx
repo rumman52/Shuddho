@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type AssistantReply, type ConversationRecord,
-  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact,
+  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, CoworkerView,
 } from "./client";
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
+import NavigationIcon from "./WorkspaceNavigationIcon";
 import VoiceDictation from "./VoiceDictation";
 import { buildConversationJson, buildConversationMarkdown, conversationExportFilename } from "./conversationExport";
 import "./conversation-enhancements.css";
 import { RefreshOrder } from "./refreshOrder";
-import { getInitialConversationId } from "../../../coworker/src/navigation.mjs";
+import { coworkerNavigation, getInitialConversationId } from "../../../coworker/src/navigation.mjs";
 
 function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifest | null): string {
   const resourceId = typeof source.resource_id === "string" ? source.resource_id : "";
@@ -20,11 +21,12 @@ function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifes
 }
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
-export default function ConversationWorkspace({ client, openAgent, initialDraft = "", onInitialDraftChange }: {
+export default function ConversationWorkspace({ client, openAgent, initialDraft = "", onInitialDraftChange, onNavigate }: {
   client: CoworkerClient;
   openAgent: (runId: string) => void;
   initialDraft?: string;
   onInitialDraftChange?: (draft: string) => void;
+  onNavigate?: (view: CoworkerView) => void;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [selected, setSelected] = useState(() => typeof window !== "undefined" ? getInitialConversationId(window.location.search) ?? "" : "");
@@ -67,6 +69,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const [mobilePanel, setMobilePanel] = useState<"conversations" | "context" | null>(null);
+  const [contextOpen, setContextOpen] = useState(false);
   const mobilePanelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const mobilePanelCloseRef = useRef<HTMLButtonElement | null>(null);
   const conversationPanelRef = useRef<HTMLElement | null>(null);
@@ -79,6 +82,14 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
 
   function closeMobilePanel() {
     setMobilePanel(null);
+  }
+
+  function toggleContext(event: { currentTarget: HTMLButtonElement }) {
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches) {
+      openMobilePanel("context", event.currentTarget);
+    } else {
+      setContextOpen(value => !value);
+    }
   }
 
   useEffect(() => {
@@ -122,8 +133,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(min-width: 1221px)");
-    const closeOnDesktop = () => { if (media.matches) setMobilePanel(null); };
+    const media = window.matchMedia("(min-width: 901px)");
+    const closeOnDesktop = () => { if (media.matches) { setMobilePanel(null); setContextOpen(false); } };
+    closeOnDesktop();
     if (typeof media.addEventListener === "function") {
       media.addEventListener("change", closeOnDesktop);
       return () => media.removeEventListener("change", closeOnDesktop);
@@ -527,13 +539,13 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  return <section className="rukh-conversation-workspace" aria-label="Private conversations">
+  return <section className={"rukh-conversation-workspace" + (contextOpen ? " rukh-context-open" : "")} aria-label="Coworker workspace">
     <div className="rukh-mobile-workspace-tools" aria-label="Workspace panels" aria-hidden={mobilePanel !== null ? true : undefined}>
-      <button type="button" aria-label="Open conversations" aria-controls="rukh-conversation-list"
+      <button type="button" aria-label="Open navigation" aria-controls="rukh-conversation-list"
         aria-expanded={mobilePanel === "conversations"}
         onClick={event => openMobilePanel("conversations", event.currentTarget)}>
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4.5h14M3 9.9h14M3 15.3h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-        Conversations
+        Menu
       </button>
       <button type="button" aria-label="Open workspace context" aria-controls="rukh-context-panel"
         aria-expanded={mobilePanel === "context"}
@@ -544,12 +556,28 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     </div>
     <aside ref={conversationPanelRef} id="rukh-conversation-list"
       className={"rukh-conversation-list" + (mobilePanel === "conversations" ? " rukh-mobile-panel-open" : "")}
-      aria-label="Private conversations"
+      aria-label="Coworker navigation and conversations"
       role={mobilePanel === "conversations" ? "dialog" : undefined}
       aria-modal={mobilePanel === "conversations" ? true : undefined}
       aria-labelledby="rukh-conversations-heading"
       aria-hidden={mobilePanel === "context" ? true : undefined}>
-      <div className="rukh-panel-heading"><div><span className="cw-eyebrow">WORKSPACE</span><h2 id="rukh-conversations-heading">Conversations</h2></div>
+      <div className="rukh-cw-brand"><span className="rukh-cw-brand-mark" aria-hidden="true">r</span><span><strong>Rukh AI</strong><small>AI coworker</small></span></div>
+      <nav className="rukh-cw-primary-nav" aria-label="Primary workspace navigation">
+        <button type="button" className="rukh-cw-nav-item is-active" aria-current="page" aria-pressed="true"><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="home" /></span><span>Coworker</span></button>
+        <a className="rukh-cw-nav-item" href={selected ? `/editor?conversation=${encodeURIComponent(selected)}` : "/editor"}><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="file-text" /></span><span>Web Editor</span></a>
+        <button type="button" className="rukh-cw-nav-item" disabled title="Project storage is not available in the current Coworker API."><span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name="folder" /></span><span>Projects</span><small>Unavailable</small></button>
+      </nav>
+      <nav className="rukh-cw-secondary-nav" aria-label="Coworker tools">
+        {["Workspace", "Tools", "Manage"].map(group => <div className="rukh-cw-nav-group" key={group}>
+          <span className="rukh-cw-nav-label">{group}</span>
+          {coworkerNavigation.filter(item => item.group === group && item.view !== "conversations").map(item =>
+            <button key={item.id} type="button" className="rukh-cw-nav-item" onClick={() => { onNavigate?.(item.view as CoworkerView); setMobilePanel(null); }}>
+              <span className="rukh-cw-nav-icon" aria-hidden="true"><NavigationIcon name={item.icon} /></span><span>{item.label}</span>
+            </button>
+          )}
+        </div>)}
+      </nav>
+      <div className="rukh-panel-heading"><div><span className="cw-eyebrow">HISTORY</span><h2 id="rukh-conversations-heading">Conversations</h2></div>
         <div className="rukh-panel-heading-actions"><span className="rukh-count">{conversations.length}</span>
           <button className="rukh-mobile-panel-close" ref={mobilePanel === "conversations" ? mobilePanelCloseRef : null}
             type="button" aria-label="Close conversations" onClick={closeMobilePanel}>×</button>
@@ -602,6 +630,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
               <button type="button" onClick={() => downloadConversation("json")}>JSON (.json)</button>
             </div>
           </details>}
+          <button type="button" className="cw-text-button rukh-context-toggle" aria-label="Activity and context" aria-expanded={contextOpen || mobilePanel === "context"} onClick={toggleContext}>Activity &amp; context</button>
           {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
         </div>
       </header>
@@ -681,7 +710,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Direct chat does not read attached files; use Start task." : "Start task separately."}</p>
     </section>
 
-    <aside ref={contextPanelRef} id="rukh-context-panel"
+    <aside ref={contextPanelRef} id="rukh-context-panel" hidden={!contextOpen && mobilePanel !== "context"}
       className={"rukh-context-panel" + (mobilePanel === "context" ? " rukh-mobile-panel-open" : "")}
       aria-label="Workspace context"
       role={mobilePanel === "context" ? "dialog" : undefined}

@@ -17,7 +17,7 @@ test("Coworker initial view accepts only implemented routes", () => {
   assert.equal(getInitialCoworkerView("?view=files"), "drafts");
   assert.equal(getInitialCoworkerView("?view=unknown"), "conversations");
   assert.equal(getInitialCoworkerView(""), "conversations");
-  assert.equal(coworkerNavigation[0].label, "Conversations");
+  assert.equal(coworkerNavigation[0].label, "Coworker");
 });
 
 test("Coworker deep links accept only UUID conversation identifiers", () => {
