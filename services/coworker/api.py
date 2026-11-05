@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
-from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
+from .conversation_schemas import ConversationReplyCreate, ConversationReplyCancelRequest, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1642,7 +1642,17 @@ def delete_conversation(conversation_id: UUID, identity: Identity, services: Ser
 async def reply_to_conversation_message(conversation_id: UUID, message_id: UUID,
     payload: ConversationReplyCreate, identity: Identity, services: Services, response: Response):
     response.headers["Cache-Control"] = "no-store"
-    return await services.conversation_replies.reply(identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence)
+    return await services.conversation_replies.reply(identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence, payload.request_key)
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/reply/cancel")
+async def cancel_reply_to_conversation_message(
+    conversation_id: UUID, message_id: UUID, payload: ConversationReplyCancelRequest, identity: Identity, services: Services, response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await services.conversation_replies.cancel_reply(
+        identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence, payload.request_key,
+    )
 
 
 @router.post("/conversations/{conversation_id}/messages/{message_id}/reply/stream")
@@ -1651,7 +1661,7 @@ async def stream_reply_to_conversation_message(
     identity: Identity, services: Services,
 ):
     claim_result, queue = await services.conversation_replies.prepare_stream(
-        identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence,
+        identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence, payload.request_key,
     )
 
     async def generate():

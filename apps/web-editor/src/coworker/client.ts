@@ -468,7 +468,7 @@ export type WorkspaceManifest = {
 export type ConversationRecord = {
   id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
 };
-export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string };
+export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted" | "cancelled"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string; attempt?: number; request_key?: string | null };
 export type ConversationMessageRecord = {
   assistant_reply?: AssistantReply | null;
   id: string; conversation_id: string; sequence: number; text: string;
@@ -517,7 +517,7 @@ export class CoworkerClient {
   }
   async replyToConversationMessageStream(
     id: string, messageId: string, sequence: number,
-    onUpdate: (reply: AssistantReply) => void, signal?: AbortSignal,
+    onUpdate: (reply: AssistantReply) => void, signal?: AbortSignal, requestKey = crypto.randomUUID(),
   ): Promise<AssistantReply> {
     const response = await this.response(
       `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply/stream`,
@@ -525,7 +525,7 @@ export class CoworkerClient {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
         signal,
-        body: JSON.stringify({ expected_sequence: sequence }),
+        body: JSON.stringify({ expected_sequence: sequence, request_key: requestKey }),
       },
       75000,
     );
@@ -555,7 +555,7 @@ export class CoworkerClient {
       if (event === "snapshot" || event === "final") {
         if (!value || typeof value !== "object") throw new WorkspaceError("The AI reply stream contained an invalid reply.");
         const reply = value as AssistantReply;
-        if (!["generating", "completed", "failed", "interrupted"].includes(reply.state) ||
+        if (!["generating", "completed", "failed", "interrupted", "cancelled"].includes(reply.state) ||
             typeof reply.text !== "string" ||
             (reply.error !== undefined && reply.error !== null && typeof reply.error !== "string")) {
           throw new WorkspaceError("The AI reply stream contained an invalid reply.");
@@ -614,11 +614,18 @@ export class CoworkerClient {
     }
   }
 
-  async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal) {
+  async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal, requestKey = crypto.randomUUID()) {
     return (await this.response(`/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply`, {
       method: "POST", headers: { "Content-Type": "application/json" }, signal,
-      body: JSON.stringify({ expected_sequence: sequence }),
+      body: JSON.stringify({ expected_sequence: sequence, request_key: requestKey }),
     }, 75000)).json() as Promise<AssistantReply>;
+  }
+
+  async cancelConversationReply(id: string, messageId: string, sequence: number, requestKey: string, signal?: AbortSignal) {
+    return (await this.response(`/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply/cancel`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal,
+      body: JSON.stringify({ expected_sequence: sequence, request_key: requestKey }),
+    })).json() as Promise<AssistantReply>;
   }
   workspaceManifest(signal?: AbortSignal) {
     return this.json<WorkspaceManifest>("/api/v1/workspace-manifest", { signal });

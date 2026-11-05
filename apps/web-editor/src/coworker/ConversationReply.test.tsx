@@ -124,3 +124,33 @@ test("a disconnected reply keeps visible partial text and offers recovery withou
     assert.equal(tree!.root.findByProps({ "aria-label": "Retry AI reply" }).props.disabled, false);
   } finally { if (tree) await act(async () => { tree!.unmount(); }); }
 });
+
+
+test("a generating reply exposes an explicit stop action", async () => {
+  let stopped = 0;
+  let tree: ReactTestRenderer | undefined;
+  try {
+    await act(async () => { tree = create(<ConversationReply
+      reply={{ state: "generating", text: "Partial answer", request_key: "attempt-key-123", attempt: 1 }}
+      pending={true} retry={() => undefined} disabled={false} onStop={() => { stopped += 1; }}
+    />); });
+    await act(async () => tree!.root.findByProps({ "aria-label": "Stop AI reply" }).props.onClick());
+    assert.equal(stopped, 1);
+  } finally { if (tree) await act(async () => { tree!.unmount(); }); }
+});
+
+test("failed, interrupted and cancelled replies expose a retry action", async () => {
+  for (const state of ["failed", "interrupted", "cancelled"] as const) {
+    let retried = 0;
+    let tree: ReactTestRenderer | undefined;
+    try {
+      await act(async () => { tree = create(<ConversationReply
+        reply={{ state, text: "", error: state === "cancelled" ? "You stopped this reply." : "The reply failed.", attempt: 1, request_key: "attempt-key-123" }}
+        pending={false} retry={() => { retried += 1; }} disabled={false}
+      />); });
+      await act(async () => tree!.root.findByProps({ "aria-label": "Retry AI reply" }).props.onClick());
+      assert.equal(retried, 1, `${state} reply should be retryable`);
+      if (state === "cancelled") assert.ok(tree!.root.findAllByProps({ role: "status" }).some(node => node.children.join("").includes("Reply stopped")));
+    } finally { if (tree) await act(async () => { tree!.unmount(); }); }
+  }
+});

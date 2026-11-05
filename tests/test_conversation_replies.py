@@ -559,3 +559,78 @@ def test_chat_model_family_matches_editor_policy(container, provider, model):
     settings = replace(container.settings, chat_provider=provider, gemma_api_key="gemma-test-only", deepseek_api_key="test-only",
         gemma_model=model if provider == "gemma" else "gemma-test", deepseek_model=model if provider == "deepseek" else "deepseek-flash")
     assert not settings.chat_provider_configured
+
+
+def test_failed_reply_retries_only_with_a_new_request_key(container):
+    data = setup(container)
+    service, model, owner, conversation, message = data
+
+    def fail():
+        raise RuntimeError("private provider details")
+
+    model.callback = fail
+    first = asyncio.run(service.reply(owner, conversation["id"], message["id"], 1, "attempt-key-one"))
+    assert first["state"] == "failed" and first["attempt"] == 1
+    assert asyncio.run(service.reply(owner, conversation["id"], message["id"], 1, "attempt-key-one")) == first
+    assert model.calls == 1
+    model.callback = None
+    retried = asyncio.run(service.reply(owner, conversation["id"], message["id"], 1, "attempt-key-two"))
+    assert retried["state"] == "completed" and retried["attempt"] == 2
+    assert retried["request_key"] == "attempt-key-two"
+    assert model.calls == 2
+
+
+def test_streamed_reply_can_be_stopped_and_retried(container):
+    class BlockingStreamModel:
+        def __init__(self):
+            self.cancelled = None
+
+        async def stream(self, _messages):
+            self.cancelled = asyncio.Event()
+            try:
+                yield "Partial response before stop."
+                await asyncio.Future()
+            finally:
+                self.cancelled.set()
+
+        async def generate(self, _messages):
+            return "Completed response after retry."
+
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    model = BlockingStreamModel()
+    service.model = model
+
+    async def stop_stream():
+        claim, queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1, "attempt-key-one")
+        events = service.stream_events(claim, queue)
+        assert (await anext(events))[0] == "snapshot"
+        assert await anext(events) == ("delta", {"delta": "Partial response before stop."})
+        stopped = await service.cancel_reply(owner, conversation["id"], message["id"], 1, "attempt-key-one")
+        final = await anext(events)
+        await model.cancelled.wait()
+        await events.aclose()
+        return stopped, final
+
+    stopped, final = asyncio.run(stop_stream())
+    assert stopped["state"] == "cancelled" and stopped["attempt"] == 1
+    assert final == ("final", stopped)
+    with container.repository.sessions() as db:
+        assert db.scalar(select(ProviderLease)) is None
+    service.model = Model()
+    retried = asyncio.run(service.reply(owner, conversation["id"], message["id"], 1, "attempt-key-two"))
+    assert retried["state"] == "completed" and retried["attempt"] == 2
+
+
+def test_public_cancel_reply_route_is_owner_scoped_and_not_cacheable(container, signed_client):
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    service.claim(owner, conversation["id"], message["id"], 1, "attempt-key-one")
+    client, headers = signed_client
+    path = f'/api/v1/conversations/{conversation["id"]}/messages/{message["id"]}/reply/cancel'
+    response = client.post(path, json={"expected_sequence": 1, "request_key": "attempt-key-one"}, headers=headers())
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["state"] == "cancelled"
+    assert client.post(path, json={"expected_sequence": 1, "request_key": "attempt-key-one"}, headers=headers("bob")).status_code == 404
+    service.release(message["id"], 1)

@@ -169,136 +169,209 @@ class ConversationReplyService:
         else:
             self.model = None  # Unsupported configuration is refused at admission.
         self.sessions = conversations.sessions
-        self._stream_tasks = set()
+        self._stream_tasks = {}
 
-    def claim(self, owner, conversation_id, message_id, expected_sequence):
+    def claim(self, owner, conversation_id, message_id, expected_sequence, request_key=None):
         self.conversations.enabled()
-        if not self.settings.conversation_replies_enabled or not self.settings.chat_provider_configured:
-            raise CoworkerError("conversation_replies_unavailable", "AI chat is not enabled for this workspace.", 409)
+        if not isinstance(expected_sequence, int) or expected_sequence < 1:
+            raise CoworkerError("invalid_message_revision", "The conversation changed. Refresh it before asking for a reply.", 409)
         with self.sessions.begin() as db:
             self.conversations._lock_account(db, owner)
             conversation = self.conversations._conversation(db, owner, conversation_id, lock=True)
-            row = db.scalar(select(ConversationMessage).where(ConversationMessage.owner_id == owner,
-                ConversationMessage.conversation_id == conversation_id, ConversationMessage.id == message_id).with_for_update())
-            if row is None: raise not_found()
+            row = db.scalar(select(ConversationMessage).where(
+                ConversationMessage.id == message_id,
+                ConversationMessage.owner_id == owner,
+                ConversationMessage.conversation_id == conversation_id,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
             if row.sequence != expected_sequence:
-                raise CoworkerError("conversation_revision_conflict", "Reload the message before asking for a reply.", 409)
+                raise CoworkerError("conversation_revision_conflict", "The conversation changed. Refresh it before asking for a reply.", 409)
+            attempt = 1
             if row.assistant_reply:
                 prior = dict(row.assistant_reply)
-                if prior["state"] == "generating" and utcnow() > datetime.fromisoformat(prior["started_at"]) + timedelta(seconds=120):
-                    prior.update(state="interrupted", error="The reply was interrupted. Send a new message to try again.")
-                    row.assistant_reply = prior
-                return prior, None
-            if conversation.message_sequence != expected_sequence:
-                raise CoworkerError("conversation_revision_conflict", "Ask for a reply to the latest message.", 409)
+                if prior.get("state") == "generating":
+                    started = datetime.fromisoformat(prior["started_at"])
+                    if utcnow() - started > timedelta(seconds=120):
+                        prior.update(state="interrupted", error="The reply was interrupted. Send a new message to try again.")
+                        row.assistant_reply = prior
+                state = prior.get("state")
+                if state in {"completed", "generating"}:
+                    return prior, None
+                if state not in {"failed", "interrupted", "cancelled"} or not request_key or request_key == prior.get("request_key"):
+                    return prior, None
+                if conversation.message_sequence != expected_sequence:
+                    raise CoworkerError("conversation_revision_conflict", "The conversation changed. Refresh it before retrying the reply.", 409)
+                attempt = max(1, int(prior.get("attempt", 1))) + 1
+            elif conversation.message_sequence != expected_sequence:
+                raise CoworkerError("conversation_revision_conflict", "The conversation changed. Refresh it before asking for a reply.", 409)
             if row.selected_sources:
-                raise CoworkerError("chat_sources_unsupported", "Use Start task to work with attached files. Chat cannot read them yet.", 409)
-            history = list(db.scalars(select(ConversationMessage).where(ConversationMessage.owner_id == owner,
-                ConversationMessage.conversation_id == conversation_id, ConversationMessage.sequence <= expected_sequence)
-                .order_by(ConversationMessage.sequence.desc()).limit(13)))
-            messages, truncated = build_reply_messages([{"text": item.text, "assistant_reply": item.assistant_reply} for item in reversed(history)])
-            # UTF-8 bytes plus framing/output is a conservative token reservation.
-            reservation = len(json.dumps(messages, ensure_ascii=False).encode("utf-8")) + MAX_OUTPUT_TOKENS + 512
-            day = utcnow().date().isoformat()
-            daily = db.get(DailyUsage, (owner, day))
-            if daily is None:
-                daily = DailyUsage(owner_id=owner, day=day, allocated_tokens=0, task_count=0); db.add(daily)
-            if daily.allocated_tokens + reservation > self.settings.daily_token_budget:
-                raise CoworkerError("daily_limit", "Your daily coworker model budget has been reached.", 429)
-            try:
-                acquire_provider_lease(db, self.settings, owner_id=owner, kind="chat", resource_id=message_id, sequence=1, reserved_tokens=reservation)
-            except CoworkerError as error:
-                if error.code in {"provider_capacity_busy", "workspace_provider_busy"}:
-                    raise CoworkerError(error.code, "AI chat is busy. Choose Check reply again in a moment.", 429) from None
-                raise
-            daily.allocated_tokens += reservation
-            row.assistant_reply = {"state": "generating", "text": "", "error": None,
-                "started_at": iso(utcnow()), "context_truncated": truncated}
-            self.conversations._audit(db, owner, message_id, "conversation.reply_requested")
+                raise CoworkerError("direct_reply_source_conflict", "Use Start task to work with attached files. Direct chat replies do not read file attachments.", 409)
+            history = self.conversations.messages(owner, conversation_id, limit=30)["items"]
+            messages, truncated = build_reply_messages(history, expected_sequence=expected_sequence)
+            reservation = self._reserve_daily_budget(db, owner, messages)
+            self.conversations.acquire_provider_lease(
+                db, owner, "conversation_reply", message_id, sequence=attempt,
+                lease_seconds=120, max_concurrent=self.settings.max_concurrent_provider_calls,
+            )
+            row.assistant_reply = {
+                "state": "generating", "text": "", "error": None, "started_at": iso(utcnow()),
+                "context_truncated": truncated, "attempt": attempt, "request_key": request_key,
+            }
+            self.conversations._audit(db, owner, "conversation.reply_started", conversation_id, {
+                "message_id": message_id, "sequence": expected_sequence, "attempt": attempt,
+                "allocated_tokens": reservation,
+            })
             return dict(row.assistant_reply), messages
 
-    def release(self, message_id):
+    def release(self, message_id, attempt=1):
         with self.sessions.begin() as db:
-            release_provider_lease(db, kind="chat", resource_id=message_id, sequence=1)
+            self.conversations.release_provider_lease(db, "conversation_reply", message_id, sequence=attempt)
 
     def finish(self, owner, conversation_id, message_id, result):
         with self.sessions.begin() as db:
             self.conversations._lock_account(db, owner)
             self.conversations._conversation(db, owner, conversation_id, lock=True)
-            row = db.get(ConversationMessage, message_id)
-            if row is None or row.owner_id != owner or row.conversation_id != conversation_id: raise not_found()
-            if not row.assistant_reply: raise not_found()
-            if row.assistant_reply["state"] != "generating": return row.assistant_reply
+            row = db.scalar(select(ConversationMessage).where(
+                ConversationMessage.id == message_id,
+                ConversationMessage.owner_id == owner,
+                ConversationMessage.conversation_id == conversation_id,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            current = dict(row.assistant_reply or {})
+            if (
+                current.get("state") != "generating"
+                or int(current.get("attempt", 1)) != int(result.get("attempt", 1))
+                or current.get("request_key") != result.get("request_key")
+                or result.get("state") == "generating"
+            ):
+                return current
             row.assistant_reply = result
-            self.conversations._audit(db, owner, message_id, "conversation.reply_" + result["state"])
-            return result
+            self.conversations._audit(db, owner, f"conversation.reply_{result['state']}", conversation_id, {
+                "message_id": message_id, "sequence": row.sequence, "attempt": result.get("attempt", 1),
+            })
+            return dict(row.assistant_reply)
 
-    async def prepare_stream(self, owner, conversation_id, message_id, expected_sequence):
-        """Claim and start the producer before HTTP headers or client reads can race it."""
-        claim_result, messages = await run_in_threadpool(
-            self.claim, owner, conversation_id, message_id, expected_sequence,
-        )
+    def current_reply(self, owner, conversation_id, message_id):
+        with self.sessions() as db:
+            row = db.scalar(select(ConversationMessage).where(
+                ConversationMessage.id == message_id,
+                ConversationMessage.owner_id == owner,
+                ConversationMessage.conversation_id == conversation_id,
+            ))
+            return dict(row.assistant_reply) if row is not None and row.assistant_reply is not None else None
+
+    def is_current_attempt(self, owner, conversation_id, message_id, attempt, request_key):
+        current = self.current_reply(owner, conversation_id, message_id)
+        return bool(current and current.get("state") == "generating"
+            and int(current.get("attempt", 1)) == int(attempt)
+            and current.get("request_key") == request_key)
+
+    def _cancel_claim(self, owner, conversation_id, message_id, expected_sequence, request_key):
+        self.conversations.enabled()
+        with self.sessions.begin() as db:
+            self.conversations._lock_account(db, owner)
+            self.conversations._conversation(db, owner, conversation_id, lock=True)
+            row = db.scalar(select(ConversationMessage).where(
+                ConversationMessage.id == message_id,
+                ConversationMessage.owner_id == owner,
+                ConversationMessage.conversation_id == conversation_id,
+            ).with_for_update())
+            if row is None:
+                raise not_found()
+            if row.sequence != expected_sequence:
+                raise CoworkerError("conversation_revision_conflict", "The conversation changed. Refresh it before stopping the reply.", 409)
+            if not row.assistant_reply:
+                raise CoworkerError("conversation_reply_not_found", "There is no AI reply to stop.", 409)
+            prior = dict(row.assistant_reply)
+            if prior.get("request_key") != request_key or prior.get("state") != "generating":
+                return prior
+            stopped = {**prior, "state": "cancelled", "error": "You stopped this reply.", "completed_at": iso(utcnow())}
+            row.assistant_reply = stopped
+            self.conversations._audit(db, owner, "conversation.reply_cancelled", conversation_id, {
+                "message_id": message_id, "sequence": row.sequence, "attempt": prior.get("attempt", 1),
+            })
+            return dict(row.assistant_reply)
+
+    async def cancel_reply(self, owner, conversation_id, message_id, expected_sequence, request_key):
+        stopped = await run_in_threadpool(self._cancel_claim, owner, conversation_id, message_id, expected_sequence, request_key)
+        if stopped.get("state") == "cancelled" and stopped.get("request_key") == request_key:
+            task = self._stream_tasks.get((message_id, int(stopped.get("attempt", 1))))
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        return stopped
+
+    async def prepare_stream(self, owner, conversation_id, message_id, expected_sequence, request_key=None):
+        claim_result, messages = await run_in_threadpool(self.claim, owner, conversation_id, message_id, expected_sequence, request_key)
         if messages is None:
             return claim_result, None
-
         queue = asyncio.Queue()
+        attempt = int(claim_result.get("attempt", 1))
 
         async def produce():
-            parts = []
-            output_bytes = 0
+            parts, output_bytes, result = [], 0, None
             try:
                 stream_method = getattr(self.model, "stream", None)
                 if callable(stream_method):
                     async for part in stream_method(messages):
+                        if not await run_in_threadpool(self.is_current_attempt, owner, conversation_id, message_id, attempt, request_key):
+                            break
                         if not isinstance(part, str):
-                            raise ValueError("Invalid model delta")
+                            raise ValueError("invalid model stream")
                         output_bytes += len(part.encode("utf-8"))
                         if output_bytes > MAX_OUTPUT_BYTES:
-                            raise ValueError("Reply too large")
+                            raise ValueError("reply exceeded output limit")
                         if part:
                             parts.append(part)
                             await queue.put(("delta", {"delta": part}))
                 else:
-                    # Compatibility for injected deterministic models and older adapters.
                     part = await self.model.generate(messages)
-                    if not isinstance(part, str) or len(part.encode("utf-8")) > MAX_OUTPUT_BYTES:
-                        raise ValueError("Invalid model output")
-                    if part:
+                    if await run_in_threadpool(self.is_current_attempt, owner, conversation_id, message_id, attempt, request_key):
+                        if not isinstance(part, str) or len(part.encode("utf-8")) > MAX_OUTPUT_BYTES:
+                            raise ValueError("invalid model response")
                         parts.append(part)
-                        await queue.put(("delta", {"delta": part}))
-                text = "".join(parts).strip()
-                if not text:
-                    raise ValueError("Empty model output")
-                result = {
-                    **claim_result, "state": "completed", "text": text,
-                    "completed_at": iso(utcnow()),
+                if await run_in_threadpool(self.is_current_attempt, owner, conversation_id, message_id, attempt, request_key):
+                    text = "".join(parts).strip()
+                    if not text:
+                        raise ValueError("empty model response")
+                    result = {**claim_result, "state": "completed", "text": text, "error": None, "completed_at": iso(utcnow())}
+                else:
+                    result = await run_in_threadpool(self.current_reply, owner, conversation_id, message_id) or {
+                        **claim_result, "state": "interrupted", "text": "",
+                        "error": "The reply was interrupted. Send a new message to try again.", "completed_at": iso(utcnow()),
+                    }
+            except asyncio.CancelledError:
+                result = await run_in_threadpool(self.current_reply, owner, conversation_id, message_id) or {
+                    **claim_result, "state": "interrupted", "text": "",
+                    "error": "The reply was interrupted. Send a new message to try again.", "completed_at": iso(utcnow()),
                 }
+                if result.get("state") == "generating" and int(result.get("attempt", 1)) == attempt:
+                    result = {**result, "state": "interrupted", "error": "The reply was interrupted. Send a new message to try again.", "completed_at": iso(utcnow())}
             except Exception:
-                # Provider diagnostics may contain private input or credentials.
-                result = {
-                    **claim_result, "state": "failed", "text": "",
-                    "error": "The AI reply could not be completed. Send a new message to try again.",
-                }
+                result = {**claim_result, "state": "failed", "text": "", "error": "Rukh could not complete this reply. Try again.", "completed_at": iso(utcnow())}
             finally:
                 try:
-                    await run_in_threadpool(self.release, message_id)
+                    await run_in_threadpool(self.release, message_id, attempt)
                 except Exception:
                     pass
             try:
-                stored = await run_in_threadpool(
-                    self.finish, owner, conversation_id, message_id, result,
-                )
-            except CoworkerError:
-                await queue.put(("error", {"error": "This conversation is no longer available."}))
-                return
-            except Exception:
-                await queue.put(("error", {"error": "The AI reply could not be saved. Reload the conversation."}))
+                stored = await run_in_threadpool(self.finish, owner, conversation_id, message_id, result)
+            except CoworkerError as error:
+                await queue.put(("error", {"error": error.message}))
                 return
             await queue.put(("final", stored))
 
         producer_task = asyncio.create_task(produce())
-        self._stream_tasks.add(producer_task)
-        producer_task.add_done_callback(self._stream_tasks.discard)
+        key = (message_id, attempt)
+        self._stream_tasks[key] = producer_task
+
+        def cleanup(task):
+            if self._stream_tasks.get(key) is task:
+                self._stream_tasks.pop(key, None)
+
+        producer_task.add_done_callback(cleanup)
         return claim_result, queue
 
     async def stream_events(self, claim_result, queue):
@@ -319,15 +392,19 @@ class ConversationReplyService:
             if event[0] in {"final", "error"}:
                 break
 
-    async def reply(self, owner, conversation_id, message_id, expected_sequence):
-        result, messages = await run_in_threadpool(self.claim, owner, conversation_id, message_id, expected_sequence)
-        if messages is None: return result
+    async def reply(self, owner, conversation_id, message_id, expected_sequence, request_key=None):
+        result, messages = await run_in_threadpool(self.claim, owner, conversation_id, message_id, expected_sequence, request_key)
+        if messages is None:
+            return result
+        attempt = int(result.get("attempt", 1))
         try:
             text = await self.model.generate(messages)
-            result = {**result, "state": "completed", "text": text, "completed_at": iso(utcnow())}
+            if await run_in_threadpool(self.is_current_attempt, owner, conversation_id, message_id, attempt, request_key):
+                result = {**result, "state": "completed", "text": text, "error": None, "completed_at": iso(utcnow())}
+            else:
+                result = await run_in_threadpool(self.current_reply, owner, conversation_id, message_id) or result
         except Exception:
-            # Provider diagnostics may contain private input or credentials.
-            result = {**result, "state": "failed", "error": "The AI reply could not be completed. Send a new message to try again."}
+            result = {**result, "state": "failed", "text": "", "error": "Rukh could not complete this reply. Try again.", "completed_at": iso(utcnow())}
         finally:
-            await run_in_threadpool(self.release, message_id)
+            await run_in_threadpool(self.release, message_id, attempt)
         return await run_in_threadpool(self.finish, owner, conversation_id, message_id, result)

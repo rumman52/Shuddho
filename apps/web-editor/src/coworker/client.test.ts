@@ -389,6 +389,8 @@ test("conversation reply stream uses authenticated fetch and publishes partial r
       "00000002-0000-4000-8000-000000000000",
       3,
       value => updates.push({ state: value.state, text: value.text }),
+      undefined,
+      "attempt-key-123",
     );
     assert.equal(reply.state, "completed");
     assert.equal(reply.text, "বাংলা উত্তর");
@@ -407,6 +409,7 @@ test("conversation reply stream uses authenticated fetch and publishes partial r
     assert.equal(seen[0].options?.credentials, "omit");
     assert.equal(seen[0].options?.redirect, "error");
     assert.equal(seen[0].options?.cache, "no-store");
+    assert.deepEqual(JSON.parse(String(seen[0].options?.body)), { expected_sequence: 3, request_key: "attempt-key-123" });
   } finally { globalThis.fetch = original; }
 });
 
@@ -451,5 +454,33 @@ test("conversation reply stream enforces the 16 KB UTF-8 response limit", async 
       1,
       () => undefined,
     ));
+  } finally { globalThis.fetch = original; }
+});
+
+
+test("explicit reply cancellation is authenticated and bound to the message revision and attempt", async () => {
+  const original = globalThis.fetch;
+  let seen: { url: string; options?: RequestInit } | undefined;
+  globalThis.fetch = (async (url, options) => {
+    seen = { url: String(url), options };
+    return new Response(JSON.stringify({
+      state: "cancelled", text: "", error: "You stopped this reply.", attempt: 2, request_key: "attempt-key-123",
+    }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "stop-test-token");
+    const reply = await client.cancelConversationReply(
+      "00000001-0000-4000-8000-000000000000",
+      "00000002-0000-4000-8000-000000000000",
+      3, "attempt-key-123",
+    );
+    assert.equal(reply.state, "cancelled");
+    assert.equal(seen?.url, "/backend/api/v1/conversations/00000001-0000-4000-8000-000000000000/messages/00000002-0000-4000-8000-000000000000/reply/cancel");
+    assert.equal(seen?.options?.method, "POST");
+    assert.deepEqual(JSON.parse(String(seen?.options?.body)), { expected_sequence: 3, request_key: "attempt-key-123" });
+    assert.equal(new Headers(seen?.options?.headers).get("Authorization"), "Bearer stop-test-token");
+    assert.equal(seen?.options?.credentials, "omit");
+    assert.equal(seen?.options?.redirect, "error");
+    assert.equal(seen?.options?.cache, "no-store");
   } finally { globalThis.fetch = original; }
 });

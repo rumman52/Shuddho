@@ -49,6 +49,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [dictating, setDictating] = useState(false);
   const [replyingId, setReplyingId] = useState("");
   const [replyErrors, setReplyErrors] = useState<Record<string, string>>({});
+  const [replyStoppingId, setReplyStoppingId] = useState("");
+  const replyAttempt = useRef<{ messageId: string; requestKey: string } | null>(null);
   const replyController = useRef<AbortController | null>(null);
   const [listRevision, setListRevision] = useState(0);
   const [listReady, setListReady] = useState(false);
@@ -213,9 +215,15 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     followLatest.current = true;
     const id = item.conversation_id;
     const controller = new AbortController();
-    replyController.current?.abort(); replyController.current = controller;
-    setReplyingId(item.id); setReplyErrors(current => ({ ...current, [item.id]: "" }));
+    const requestKey = crypto.randomUUID();
+    replyController.current?.abort();
+    replyController.current = controller;
+    replyAttempt.current = { messageId: item.id, requestKey };
+    setReplyingId(item.id);
+    setReplyErrors(current => ({ ...current, [item.id]: "" }));
+    let terminal = false;
     const applyReply = (reply: AssistantReply) => {
+      if (reply.request_key) replyAttempt.current = { messageId: item.id, requestKey: reply.request_key };
       if (!controller.signal.aborted && selectedRef.current === id) {
         refreshOrder.current.invalidate();
         setMessages(current => current.map(message => message.id === item.id
@@ -224,14 +232,52 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     };
     try {
       const reply = typeof client.replyToConversationMessageStream === "function"
-        ? await client.replyToConversationMessageStream(id, item.id, item.sequence, applyReply, controller.signal)
-        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+        ? await client.replyToConversationMessageStream(id, item.id, item.sequence, applyReply, controller.signal, requestKey)
+        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal, requestKey);
       applyReply(reply);
+      terminal = reply.state !== "generating";
     } catch (cause) {
       if (!controller.signal.aborted && selectedRef.current === id)
         setReplyErrors(current => ({ ...current, [item.id]: cause instanceof Error ? cause.message : "Could not load the AI reply." }));
     } finally {
-      if (replyController.current === controller) setReplyingId("");
+      if (replyController.current === controller) {
+        replyController.current = null;
+        setReplyingId("");
+      }
+      if (terminal && replyAttempt.current?.messageId === item.id && replyAttempt.current.requestKey === requestKey) {
+        replyAttempt.current = null;
+      }
+    }
+  }
+
+  async function stopReply(item: ConversationMessageRecord) {
+    const active = replyAttempt.current;
+    const requestKey = active?.messageId === item.id ? active.requestKey : item.assistant_reply?.request_key;
+    if (!requestKey || typeof client.cancelConversationReply !== "function") return;
+    setReplyStoppingId(item.id);
+    setReplyErrors(current => ({ ...current, [item.id]: "" }));
+    try {
+      const stopped = await client.cancelConversationReply(item.conversation_id, item.id, item.sequence, requestKey);
+      if (selectedRef.current === item.conversation_id) {
+        refreshOrder.current.invalidate();
+        setMessages(current => current.map(message => message.id === item.id ? { ...message, assistant_reply: stopped } : message));
+      }
+      if (stopped.state !== "generating") {
+        if (active?.messageId === item.id && active.requestKey === requestKey) replyAttempt.current = null;
+        if (active?.messageId === item.id && active.requestKey === requestKey && replyController.current) {
+          replyController.current.abort();
+          replyController.current = null;
+        }
+        setReplyingId(current => current === item.id ? "" : current);
+      } else if (selectedRef.current === item.conversation_id) {
+        setReplyErrors(current => ({ ...current, [item.id]: "This reply is still active. Try stopping it again." }));
+      }
+    } catch (cause) {
+      if (selectedRef.current === item.conversation_id) {
+        setReplyErrors(current => ({ ...current, [item.id]: cause instanceof Error ? cause.message : "The reply could not be stopped. Try again." }));
+      }
+    } finally {
+      setReplyStoppingId(current => current === item.id ? "" : current);
     }
   }
 
@@ -660,6 +706,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
               const linked = item.resource_links.find(link => link.resource_type === "agent_run");
               const activeRun = run && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state);
               const canDispatch = !linked && item.sequence === selectedConversation?.message_sequence;
+              const activeReplyRequestKey = replyAttempt.current?.messageId === item.id
+                ? replyAttempt.current.requestKey : item.assistant_reply?.request_key;
               return <li className="rukh-message rukh-chat-turn" key={item.id}>
                 <div className="rukh-user-message">
                 <span className="rukh-message-author">You</span>
@@ -677,8 +725,15 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                   {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start task</button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
-                {(item.assistant_reply || replyingId === item.id || replyErrors[item.id]) && <ConversationReply reply={item.assistant_reply}
-                  pending={replyingId === item.id} error={replyErrors[item.id]} disabled={composerDisabled} retry={() => { void askForReply(item); }} />}
+                {(item.assistant_reply || replyingId === item.id || replyErrors[item.id]) && <ConversationReply
+                  reply={item.assistant_reply}
+                  pending={replyingId === item.id}
+                  error={replyErrors[item.id] ?? ""}
+                  disabled={composerDisabled}
+                  retry={() => { void askForReply(item); }}
+                  onStop={activeReplyRequestKey && typeof client.cancelConversationReply === "function" ? () => { void stopReply(item); } : undefined}
+                  stopping={replyStoppingId === item.id}
+                />}
                 {linked && <ConversationRunStatus client={client} runId={linked.resource_id} eager={item.id === latestRunMessageId} />}
               </li>;
             })}

@@ -63,3 +63,10 @@ class ConversationCancelRequest(BaseModel):
 class ConversationReplyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
+    request_key: str | None = Field(default=None, min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+
+
+class ConversationReplyCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_sequence: int = Field(ge=1)
+    request_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
