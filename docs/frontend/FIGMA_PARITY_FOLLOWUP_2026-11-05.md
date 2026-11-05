@@ -55,5 +55,6 @@
 - Public authentication remains dependent on correct deployment-time Supabase URL and publishable key.
 - Projects remain gated by the already documented authorized migration `0064` and `SHUDDHO_PROJECTS_ENABLED=true`.
 - Real AI provider response, live project isolation, and production alias/revision are not verified by this frontend change.
-- No production secrets, live database migration, provider enablement, paid resource, or production promotion was performed.
+- The frontend Coworker entry is enabled by default; setting `VITE_COWORKER_ENABLED=false` is the explicit UI rollback. This does not enable backend execution: `SHUDDHO_COWORKER_ENABLED` and the dependent backend service gates remain default-off until separately qualified.
+- No production secrets, live database migration, backend provider enablement, paid resource, or production promotion was performed.
 - The connected Vercel API still does not expose the existing Rukh project to this connection. Hosted preview and production qualification remain separate release steps.
