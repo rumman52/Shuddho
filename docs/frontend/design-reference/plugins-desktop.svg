@@ -1,0 +1,250 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-label="Plugins">
+<g data-name="Surface">
+<rect x="0" y="0" width="1440" height="900" rx="0" fill="#FAFAF7" stroke="none"/>
+</g>
+<g data-name="Surface">
+<rect x="0" y="0" width="248" height="900" rx="0" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="Rukh companion mark">
+<rect x="22" y="24" width="32" height="32" rx="10.88" fill="#E6EDE3"/><svg x="26.8" y="28.8" width="22.4" height="22.4" viewBox="0 0 32 32"><path d="M4 22 L14 6 L17 17 L28 10 L22 27 L16 22 L9 27 Z" fill="#245A43"/><circle cx="15" cy="14" r="1.3" fill="#FFFFFF"/></svg>
+</g>
+<g data-name="rukh">
+<text x="65" y="52" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="600" fill="#20291F">rukh</text>
+</g>
+<g data-name="AI">
+<text x="121" y="46" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600" fill="#687064">AI</text>
+</g>
+<g data-name="+  New chat" data-link="home-desktop" style="cursor:pointer">
+<rect x="18" y="88" width="212" height="42" rx="10" fill="#FFFFFF" stroke="#DFE3DA"/>
+<text x="124.0" y="113.5" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#20291F">+  New chat</text>
+</g>
+<g data-name="Coworker navigation" data-link="home-desktop" style="cursor:pointer">
+<rect x="12" y="143" width="224" height="40" rx="9" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="chat icon">
+<svg x="24" y="154" width="20" height="20" viewBox="0 0 24 24"><path d="M4 4 H20 V16 H9 L4 20 Z" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Coworker">
+<text x="58" y="168" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="400" fill="#20291F">Coworker</text>
+</g>
+<g data-name="Web Editor navigation" data-link="editor-desktop" style="cursor:pointer">
+<rect x="12" y="189" width="224" height="40" rx="9" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="layout icon">
+<svg x="24" y="200" width="20" height="20" viewBox="0 0 24 24"><path d="M3 4 H21 V20 H3 Z M3 9 H21 M9 9 V20" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Web Editor">
+<text x="58" y="214" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="400" fill="#20291F">Web Editor</text>
+</g>
+<g data-name="Projects navigation" data-link="projects-desktop" style="cursor:pointer">
+<rect x="12" y="235" width="224" height="40" rx="9" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="folder icon">
+<svg x="24" y="246" width="20" height="20" viewBox="0 0 24 24"><path d="M3 7 V20 H21 V7 H12 L10 4 H3 Z" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Projects">
+<text x="58" y="260" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="400" fill="#20291F">Projects</text>
+</g>
+<g data-name="Plugins navigation" data-link="plugins-desktop" style="cursor:pointer">
+<rect x="12" y="281" width="224" height="40" rx="9" fill="#E6EDE3" stroke="none"/>
+</g>
+<g data-name="grid icon">
+<svg x="24" y="292" width="20" height="20" viewBox="0 0 24 24"><path d="M3 3 H9 V9 H3 Z M15 3 H21 V9 H15 Z M3 15 H9 V21 H3 Z M15 15 H21 V21 H15 Z" fill="none" stroke="#245A43" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Plugins">
+<text x="58" y="306" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="600" fill="#245A43">Plugins</text>
+</g>
+<g data-name="WORKSPACE">
+<text x="24" y="363" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="600" fill="#687064">WORKSPACE</text>
+</g>
+<g data-name="Files navigation" data-link="files-desktop" style="cursor:pointer">
+<rect x="12" y="379" width="224" height="36" rx="8" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="file icon">
+<svg x="24" y="388" width="18" height="18" viewBox="0 0 24 24"><path d="M5 3 H14 L19 8 V21 H5 Z M14 3 V8 H19 M9 13 H15 M9 17 H15" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Files">
+<text x="58" y="400" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="400" fill="#20291F">Files</text>
+</g>
+<g data-name="Goals navigation" data-link="goals-desktop" style="cursor:pointer">
+<rect x="12" y="418" width="224" height="36" rx="8" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="target icon">
+<svg x="24" y="427" width="18" height="18" viewBox="0 0 24 24"><path d="M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 M12 7 A5 5 0 1 0 12 17 A5 5 0 1 0 12 7 M12 10 V14 M10 12 H14" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Goals">
+<text x="58" y="439" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="400" fill="#20291F">Goals</text>
+</g>
+<g data-name="Automations navigation" data-link="automations-desktop" style="cursor:pointer">
+<rect x="12" y="457" width="224" height="36" rx="8" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="clock icon">
+<svg x="24" y="466" width="18" height="18" viewBox="0 0 24 24"><path d="M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 M12 7 V12 L16 14" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Automations">
+<text x="58" y="478" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="400" fill="#20291F">Automations</text>
+</g>
+<g data-name="Divider">
+<rect x="20" y="516" width="208" height="1" rx="0" fill="#DFE3DA" stroke="none"/>
+</g>
+<g data-name="RECENT CHATS">
+<text x="24" y="550" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="600" fill="#687064">RECENT CHATS</text>
+</g>
+<g data-name="search icon">
+<svg x="206" y="537" width="16" height="16" viewBox="0 0 24 24"><path d="M10 3 A7 7 0 1 0 10 17 A7 7 0 1 0 10 3 M15 15 L21 21" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Open Launch plan for Rukh" data-link="conversation-desktop" style="cursor:pointer">
+<rect x="12" y="566" width="224" height="34" rx="8" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="Launch plan for Rukh">
+<text x="25" y="586" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Launch plan for Rukh</text>
+</g>
+<g data-name="Open Website copy review" data-link="conversation-desktop" style="cursor:pointer">
+<rect x="12" y="603" width="224" height="34" rx="8" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="Website copy review">
+<text x="25" y="623" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Website copy review</text>
+</g>
+<g data-name="Open Weekly research notes" data-link="conversation-desktop" style="cursor:pointer">
+<rect x="12" y="640" width="224" height="34" rx="8" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="Weekly research notes">
+<text x="25" y="660" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Weekly research notes</text>
+</g>
+<g data-name="Divider">
+<rect x="20" y="817" width="208" height="1" rx="0" fill="#DFE3DA" stroke="none"/>
+</g>
+<g data-name="Surface">
+<rect x="20" y="836" width="34" height="34" rx="17" fill="#E6EDE3" stroke="none"/>
+</g>
+<g data-name="A">
+<text x="29" y="856" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#245A43">A</text>
+</g>
+<g data-name="Anowar">
+<text x="65" y="848" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#20291F">Anowar</text>
+</g>
+<g data-name="Personal workspace">
+<text x="65" y="867" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="400" fill="#687064">Personal workspace</text>
+</g>
+<g data-name="Surface" data-link="settings-desktop" style="cursor:pointer">
+<rect x="200" y="834" width="36" height="36" rx="8" fill="#F1F2ED" stroke="none"/>
+</g>
+<g data-name="settings icon">
+<svg x="208" y="842" width="19" height="19" viewBox="0 0 24 24"><path d="M12 8 A4 4 0 1 0 12 16 A4 4 0 1 0 12 8 M12 2 V5 M12 19 V22 M2 12 H5 M19 12 H22 M5 5 L7 7 M17 17 L19 19 M5 19 L7 17 M17 7 L19 5" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Plugins">
+<text x="280" y="44" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="600" fill="#20291F">Plugins</text>
+</g>
+<g data-name="Activity &amp; context" data-link="context-desktop" style="cursor:pointer">
+<rect x="1264" y="22" width="144" height="42" rx="10" fill="#FFFFFF" stroke="#DFE3DA"/>
+<text x="1336.0" y="47.5" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#20291F">Activity &amp; context</text>
+</g>
+<g data-name="Divider">
+<rect x="248" y="82" width="1192" height="1" rx="0" fill="#DFE3DA" stroke="none"/>
+</g>
+<g data-name="Plugins">
+<text x="300" y="156" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="600" fill="#20291F">Plugins</text>
+</g>
+<g data-name="Connect the tools you already use. You stay in control.">
+<text x="300" y="187" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="400" fill="#687064">Connect the tools you already use. You stay in control.</text>
+</g>
+<g data-name="Surface">
+<rect x="300" y="235" width="1088" height="44" rx="10" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="search icon">
+<svg x="314" y="247" width="18" height="18" viewBox="0 0 24 24"><path d="M10 3 A7 7 0 1 0 10 17 A7 7 0 1 0 10 3 M15 15 L21 21" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Search plugins…">
+<text x="342" y="262" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="400" fill="#687064">Search plugins…</text>
+</g>
+<g data-name="Google Drive" data-link="plugin-detail-desktop" style="cursor:pointer">
+<rect x="300.0" y="302" width="349.3333333333333" height="132" rx="14" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="Surface">
+<rect x="316.0" y="318" width="34" height="34" rx="9" fill="#F4F6F1" stroke="none"/>
+</g>
+<g data-name="folder icon">
+<svg x="323.0" y="325" width="20" height="20" viewBox="0 0 24 24"><path d="M3 7 V20 H21 V7 H12 L10 4 H3 Z" fill="none" stroke="#245A43" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Google Drive">
+<text x="316.0" y="382" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="600" fill="#20291F">Google Drive</text>
+</g>
+<g data-name="Find and work with your documents.">
+<text x="316.0" y="405" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Find and work with your documents.</text>
+</g>
+<g data-name="GitHub" data-link="plugin-detail-desktop" style="cursor:pointer">
+<rect x="669.3333333333333" y="302" width="349.3333333333333" height="132" rx="14" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="Surface">
+<rect x="685.3333333333333" y="318" width="34" height="34" rx="9" fill="#F4F6F1" stroke="none"/>
+</g>
+<g data-name="code icon">
+<svg x="692.3333333333333" y="325" width="20" height="20" viewBox="0 0 24 24"><path d="M8 6 L3 12 L8 18 M16 6 L21 12 L16 18 M14 3 L10 21" fill="none" stroke="#245A43" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="GitHub">
+<text x="685.3333333333333" y="382" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="600" fill="#20291F">GitHub</text>
+</g>
+<g data-name="Bring repositories into your work.">
+<text x="685.3333333333333" y="405" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Bring repositories into your work.</text>
+</g>
+<g data-name="Google Calendar" data-link="plugin-detail-desktop" style="cursor:pointer">
+<rect x="1038.6666666666665" y="302" width="349.3333333333333" height="132" rx="14" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="Surface">
+<rect x="1054.6666666666665" y="318" width="34" height="34" rx="9" fill="#F4F6F1" stroke="none"/>
+</g>
+<g data-name="calendar icon">
+<svg x="1061.6666666666665" y="325" width="20" height="20" viewBox="0 0 24 24"><path d="M3 5 H21 V21 H3 Z M3 10 H21 M7 2 V7 M17 2 V7 M7 14 H10 M14 14 H17" fill="none" stroke="#245A43" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Google Calendar">
+<text x="1054.6666666666665" y="382" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="600" fill="#20291F">Google Calendar</text>
+</g>
+<g data-name="Make room for what matters.">
+<text x="1054.6666666666665" y="405" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Make room for what matters.</text>
+</g>
+<g data-name="Gmail" data-link="plugin-detail-desktop" style="cursor:pointer">
+<rect x="300.0" y="453" width="349.3333333333333" height="132" rx="14" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="Surface">
+<rect x="316.0" y="469" width="34" height="34" rx="9" fill="#F4F6F1" stroke="none"/>
+</g>
+<g data-name="mail icon">
+<svg x="323.0" y="476" width="20" height="20" viewBox="0 0 24 24"><path d="M3 5 H21 V19 H3 Z M3 5 L12 13 L21 5" fill="none" stroke="#245A43" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Gmail">
+<text x="316.0" y="533" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="600" fill="#20291F">Gmail</text>
+</g>
+<g data-name="Draft and review your messages.">
+<text x="316.0" y="556" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Draft and review your messages.</text>
+</g>
+<g data-name="Notion" data-link="plugin-detail-desktop" style="cursor:pointer">
+<rect x="669.3333333333333" y="453" width="349.3333333333333" height="132" rx="14" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="Surface">
+<rect x="685.3333333333333" y="469" width="34" height="34" rx="9" fill="#F4F6F1" stroke="none"/>
+</g>
+<g data-name="file icon">
+<svg x="692.3333333333333" y="476" width="20" height="20" viewBox="0 0 24 24"><path d="M5 3 H14 L19 8 V21 H5 Z M14 3 V8 H19 M9 13 H15 M9 17 H15" fill="none" stroke="#245A43" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Notion">
+<text x="685.3333333333333" y="533" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="600" fill="#20291F">Notion</text>
+</g>
+<g data-name="Keep knowledge close to the work.">
+<text x="685.3333333333333" y="556" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Keep knowledge close to the work.</text>
+</g>
+<g data-name="Slack" data-link="plugin-detail-desktop" style="cursor:pointer">
+<rect x="1038.6666666666665" y="453" width="349.3333333333333" height="132" rx="14" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="Surface">
+<rect x="1054.6666666666665" y="469" width="34" height="34" rx="9" fill="#F4F6F1" stroke="none"/>
+</g>
+<g data-name="chat icon">
+<svg x="1061.6666666666665" y="476" width="20" height="20" viewBox="0 0 24 24"><path d="M4 4 H20 V16 H9 L4 20 Z" fill="none" stroke="#245A43" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Slack">
+<text x="1054.6666666666665" y="533" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="600" fill="#20291F">Slack</text>
+</g>
+<g data-name="Turn team updates into next steps.">
+<text x="1054.6666666666665" y="556" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Turn team updates into next steps.</text>
+</g>
+</svg>

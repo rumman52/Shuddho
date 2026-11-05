@@ -35,7 +35,7 @@ try {
   // The unauthenticated entry exposes the first-message composer; sign-in opens
   // only after the user chooses to continue, preserving the unsent draft.
   await page.goto("http://127.0.0.1:5173/");
-  await page.getByRole("heading", { name: "What would you like to work on?" }).waitFor();
+  await page.getByRole("heading", { name: "What shall we work on today?" }).waitFor();
   await page.locator("#rukh-first-message").waitFor();
   assert.equal(await page.locator("#rukh-first-message").isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
@@ -50,13 +50,13 @@ try {
   await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  await page.locator("#cw-conversation-message").waitFor();
   await page.locator("#cw-conversation-message").waitFor();
   assert.equal(await page.locator("#cw-conversation-message").isVisible(), true);
 
   // Confirm an authenticated refresh at / still restores the persistent chat workspace.
   await page.goto("http://127.0.0.1:5173/");
-  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  await page.locator("#cw-conversation-message").waitFor();
   await page.locator("#cw-conversation-message").waitFor();
 
   // The workspace directory is optional and remains available at /workspaces.
@@ -71,10 +71,12 @@ try {
   await page.screenshot({ path: join(folder, "screenshots/rukh-workspaces-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
-  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  await page.locator("#cw-conversation-message").waitFor();
+  await page.getByText("More tools", { exact:true }).click();
   await page.getByRole("button", { name: "Sandbox", exact: true }).click();
   await page.getByRole("heading", { name: "Sandboxed computation", exact: true }).waitFor();
   await page.getByText("Sandbox capability is disabled.", { exact: true }).waitFor();
+  await page.getByText("More tools", { exact:true }).click();
   await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
   await page.getByLabel("Your notes").fill("The team completed 12 reviews on 10 September 2026.");
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });
@@ -223,7 +225,7 @@ try {
   await page.getByLabel("Email", { exact: true }).fill("bob@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  await page.locator("#cw-conversation-message").waitFor();
   await page.getByRole("button", { name: "Files & drafts", exact: true }).click();
   await page.getByRole("button", { name: "Create report & email draft" }).waitFor();
   assert.equal(await page.locator(".cw-history li").count(), 0);

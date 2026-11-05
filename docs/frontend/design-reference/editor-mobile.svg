@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="Web Editor · website canvas">
+<g data-name="Surface">
+<rect x="0" y="0" width="390" height="844" rx="0" fill="#FAFAF7" stroke="none"/>
+</g>
+<g data-name="9:41">
+<text x="22" y="26" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#20291F">9:41</text>
+</g>
+<g data-name="•••  ▰">
+<text x="312" y="25" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#20291F">•••  ▰</text>
+</g>
+<g data-name="menu icon">
+<svg x="20" y="56" width="20" height="20" viewBox="0 0 24 24"><path d="M4 6 H20 M4 12 H20 M4 18 H20" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Open navigation" data-link="menu-mobile" style="cursor:pointer">
+<rect x="8" y="44" width="44" height="44" rx="0" fill="#FAFAF7" stroke="none"/>
+</g>
+<g data-name="menu icon">
+<svg x="20" y="56" width="20" height="20" viewBox="0 0 24 24"><path d="M4 6 H20 M4 12 H20 M4 18 H20" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Web Editor">
+<text x="58" y="68" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="600" fill="#20291F">Web Editor</text>
+</g>
+<g data-name="Open context" data-link="context-mobile" style="cursor:pointer">
+<rect x="338" y="44" width="44" height="44" rx="0" fill="#FAFAF7" stroke="none"/>
+</g>
+<g data-name="sliders icon">
+<svg x="350" y="56" width="20" height="20" viewBox="0 0 24 24"><path d="M4 6 H10 M14 6 H20 M4 12 H14 M18 12 H20 M4 18 H6 M10 18 H20 M10 3 V9 M14 3 V9 M14 9 V15 M18 9 V15 M6 15 V21 M10 15 V21" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Divider">
+<rect x="0" y="94" width="390" height="1" rx="0" fill="#DFE3DA" stroke="none"/>
+</g>
+<g data-name="Home indicator">
+<rect x="135.0" y="834" width="120" height="4" rx="2" fill="#20291F" stroke="none"/>
+</g>
+<g data-name="Rukh landing page">
+<text x="16" y="127" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="600" fill="#20291F">Rukh landing page</text>
+</g>
+<g data-name="Surface">
+<rect x="16" y="142" width="83.953125" height="24" rx="12" fill="#E6EDE3" stroke="none"/>
+</g>
+<g data-name="Draft saved">
+<text x="26" y="157" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="400" fill="#245A43">Draft saved</text>
+</g>
+<g data-name="Preview" data-link="editor-review-mobile" style="cursor:pointer">
+<rect x="291" y="104" width="83" height="42" rx="10" fill="#FFFFFF" stroke="#DFE3DA"/>
+<text x="332.5" y="129.5" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#20291F">Preview</text>
+</g>
+<g data-name="Surface">
+<rect x="16" y="188" width="358" height="43" rx="9" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="Design">
+<text x="30" y="214" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600" fill="#245A43">Design</text>
+</g>
+<g data-name="Code">
+<text x="104" y="214" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">Code</text>
+</g>
+<g data-name="History">
+<text x="170" y="214" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="400" fill="#687064">History</text>
+</g>
+<g data-name="layout icon">
+<svg x="343" y="201" width="17" height="17" viewBox="0 0 24 24"><path d="M3 4 H21 V20 H3 Z M3 9 H21 M9 9 V20" fill="none" stroke="#687064" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</g>
+<g data-name="Surface">
+<rect x="16" y="249" width="358" height="331" rx="12" fill="#FFFFFF" stroke="#DFE3DA"/>
+</g>
+<g data-name="rukh">
+<text x="36" y="286" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="600" fill="#20291F">rukh</text>
+</g>
+<g data-name="Get started">
+<text x="280" y="282" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="400" fill="#245A43">Get started</text>
+</g>
+<g data-name="Divider">
+<rect x="32" y="304" width="326" height="1" rx="0" fill="#DFE3DA" stroke="none"/>
+</g>
+<g data-name="Make room
+for your best work.">
+<text x="40" y="359" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="600" fill="#20291F">Make room</text>
+<text x="40" y="400" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="600" fill="#20291F">for your best work.</text>
+</g>
+<g data-name="An AI coworker for ideas, projects, and
+everything in betwee">
+<text x="40" y="437" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="400" fill="#687064">An AI coworker for ideas, projects, and</text>
+<text x="40" y="457" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="400" fill="#687064">everything in between.</text>
+</g>
+<g data-name="Meet your coworker" data-link="home-mobile" style="cursor:pointer">
+<rect x="40" y="493" width="172" height="42" rx="10" fill="#245A43" stroke="#245A43"/>
+<text x="126.0" y="518.5" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#FFFFFF">Meet your coworker</text>
+</g>
+<g data-name="Ask Rukh to refine this" data-link="editor-review-mobile" style="cursor:pointer">
+<rect x="16" y="600" width="358" height="42" rx="10" fill="#FFFFFF" stroke="#DFE3DA"/>
+<text x="195.0" y="625.5" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#20291F">Ask Rukh to refine this</text>
+</g>
+<g data-name="← Back to Coworker" data-link="conversation-mobile" style="cursor:pointer">
+<rect x="16" y="773" width="358" height="42" rx="10" fill="#FFFFFF" stroke="#DFE3DA"/>
+<text x="195.0" y="798.5" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="600" fill="#20291F">← Back to Coworker</text>
+</g>
+</svg>

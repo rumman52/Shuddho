@@ -7,6 +7,8 @@ import "./coworker/coworker-entry.css";
 import "../../coworker/src/styles.css";
 import "../../../packages/design-system/src/tokens.css";
 
+import "./coworker/approved-design.css";
+
 const CoworkerStandalone = lazy(() => import("../../coworker/src/App"));
 const EditorStandalone = lazy(() => import("../../editor/src/App"));
 

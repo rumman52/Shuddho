@@ -7,6 +7,8 @@ import "./styles.css";
 import App from "./App";
 import { initializeRukhTheme } from "../../web-editor/src/lib/theme";
 
+import "../../web-editor/src/coworker/approved-design.css";
+
 initializeRukhTheme();
 
 const root = document.getElementById("root");

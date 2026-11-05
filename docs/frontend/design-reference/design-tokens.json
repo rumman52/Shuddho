@@ -1,0 +1,51 @@
+{
+  "colors": {
+    "bg": "#FAFAF7",
+    "surface": "#FFFFFF",
+    "rail": "#F1F2ED",
+    "line": "#DFE3DA",
+    "text": "#20291F",
+    "muted": "#687064",
+    "green": "#245A43",
+    "soft": "#E6EDE3",
+    "pale": "#F4F6F1",
+    "orange": "#8D501E",
+    "orangebg": "#FFF1DF",
+    "red": "#A23636",
+    "redbg": "#FBEDEC",
+    "blue": "#345E85"
+  },
+  "fontFamily": "Inter",
+  "spacing": [
+    4,
+    8,
+    12,
+    16,
+    24,
+    32,
+    48
+  ],
+  "radius": {
+    "button": 10,
+    "card": 14,
+    "composer": 22
+  },
+  "viewport": {
+    "laptop": [
+      1440,
+      900
+    ],
+    "smallLaptop": [
+      1366,
+      768
+    ],
+    "phone": [
+      390,
+      844
+    ],
+    "smallPhone": [
+      375,
+      812
+    ]
+  }
+}

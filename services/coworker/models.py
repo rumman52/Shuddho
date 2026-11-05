@@ -33,6 +33,36 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(String(100), default="My workspace")
 
 
+class Project(Base):
+    __tablename__ = "cw_projects"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(Text, default="")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_projects_owner_key"),
+        UniqueConstraint("id", "owner_id", name="uq_cw_projects_id_owner"),
+    )
+
+
+class ProjectResource(Base):
+    __tablename__ = "cw_project_resources"
+    project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    resource_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id", "owner_id"], ["cw_projects.id", "cw_projects.owner_id"]),
+        CheckConstraint("resource_type IN ('conversation', 'document')", name="ck_cw_project_resource_type"),
+    )
+
+
 class Conversation(Base):
     __tablename__ = "cw_conversations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

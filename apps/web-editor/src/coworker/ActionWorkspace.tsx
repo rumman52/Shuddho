@@ -22,7 +22,7 @@ const title = (item: ExternalAction) => item.preview.payload.kind === "document_
       : "title" in item.preview.payload ? item.preview.payload.title : item.preview.payload.subject;
 const reminderLabel = (minutes: number) => minutes === 1440 ? "1 day before start" : minutes >= 60 ? `${minutes / 60} ${minutes === 60 ? "hour" : "hours"} before start` : `${minutes} minutes before start`;
 
-export default function ActionWorkspace({ client, account, emailDraft, socialDraft, focusActionId, onFocused }: { client: CoworkerClient; account: string; emailDraft: EmailDraft | null; socialDraft: string | null; focusActionId?: string | null; onFocused?: () => void }) {
+export default function ActionWorkspace({ client, account, emailDraft, socialDraft, focusActionId, onFocused, onConnectionsChanged }: { client: CoworkerClient; account: string; emailDraft: EmailDraft | null; socialDraft: string | null; focusActionId?: string | null; onFocused?: () => void; onConnectionsChanged?: (connections: ConnectedAccount[]) => void }) {
   const [enabled, setEnabled] = useState(false);
   const [connections, setConnections] = useState<ConnectedAccount[]>([]);
   const [history, setHistory] = useState<ExternalAction[]>([]);
@@ -90,13 +90,13 @@ export default function ActionWorkspace({ client, account, emailDraft, socialDra
       });
       Promise.all([client.connections(controller.signal), client.actions(controller.signal), client.actionArtifacts(controller.signal), directory]).then(([value, recent, available, recipientDirectory]) => {
         if (!alive) return;
-        setEnabled(value.enabled); setReadsEnabled(value.reads_enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setPersonalTransactionsEnabled(value.personal_transactions_enabled); setTransactionOperations(value.transaction_operations ?? []); setConnections(value.connections); setHistory(recent.actions);
+        setEnabled(value.enabled); setReadsEnabled(value.reads_enabled); setRemindersEnabled(value.reminders_enabled); setDocumentSharingEnabled(value.document_sharing_enabled); setThreadingEnabled(value.threading_enabled); setSocialPublishingEnabled(value.social_publishing_enabled); setPersonalTransactionsEnabled(value.personal_transactions_enabled); setTransactionOperations(value.transaction_operations ?? []); setConnections(value.connections); onConnectionsChanged?.(value.connections); setHistory(recent.actions);
         setAttachmentsEnabled(available.attachments_enabled); setDocumentSharingEnabled(current => current || available.document_sharing_enabled); setArtifacts(available.artifacts);
         setRecipientDirectoryEnabled(recipientDirectory.enabled); setSavedRecipients(recipientDirectory.recipients); setLoaded(true);
       }).catch(failure => { if (alive) { setError(message(failure)); setLoaded(true); } });
     });
     return () => { alive = false; controller.abort(); };
-  }, [client, account, reload]);
+  }, [client, account, reload, onConnectionsChanged]);
 
   useEffect(() => {
     if (mode === "negotiation" && !negotiationEnabled) {

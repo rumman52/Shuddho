@@ -87,3 +87,15 @@ test("prompt starters populate the first-message composer without sending", asyn
     assert.match(tree.root.findByProps({ id: "rukh-first-message" }).props.value, /Research this topic/);
   });
 });
+
+
+test("signed-out Coworker uses the approved workspace navigation and New chat clears only its draft", async () => {
+  await withGate(undefined, async tree => {
+    assert.ok(tree.root.findByProps({ "aria-label": "Primary workspace navigation" }));
+    assert.ok(tree.root.findByProps({ className: "rukh-welcome" }));
+    assert.equal(tree.root.findByProps({ href: "/editor", className: "rukh-design-nav-link" }).children.length > 0, true);
+    await act(async () => tree.root.findByProps({ id: "rukh-first-message" }).props.onChange({ target: { value: "Unsent draft" } }));
+    await act(async () => tree.root.findByProps({ "aria-label": "New chat" }).props.onClick());
+    assert.equal(tree.root.findByProps({ id: "rukh-first-message" }).props.value, "");
+  });
+});
