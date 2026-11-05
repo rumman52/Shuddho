@@ -568,6 +568,7 @@ export default function App() {
               aria-expanded={editorContextOpen}
               onClick={() => { setMobileLibraryOpen(false); setEditorContextOpen(value => !value); }}
             >Activity &amp; context</button>}
+            {!coworkerEnabled && <a className="rukh-workspace-home" href="/workspaces" target="_blank" rel="noreferrer">All workspaces</a>}
           </div>
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
@@ -639,8 +640,8 @@ export default function App() {
             </div>
           </section>
         </div>
-        {editorContextOpen && <button className="rukh-editor-context-backdrop" type="button" aria-label="Dismiss activity and context panel" onClick={() => setEditorContextOpen(false)} />}
-        <aside id="rukh-editor-context" className={"rukh-editor-context-panel" + (editorContextOpen ? " is-open" : "")} aria-label="Activity and context" hidden={!editorContextOpen}>
+        {coworkerEnabled && editorContextOpen && <button className="rukh-editor-context-backdrop" type="button" aria-label="Dismiss activity and context panel" onClick={() => setEditorContextOpen(false)} />}
+        {coworkerEnabled && <aside id="rukh-editor-context" className={"rukh-editor-context-panel" + (editorContextOpen ? " is-open" : "")} aria-label="Activity and context" hidden={!editorContextOpen}>
           <header><h2>Activity &amp; context</h2><button type="button" aria-label="Close activity and context" onClick={() => setEditorContextOpen(false)}>×</button></header>
           <section><span>WORKSPACE</span><strong>{session?.user.email ?? "Personal workspace"}</strong><p>Your editor work stays in your private workspace.</p></section>
           <section><span>PROJECT CONTEXT</span><p>{originProjectId ? "This editor is linked to a project." : "No project is linked to this draft."}</p></section>
@@ -649,7 +650,7 @@ export default function App() {
             {artifacts.length === 0 ? <p>No generated outputs are available yet.</p> : <ul>{artifacts.slice(0, 3).map(item => <li key={item.artifact.id}><button type="button" disabled={Boolean(busy)} onClick={() => void openArtifact(item)}>{item.artifact.filename}</button></li>)}</ul>}
           </section>
           <p className="rukh-editor-context-note">Website preview runs in an isolated sandbox. Saving stores a private source file; it does not publish the website.</p>
-        </aside>
+        </aside>}
       </div>
     </ErrorBoundary>
   );
