@@ -57,4 +57,5 @@
 - Real AI provider response, live project isolation, and production alias/revision are not verified by this frontend change.
 - The frontend Coworker entry is enabled by default; setting `VITE_COWORKER_ENABLED=false` is the explicit UI rollback. This does not enable backend execution: `SHUDDHO_COWORKER_ENABLED` and the dependent backend service gates remain default-off until separately qualified.
 - No production secrets, live database migration, backend provider enablement, paid resource, or production promotion was performed.
+- Vercel GitHub integration produced a Ready preview for an earlier branch revision (`53c8ab65aa826b23484b91bf44ce343ecde8a042`). Later preview deployment attempts failed because the Hobby plan reached its 100-deployments-per-day limit. The available preview alias may therefore be stale and must not be treated as the latest branch revision.
 - The connected Vercel API still does not expose the existing Rukh project to this connection. Hosted preview and production qualification remain separate release steps.
