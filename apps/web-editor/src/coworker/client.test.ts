@@ -456,6 +456,29 @@ test("conversation reply stream enforces the 16 KB UTF-8 response limit", async 
 });
 
 
+
+test("source text documents reject a response with a mismatched SHA-256 digest", async () => {
+  const original = globalThis.fetch;
+  const bytes = new TextEncoder().encode("tampered body");
+  globalThis.fetch = (async () => new Response(bytes)) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-document-token");
+    const document = {
+      id: "00000000-0000-4000-8000-000000000000",
+      filename: "notes.txt",
+      kind: "txt",
+      state: "uploaded",
+      byte_size: bytes.byteLength,
+      sha256: "0".repeat(64),
+    };
+    const read = (client as unknown as { readTextDocument: (value: typeof document) => Promise<string> }).readTextDocument;
+    await assert.rejects(read.call(client, document), /failed its integrity check/i);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+
 test("source text documents are read through the owner-authenticated content route and SHA-256 is verified", async () => {
   const original = globalThis.fetch;
   const seen: { url: string; options?: RequestInit }[] = [];
