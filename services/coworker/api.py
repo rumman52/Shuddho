@@ -8,7 +8,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Annotated
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response
@@ -2375,6 +2375,35 @@ async def upload_content(document_id: UUID, request: Request, identity: Identity
         raise CoworkerError("file_type_mismatch", "The file content does not match its extension.", 415)
     await run_in_threadpool(services.storage.put, item["object_key"], bytes(body), "application/octet-stream")
     return await run_in_threadpool(services.repository.finish_upload, identity.account_id, str(document_id))
+
+
+@router.get("/documents/{document_id}/content")
+async def download_document_content(document_id: UUID, identity: Identity, services: Services):
+    item = await run_in_threadpool(services.repository.get_upload, identity.account_id, str(document_id))
+    if item["state"] != "uploaded":
+        raise CoworkerError("upload_incomplete", "This document upload has not completed.", 409)
+    try:
+        body = await run_in_threadpool(
+            services.storage.get,
+            item["object_key"],
+            min(item["byte_size"], services.settings.max_upload_bytes),
+        )
+    except CoworkerError:
+        raise
+    except Exception as exc:
+        raise CoworkerError("document_invalid", "The stored document is unavailable or could not be verified.", 503) from exc
+    digest = hashlib.sha256(body).hexdigest()
+    if len(body) != item["byte_size"] or not hmac.compare_digest(digest, item["sha256"]):
+        raise CoworkerError("document_invalid", "The stored document failed its integrity check. Upload it again.", 503)
+    kind = item["kind"].lower()
+    media_type = "text/plain; charset=utf-8" if kind == "txt" else "text/csv; charset=utf-8" if kind == "csv" else "application/octet-stream"
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": "attachment; filename*=UTF-8''" + quote(item["filename"], safe=""),
+        "ETag": '"' + item["sha256"] + '"',
+    }
+    return Response(content=body, media_type=media_type, headers=headers)
 
 
 @router.post("/tasks", status_code=202)
