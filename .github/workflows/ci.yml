@@ -370,16 +370,38 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_browser_test
           VITE_COWORKER_API_BASE_URL: http://127.0.0.1:8000
         run: |
+          set -euo pipefail
           mkdir -p "$SHUDDHO_TEST_WORKDIR"
           PYTHONPATH=. uv run --extra coworker python tests/coworker_browser_server.py > "$SHUDDHO_TEST_WORKDIR/backend.log" 2>&1 &
           fixture_pid=$!
           npm run dev --workspace @shuddho/web-editor -- --host 127.0.0.1 > "$SHUDDHO_TEST_WORKDIR/frontend.log" 2>&1 &
           editor_pid=$!
-          trap 'kill "$fixture_pid" "$editor_pid" 2>/dev/null || true' EXIT
+          trap '
+            status=$?
+            kill "$fixture_pid" "$editor_pid" 2>/dev/null || true
+            wait "$fixture_pid" "$editor_pid" 2>/dev/null || true
+            if [ "$status" -ne 0 ]; then
+              echo "Browser workflow failed; backend startup/runtime log:"
+              cat "$SHUDDHO_TEST_WORKDIR/backend.log" || true
+              echo "Frontend startup/runtime log:"
+              cat "$SHUDDHO_TEST_WORKDIR/frontend.log" || true
+            fi
+            exit "$status"
+          ' EXIT
+
+          backend_ready=false
+          frontend_ready=false
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null && curl -fsS http://127.0.0.1:5173/ >/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then backend_ready=true; fi
+            if curl -fsS http://127.0.0.1:5173/ >/dev/null 2>&1; then frontend_ready=true; fi
+            if [ "$backend_ready" = true ] && [ "$frontend_ready" = true ]; then break; fi
             sleep 1
           done
+
+          if [ "$backend_ready" != true ] || [ "$frontend_ready" != true ]; then
+            echo "Browser test services did not become ready within 60 seconds (backend=$backend_ready, frontend=$frontend_ready)."
+            exit 1
+          fi
           node apps/web-editor/test/coworker-browser.mjs
       - name: Keep browser screenshots
         if: always()
