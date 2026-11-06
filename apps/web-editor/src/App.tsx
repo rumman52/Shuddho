@@ -234,7 +234,7 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const focusable = () => panel?.querySelectorAll<HTMLElement>(
-      "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex='-1'])"
+      "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),summary,[contenteditable='true'],[tabindex]:not([tabindex='-1'])"
     ) ?? [];
     const frame = window.requestAnimationFrame(() => (reviewCloseRef.current ?? focusable()[0])?.focus());
     function onKeyDown(event: KeyboardEvent) {
