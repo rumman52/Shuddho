@@ -42,7 +42,7 @@ function formatDocumentSize(bytes: number): string {
 }
 
 function isEditableSourceDocument(source: SourceDocument): boolean {
-  return source.kind.toLowerCase() === "txt" && source.filename.toLowerCase().endsWith(".txt") && source.byte_size <= 1024 * 1024;
+  return (source.kind?.toLowerCase() === "txt" || (!source.kind && source.filename.toLowerCase().endsWith(".txt"))) && source.filename.toLowerCase().endsWith(".txt") && source.byte_size <= 1024 * 1024;
 }
 
 
@@ -333,7 +333,7 @@ export default function App() {
       id: source.id,
       filename: source.filename,
       createdAt: source.created_at,
-      preview: source.kind.toUpperCase() + " document · " + formatDocumentSize(source.byte_size),
+      preview: (source.kind?.toUpperCase() || "FILE") + " document · " + formatDocumentSize(source.byte_size),
       source,
     }));
     const generated: WritingLibraryItem[] = artifacts.map(artifactItem => ({
@@ -897,7 +897,7 @@ export default function App() {
                     {filteredLibraryItems.map(item => {
                       const isSource = item.kind === "source";
                       const canOpen = isSource ? isEditableSourceDocument(item.source) : isTextArtifact(item.artifactItem.artifact);
-                      const typeLabel = isSource ? item.source.kind.toUpperCase() : "AI OUTPUT";
+                      const typeLabel = isSource ? (item.source.kind?.toUpperCase() || "FILE") : "AI OUTPUT";
                       const busyForItem = busy === item.id;
                       const preview = item.preview.length > 180 ? item.preview.slice(0, 177) + "…" : item.preview;
                       return (
