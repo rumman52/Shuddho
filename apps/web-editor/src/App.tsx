@@ -210,6 +210,9 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
   const queuedAnalysisRef = pendingSnapshotRef;
   const apiCheckReachableRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const reviewToggleRef = useRef<HTMLButtonElement | null>(null);
+  const reviewCloseRef = useRef<HTMLButtonElement | null>(null);
+  const reviewPanelRef = useRef<HTMLElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisRequestState>("idle");
   const [apiCheckDiagnostic, setApiCheckDiagnostic] = useState<ApiCheckDiagnostic>(
@@ -224,6 +227,43 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
   const [loadedCompetitionFixtureId, setLoadedCompetitionFixtureId] = useState<string | null>(null);
   const [competitionReviewDurationMs, setCompetitionReviewDurationMs] = useState<number | null>(null);
   const competitionDemoActive = COMPETITION_DEMO_MODE && loadedCompetitionFixtureId !== null;
+
+  useEffect(() => {
+    if (!mobileReviewOpen || typeof window === "undefined" || typeof document === "undefined") return;
+    const panel = reviewPanelRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => panel?.querySelectorAll<HTMLElement>(
+      "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex='-1'])"
+    ) ?? [];
+    const frame = window.requestAnimationFrame(() => (reviewCloseRef.current ?? focusable()[0])?.focus());
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileReviewOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = Array.from(focusable());
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => reviewToggleRef.current?.focus());
+    };
+  }, [mobileReviewOpen]);
 
   const normalizedAnalysis = useMemo(
     () => normalizeAnalyzeResponse(analysis, text, mode),
@@ -1314,6 +1354,7 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
             <button
               type="button"
               className="review-toggle"
+              ref={reviewToggleRef}
               aria-controls="writing-review-panel"
               aria-expanded={mobileReviewOpen}
               onClick={() => setMobileReviewOpen(true)}
@@ -1496,18 +1537,23 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
 
         {mobileReviewOpen && <button type="button" className="review-panel-backdrop" aria-label="Close writing review" onClick={() => setMobileReviewOpen(false)} />}
         <aside
+          ref={reviewPanelRef}
           id="writing-review-panel"
+          role={mobileReviewOpen ? "dialog" : undefined}
+          aria-modal={mobileReviewOpen ? true : undefined}
+          aria-labelledby="writing-review-heading"
           className={`review-panel rukh-writing-review ${mobileReviewOpen ? "review-panel--open" : ""}`}
           aria-label="Writing review and suggestions"
         >
           <div className="review-panel__header">
             <div>
-              <h2>Suggestions</h2>
+              <h2 id="writing-review-heading">Suggestions</h2>
               <p className="review-count">{suggestions.length} suggestions</p>
             </div>
             <button
               type="button"
               className="review-close"
+              ref={reviewCloseRef}
               aria-label="Close writing review"
               onClick={() => setMobileReviewOpen(false)}
             >
