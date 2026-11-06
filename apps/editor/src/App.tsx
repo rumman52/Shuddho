@@ -890,7 +890,7 @@ export default function App() {
                 {documentsError && <p className="rukh-documents-message rukh-documents-message--error" role="alert">{documentsError}</p>}
                 {libraryError && <p className="rukh-documents-message rukh-documents-message--error" role="alert">{libraryError}</p>}
                 {notice && <p className="rukh-documents-message" role="status">{notice}</p>}
-                {documentsLoading || libraryLoading ? (
+                {authLoading || documentsLoading || libraryLoading ? (
                   <div className="rukh-document-empty-state" role="status">Loading your documents…</div>
                 ) : filteredLibraryItems.length ? (
                   <section className="rukh-document-grid" aria-label="Saved documents">
