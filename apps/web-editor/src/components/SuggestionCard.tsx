@@ -47,7 +47,7 @@ export function SuggestionCard({
   const hasReplacement = replacementOptions.length > 0;
 
   return (
-    <article className="suggestion-card">
+    <article className="suggestion-card" data-category={displaySuggestionType(suggestion).toLowerCase()}>
       <div className="suggestion-card__header">
         <span className="suggestion-card__type">
           <span className="issue-dot" aria-hidden="true" />
