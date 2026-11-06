@@ -127,6 +127,10 @@ try {
   await page.locator(".rukh-editor-topbar-heading strong").getByText("Writing Assistant", { exact: true }).waitFor();
   await page.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: /^Review ·/ }).click();
+  await page.locator(".rukh-writing-review.review-panel--open").waitFor();
+  await page.getByRole("button", { name: "Close writing review" }).click();
+  await page.locator(".rukh-writing-review:not(.review-panel--open)").waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/writing-assistant-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
