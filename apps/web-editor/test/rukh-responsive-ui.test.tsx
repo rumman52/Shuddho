@@ -31,9 +31,9 @@ test("Coworker exposes mobile controls for conversation history and Context", ()
 
 test("Coworker and Fly use distinct canonical routes in primary navigation", () => {
   const flyHtml = renderToString(<WorkspaceNavigation active="sandbox" onNavigate={() => undefined} />);
-  assert.match(flyHtml, /href="\\/coworker"/);
-  assert.match(flyHtml, /href="\\/fly"/);
-  assert.match(flyHtml, /href="\\/writing"/);
+  assert.match(flyHtml, /href="\/coworker"/);
+  assert.match(flyHtml, /href="\/fly"/);
+  assert.match(flyHtml, /href="\/writing"/);
   assert.match(flyHtml, /aria-current="page"/);
 });
 
