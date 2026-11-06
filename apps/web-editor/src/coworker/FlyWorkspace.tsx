@@ -539,11 +539,6 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     const baseline = savedSnapshots[file.id];
     return baseline === undefined ? !file.saved : baseline !== file.content;
   });
-  const activeBaseline = active ? savedSnapshots[active.id] : undefined;
-  const activeDiff = activeBaseline === undefined || !active
-    ? null
-    : buildLineDiff(activeBaseline, active.content);
-
   return <section className="rukh-fly-workspace" aria-label="Fly code workspace">
     <header className="rukh-fly-v2-topbar">
       <div className="rukh-fly-v2-brand">
