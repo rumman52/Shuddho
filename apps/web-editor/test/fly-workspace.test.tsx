@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
 import { renderToString } from "react-dom/server.browser";
-import FlyWorkspace from "../src/coworker/FlyWorkspace";
+import FlyWorkspace, { normalizeStoredDraft } from "../src/coworker/FlyWorkspace";
 import type { CoworkerClient } from "../src/coworker/client";
 
 test("Fly renders a code workspace with clear execution and repository boundaries", () => {
@@ -14,4 +14,36 @@ test("Fly renders a code workspace with clear execution and repository boundarie
   assert.match(html, /Ask Rukh to review/);
   assert.match(html, /Terminal output/);
   assert.match(html, /Git clone\/push/);
+});
+
+
+test("Fly restores only valid source files and falls back to a valid active file", () => {
+  const draft = normalizeStoredDraft({
+    activeId: "missing-file",
+    files: [
+      {
+        id: "valid-html",
+        name: "../index.html",
+        language: "html",
+        content: "<h1>Saved source</h1>",
+        saved: { documentId: "doc-1", versionId: "version-1", sha256: "abc123", filename: "index.html" },
+      },
+      { id: "invalid-language", name: "bad.exe", language: "exe", content: "not executable" },
+      { id: "oversized", name: "large.txt", language: "text", content: "x".repeat(512 * 1024 + 1) },
+    ],
+  });
+
+  assert.equal(draft.files.length, 1);
+  assert.equal(draft.files[0].id, "valid-html");
+  assert.equal(draft.files[0].name, "index.html");
+  assert.equal(draft.files[0].saved?.documentId, "doc-1");
+  assert.equal(draft.activeId, "valid-html");
+});
+
+test("Fly malformed stored drafts safely restore the starter file", () => {
+  const draft = normalizeStoredDraft({ files: "not-an-array", activeId: "missing" });
+  assert.equal(draft.files.length, 1);
+  assert.equal(draft.files[0].id, "fly-main");
+  assert.equal(draft.files[0].name, "main.py");
+  assert.equal(draft.activeId, "fly-main");
 });

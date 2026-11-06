@@ -43,25 +43,42 @@ function languageForFilename(name: string): FlyLanguage {
   if (["sh", "bash"].includes(ext)) return "shell";
   return "text";
 }
+export function normalizeStoredDraft(value: unknown): FlyDraft {
+  const fallback: FlyDraft = { files: [DEFAULT_FILE], activeId: DEFAULT_FILE.id };
+  if (!value || typeof value !== "object") return fallback;
+  const parsed = value as { files?: unknown; activeId?: unknown };
+  if (!Array.isArray(parsed.files)) return fallback;
+
+  const files = parsed.files.filter((item: unknown): item is FlyFile => {
+    if (!item || typeof item !== "object") return false;
+    const file = item as Record<string, unknown>;
+    return typeof file.id === "string" && typeof file.name === "string" && typeof file.content === "string" &&
+      encodedBytes(file.content) <= MAX_FILE_BYTES && typeof file.language === "string" &&
+      languageOptions.some(option => option.value === file.language);
+  }).slice(0, MAX_FILES).map((file: FlyFile) => {
+    const savedValue: unknown = file.saved;
+    const saved = savedValue && typeof savedValue === "object" &&
+      "documentId" in savedValue && typeof savedValue.documentId === "string" &&
+      "versionId" in savedValue && typeof savedValue.versionId === "string" &&
+      "sha256" in savedValue && typeof savedValue.sha256 === "string" &&
+      "filename" in savedValue && typeof savedValue.filename === "string"
+      ? savedValue as SavedSource
+      : undefined;
+    return { ...file, name: safeFilename(file.name), saved };
+  });
+
+  if (!files.length) return fallback;
+  const activeId = typeof parsed.activeId === "string" && files.some(file => file.id === parsed.activeId)
+    ? parsed.activeId
+    : files[0].id;
+  return { files, activeId };
+}
+
 function readDraft(accountId: string): FlyDraft {
   const fallback: FlyDraft = { files: [DEFAULT_FILE], activeId: DEFAULT_FILE.id };
   if (typeof window === "undefined") return fallback;
   try {
-    const parsed = JSON.parse(window.sessionStorage.getItem(storageKey(accountId)) ?? "null");
-    if (!parsed || !Array.isArray(parsed.files)) return fallback;
-    const files = parsed.files.filter((item: unknown): item is FlyFile => {
-      if (!item || typeof item !== "object") return false;
-      const file = item as FlyFile;
-      return typeof file.id === "string" && typeof file.name === "string" && typeof file.content === "string" &&
-        encodedBytes(file.content) <= MAX_FILE_BYTES && languageOptions.some(option => option.value === file.language);
-    }).slice(0, MAX_FILES).map(file => {
-      const saved = file.saved && typeof file.saved.documentId === "string" && typeof file.saved.versionId === "string" &&
-        typeof file.saved.sha256 === "string" && typeof file.saved.filename === "string" ? file.saved : undefined;
-      return { ...file, name: safeFilename(file.name), saved };
-    });
-    if (!files.length) return fallback;
-    const activeId = files.some(file => file.id === parsed.activeId) ? parsed.activeId : files[0].id;
-    return { files, activeId };
+    return normalizeStoredDraft(JSON.parse(window.sessionStorage.getItem(storageKey(accountId)) ?? "null"));
   } catch { return fallback; }
 }
 async function sha256(value: string) {
