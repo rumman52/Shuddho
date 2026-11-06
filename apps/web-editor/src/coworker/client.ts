@@ -387,7 +387,7 @@ export type Workspace = {
   account_id: string; workspace_name: string; preferences: { language?: string; writing_goal?: string; tone_goal?: string; personal_dictionary?: string[] };
   usage: { tasks_today: number }; limits: { daily_tasks: number; upload_bytes: number };
 };
-export type SourceDocument = { id: string; version_id: string; filename: string; kind: string; state: string; byte_size: number; sha256: string; created_at?: string };
+export type SourceDocument = { id: string; version_id?: string; filename: string; kind?: string; state: string; byte_size: number; sha256?: string; created_at?: string };
 export type TaskInput = { skill_id?: SkillId; instruction: string; notes: string; document_ids: string[]; output_language: string; research?: ResearchOptions };
 export type ProgressEvent = { sequence: number; state: TaskState; phase: string; message: string };
 export const terminal = (state: TaskState) => ["completed", "needs_input", "failed", "cancelled"].includes(state);
@@ -1111,13 +1111,13 @@ export class CoworkerClient {
    * browser independently verifies the returned bytes before decoding UTF-8.
    */
   async readTextDocument(source: SourceDocument, signal?: AbortSignal): Promise<string> {
-    if (source.kind !== "txt" || !source.filename.toLowerCase().endsWith(".txt")) {
+    if ((source.kind && source.kind !== "txt") || !source.filename.toLowerCase().endsWith(".txt")) {
       throw new WorkspaceError("Only plain-text TXT files can be opened in the editor.");
     }
     if (!Number.isSafeInteger(source.byte_size) || source.byte_size < 0 || source.byte_size > MAX_TEXT_ARTIFACT_BYTES) {
       throw new WorkspaceError("This text file is too large to preview. Download it instead.");
     }
-    if (!/^[a-f0-9]{64}$/i.test(source.sha256)) {
+    if (!source.sha256 || !/^[a-f0-9]{64}$/i.test(source.sha256)) {
       throw new WorkspaceError("This file is missing a valid integrity checksum.");
     }
     const id = identifier(source.id);
@@ -1143,7 +1143,7 @@ export class CoworkerClient {
     if (!Number.isSafeInteger(source.byte_size) || source.byte_size < 1 || source.byte_size > MAX_SOURCE_DOCUMENT_BYTES) {
       throw new WorkspaceError("This source file exceeds the 8 MB download limit.");
     }
-    if (!/^[a-f0-9]{64}$/i.test(source.sha256)) {
+    if (source.sha256 && !/^[a-f0-9]{64}$/i.test(source.sha256)) {
       throw new WorkspaceError("This file is missing a valid integrity checksum.");
     }
     const id = identifier(source.id);
