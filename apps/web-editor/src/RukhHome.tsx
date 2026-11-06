@@ -35,7 +35,6 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
         <nav className="rukh-home-nav" aria-label="Workspace navigation">
           <a href="/coworker">AI Coworker</a>
           <a href="/fly">Fly</a>
-          <a href="/editor">Web Editor</a>
           <a href="/writing">Writing Assistant</a>
         </nav>
         <ThemeToggle />
@@ -107,27 +106,6 @@ export default function RukhHome({ coworkerEnabled }: RukhHomeProps) {
             <div className="rukh-home-product-footer">
               <p>Local drafts remain in this browser tab until saved to Rukh Files.</p>
               <a className="rukh-home-action" href="/fly">Open Fly <ArrowIcon /></a>
-            </div>
-          </article>
-
-          <article className="rukh-home-product rukh-home-product--editor">
-            <div className="rukh-home-product-top">
-              <span className="rukh-home-product-icon"><EditorIcon /></span>
-              <span className="rukh-home-product-status rukh-home-product-status--active">Available</span>
-            </div>
-            <div className="rukh-home-product-copy">
-              <h2>Web Editor</h2>
-              <p>Design and refine websites with visual layers, HTML source editing and an isolated preview. Saving stores a private source file; it does not publish your website.</p>
-            </div>
-            <div className="rukh-home-editor-preview" aria-hidden="true">
-              <div className="rukh-home-editor-preview-heading"><span>WEBSITE CANVAS</span><span>PRIVATE DRAFT</span></div>
-              <h3>Your next page, in view.</h3>
-              <p>Shape a layout, inspect HTML and CSS, and review the isolated preview before exporting.</p>
-              <div className="rukh-home-editor-preview-checks" aria-label="Website editor features"><span>HTML</span><span>CSS</span><span>Preview</span></div>
-            </div>
-            <div className="rukh-home-product-footer">
-              <p>Preview and refine your website without publishing it.</p>
-              <a className="rukh-home-action" href="/editor">Open Web Editor <ArrowIcon /></a>
             </div>
           </article>
 

@@ -20,17 +20,20 @@ test("Coworker exposes mobile controls for conversation history and Context", ()
   );
   assert.match(html, /aria-label="Open navigation"/);
   assert.match(html, /aria-controls="rukh-conversation-list"/);
-  assert.match(html, /href="\/editor"/);
+  assert.match(html, /href="\/fly"/);
+  assert.match(html, /href="\/writing"/);
+  assert.doesNotMatch(html, /href="\/editor"/);
   assert.match(html, /Projects/);
   assert.match(html, /aria-label="Open workspace context"/);
   assert.match(html, /aria-controls="rukh-context-panel"/);
 });
 
-test("Web Editor exposes a mobile Recent files drawer control", () => {
+test("Writing Assistant exposes a mobile Recent files drawer control", () => {
   const html = renderToString(<Editor />);
   assert.match(html, /aria-label="Open navigation"/);
   assert.match(html, /aria-controls="rukh-editor-library"/);
   assert.match(html, /aria-expanded="false"/);
+  assert.doesNotMatch(html, /Web Editor/);
 });
 
 test("theme preference is restored and persisted without requiring a backend", () => {

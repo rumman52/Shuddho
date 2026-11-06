@@ -17,7 +17,6 @@ const tests = [
   "src/coworker/client.test.ts",
   "src/coworker/CoworkerGate.test.tsx",
   "src/coworker/CoworkerWorkspace.test.tsx",
-  "src/coworker/websiteEditorPersistence.test.tsx",
   "src/coworker/refreshOrder.test.ts",
   "src/coworker/conversationIdentity.test.tsx",
   "src/coworker/conversationUsability.test.tsx",
@@ -74,7 +73,7 @@ for (const testFile of tests) {
       "import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY": '""',
       "import.meta.env.VITE_COWORKER_API_BASE_URL": '"/backend"',
       "import.meta.env.VITE_COWORKER_APP_URL": '"/coworker"',
-      "import.meta.env.VITE_EDITOR_APP_URL": '"/editor"',
+      "import.meta.env.VITE_EDITOR_APP_URL": '"/writing"',
     },
   });
   await import(pathToFileURL(outfile));

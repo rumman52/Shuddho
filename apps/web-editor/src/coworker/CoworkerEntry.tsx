@@ -64,7 +64,6 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
       <nav aria-label="Primary workspace navigation">
         <button type="button" className="rukh-design-nav-link is-active" aria-current="page" onClick={() => setNavigationOpen(false)}><NavigationIcon name="chat" />Coworker</button>
         <a href="/fly" className="rukh-design-nav-link"><NavigationIcon name="terminal" />Fly</a>
-        <a href="/editor" className="rukh-design-nav-link"><NavigationIcon name="layout" />Web Editor</a>
         <a href="/writing" className="rukh-design-nav-link"><NavigationIcon name="file-text" />Writing Assistant</a>
         <button type="button" className="rukh-design-nav-link" disabled title="Projects are not available yet"><NavigationIcon name="folder" />Projects<small>Unavailable</small></button>
         <button type="button" className="rukh-design-nav-link" onClick={accountAccess}><NavigationIcon name="grid" />Plugins</button>

@@ -10,7 +10,7 @@ import "../../../packages/design-system/src/tokens.css";
 import "./coworker/approved-design.css";
 
 const CoworkerStandalone = lazy(() => import("../../coworker/src/App"));
-const EditorStandalone = lazy(() => import("../../editor/src/App"));
+const WritingStandalone = lazy(() => import("../../editor/src/App"));
 
 export default function WorkspaceShell() {
   const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";
@@ -27,10 +27,10 @@ export default function WorkspaceShell() {
     );
   }
 
-  if (route === "editor") {
+  if (route === "writing") {
     return (
-      <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh AI Web Editor…</p>}>
-        <EditorStandalone />
+      <Suspense fallback={<p className="cw-loading" role="status">Opening Rukh AI Writing Assistant…</p>}>
+        <WritingStandalone />
       </Suspense>
     );
   }
