@@ -1242,6 +1242,7 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 .rukh-documents-search input::placeholder { color: var(--rukh-muted); opacity: .8; }
 .rukh-documents-search input:focus-visible { outline: 0; box-shadow: none; }
 .rukh-documents-count { color: var(--rukh-muted); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.rukh-documents-section-title { margin: 0 0 -8px; color: var(--rukh-muted); font-size: 13px; font-weight: 650; letter-spacing: -.01em; }
 .rukh-documents-session-status { color: var(--rukh-muted); font-size: 10px; font-weight: 600; }
 .rukh-editor-back-button {
   min-height: 34px;
