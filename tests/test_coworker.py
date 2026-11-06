@@ -3874,3 +3874,36 @@ def test_model_usage_metadata_rejects_boolean_token_counts(container):
     assert result.total_tokens == 21
     assert result.input_tokens is None
     assert result.output_tokens == 20
+
+
+def test_uploaded_source_content_is_owner_scoped_and_integrity_checked(signed_client, container):
+    client, headers = signed_client
+    owner_headers, other_headers = headers(), headers("bob")
+    body = "Private writing draft: বাংলা লেখা।".encode("utf-8")
+    upload = client.post(
+        "/api/v1/documents",
+        headers=owner_headers,
+        json={
+            "filename": "writing-draft.txt",
+            "byte_size": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
+        },
+    )
+    assert upload.status_code == 201
+    document = upload.json()
+    path = f'/api/v1/documents/{document["id"]}/content'
+    assert client.put(path, headers=owner_headers, content=body).status_code == 200
+
+    downloaded = client.get(path, headers=owner_headers)
+    assert downloaded.status_code == 200
+    assert downloaded.content == body
+    assert downloaded.headers["content-type"].startswith("text/plain")
+    assert downloaded.headers["cache-control"] == "no-store"
+    assert downloaded.headers["x-content-type-options"] == "nosniff"
+    assert client.get(path, headers=other_headers).status_code == 404
+
+    stored = container.repository.get_upload(principal().account_id, document["id"])
+    container.storage.put(stored["object_key"], b"tampered", "text/plain")
+    invalid = client.get(path, headers=owner_headers)
+    assert invalid.status_code == 503
+    assert invalid.json()["error"]["code"] == "document_invalid"
