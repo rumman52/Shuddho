@@ -1115,8 +1115,7 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 .rukh-writing-library-nav button.is-active > span { color: var(--rukh-accent); }
 
 .rukh-document-dashboard {
-  grid-column: 2;
-  grid-row: 2;
+  grid-area: canvas;
   display: flex;
   flex-direction: column;
   min-width: 0;
