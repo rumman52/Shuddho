@@ -84,6 +84,9 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   const [newChatRevision, setNewChatRevision] = useState(0);
   const [view, setView] = useState<CoworkerView>(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
+    // An explicit Fly deep link wins over a saved, unsent Coworker draft.
+    // Previously the draft forced /fly to mount Coworker instead.
+    if (typeof window !== "undefined" && String(window.location?.pathname ?? "").replace(/\/+$/, "") === "/fly") return "sandbox";
     if (initialDraft.trim()) return "conversations";
     if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search);
     return "conversations";

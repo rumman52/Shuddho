@@ -47,6 +47,14 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/coworker-entry-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
+  // Signed-out navigation must work too: the Coworker control on /fly
+  // previously did nothing except close the mobile menu.
+  await page.getByRole("link", { name: "Fly", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/fly");
+  await page.getByRole("main", { name: "Rukh AI Fly" }).waitFor();
+  await page.getByRole("link", { name: "Coworker", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/coworker");
+  await page.getByRole("main", { name: "Rukh AI Coworker" }).waitFor();
   await page.locator("#rukh-first-message").fill("Please help me prepare a short project update.");
   await page.getByRole("button", { name: "Continue to sign in" }).click();
   await page.getByRole("heading", { name: /^Welcome back\.?$/ }).waitFor();
@@ -84,6 +92,28 @@ try {
   await page.getByRole("region", { name: "Terminal output" }).waitFor();
   await page.getByRole("textbox", { name: "Ask Rukh about this code" }).waitFor();
   await page.locator(".rukh-fly-runtime-badge").waitFor();
+  // A Fly → Coworker switch must change both the visible application and its
+  // canonical URL. Otherwise a refresh silently reopens Fly.
+  await page.getByRole("link", { name: "Coworker", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/coworker");
+  const restoredComposer = page.locator("#cw-conversation-message");
+  await restoredComposer.waitFor();
+  await restoredComposer.fill("My unsent Coworker text should not redirect Fly back to Coworker.");
+  assert.equal(await restoredComposer.inputValue(), "My unsent Coworker text should not redirect Fly back to Coworker.");
+
+  // A stored Coworker draft must not override an explicit /fly deep link,
+  // even after a full reload. Verify both directions repeatedly.
+  await navigateWorkspace(page, "Fly");
+  await page.waitForURL(url => url.pathname === "/fly");
+  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.reload();
+  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("link", { name: "Coworker", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/coworker");
+  await page.locator("#cw-conversation-message").waitFor();
+  await navigateWorkspace(page, "Fly");
+  await page.waitForURL(url => url.pathname === "/fly");
+  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
   await navigateWorkspace(page, "Files & drafts");
   await page.getByLabel("Your notes").fill("The team completed 12 reviews on 10 September 2026.");
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });

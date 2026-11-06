@@ -5,6 +5,8 @@ import { renderToString } from "react-dom/server.browser";
 import ThemeToggle from "../src/components/ThemeToggle";
 import { initializeRukhTheme, saveRukhTheme } from "../src/lib/theme";
 import ConversationWorkspace from "../src/coworker/ConversationWorkspace";
+import CoworkerEntry from "../src/coworker/CoworkerEntry";
+import WorkspaceNavigation from "../src/coworker/WorkspaceNavigation";
 import type { CoworkerClient } from "../src/coworker/client";
 import Editor from "../../editor/src/App";
 
@@ -26,6 +28,32 @@ test("Coworker exposes mobile controls for conversation history and Context", ()
   assert.match(html, /Projects/);
   assert.match(html, /aria-label="Open workspace context"/);
   assert.match(html, /aria-controls="rukh-context-panel"/);
+});
+
+test("Coworker and Fly use distinct canonical routes in primary navigation", () => {
+  const flyHtml = renderToString(<WorkspaceNavigation active="sandbox" onNavigate={() => undefined} />);
+  assert.match(flyHtml, /href="\/coworker"/);
+  assert.match(flyHtml, /href="\/fly"/);
+  assert.match(flyHtml, /href="\/writing"/);
+  assert.match(flyHtml, /aria-current="page"/);
+});
+
+test("signed-out Fly and Coworker entry screens expose working, correctly highlighted route links", () => {
+  const props = {
+    authConfigured: false,
+    loading: false,
+    draft: "",
+    error: "",
+    onDraftChange: () => undefined,
+    onSubmit: () => undefined,
+    onOpenSignIn: () => undefined,
+  };
+  const flyHtml = renderToString(<CoworkerEntry {...props} workspaceIntent="fly" />);
+  assert.match(flyHtml, /href="\/coworker" class="rukh-design-nav-link"/);
+  assert.match(flyHtml, /href="\/fly" class="rukh-design-nav-link is-active" aria-current="page"/);
+  const coworkerHtml = renderToString(<CoworkerEntry {...props} workspaceIntent="coworker" />);
+  assert.match(coworkerHtml, /href="\/coworker" class="rukh-design-nav-link is-active" aria-current="page"/);
+  assert.match(coworkerHtml, /href="\/fly" class="rukh-design-nav-link"/);
 });
 
 test("Writing Assistant exposes a mobile Recent files drawer control", () => {

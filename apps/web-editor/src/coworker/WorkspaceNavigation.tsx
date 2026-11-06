@@ -12,7 +12,7 @@ export default function WorkspaceNavigation({ active, onNavigate, writingHref = 
   }
   return <>
     <nav aria-label="Primary workspace navigation">
-      {item("conversations", "Coworker", "chat")}
+      <a href="/coworker" className={"rukh-design-nav-link" + (active === "conversations" ? " is-active" : "")} aria-current={active === "conversations" ? "page" : undefined}><NavigationIcon name="chat" />Coworker</a>
       <a href="/fly" className={"rukh-design-nav-link" + (active === "sandbox" ? " is-active" : "")} aria-current={active === "sandbox" ? "page" : undefined}><NavigationIcon name="terminal" />Fly</a>
       <a href={writingHref} className={"rukh-design-nav-link" + (active === "writing" ? " is-active" : "")} aria-current={active === "writing" ? "page" : undefined}><NavigationIcon name="file-text" />Writing Assistant</a>
       {item("projects", "Projects", "folder")}
