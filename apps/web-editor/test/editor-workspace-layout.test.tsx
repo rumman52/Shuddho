@@ -11,6 +11,7 @@ test("Writing Assistant keeps Coworker navigation and presents recent files befo
   assert.match(html, /AI Coworker/);
   assert.match(html, /Recent files/);
   assert.match(html, /aria-label="Writing editor"/);
+  assert.doesNotMatch(html, /Web Editor/);
 
   const libraryIndex = html.indexOf('class="rukh-editor-library"');
   const canvasIndex = html.indexOf('class="rukh-editor-canvas"');
