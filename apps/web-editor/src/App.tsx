@@ -1475,7 +1475,7 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
                 ref={textareaRef}
                 className="editor-textarea"
                 aria-label="Bangla editor"
-                placeholder="এখানে বাংলা লেখা শুরু করুন। Rukh Editor বানান, ব্যাকরণ, স্পষ্টতা ও প্রবাহ নিয়ে পরামর্শ দেবে।"
+                placeholder="এখানে বাংলা লেখা শুরু করুন। Rukh Writing Assistant বানান, ব্যাকরণ, স্পষ্টতা ও প্রবাহ নিয়ে পরামর্শ দেবে।"
                 value={text}
                 onChange={(event) => setText(event.target.value)}
                 onSelect={handleSelectionChange}
