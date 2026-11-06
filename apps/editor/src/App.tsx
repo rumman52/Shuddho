@@ -59,7 +59,7 @@ export default function App() {
   const [documentsError, setDocumentsError] = useState("");
   const [documentSearch, setDocumentSearch] = useState("");
   const [libraryView, setLibraryView] = useState<LibraryView>("documents");
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(!coworkerEnabled);
   const [recentConversations, setRecentConversations] = useState<ConversationRecord[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState("");
