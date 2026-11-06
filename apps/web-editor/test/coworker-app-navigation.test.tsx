@@ -4,7 +4,7 @@ import React from "react";
 import { renderToString } from "react-dom/server.browser";
 import CoworkerApp from "../../coworker/src/App";
 
-test("Coworker navigation keeps the workspace directory and Web Editor reachable", () => {
+test("Coworker navigation keeps the workspace directory, Fly and Writing Assistant reachable", () => {
   const html = renderToString(<CoworkerApp />);
 
   assert.match(html, /href="\/workspaces"/);
@@ -12,8 +12,8 @@ test("Coworker navigation keeps the workspace directory and Web Editor reachable
   assert.match(html, /aria-label="Primary workspace navigation"/);
   assert.match(html, /href="\/fly"/);
   assert.match(html, /Fly/);
-  assert.match(html, /href="\/editor"/);
-  assert.match(html, /Web Editor/);
+  assert.doesNotMatch(html, /href="\/editor"/);
+  assert.doesNotMatch(html, /Web Editor/);
   assert.match(html, /href="\/writing"/);
   assert.match(html, /Writing Assistant/);
   assert.match(html, /AI Coworker/);
