@@ -12,6 +12,7 @@ import App, {
   normalizeShallowHealthAfterSuccessfulCheck,
 } from "./App";
 import type { Suggestion } from "@shared/schemas/contracts";
+import { SuggestionCard } from "./components/SuggestionCard";
 import { analyzeText, setApiBaseUrlOverride } from "./lib/api";
 
 function suggestion(
@@ -41,11 +42,25 @@ function suggestion(
 test("App renders the professional writing workspace without waiting for backend data", () => {
   const html = renderToString(<App />);
 
-  assert.match(html, /Rukh Editor/);
+  assert.match(html, /Untitled document/);
   assert.match(html, /Multilingual Writing Studio/);
   assert.match(html, /Write in Bangla with context-aware review/);
-  assert.match(html, /Review suggestions/);
+  assert.match(html, /Writing review and suggestions/);
   assert.match(html, /Apply safe suggestions/);
+});
+
+test("Suggestion cards retain punctuation and spacing categories in the Grammarly-style inspector", () => {
+  const base = suggestion("category", 0, 1, "a", "b");
+  const props = {
+    onApply: () => undefined,
+    onDismiss: () => undefined,
+    onIgnoreForever: () => undefined,
+    onRewrite: () => undefined,
+  };
+  const punctuation = renderToString(<SuggestionCard {...props} suggestion={{ ...base, category: "punctuation" }} />);
+  const spacing = renderToString(<SuggestionCard {...props} suggestion={{ ...base, category: "spacing" }} />);
+  assert.match(punctuation, /data-category="punctuation"/);
+  assert.match(spacing, /data-category="spacing"/);
 });
 
 test("App keeps advanced settings and diagnostics outside the normal workspace", () => {

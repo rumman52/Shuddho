@@ -138,7 +138,7 @@ type SafeApplyResult = {
 
 type FriendlyStatus = { label: string; tone: "ok" | "warn" | "error" | "info" };
 
-export default function App({ initialText, onTextChange }: { initialText?: string; onTextChange?: (text: string) => void } = {}) {
+export default function App({ initialText, onTextChange, documentTitle }: { initialText?: string; onTextChange?: (text: string) => void; documentTitle?: string } = {}) {
   const [text, setText] = useState(initialText ?? INITIAL_TEXT);
   const [mode, setMode] = useState<AnalyzeMode>("standard");
   const [userId] = useState(loadOrCreateLocalUserId);
@@ -210,6 +210,9 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
   const queuedAnalysisRef = pendingSnapshotRef;
   const apiCheckReachableRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const reviewToggleRef = useRef<HTMLButtonElement | null>(null);
+  const reviewCloseRef = useRef<HTMLButtonElement | null>(null);
+  const reviewPanelRef = useRef<HTMLElement | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [analysisState, setAnalysisState] = useState<AnalysisRequestState>("idle");
   const [apiCheckDiagnostic, setApiCheckDiagnostic] = useState<ApiCheckDiagnostic>(
@@ -224,6 +227,44 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
   const [loadedCompetitionFixtureId, setLoadedCompetitionFixtureId] = useState<string | null>(null);
   const [competitionReviewDurationMs, setCompetitionReviewDurationMs] = useState<number | null>(null);
   const competitionDemoActive = COMPETITION_DEMO_MODE && loadedCompetitionFixtureId !== null;
+
+  useEffect(() => {
+    if (!mobileReviewOpen || typeof window === "undefined" || typeof document === "undefined") return;
+    const panel = reviewPanelRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => panel?.querySelectorAll<HTMLElement>(
+      "a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),summary,[contenteditable='true'],[tabindex]:not([tabindex='-1'])"
+    ) ?? [];
+    const frame = window.requestAnimationFrame(() => (reviewCloseRef.current ?? focusable()[0])?.focus());
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileReviewOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = Array.from(focusable());
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) { event.preventDefault(); return; }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => reviewToggleRef.current?.focus());
+    };
+  }, [mobileReviewOpen]);
 
   const normalizedAnalysis = useMemo(
     () => normalizeAnalyzeResponse(analysis, text, mode),
@@ -1193,13 +1234,13 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
   );
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <div className="brand-text" aria-label="Rukh Editor home">
-          <strong>Rukh Editor</strong>
+    <main className="app-shell rukh-writing-studio">
+      <header className="app-header rukh-writing-toolbar">
+        <div className="brand-text" aria-label="Rukh Writing Assistant document">
+          <strong>{documentTitle?.trim() || "Untitled document"}</strong>
           <span>Multilingual Writing Studio</span>
         </div>
-        <div className="header-actions" aria-label="Workspace actions">
+        <div className="header-actions" aria-label="Document review actions">
           <span
             className={`runtime-chip runtime-chip--${friendlyStatus.tone}`}
             role="status"
@@ -1253,10 +1294,10 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
       ) : null}
 
       <section
-        className="workspace"
+        className="workspace rukh-writing-workspace"
         aria-label="Bangla writing assistant workspace"
       >
-        <section className="editor-column" aria-label="Writing workspace">
+        <section className="editor-column rukh-writing-editor-column" aria-label="Writing workspace">
           {COMPETITION_DEMO_MODE ? (
             <CompetitionDemoPanel
               selectedFixtureId={selectedCompetitionFixtureId}
@@ -1269,7 +1310,7 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
               reviewDurationMs={competitionReviewDurationMs}
             />
           ) : null}
-          <div className="context-bar" aria-label="Writing context">
+          <div className="context-bar rukh-writing-context" aria-label="Writing preferences">
             <label className="context-item">
               <span>Writing goal</span>
               <select
@@ -1314,17 +1355,21 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
             <button
               type="button"
               className="review-toggle"
+              ref={reviewToggleRef}
+              aria-controls="writing-review-panel"
+              aria-expanded={mobileReviewOpen}
               onClick={() => setMobileReviewOpen(true)}
             >
               Review · {suggestions.length}
             </button>
           </div>
 
-          <article className="editor-card" aria-busy={isChecking}>
+          <article className="editor-card rukh-writing-document" aria-busy={isChecking}>
             <div className="editor-card__header">
               <div>
                 <p className="eyebrow">Document</p>
                 <h1>Write in Bangla with context-aware review</h1>
+                <p className="editor-card__subtitle">Keep your draft in focus while spelling, grammar, clarity and flow suggestions stay alongside it.</p>
               </div>
               <p className="editor-card__status">
                 {suggestions.length
@@ -1430,7 +1475,7 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
                 ref={textareaRef}
                 className="editor-textarea"
                 aria-label="Bangla editor"
-                placeholder="এখানে বাংলা লেখা শুরু করুন। Rukh Editor বানান, ব্যাকরণ, স্পষ্টতা ও প্রবাহ নিয়ে পরামর্শ দেবে।"
+                placeholder="এখানে বাংলা লেখা শুরু করুন। Rukh Writing Assistant বানান, ব্যাকরণ, স্পষ্টতা ও প্রবাহ নিয়ে পরামর্শ দেবে।"
                 value={text}
                 onChange={(event) => setText(event.target.value)}
                 onSelect={handleSelectionChange}
@@ -1458,7 +1503,7 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
           </article>
 
           {rewriteResult ? (
-            <section className="rewrite-panel" aria-label="Rewrite options">
+            <section className="rewrite-panel rukh-writing-rewrite" aria-label="Rewrite options">
               <div className="review-panel__header">
                 <h2>Rewrite options</h2>
                 <button
@@ -1491,25 +1536,32 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
           ) : null}
         </section>
 
+        {mobileReviewOpen && <button type="button" className="review-panel-backdrop" aria-label="Dismiss writing review panel" onClick={() => setMobileReviewOpen(false)} />}
         <aside
-          className={`review-panel ${mobileReviewOpen ? "review-panel--open" : ""}`}
-          aria-label="Review suggestions"
+          ref={reviewPanelRef}
+          id="writing-review-panel"
+          role={mobileReviewOpen ? "dialog" : undefined}
+          aria-modal={mobileReviewOpen ? true : undefined}
+          aria-labelledby="writing-review-heading"
+          className={`review-panel rukh-writing-review ${mobileReviewOpen ? "review-panel--open" : ""}`}
+          aria-label="Writing review and suggestions"
         >
           <div className="review-panel__header">
             <div>
-              <h2>Review</h2>
+              <h2 id="writing-review-heading">Suggestions</h2>
               <p className="review-count">{suggestions.length} suggestions</p>
             </div>
             <button
               type="button"
               className="review-close"
-              aria-label="Close review"
+              ref={reviewCloseRef}
+              aria-label="Close writing review"
               onClick={() => setMobileReviewOpen(false)}
             >
               ×
             </button>
           </div>
-          <p className="review-panel__status">
+          <p className="review-panel__status" role="status" aria-live="polite">
             {analysisState === "checking" || analysisState === "queued" || analysisState === "waiting_for_ai"
               ? analysisState === "queued"
                 ? "Latest edit queued for review…"
@@ -1536,8 +1588,8 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
           ) : null}
           <div
             className="review-tabs"
-            role="tablist"
-            aria-label="Suggestion filters"
+            role="group"
+            aria-label="Review issue categories"
           >
             {(
               [
@@ -1552,8 +1604,7 @@ export default function App({ initialText, onTextChange }: { initialText?: strin
               <button
                 key={filter}
                 type="button"
-                role="tab"
-                aria-selected={reviewFilter === filter}
+                aria-pressed={reviewFilter === filter}
                 className={
                   reviewFilter === filter
                     ? "review-tab review-tab--active"

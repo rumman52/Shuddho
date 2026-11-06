@@ -628,7 +628,7 @@ export default function App() {
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
           <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
             <div className="rukh-writing-mode">
-            <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
+            <WritingAssistant initialText={initialText} onTextChange={onTextChange} documentTitle={savedDocumentName || openedArtifact || "Untitled document"} />
             </div>
           </section>
         </div>

@@ -30,6 +30,11 @@ test("Editor mobile layout removes the fixed desktop-height canvas", async () =>
   assert.match(css, /rukh-editor-library--open/);
   assert.match(css, /rukh-editor-mobile-backdrop/);
   assert.doesNotMatch(css, /flex:\s*0\s+0\s+720px/);
+  assert.match(css, /\.rukh-writing-workspace/);
+  assert.match(css, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(300px,\s*360px\)/);
+  assert.match(css, /\.review-panel-backdrop/);
+  assert.match(css, /\.review-panel--open/);
+  assert.match(css, /@media\s*\(max-width:\s*900px\)/);
 });
 
 test("assistant Markdown wraps long Unicode replies and contains code and tables on narrow screens", async () => {
