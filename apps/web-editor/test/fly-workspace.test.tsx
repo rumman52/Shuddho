@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
 import { renderToString } from "react-dom/server.browser";
-import FlyWorkspace, { normalizeStoredDraft } from "../src/coworker/FlyWorkspace";
+import FlyWorkspace, { buildLineDiff, normalizeStoredDraft } from "../src/coworker/FlyWorkspace";
 import type { CoworkerClient } from "../src/coworker/client";
 
 test("Fly renders an agent-first Codex-style workspace with explicit runtime boundaries", () => {
@@ -19,7 +19,7 @@ test("Fly renders an agent-first Codex-style workspace with explicit runtime bou
   assert.match(html, /Rukh Agent/);
   assert.match(html, /Ask Rukh about this code/);
   assert.match(html, /Git clone\/push/);
-  assert.match(html, /Test runner not connected/);
+  assert.match(html, />Tests</);
 });
 
 
@@ -56,7 +56,6 @@ test("Fly malformed stored drafts safely restore the starter file", () => {
 
 
 test("Fly local diff reports added and removed lines without claiming repository history", () => {
-  const { buildLineDiff } = require("../src/coworker/FlyWorkspace");
   assert.deepEqual(buildLineDiff("before", "after"), [
     { kind: "remove", text: "before" },
     { kind: "add", text: "after" },
