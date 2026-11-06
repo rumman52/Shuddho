@@ -248,6 +248,7 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
       if (!items.length) { event.preventDefault(); return; }
       const first = items[0];
       const last = items[items.length - 1];
+      if (!first || !last) { event.preventDefault(); return; }
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
