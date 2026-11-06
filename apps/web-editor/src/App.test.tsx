@@ -44,7 +44,7 @@ test("App renders the professional writing workspace without waiting for backend
   assert.match(html, /Untitled document/);
   assert.match(html, /Multilingual Writing Studio/);
   assert.match(html, /Write in Bangla with context-aware review/);
-  assert.match(html, /Review suggestions/);
+  assert.match(html, /Writing review and suggestions/);
   assert.match(html, /Apply safe suggestions/);
 });
 
