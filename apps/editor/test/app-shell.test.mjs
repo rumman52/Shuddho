@@ -49,6 +49,7 @@ test("Writing Assistant exposes a document-library landing page with real docume
 test("Writing Assistant document cards use responsive Rukh theme tokens", () => {
   const css = readFileSync(resolve(sourceRoot, "styles.css"), "utf8");
   assert.match(css, /\.rukh-document-dashboard/);
+  assert.match(css, /\.rukh-document-dashboard\\s*\\{[^}]*grid-area:\\s*canvas/s);
   assert.match(css, /\.rukh-document-card/);
   assert.match(css, /var\(--rukh-accent\)/);
   assert.match(css, /@media\s*\(max-width:\s*900px\)/);
