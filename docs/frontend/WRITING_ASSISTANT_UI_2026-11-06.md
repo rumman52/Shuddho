@@ -12,6 +12,7 @@
 
 - Persistent Rukh workspace rail with Coworker, Fly, Writing Assistant, recent chats/files and account controls.
 - Documents-first Writing Assistant landing page with new-document creation, authenticated file upload, search, recent source documents and generated artifacts, download and owner-scoped removal actions.
+- Source uploads are limited to TXT, DOCX and PDF (8 MB maximum). TXT files up to 1 MB can open in the editor; DOCX and PDF files are stored securely and downloaded, not converted into editable text yet.
 - Version history and Trash navigation are present, but their views clearly state that the current workspace API does not expose version browsing or restore; no synthetic history or trash data is shown.
 - Dedicated document toolbar with the current artifact title, document word count, runtime status, settings and Deep AI Review.
 - Focused center writing canvas with Bangla typography, document status, writing goal and tone controls, inline issue marks and word/character status.
