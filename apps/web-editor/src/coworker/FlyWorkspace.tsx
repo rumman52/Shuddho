@@ -534,6 +534,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
 
   const latestArtifact = latestExecution?.result.artifact ?? null;
   const activeConversation = conversations.find(item => item.id === activeConversationId);
+  const flyTasks = conversations.filter(item => item.title.startsWith("Fly: "));
   const activityByMessage = new Map(activity.map(item => [item.message_id, item]));
   const changedFiles = files.filter(file => {
     const baseline = savedSnapshots[file.id];
@@ -583,9 +584,9 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
         </label>
 
         <section className="rukh-fly-v2-sidebar-section" aria-label="Recent coding tasks">
-          <div className="rukh-fly-v2-section-title"><span>RECENT TASKS</span><small>{conversations.length}</small></div>
-          {conversations.length ? <ul className="rukh-fly-v2-task-list">
-            {conversations.map(item => <li key={item.id}>
+          <div className="rukh-fly-v2-section-title"><span>RECENT TASKS</span><small>{flyTasks.length}</small></div>
+          {flyTasks.length ? <ul className="rukh-fly-v2-task-list">
+            {flyTasks.map(item => <li key={item.id}>
               <button type="button" className={activeConversationId === item.id ? "is-active" : ""} aria-pressed={activeConversationId === item.id} onClick={() => openTask(item.id)} disabled={Boolean(busy)}>
                 <strong>{item.title}</strong>
                 <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
