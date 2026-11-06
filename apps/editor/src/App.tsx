@@ -875,7 +875,7 @@ export default function App() {
                 {editorText.trim() && <button type="button" className="rukh-document-button rukh-document-button--quiet" onClick={() => setEditorOpen(true)}>Continue editing</button>}
                 <button type="button" className="rukh-document-button rukh-document-button--primary" onClick={createNewDocument}><span aria-hidden="true">＋</span>New document</button>
                 <button type="button" className="rukh-document-button rukh-document-button--secondary" onClick={() => uploadInputRef.current?.click()}
-                  disabled={!client || authLoading || busy === "upload"} title={!client ? "Sign in to upload files" : "Upload a document"}><span aria-hidden="true">↑</span>{busy === "upload" ? "Uploading…" : "Upload file"}</button>
+                  disabled={!client || authLoading || Boolean(busy)} title={!client ? "Sign in to upload files" : "Upload a document"}><span aria-hidden="true">↑</span>{busy === "upload" ? "Uploading…" : "Upload file"}</button>
               </div>}
             </header>
             {libraryView === "documents" ? (
@@ -893,7 +893,9 @@ export default function App() {
                 {authLoading || documentsLoading || libraryLoading ? (
                   <div className="rukh-document-empty-state" role="status">Loading your documents…</div>
                 ) : filteredLibraryItems.length ? (
-                  <section className="rukh-document-grid" aria-label="Saved documents">
+                  <>
+                    <h2 className="rukh-documents-section-title">Earlier</h2>
+                    <section className="rukh-document-grid" aria-label="Saved documents">
                     {filteredLibraryItems.map(item => {
                       const isSource = item.kind === "source";
                       const canOpen = isSource ? isEditableSourceDocument(item.source) : isTextArtifact(item.artifactItem.artifact);
@@ -911,7 +913,7 @@ export default function App() {
                           <div className="rukh-document-card__footer">
                             <span className="rukh-document-card__type">{typeLabel}</span>
                             <div className="rukh-document-card__actions">
-                              <button type="button" className="rukh-document-card__open" disabled={busyForItem}
+                              <button type="button" className="rukh-document-card__open" disabled={Boolean(busy)}
                                 onClick={() => {
                                   if (isSource) {
                                     if (canOpen) void openSourceDocument(item.source);
@@ -921,18 +923,19 @@ export default function App() {
                                   }
                                 }}>{busyForItem ? "Working…" : canOpen ? "Open" : "Download"}</button>
                               <button type="button" className="rukh-document-card__icon-action" aria-label={"Download " + item.filename} title="Download"
-                                disabled={busyForItem} onClick={() => {
+                                disabled={Boolean(busy)} onClick={() => {
                                   if (isSource) void downloadSourceDocument(item.source);
                                   else void downloadArtifactFile(item.artifactItem);
                                 }}>↓</button>
                               {isSource && <button type="button" className="rukh-document-card__icon-action" aria-label={"Remove " + item.filename} title="Remove from workspace"
-                                disabled={busyForItem} onClick={() => void removeSourceDocument(item.source)}>⌫</button>}
+                                disabled={Boolean(busy)} onClick={() => void removeSourceDocument(item.source)}>⌫</button>}
                             </div>
                           </div>
                         </article>
                       );
                     })}
-                  </section>
+                    </section>
+                  </>
                 ) : (
                   <div className="rukh-document-empty-state">
                     <span className="rukh-document-empty-state__icon" aria-hidden="true">▤</span>
