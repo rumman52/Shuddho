@@ -27,8 +27,8 @@ type PendingSavedDocument = { id: string; sha256: string; text: string; name: st
 export default function App() {
   const [editorMode, setEditorMode] = useState<"website" | "writing">(() => {
     if (typeof window === "undefined") return "writing";
-    const query = new URLSearchParams(window.location.search);
-    const path = window.location.pathname.replace(/\/+$/, "") || "/";
+    const query = new URLSearchParams(window.location.search ?? "");
+    const path = String(window.location.pathname ?? "/").replace(/\/+$/, "") || "/";
     return path === "/writing" || query.has("artifact_id") || query.has("conversation") || query.get("mode") === "writing" ? "writing" : "website";
   });
   const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";

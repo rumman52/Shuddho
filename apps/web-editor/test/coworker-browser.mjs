@@ -37,6 +37,8 @@ try {
   // only after the user chooses to continue, preserving the unsent draft.
   await page.goto("http://127.0.0.1:5173/");
   await page.getByRole("heading", { name: "What shall we work on today?" }).waitFor();
+  await page.getByRole("link", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("link", { name: "Writing Assistant", exact: true }).waitFor();
   await page.locator("#rukh-first-message").waitFor();
   assert.equal(await page.locator("#rukh-first-message").isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
@@ -47,8 +49,8 @@ try {
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.locator("#rukh-first-message").fill("Please help me prepare a short project update.");
   await page.getByRole("button", { name: "Continue to sign in" }).click();
-  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
-  await page.getByLabel("Email", { exact: true }).fill("alice@example.test");
+  await page.getByRole("heading", { name: /^Welcome back\.?$/ }).waitFor();
+  await page.getByLabel("Email address", { exact: true }).fill("alice@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.locator("#cw-conversation-message").waitFor();
@@ -65,6 +67,8 @@ try {
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
   await page.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Web Editor", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Writing Assistant", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/rukh-workspaces-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -73,9 +77,11 @@ try {
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("link", { name: "AI Coworker", exact: true }).click();
   await page.locator("#cw-conversation-message").waitFor();
-  await navigateWorkspace(page, "Sandbox");
-  await page.getByRole("heading", { name: "Sandboxed computation", exact: true }).waitFor();
-  await page.getByText("Sandbox capability is disabled.", { exact: true }).waitFor();
+  await navigateWorkspace(page, "Fly");
+  await page.waitForURL(url => url.pathname === "/fly");
+  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Build, test and iterate.", exact: true }).waitFor();
+  await page.locator(".rukh-fly-runtime-badge").waitFor();
   await navigateWorkspace(page, "Files & drafts");
   await page.getByLabel("Your notes").fill("The team completed 12 reviews on 10 September 2026.");
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });
@@ -87,12 +93,21 @@ try {
   await page.waitForURL(url => url.pathname === "/editor");
   const editorPage = page;
   editorPage.on("pageerror", error => failures.push(error.message));
-  await editorPage.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
+  await editorPage.locator(".rukh-editor-topbar-heading strong").getByText("Web Editor", { exact: true }).waitFor();
+  await editorPage.getByRole("region", { name: "Website editor" }).waitFor();
   await editorPage.setViewportSize({ width: 390, height: 844 });
   assert.equal(await editorPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await editorPage.screenshot({ path: join(folder, "screenshots/editor-mobile.png"), fullPage: true });
   await editorPage.setViewportSize({ width: 1365, height: 960 });
-  await editorPage.getByRole("link", { name: "AI Coworker", exact: true }).click();
+  await editorPage.getByRole("link", { name: "Writing Assistant", exact: true }).click();
+  await editorPage.waitForURL(url => url.pathname === "/writing");
+  await editorPage.locator(".rukh-editor-topbar-heading strong").getByText("Writing Assistant", { exact: true }).waitFor();
+  await editorPage.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
+  await editorPage.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await editorPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await editorPage.screenshot({ path: join(folder, "screenshots/writing-assistant-mobile.png"), fullPage: true });
+  await editorPage.setViewportSize({ width: 1365, height: 960 });
+  await editorPage.getByRole("button", { name: "Coworker", exact: true }).click();
   await editorPage.waitForURL(url => url.pathname === "/coworker");
   const coworkerPage = editorPage;
   await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
@@ -217,9 +232,9 @@ try {
   await verifyNotificationDigests(page, folder);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("heading", { name: "Welcome back." }).waitFor();
+  await page.getByRole("heading", { name: /^Welcome back\.?$/ }).waitFor();
   assert.equal(await page.getByText("প্রকল্পের অগ্রগতি", { exact: true }).count(), 0);
-  await page.getByLabel("Email", { exact: true }).fill("bob@example.test");
+  await page.getByLabel("Email address", { exact: true }).fill("bob@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.locator("#cw-conversation-message").waitFor();
@@ -232,7 +247,7 @@ try {
   assert.equal(await page.locator(".cw-actions .cw-history li").count(), 0);
   assert.equal(await page.getByRole("button", { name: "Disconnect Calendar", exact: true }).count(), 0);
   assert.deepEqual(failures, []);
-  console.log("Browser workflow passed: login, uploads, all eleven work services, writing tab, refresh recovery, service-aware revision, Bangla and RTL previews, editable PPTX/XLSX downloads, formula values, research citations and query restoration, copy post, mobile layout, sign-out and account switch.");
+  console.log("Browser workflow passed: login, Coworker chat, Fly, Web Editor, Writing Assistant, uploads, all eleven work services, refresh recovery, service-aware revision, Bangla and RTL previews, editable PPTX/XLSX downloads, formula values, research citations and query restoration, copy post, mobile layout, sign-out and account switch.");
 } finally {
   await context.close();
   await browser.close();

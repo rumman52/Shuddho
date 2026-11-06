@@ -8,7 +8,7 @@ type AuthCallback = (event: string, session: unknown) => void;
 
 function authFixture() {
   let listener: AuthCallback | undefined;
-  const calls = { signIns: 0, oauthProviders: [] as string[] };
+  const calls = { signIns: 0, oauthProviders: [] as string[], redirectUrls: [] as string[] };
   const client = {
     auth: {
       getSession: async () => ({ data: { session: null }, error: null }),
@@ -17,7 +17,11 @@ function authFixture() {
         return { data: { subscription: { unsubscribe() {} } } };
       },
       signInWithPassword: async () => { calls.signIns++; return { error: null }; },
-      signInWithOAuth: async ({ provider }: { provider: string }) => { calls.oauthProviders.push(provider); return { error: null }; },
+      signInWithOAuth: async ({ provider, options }: { provider: string; options?: { redirectTo?: string } }) => {
+        calls.oauthProviders.push(provider);
+        if (options?.redirectTo) calls.redirectUrls.push(options.redirectTo);
+        return { error: null };
+      },
       signUp: async () => ({ error: null, data: { session: null } }),
       resetPasswordForEmail: async () => ({ error: null }),
       updateUser: async () => ({ error: null }),
@@ -29,11 +33,11 @@ function authFixture() {
 
 const TestableGate = CoworkerGate as unknown as React.ComponentType<{ authClientFactory?: () => unknown }>;
 
-async function withGate(factory: (() => unknown) | undefined, run: (tree: ReactTestRenderer, auth: ReturnType<typeof authFixture> | null) => Promise<void>) {
+async function withGate(factory: (() => unknown) | undefined, run: (tree: ReactTestRenderer, auth: ReturnType<typeof authFixture> | null) => Promise<void>, pathname?: string) {
   const previousWindow = globalThis.window;
   const sessionValues = new Map<string, string>();
   globalThis.window = {
-    location: { origin: "https://rukh.test" },
+    location: { origin: "https://rukh.test", ...(pathname === undefined ? {} : { pathname }) },
     sessionStorage: {
       getItem: (key: string) => sessionValues.get(key) ?? null,
       setItem: (key: string, value: string) => { sessionValues.set(key, value); },
@@ -104,9 +108,20 @@ test("Google sign-in uses the configured Supabase OAuth provider", async () => {
     await act(async () => tree.root.findByProps({ "aria-label": "Start a conversation" }).props.onSubmit({ preventDefault() {} }));
     await act(async () => tree.root.findByProps({ className: "rukh-login-google" }).props.onClick());
     assert.deepEqual(auth!.calls.oauthProviders, ["google"]);
+    assert.deepEqual(auth!.calls.redirectUrls, ["https://rukh.test/coworker"]);
     assert.equal(tree.root.findByProps({ id: "rukh-login-email" }).props.value, "");
   });
 });
+
+test("Fly sign-in returns OAuth callbacks to the Fly workspace", async () => {
+  await withGate(() => ({}), async (tree, auth) => {
+    await act(async () => tree.root.findByProps({ className: "rukh-fly-entry-primary" }).props.onClick());
+    await act(async () => tree.root.findByProps({ className: "rukh-login-google" }).props.onClick());
+    assert.deepEqual(auth!.calls.oauthProviders, ["google"]);
+    assert.deepEqual(auth!.calls.redirectUrls, ["https://rukh.test/fly"]);
+  }, "/fly");
+});
+
 
 test("prompt starters populate the first-message composer without sending", async () => {
   await withGate(undefined, async tree => {

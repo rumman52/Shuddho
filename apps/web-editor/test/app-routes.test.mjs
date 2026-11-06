@@ -14,6 +14,7 @@ test("same-origin routes identify the independent Rukh applications and workspac
   assert.equal(getStandaloneAppRoute("/workspaces/?from=editor"), "home");
   assert.equal(getStandaloneAppRoute("/"), "default");
   assert.equal(getStandaloneAppRoute("/unknown"), "default");
+  assert.equal(getStandaloneAppRoute(undefined), "default");
 });
 
 test("Rukh opens Coworker by default and keeps the workspace directory available as an explicit route", () => {
@@ -22,6 +23,7 @@ test("Rukh opens Coworker by default and keeps the workspace directory available
   assert.equal(getWorkspaceAppRoute("/?from=bookmark", true), "coworker");
   assert.equal(getWorkspaceAppRoute("/unknown", true), "home");
   assert.equal(getWorkspaceAppRoute("/", false), "home");
+  assert.equal(getWorkspaceAppRoute(undefined, false), "home");
   assert.equal(getWorkspaceAppRoute("/coworker", false), "coworker");
   assert.equal(getWorkspaceAppRoute("/coworker?conversation=abc", false), "coworker");
   assert.equal(getWorkspaceAppRoute("/coworker", true), "coworker");
