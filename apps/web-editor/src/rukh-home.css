@@ -36,7 +36,7 @@
 .rukh-home-intro-note { padding-top: 15px; border-top: 1px solid var(--home-line-strong); }
 .rukh-home-intro-note p { margin: 0; color: var(--home-ink); font-size: 19px; font-weight: 550; letter-spacing: -.035em; line-height: 1.4; }
 .rukh-home-intro-note span { display: block; margin-top: 17px; color: var(--home-muted); font-size: 9px; font-weight: 700; letter-spacing: .14em; }
-.rukh-home-products { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 17px; }
+.rukh-home-products { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; gap: 17px; }
 .rukh-home-product { display: flex; min-width: 0; min-height: 490px; flex-direction: column; padding: clamp(23px, 3vw, 36px); border: 1px solid var(--home-line); border-radius: 16px; box-shadow: 0 10px 30px rgba(25, 30, 24, .045); }
 .rukh-home-product--coworkers { background: var(--home-surface); }
 .rukh-home-product--editor { background: var(--home-soft); }

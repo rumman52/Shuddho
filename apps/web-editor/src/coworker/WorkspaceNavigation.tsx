@@ -2,10 +2,9 @@ import NavigationIcon from "./WorkspaceNavigationIcon";
 import type { CoworkerView } from "./client";
 import { coworkerNavigation } from "../../../coworker/src/navigation.mjs";
 
-export default function WorkspaceNavigation({ active, onNavigate, editorHref = "/editor", writingHref = "/writing" }: {
-  active: CoworkerView | "editor" | "writing";
+export default function WorkspaceNavigation({ active, onNavigate, writingHref = "/writing" }: {
+  active: CoworkerView | "writing";
   onNavigate: (view: CoworkerView) => void;
-  editorHref?: string;
   writingHref?: string;
 }) {
   function item(view: CoworkerView, label: string, icon: string) {
@@ -15,7 +14,6 @@ export default function WorkspaceNavigation({ active, onNavigate, editorHref = "
     <nav aria-label="Primary workspace navigation">
       {item("conversations", "Coworker", "chat")}
       <a href="/fly" className={"rukh-design-nav-link" + (active === "sandbox" ? " is-active" : "")} aria-current={active === "sandbox" ? "page" : undefined}><NavigationIcon name="terminal" />Fly</a>
-      <a href={editorHref} className={"rukh-design-nav-link" + (active === "editor" ? " is-active" : "")} aria-current={active === "editor" ? "page" : undefined}><NavigationIcon name="layout" />Web Editor</a>
       <a href={writingHref} className={"rukh-design-nav-link" + (active === "writing" ? " is-active" : "")} aria-current={active === "writing" ? "page" : undefined}><NavigationIcon name="file-text" />Writing Assistant</a>
       {item("projects", "Projects", "folder")}
       {item("actions", "Plugins", "grid")}

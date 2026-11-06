@@ -8,7 +8,7 @@ export function getStandaloneAppRoute(pathname) {
   // handler can validate state and finish the owner-scoped connection.
   if (["/oauth/google/callback", "/oauth/microsoft/callback", "/oauth/linkedin/callback"].includes(path)) return "coworker";
   if (path === "/coworker" || path.startsWith("/coworker/") || path === "/fly") return "coworker";
-  if (path === "/editor" || path.startsWith("/editor/") || path === "/writing") return "editor";
+  if (path === "/writing") return "writing";
   if (path === "/workspaces" || path.startsWith("/workspaces/")) return "home";
   return "default";
 }

@@ -3,7 +3,6 @@ import "./styles.css";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
 import WorkspaceNavigation from "../../web-editor/src/coworker/WorkspaceNavigation";
-import WebsiteEditor from "./WebsiteEditor";
 import { RukhCompanionMark } from "../../web-editor/src/coworker/CoworkerWelcome";
 import WritingAssistant from "../../web-editor/src/App";
 import ThemeToggle from "../../web-editor/src/components/ThemeToggle";
@@ -25,12 +24,6 @@ type SavedEditorRecord = { text: string; documentId: string; sha256: string; nam
 type PendingSavedDocument = { id: string; sha256: string; text: string; name: string };
 
 export default function App() {
-  const [editorMode, setEditorMode] = useState<"website" | "writing">(() => {
-    if (typeof window === "undefined") return "writing";
-    const query = new URLSearchParams(window.location.search ?? "");
-    const path = String(window.location.pathname ?? "/").replace(/\/+$/, "") || "/";
-    return path === "/writing" || query.has("artifact_id") || query.has("conversation") || query.get("mode") === "writing" ? "writing" : "website";
-  });
   const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";
   const auth = useMemo(() => coworkerEnabled
     ? getRukhAuthClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
@@ -545,11 +538,11 @@ export default function App() {
               aria-expanded={mobileLibraryOpen}
               onClick={() => { setEditorContextOpen(false); setMobileLibraryOpen(true); }}
             ><span aria-hidden="true">☰</span></button>}
-            <strong>{editorMode === "writing" ? "Writing Assistant" : "Web Editor"}</strong>
+            <strong>Writing Assistant</strong>
           </div>
           <div className="rukh-editor-top-actions">
             {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
-            {coworkerEnabled && editorMode === "writing" && <>
+            {coworkerEnabled && <>
               {saveStatus && <span className="rukh-editor-save-status" role="status">{saveStatus}</span>}
               {saveError && <span className="rukh-editor-save-error" role="alert">{saveError}</span>}
               <button type="button" className="rukh-save-workspace-button" onClick={() => void saveToWorkspace()}
@@ -587,7 +580,7 @@ export default function App() {
               <button className="rukh-library-close" ref={mobileLibraryCloseRef} type="button" aria-label="Close navigation" onClick={() => setMobileLibraryOpen(false)}>×</button>
             </div>
             <a href="/coworker" className="rukh-design-new rukh-editor-new-chat">+ New chat</a>
-            <WorkspaceNavigation active={editorMode === "writing" ? "writing" : "editor"} editorHref="/editor" writingHref="/writing" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
+            <WorkspaceNavigation active="writing" writingHref="/writing" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
             <section className="rukh-editor-recent-chats" aria-labelledby="rukh-editor-recent-chats-title">
               <div className="rukh-editor-sidebar-heading">
                 <span id="rukh-editor-recent-chats-title">RECENT CHATS</span>
@@ -633,10 +626,8 @@ export default function App() {
             </div>
           </aside>}
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
-          <section className="rukh-editor-canvas" aria-label={editorMode === "website" ? "Website editor" : "Writing editor"} aria-hidden={mobileLibraryOpen ? true : undefined}>
-            {editorMode === "writing" && <nav className="rukh-editor-mode" aria-label="Editor mode"><button type="button" onClick={() => { setEditorMode("website"); window.history.replaceState(null, "", "/editor"); }}>← Web Editor</button></nav>}
-            {editorMode === "website" && <WebsiteEditor key={session?.user.id ?? "signed-out"} client={client} userId={session?.user.id ?? null} conversationId={originConversationId} projectId={originProjectId} />}
-            <div className="rukh-writing-mode" hidden={editorMode !== "writing"}>
+          <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
+            <div className="rukh-writing-mode">
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />
             </div>
           </section>
@@ -644,13 +635,13 @@ export default function App() {
         {coworkerEnabled && editorContextOpen && <button className="rukh-editor-context-backdrop" type="button" aria-label="Dismiss activity and context panel" onClick={() => setEditorContextOpen(false)} />}
         {coworkerEnabled && <aside id="rukh-editor-context" className={"rukh-editor-context-panel" + (editorContextOpen ? " is-open" : "")} aria-label="Activity and context" hidden={!editorContextOpen}>
           <header><h2>Activity &amp; context</h2><button type="button" aria-label="Close activity and context" onClick={() => setEditorContextOpen(false)}>×</button></header>
-          <section><span>WORKSPACE</span><strong>{session?.user.email ?? "Personal workspace"}</strong><p>Your editor work stays in your private workspace.</p></section>
-          <section><span>PROJECT CONTEXT</span><p>{originProjectId ? "This editor is linked to a project." : "No project is linked to this draft."}</p></section>
+          <section><span>WORKSPACE</span><strong>{session?.user.email ?? "Personal workspace"}</strong><p>Your writing work stays in your private workspace.</p></section>
+          <section><span>PROJECT CONTEXT</span><p>{originProjectId ? "This writing session was opened with project context." : "No project is linked to this writing session."}</p></section>
           <section><span>COWORKER CONVERSATION</span><p>{originConversationId ? "This editor was opened from a Coworker conversation." : "No Coworker conversation is linked yet."}</p><a href={coworkerReturnUrl}>Open Coworker</a></section>
           <section><span>RECENT OUTPUTS</span>
             {artifacts.length === 0 ? <p>No generated outputs are available yet.</p> : <ul>{artifacts.slice(0, 3).map(item => <li key={item.artifact.id}><button type="button" disabled={Boolean(busy)} onClick={() => void openArtifact(item)}>{item.artifact.filename}</button></li>)}</ul>}
           </section>
-          <p className="rukh-editor-context-note">Website preview runs in an isolated sandbox. Saving stores a private source file; it does not publish the website.</p>
+          <p className="rukh-editor-context-note">Writing Assistant keeps your text in a private workspace. Save a copy or send it to AI Coworker when you are ready.</p>
         </aside>}
       </div>
     </ErrorBoundary>

@@ -13,6 +13,8 @@ test("Fly renders a code workspace with clear execution and repository boundarie
   assert.match(html, /Run Python 3\.11/);
   assert.match(html, /Ask Rukh to review/);
   assert.match(html, /Terminal output/);
+  assert.match(html, /Rukh Agent/);
+  assert.match(html, /Ask Rukh about this code/);
   assert.match(html, /Git clone\/push/);
 });
 
