@@ -753,3 +753,4 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
       </section>
     </div>
   </section>;
+}
