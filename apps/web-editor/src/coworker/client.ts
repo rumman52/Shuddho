@@ -6,6 +6,7 @@ export type Artifact = { id: string; filename: string; content_type: string; byt
 
 const TEXT_ARTIFACT_TYPES = new Set(["text/plain", "text/markdown"]);
 const MAX_TEXT_ARTIFACT_BYTES = 1024 * 1024;
+const MAX_SOURCE_DOCUMENT_BYTES = 8 * 1024 * 1024;
 
 /** Only plain-text and Markdown files are opened in the editor. */
 export function isTextArtifact(artifact: Pick<Artifact, "filename" | "content_type">): boolean {
@@ -386,7 +387,7 @@ export type Workspace = {
   account_id: string; workspace_name: string; preferences: { language?: string; writing_goal?: string; tone_goal?: string; personal_dictionary?: string[] };
   usage: { tasks_today: number }; limits: { daily_tasks: number; upload_bytes: number };
 };
-export type SourceDocument = { id: string; filename: string; state: string; byte_size: number };
+export type SourceDocument = { id: string; version_id: string; filename: string; kind: string; state: string; byte_size: number; sha256: string; created_at?: string };
 export type TaskInput = { skill_id?: SkillId; instruction: string; notes: string; document_ids: string[]; output_language: string; research?: ResearchOptions };
 export type ProgressEvent = { sequence: number; state: TaskState; phase: string; message: string };
 export const terminal = (state: TaskState) => ["completed", "needs_input", "failed", "cancelled"].includes(state);
@@ -1102,6 +1103,64 @@ export class CoworkerClient {
     const document = await this.json<SourceDocument>("/api/v1/documents", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filename: file.name, byte_size: file.size, sha256 }) });
     return (await this.response(`/api/v1/documents/${identifier(document.id)}/content`, { method: "PUT", body: file }, 40000)).json();
+  }
+
+  /**
+   * Read a bounded plain-text source document through the owner-authenticated
+   * content route. The server rechecks ownership and object integrity; the
+   * browser independently verifies the returned bytes before decoding UTF-8.
+   */
+  async readTextDocument(source: SourceDocument, signal?: AbortSignal): Promise<string> {
+    if (source.kind !== "txt" || !source.filename.toLowerCase().endsWith(".txt")) {
+      throw new WorkspaceError("Only plain-text TXT files can be opened in the editor.");
+    }
+    if (!Number.isSafeInteger(source.byte_size) || source.byte_size < 0 || source.byte_size > MAX_TEXT_ARTIFACT_BYTES) {
+      throw new WorkspaceError("This text file is too large to preview. Download it instead.");
+    }
+    if (!/^[a-f0-9]{64}$/i.test(source.sha256)) {
+      throw new WorkspaceError("This file is missing a valid integrity checksum.");
+    }
+    const id = identifier(source.id);
+    const response = await this.response(`/api/v1/documents/${id}/content`, { signal });
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength !== source.byte_size) {
+      throw new WorkspaceError("The downloaded file size does not match its saved metadata.");
+    }
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    const actual = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+    if (actual !== source.sha256.toLowerCase()) {
+      throw new WorkspaceError("The downloaded file failed its integrity check. Upload it again.");
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new WorkspaceError("This TXT file is not valid UTF-8 text and cannot be opened safely.");
+    }
+  }
+
+  /** Download a source document through the same-origin owner-authenticated route. */
+  async downloadSourceDocument(source: SourceDocument, signal?: AbortSignal): Promise<void> {
+    if (!Number.isSafeInteger(source.byte_size) || source.byte_size < 1 || source.byte_size > MAX_SOURCE_DOCUMENT_BYTES) {
+      throw new WorkspaceError("This source file exceeds the 8 MB download limit.");
+    }
+    if (!/^[a-f0-9]{64}$/i.test(source.sha256)) {
+      throw new WorkspaceError("This file is missing a valid integrity checksum.");
+    }
+    const id = identifier(source.id);
+    const response = await this.response(`/api/v1/documents/${id}/content`, { signal });
+    const blob = await response.blob();
+    if (blob.size !== source.byte_size) {
+      throw new WorkspaceError("The downloaded file size does not match its saved metadata.");
+    }
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = source.filename;
+    anchor.rel = "noreferrer";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 10000);
   }
 
   async download(artifact: Artifact) {
