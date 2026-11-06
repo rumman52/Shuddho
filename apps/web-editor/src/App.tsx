@@ -1536,7 +1536,7 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
           ) : null}
         </section>
 
-        {mobileReviewOpen && <button type="button" className="review-panel-backdrop" aria-label="Close writing review" onClick={() => setMobileReviewOpen(false)} />}
+        {mobileReviewOpen && <button type="button" className="review-panel-backdrop" aria-label="Dismiss writing review panel" onClick={() => setMobileReviewOpen(false)} />}
         <aside
           ref={reviewPanelRef}
           id="writing-review-panel"
