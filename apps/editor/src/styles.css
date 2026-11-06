@@ -722,8 +722,8 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 .rukh-editor-canvas .inline-issue.spelling { text-decoration-color: var(--writing-spelling); }
 .rukh-editor-canvas .inline-issue.grammar { text-decoration-color: var(--writing-grammar); }
 .rukh-editor-canvas .inline-issue.punctuation,
-.rukh-editor-canvas .inline-issue.spacing { text-decoration-color: var(--writing-clarity); }
-.rukh-editor-canvas .inline-issue.clarity { text-decoration-color: var(--writing-success); }
+.rukh-editor-canvas .inline-issue.clarity { text-decoration-color: var(--writing-clarity); }
+.rukh-editor-canvas .inline-issue.spacing { text-decoration-color: var(--writing-success); }
 .rukh-editor-canvas .editor-statusbar {
   display: flex;
   align-items: center;
@@ -812,13 +812,25 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
 }
 .rukh-editor-canvas .suggestion-card[data-category="spelling"] { border-left: 3px solid var(--writing-spelling); }
 .rukh-editor-canvas .suggestion-card[data-category="grammar"] { border-left: 3px solid var(--writing-grammar); }
-.rukh-editor-canvas .suggestion-card[data-category="clarity"] { border-left: 3px solid var(--writing-clarity); }
-.rukh-editor-canvas .suggestion-card[data-category="punctuation"],
+.rukh-editor-canvas .suggestion-card[data-category="clarity"],
+.rukh-editor-canvas .suggestion-card[data-category="punctuation"] { border-left: 3px solid var(--writing-clarity); }
 .rukh-editor-canvas .suggestion-card[data-category="spacing"] { border-left: 3px solid var(--writing-success); }
 .rukh-editor-canvas .suggestion-card__type { color: var(--rukh-text); font-size: 10px; font-weight: 700; }
 .rukh-editor-canvas .suggestion-card[data-category="spelling"] .suggestion-card__type { color: var(--writing-spelling); }
 .rukh-editor-canvas .suggestion-card[data-category="grammar"] .suggestion-card__type { color: var(--writing-grammar); }
-.rukh-editor-canvas .suggestion-card[data-category="clarity"] .suggestion-card__type { color: var(--writing-clarity); }
+.rukh-editor-canvas .suggestion-card[data-category="clarity"] .suggestion-card__type,
+.rukh-editor-canvas .suggestion-card[data-category="punctuation"] .suggestion-card__type { color: var(--writing-clarity); }
+.rukh-editor-canvas .suggestion-card[data-category="spacing"] .suggestion-card__type { color: var(--writing-success); }
+.rukh-editor-canvas .suggestion-card[data-category="spelling"] .issue-dot,
+.rukh-editor-canvas .inline-issue.spelling .issue-dot { background: var(--writing-spelling); }
+.rukh-editor-canvas .suggestion-card[data-category="grammar"] .issue-dot,
+.rukh-editor-canvas .inline-issue.grammar .issue-dot { background: var(--writing-grammar); }
+.rukh-editor-canvas .suggestion-card[data-category="clarity"] .issue-dot,
+.rukh-editor-canvas .suggestion-card[data-category="punctuation"] .issue-dot,
+.rukh-editor-canvas .inline-issue.clarity .issue-dot,
+.rukh-editor-canvas .inline-issue.punctuation .issue-dot { background: var(--writing-clarity); }
+.rukh-editor-canvas .suggestion-card[data-category="spacing"] .issue-dot,
+.rukh-editor-canvas .inline-issue.spacing .issue-dot { background: var(--writing-success); }
 .rukh-editor-canvas .suggestion-card__source { border-radius: 999px; background: var(--rukh-surface-soft); color: var(--rukh-muted); font-size: 9px; }
 .rukh-editor-canvas .suggestion-card__change {
   display: flex;
