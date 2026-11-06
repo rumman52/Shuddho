@@ -127,7 +127,17 @@ try {
   await page.locator(".rukh-editor-topbar-heading strong").getByText("Writing Assistant", { exact: true }).waitFor();
   await page.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: /^Review ·/ }).click();
+  const reviewToggle = page.getByRole("button", { name: /^Review ·/ });
+  await reviewToggle.click();
+  await page.locator(".rukh-writing-review.review-panel--open").waitFor();
+  await page.keyboard.press("Escape");
+  await page.locator(".rukh-writing-review:not(.review-panel--open)").waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-controls") === "writing-review-panel");
+  await reviewToggle.click();
+  await page.locator(".rukh-writing-review.review-panel--open").waitFor();
+  await page.locator(".review-panel-backdrop").click({ position: { x: 10, y: 10 } });
+  await page.locator(".rukh-writing-review:not(.review-panel--open)").waitFor();
+  await reviewToggle.click();
   await page.locator(".rukh-writing-review.review-panel--open").waitFor();
   await page.getByRole("button", { name: "Close writing review" }).click();
   await page.locator(".rukh-writing-review:not(.review-panel--open)").waitFor();
