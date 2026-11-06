@@ -248,6 +248,39 @@ def test_auth_validation_and_private_errors(signed_client):
     assert client.post("/api/check", headers=headers(), json={}).status_code == 400
 
 
+
+def test_document_content_download_is_owner_scoped_and_integrity_checked(signed_client, container):
+    client, headers = signed_client
+    owner_headers, other_headers = headers(), headers("bob")
+    body = "Saved document body. বাংলা লেখা।".encode("utf-8")
+    upload = client.post(
+        "/api/v1/documents",
+        headers=owner_headers,
+        json={"filename": "notes.txt", "byte_size": len(body), "sha256": hashlib.sha256(body).hexdigest()},
+    )
+    assert upload.status_code == 201
+    document = upload.json()
+    path = f'/api/v1/documents/{document["id"]}/content'
+    assert client.put(path, headers=owner_headers, content=body).status_code == 200
+
+    downloaded = client.get(path, headers=owner_headers)
+    assert downloaded.status_code == 200
+    assert downloaded.content == body
+    assert downloaded.headers["Cache-Control"] == "no-store"
+    assert downloaded.headers["X-Content-Type-Options"] == "nosniff"
+    assert "attachment" in downloaded.headers["Content-Disposition"]
+    assert downloaded.headers["ETag"] == '"' + document["sha256"] + '"'
+
+    # The same opaque document ID must not reveal another account's bytes.
+    assert client.get(path, headers=other_headers).status_code == 404
+
+    stored = container.repository.get_upload(account(container), document["id"])
+    container.storage.put(stored["object_key"], b"tampered document bytes", "application/octet-stream")
+    corrupted = client.get(path, headers=owner_headers)
+    assert corrupted.status_code == 503
+    assert "document_invalid" in corrupted.text
+
+
 def test_malformed_jwks_is_a_safe_unavailable_error():
     verifier = JwtVerifier(ISSUER, "authenticated", httpx.MockTransport(lambda _: httpx.Response(200, json={"keys": [None]})))
     with pytest.raises(CoworkerError, match="temporarily unavailable") as error:
