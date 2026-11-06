@@ -5,10 +5,13 @@ import { renderToString } from "react-dom/server.browser";
 import FlyWorkspace, { normalizeStoredDraft } from "../src/coworker/FlyWorkspace";
 import type { CoworkerClient } from "../src/coworker/client";
 
-test("Fly renders a code workspace with clear execution and repository boundaries", () => {
+test("Fly renders an agent-first Codex-style workspace with explicit runtime boundaries", () => {
   const html = renderToString(<FlyWorkspace client={{} as CoworkerClient} accountId="test-account" />);
   assert.match(html, /Fly code workspace/);
   assert.match(html, /Fly file explorer/);
+  assert.match(html, /Recent coding tasks/);
+  assert.match(html, /What are we building/);
+  assert.match(html, /Code &amp; changes/);
   assert.match(html, /Code editor/);
   assert.match(html, /Run Python 3\.11/);
   assert.match(html, /Ask Rukh to review/);
@@ -16,6 +19,7 @@ test("Fly renders a code workspace with clear execution and repository boundarie
   assert.match(html, /Rukh Agent/);
   assert.match(html, /Ask Rukh about this code/);
   assert.match(html, /Git clone\/push/);
+  assert.match(html, /Test runner not connected/);
 });
 
 
@@ -48,4 +52,15 @@ test("Fly malformed stored drafts safely restore the starter file", () => {
   assert.equal(draft.files[0].id, "fly-main");
   assert.equal(draft.files[0].name, "main.py");
   assert.equal(draft.activeId, "fly-main");
+});
+
+
+test("Fly local diff reports added and removed lines without claiming repository history", () => {
+  const { buildLineDiff } = require("../src/coworker/FlyWorkspace");
+  assert.deepEqual(buildLineDiff("before", "after"), [
+    { kind: "remove", text: "before" },
+    { kind: "add", text: "after" },
+  ]);
+  assert.deepEqual(buildLineDiff("same\nline", "same\nline"), []);
+  assert.equal(buildLineDiff(Array(301).fill("x").join("\n"), "small"), null);
 });
