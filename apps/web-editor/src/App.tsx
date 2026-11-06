@@ -1588,7 +1588,7 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
           ) : null}
           <div
             className="review-tabs"
-            role="tablist"
+            role="group"
             aria-label="Review issue categories"
           >
             {(
@@ -1604,8 +1604,7 @@ export default function App({ initialText, onTextChange, documentTitle }: { init
               <button
                 key={filter}
                 type="button"
-                role="tab"
-                aria-selected={reviewFilter === filter}
+                aria-pressed={reviewFilter === filter}
                 className={
                   reviewFilter === filter
                     ? "review-tab review-tab--active"
