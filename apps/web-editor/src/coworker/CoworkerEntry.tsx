@@ -62,8 +62,8 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
       <a href="/coworker" className="rukh-design-brand" aria-label="Rukh AI Coworker home"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
       <button type="button" className="rukh-design-new" aria-label="New chat" onClick={newChat}>+ New chat</button>
       <nav aria-label="Primary workspace navigation">
-        <button type="button" className="rukh-design-nav-link is-active" aria-current="page" onClick={() => setNavigationOpen(false)}><NavigationIcon name="chat" />Coworker</button>
-        <a href="/fly" className="rukh-design-nav-link"><NavigationIcon name="terminal" />Fly</a>
+        <a href="/coworker" className={"rukh-design-nav-link" + (!flyIntent ? " is-active" : "")} aria-current={!flyIntent ? "page" : undefined}><NavigationIcon name="chat" />Coworker</a>
+        <a href="/fly" className={"rukh-design-nav-link" + (flyIntent ? " is-active" : "")} aria-current={flyIntent ? "page" : undefined}><NavigationIcon name="terminal" />Fly</a>
         <a href="/writing" className="rukh-design-nav-link"><NavigationIcon name="file-text" />Writing Assistant</a>
         <button type="button" className="rukh-design-nav-link" disabled title="Projects are not available yet"><NavigationIcon name="folder" />Projects<small>Unavailable</small></button>
         <button type="button" className="rukh-design-nav-link" onClick={accountAccess}><NavigationIcon name="grid" />Plugins</button>
