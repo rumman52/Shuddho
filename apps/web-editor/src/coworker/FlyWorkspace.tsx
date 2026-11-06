@@ -394,7 +394,6 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     setError("");
   }
 
-  const runtimeStatus = runtimeLoading ? "Checking runtime" : runtimeEnabled ? "Python 3.11 ready" : "Python runtime disabled";
   const latestArtifact = latestExecution?.result.artifact ?? null;
 
   return <section className="rukh-fly-workspace" aria-label="Fly code workspace">

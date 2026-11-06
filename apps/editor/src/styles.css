@@ -127,7 +127,7 @@ body { margin: 0; overflow: hidden; background: var(--rukh-bg); color: var(--ruk
   }
 }
 
-/* Rukh AI premium Web Editor layout: recent work / writing / AI review. */
+/* Rukh AI Writing Assistant layout: recent work / writing / AI review. */
 .rukh-editor-app {
   font-family: var(--rukh-font-ui, system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
