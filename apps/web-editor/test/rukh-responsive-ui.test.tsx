@@ -5,6 +5,7 @@ import { renderToString } from "react-dom/server.browser";
 import ThemeToggle from "../src/components/ThemeToggle";
 import { initializeRukhTheme, saveRukhTheme } from "../src/lib/theme";
 import ConversationWorkspace from "../src/coworker/ConversationWorkspace";
+import WorkspaceNavigation from "../src/coworker/WorkspaceNavigation";
 import type { CoworkerClient } from "../src/coworker/client";
 import Editor from "../../editor/src/App";
 
@@ -26,6 +27,14 @@ test("Coworker exposes mobile controls for conversation history and Context", ()
   assert.match(html, /Projects/);
   assert.match(html, /aria-label="Open workspace context"/);
   assert.match(html, /aria-controls="rukh-context-panel"/);
+});
+
+test("Coworker and Fly use distinct canonical routes in primary navigation", () => {
+  const flyHtml = renderToString(<WorkspaceNavigation active="sandbox" onNavigate={() => undefined} />);
+  assert.match(flyHtml, /href="\\/coworker"/);
+  assert.match(flyHtml, /href="\\/fly"/);
+  assert.match(flyHtml, /href="\\/writing"/);
+  assert.match(flyHtml, /aria-current="page"/);
 });
 
 test("Writing Assistant exposes a mobile Recent files drawer control", () => {
