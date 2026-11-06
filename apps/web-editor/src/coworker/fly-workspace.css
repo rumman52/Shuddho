@@ -327,3 +327,11 @@
 @media(prefers-reduced-motion:reduce){
   .rukh-fly-workspace *,.rukh-fly-workspace *::before,.rukh-fly-workspace *::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+
+
+/* Tablet workbench must grow vertically instead of clipping the stacked panels. */
+@media (min-width:761px) and (max-width:1180px){
+  .rukh-cw-sections .rukh-cw-content:has(.rukh-fly-workspace){overflow:auto}
+  .rukh-fly-workspace{height:auto;min-height:calc(100dvh - 176px);overflow:visible}
+  .rukh-fly-v2-layout{min-height:940px;flex:none;overflow:visible;grid-template-rows:minmax(390px,520px) minmax(360px,auto) 190px}
+}
