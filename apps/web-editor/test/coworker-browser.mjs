@@ -102,7 +102,7 @@ try {
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("button", { name: "Coworker", exact: true }).click();
   await page.waitForURL(url => url.pathname === "/coworker");
-  const coworkerPage = editorPage;
+  const coworkerPage = page;
   await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
   await coworkerPage.setViewportSize({ width: 390, height: 844 });
   assert.equal(await coworkerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
