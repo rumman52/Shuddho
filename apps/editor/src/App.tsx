@@ -863,7 +863,7 @@ export default function App() {
             </div>
           </aside>}
           <section className="rukh-document-dashboard" aria-label="Writing Assistant documents" hidden={editorOpen} aria-hidden={mobileLibraryOpen ? true : undefined}>
-            <input ref={uploadInputRef} className="rukh-document-upload-input" type="file" accept=".txt,.docx,.pdf,.csv,.xlsx,.pptx"
+            <input ref={uploadInputRef} className="rukh-document-upload-input" type="file" accept=".txt,.docx,.pdf"
               aria-label="Upload a document file" onChange={uploadSourceDocument} />
             <header className="rukh-documents-heading">
               <div>
