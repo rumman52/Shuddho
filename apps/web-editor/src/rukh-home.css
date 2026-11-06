@@ -36,7 +36,7 @@
 .rukh-home-intro-note { padding-top: 15px; border-top: 1px solid var(--home-line-strong); }
 .rukh-home-intro-note p { margin: 0; color: var(--home-ink); font-size: 19px; font-weight: 550; letter-spacing: -.035em; line-height: 1.4; }
 .rukh-home-intro-note span { display: block; margin-top: 17px; color: var(--home-muted); font-size: 9px; font-weight: 700; letter-spacing: .14em; }
-.rukh-home-products { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(310px, .88fr); align-items: stretch; gap: 17px; }
+.rukh-home-products { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 17px; }
 .rukh-home-product { display: flex; min-width: 0; min-height: 490px; flex-direction: column; padding: clamp(23px, 3vw, 36px); border: 1px solid var(--home-line); border-radius: 16px; box-shadow: 0 10px 30px rgba(25, 30, 24, .045); }
 .rukh-home-product--coworkers { background: var(--home-surface); }
 .rukh-home-product--editor { background: var(--home-soft); }
@@ -155,3 +155,24 @@
   .rukh-home-header nav { order: 4; flex: 0 0 100%; max-width: 100%; margin-left: 0; overflow-x: auto; }
 }
 
+
+
+.rukh-home-product--fly { background: var(--home-surface); }
+.rukh-home-product--writing { background: var(--home-soft); }
+.rukh-home-code-preview {
+  display: flex;
+  margin-top: auto;
+  padding: 18px;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 13px;
+  background: #17201a;
+  color: #e7eee7;
+}
+.rukh-home-code-preview > div { display: flex; justify-content: space-between; gap: 12px; color: #dce9de; font-size: 11px; }
+.rukh-home-code-preview small { color: #9fb0a1; font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.rukh-home-code-preview pre { margin: 0; overflow: auto; color: #e9f0e9; font: 12px/1.75 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+@media (max-width: 620px) {
+  .rukh-home-code-preview { margin-top: 28px; }
+}

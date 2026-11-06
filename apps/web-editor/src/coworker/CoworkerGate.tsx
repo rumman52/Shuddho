@@ -32,6 +32,8 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
   });
   const [entryError, setEntryError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
+  const flyIntent = typeof window !== "undefined" && window.location.pathname.replace(/\/+$/, "") === "/fly";
+  const authReturnUrl = () => new URL(flyIntent ? "/fly" : "/coworker", window.location.origin).href;
 
   const client = useMemo(() => auth && session ? new CoworkerClient(
     import.meta.env.VITE_COWORKER_API_BASE_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8000" : "/backend"),
@@ -125,7 +127,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     try {
       const { error } = await auth.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: new URL("/coworker", window.location.origin).href },
+        options: { redirectTo: authReturnUrl() },
       });
       if (error) throw error;
     } catch (failure) {
@@ -143,7 +145,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     setNotice("");
     try {
       if (mode === "reset") {
-        const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: new URL("/coworker", window.location.origin).href });
+        const { error } = await auth.auth.resetPasswordForEmail(email, { redirectTo: authReturnUrl() });
         if (error) throw error;
         setNotice("Check your email for the password reset link.");
       } else if (mode === "recovery") {
@@ -153,7 +155,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
         setPassword("");
         setAuthOpen(false);
       } else if (mode === "signup") {
-        const { error, data } = await auth.auth.signUp({ email, password, options: { emailRedirectTo: new URL("/coworker", window.location.origin).href } });
+        const { error, data } = await auth.auth.signUp({ email, password, options: { emailRedirectTo: authReturnUrl() } });
         if (error) throw error;
         if (!data.session) setNotice("Check your email to confirm your account, then sign in.");
       } else {
@@ -203,13 +205,13 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
           <p className="rukh-login-story-footer">Designed around the way you work.</p>
         </aside>
         <section className="rukh-login-form-panel">
-          {mode !== "recovery" && <button type="button" className="rukh-login-back" onClick={closeAuth}>← Back to Coworker</button>}
+          {mode !== "recovery" && <button type="button" className="rukh-login-back" onClick={closeAuth}>← Back to {flyIntent ? "Fly" : "Coworker"}</button>}
           <div className="rukh-login-form-content">
             <h2 id="rukh-login-title">
               {mode === "signup" ? "Create your account" : mode === "reset" ? "Reset your password" : mode === "recovery" ? "Choose a new password" : "Welcome back"}
             </h2>
             <p id="rukh-login-description">
-              {mode === "signup" ? "Create an account to open your personal AI workspace." : mode === "reset" ? "Enter your email and we will send you a password reset link." : mode === "recovery" ? "Choose a new password for your Rukh account." : "Sign in to your AI coworker."}
+              {mode === "signup" ? (flyIntent ? "Create an account to open Fly." : "Create an account to open your personal AI workspace.") : mode === "reset" ? "Enter your email and we will send you a password reset link." : mode === "recovery" ? "Choose a new password for your Rukh account." : (flyIntent ? "Sign in to open Fly." : "Sign in to your AI coworker.")}
             </p>
             {mode === "signin" && (
               <>
@@ -267,6 +269,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
       onDraftChange={value => { setDraft(value); setEntryError(""); }}
       onSubmit={requestFirstMessage}
       onOpenSignIn={openAuth}
+      workspaceIntent={flyIntent ? "fly" : "coworker"}
     />
   );
 }

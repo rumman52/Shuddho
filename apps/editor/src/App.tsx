@@ -28,7 +28,8 @@ export default function App() {
   const [editorMode, setEditorMode] = useState<"website" | "writing">(() => {
     if (typeof window === "undefined") return "writing";
     const query = new URLSearchParams(window.location.search);
-    return query.has("artifact_id") || query.has("conversation") || query.get("mode") === "writing" ? "writing" : "website";
+    const path = window.location.pathname.replace(/\/+$/, "") || "/";
+    return path === "/writing" || query.has("artifact_id") || query.has("conversation") || query.get("mode") === "writing" ? "writing" : "website";
   });
   const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";
   const auth = useMemo(() => coworkerEnabled
@@ -544,7 +545,7 @@ export default function App() {
               aria-expanded={mobileLibraryOpen}
               onClick={() => { setEditorContextOpen(false); setMobileLibraryOpen(true); }}
             ><span aria-hidden="true">☰</span></button>}
-            <strong>Web Editor</strong>
+            <strong>{editorMode === "writing" ? "Writing Assistant" : "Web Editor"}</strong>
           </div>
           <div className="rukh-editor-top-actions">
             {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
@@ -586,7 +587,7 @@ export default function App() {
               <button className="rukh-library-close" ref={mobileLibraryCloseRef} type="button" aria-label="Close navigation" onClick={() => setMobileLibraryOpen(false)}>×</button>
             </div>
             <a href="/coworker" className="rukh-design-new rukh-editor-new-chat">+ New chat</a>
-            <WorkspaceNavigation active="editor" editorHref="/editor" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
+            <WorkspaceNavigation active={editorMode === "writing" ? "writing" : "editor"} editorHref="/editor" writingHref="/writing" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
             <section className="rukh-editor-recent-chats" aria-labelledby="rukh-editor-recent-chats-title">
               <div className="rukh-editor-sidebar-heading">
                 <span id="rukh-editor-recent-chats-title">RECENT CHATS</span>
@@ -633,7 +634,7 @@ export default function App() {
           </aside>}
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
           <section className="rukh-editor-canvas" aria-label={editorMode === "website" ? "Website editor" : "Writing editor"} aria-hidden={mobileLibraryOpen ? true : undefined}>
-            {editorMode === "writing" && <nav className="rukh-editor-mode" aria-label="Editor mode"><button type="button" onClick={() => setEditorMode("website")}>← Website editor</button></nav>}
+            {editorMode === "writing" && <nav className="rukh-editor-mode" aria-label="Editor mode"><button type="button" onClick={() => { setEditorMode("website"); window.history.replaceState(null, "", "/editor"); }}>← Web Editor</button></nav>}
             {editorMode === "website" && <WebsiteEditor key={session?.user.id ?? "signed-out"} client={client} userId={session?.user.id ?? null} conversationId={originConversationId} projectId={originProjectId} />}
             <div className="rukh-writing-mode" hidden={editorMode !== "writing"}>
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} />

@@ -579,7 +579,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       aria-hidden={mobilePanel === "context" ? true : undefined}>
       <div className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></div>
       <button type="button" className="rukh-design-new" aria-label="New chat" disabled={composerDisabled} onClick={startNew}>+ New chat</button>
-      <WorkspaceNavigation active="conversations" editorHref={selected || projectId ? "/editor?" + new URLSearchParams({ ...(selected ? { conversation: selected } : {}), ...(projectId ? { project: projectId } : {}) }) : "/editor"} onNavigate={view => { onNavigate?.(view); setMobilePanel(null); }} />
+      <WorkspaceNavigation active="conversations" editorHref={selected || projectId ? "/editor?" + new URLSearchParams({ ...(selected ? { conversation: selected } : {}), ...(projectId ? { project: projectId } : {}) }) : "/editor"} writingHref={selected || projectId ? "/writing?" + new URLSearchParams({ ...(selected ? { conversation: selected } : {}), ...(projectId ? { project: projectId } : {}) }) : "/writing"} onNavigate={view => { onNavigate?.(view); setMobilePanel(null); }} />
       <div className="rukh-panel-heading"><div><span className="cw-eyebrow">HISTORY</span><h2 id="rukh-conversations-heading">Conversations</h2></div>
         <div className="rukh-panel-heading-actions"><span className="rukh-count">{conversations.length}</span>
           <button className="rukh-mobile-panel-close" ref={mobilePanel === "conversations" ? mobilePanelCloseRef : null}

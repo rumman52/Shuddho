@@ -10,8 +10,12 @@ test("Coworker navigation keeps the workspace directory and Web Editor reachable
   assert.match(html, /href="\/workspaces"/);
   assert.match(html, /All workspaces/);
   assert.match(html, /aria-label="Primary workspace navigation"/);
+  assert.match(html, /href="\/fly"/);
+  assert.match(html, /Fly/);
   assert.match(html, /href="\/editor"/);
   assert.match(html, /Web Editor/);
+  assert.match(html, /href="\/writing"/);
+  assert.match(html, /Writing Assistant/);
   assert.match(html, /AI Coworker/);
 });
 

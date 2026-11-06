@@ -10,6 +10,7 @@ const tests = [
   "test/rukh-home.test.tsx",
   "test/editor-feature-gate.test.tsx",
   "test/coworker-app-navigation.test.tsx",
+  "test/fly-workspace.test.tsx",
   "test/editor-workspace-layout.test.tsx",
   "test/rukh-responsive-ui.test.tsx",
   "test/rukh-responsive-css.test.mjs",

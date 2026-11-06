@@ -9,7 +9,7 @@ export const coworkerNavigation = Object.freeze([
   { id: "browser", label: "Browser", icon: "globe", group: "Tools", view: "browser" },
   { id: "files", label: "Files & drafts", icon: "file-text", group: "Tools", view: "drafts" },
   { id: "approvals", label: "Plugins & approvals", icon: "shield", group: "Manage", view: "actions" },
-  { id: "sandbox", label: "Sandbox", icon: "terminal", group: "Tools", view: "sandbox" },
+  { id: "fly", label: "Fly", icon: "terminal", group: "Tools", view: "sandbox" },
   { id: "transactions", label: "Transactions", icon: "wallet", group: "Manage", view: "transactions" },
   { id: "negotiations", label: "Negotiations", icon: "handshake", group: "Manage", view: "negotiations" },
 ]);
@@ -22,6 +22,12 @@ export function getInitialCoworkerView(search) {
   const params = new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
   const requested = params.get("view");
   return requested ? getCoworkerView(requested) : "conversations";
+}
+
+export function getInitialCoworkerViewFromLocation(pathname, search) {
+  const path = String(pathname ?? "/").split(/[?#]/, 1)[0].replace(/\/+$/, "") || "/";
+  if (path === "/fly") return "sandbox";
+  return getInitialCoworkerView(search ?? "");
 }
 
 export function getInitialConversationId(search) {
