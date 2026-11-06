@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import "./styles.css";
 import { type Session } from "@supabase/supabase-js";
 import { getRukhAuthClient } from "@rukh/auth";
@@ -23,6 +23,29 @@ type SaveAttempt = { fingerprint: string; uploaded?: SourceDocument };
 type SavedEditorRecord = { text: string; documentId: string; sha256: string; name: string };
 type PendingSavedDocument = { id: string; sha256: string; text: string; name: string };
 
+type LibraryView = "documents" | "history" | "trash";
+type WritingLibraryItem =
+  | { kind: "source"; id: string; filename: string; createdAt?: string; preview: string; source: SourceDocument }
+  | { kind: "artifact"; id: string; filename: string; createdAt?: string; preview: string; artifactItem: ArtifactItem };
+
+function formatDocumentDate(value?: string): string {
+  if (!value) return "Recently added";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Recently added";
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(date);
+}
+
+function formatDocumentSize(bytes: number): string {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function isEditableSourceDocument(source: SourceDocument): boolean {
+  return source.kind.toLowerCase() === "txt" && source.filename.toLowerCase().endsWith(".txt") && source.byte_size <= 1024 * 1024;
+}
+
+
 export default function App() {
   const coworkerEnabled = import.meta.env.VITE_COWORKER_ENABLED !== "false";
   const auth = useMemo(() => coworkerEnabled
@@ -31,19 +54,26 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(Boolean(auth));
   const [tasks, setTasks] = useState<CoworkerTask[]>([]);
+  const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsError, setDocumentsError] = useState("");
+  const [documentSearch, setDocumentSearch] = useState("");
+  const [libraryView, setLibraryView] = useState<LibraryView>("documents");
+  const [editorOpen, setEditorOpen] = useState(false);
   const [recentConversations, setRecentConversations] = useState<ConversationRecord[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [reload, setReload] = useState(0);
-  const [initialText, setInitialText] = useState<string | undefined>();
+  const [initialText, setInitialText] = useState<string | undefined>("");
   const [openedArtifact, setOpenedArtifact] = useState("");
   const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
   const [editorContextOpen, setEditorContextOpen] = useState(false);
   const mobileLibraryTriggerRef = useRef<HTMLButtonElement | null>(null);
   const mobileLibraryCloseRef = useRef<HTMLButtonElement | null>(null);
   const mobileLibraryPanelRef = useRef<HTMLElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [editorText, setEditorText] = useState("");
   const [openedArtifactId, setOpenedArtifactId] = useState("");
   const [originConversationId, setOriginConversationId] = useState<string | null>(() => typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("conversation") : null);
@@ -107,6 +137,8 @@ export default function App() {
       if (!alive) return;
       setSession(next);
       setTasks([]);
+      setSourceDocuments([]);
+      setDocumentsError("");
       setLibraryError("");
     });
     return () => { alive = false; data.subscription.unsubscribe(); };
@@ -204,6 +236,26 @@ export default function App() {
   }, [client, reload]);
 
   useEffect(() => {
+    if (!client) {
+      setSourceDocuments([]);
+      setDocumentsLoading(false);
+      setDocumentsError("");
+      return;
+    }
+    const controller = new AbortController();
+    setDocumentsLoading(true);
+    setDocumentsError("");
+    client.documents(controller.signal).then(({ documents }) => {
+      if (!controller.signal.aborted) setSourceDocuments(documents);
+    }).catch(error => {
+      if (!controller.signal.aborted) setDocumentsError(error instanceof Error ? error.message : "Documents could not be loaded.");
+    }).finally(() => {
+      if (!controller.signal.aborted) setDocumentsLoading(false);
+    });
+    return () => controller.abort();
+  }, [client, reload]);
+
+  useEffect(() => {
     if (!client) { setRecentConversations([]); return; }
     const controller = new AbortController();
     client.conversations(controller.signal).then(({ items }) => {
@@ -275,6 +327,32 @@ export default function App() {
       .slice(0, 12),
   [tasks]);
 
+  const libraryItems = useMemo<WritingLibraryItem[]>(() => {
+    const uploaded: WritingLibraryItem[] = sourceDocuments.map(source => ({
+      kind: "source",
+      id: source.id,
+      filename: source.filename,
+      createdAt: source.created_at,
+      preview: source.kind.toUpperCase() + " document · " + formatDocumentSize(source.byte_size),
+      source,
+    }));
+    const generated: WritingLibraryItem[] = artifacts.map(artifactItem => ({
+      kind: "artifact",
+      id: artifactItem.artifact.id,
+      filename: artifactItem.artifact.filename,
+      createdAt: artifactItem.artifact.created_at ?? artifactItem.task.created_at,
+      preview: artifactItem.task.instruction?.trim() || "Generated by Rukh AI",
+      artifactItem,
+    }));
+    return [...uploaded, ...generated].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  }, [sourceDocuments, artifacts]);
+
+  const filteredLibraryItems = useMemo(() => {
+    const query = documentSearch.trim().toLocaleLowerCase();
+    if (!query) return libraryItems;
+    return libraryItems.filter(item => (item.filename + " " + item.preview).toLocaleLowerCase().includes(query));
+  }, [libraryItems, documentSearch]);
+
   const coworkerUrl = import.meta.env.VITE_COWORKER_APP_URL ?? "/coworker";
   const coworkerReturnUrl = useMemo(() => {
     if (typeof window === "undefined") return coworkerUrl;
@@ -337,7 +415,7 @@ export default function App() {
 
   async function openArtifact(item: ArtifactItem): Promise<boolean> {
     if (!client || busy) return false;
-    if (isTextArtifact(item.artifact) && editorText.trim() && !window.confirm("Replace the text currently in the editor with this saved file?")) return false;
+    if (isTextArtifact(item.artifact) && editorText.trim() && saveStatus !== "Saved to workspace" && !window.confirm("Replace the text currently in the editor with this saved file?")) return false;
     setBusy(item.artifact.id);
     setLibraryError("");
     setNotice("");
@@ -353,6 +431,9 @@ export default function App() {
         setSavedDocumentName("");
         setSaveStatus(content.trim() ? "Unsaved changes" : "");
         setInitialText(content);
+        setEditorOpen(true);
+        setLibraryView("documents");
+        setEditorContextOpen(false);
         setEditorText(content);
         setOpenedArtifact(item.artifact.filename);
         setOpenedArtifactId(item.artifact.id);
@@ -367,6 +448,143 @@ export default function App() {
     } catch (error) {
       setLibraryError(error instanceof Error ? error.message : "The file could not be opened.");
       return false;
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function createNewDocument() {
+    if (editorText.trim() && saveStatus !== "Saved to workspace" && !window.confirm("Start a new document? Your current unsaved editor draft will be replaced in this tab.")) return;
+    lastSavedRecord.current = null;
+    pendingSavedDocumentRef.current = null;
+    saveAttempt.current = null;
+    setPendingSavedDocument(null);
+    setInitialText("");
+    setEditorText("");
+    setOpenedArtifact("");
+    setOpenedArtifactId("");
+    setSavedDocumentId("");
+    setSavedSha256("");
+    setSavedDocumentName("");
+    setSaveStatus("");
+    setSaveError("");
+    setNotice("");
+    setDocumentsError("");
+    setLibraryView("documents");
+    setEditorContextOpen(false);
+    setMobileLibraryOpen(false);
+    setEditorOpen(true);
+  }
+
+  function backToDocuments() {
+    setEditorOpen(false);
+    setEditorContextOpen(false);
+    setMobileLibraryOpen(false);
+    setLibraryView("documents");
+  }
+
+  async function openSourceDocument(source: SourceDocument): Promise<boolean> {
+    if (!client || busy) return false;
+    if (!isEditableSourceDocument(source)) {
+      await downloadSourceDocument(source);
+      return false;
+    }
+    if (editorText.trim() && saveStatus !== "Saved to workspace" && !window.confirm("Replace the text currently in the editor with this uploaded file?")) return false;
+    setBusy(source.id);
+    setDocumentsError("");
+    setNotice("");
+    setSaveError("");
+    try {
+      const content = await client.readTextDocument(source);
+      lastSavedRecord.current = null;
+      pendingSavedDocumentRef.current = null;
+      setPendingSavedDocument(null);
+      setSavedDocumentId("");
+      setSavedSha256("");
+      setSavedDocumentName("");
+      setSaveStatus(content.trim() ? "Unsaved changes" : "");
+      setInitialText(content);
+      setEditorText(content);
+      setOpenedArtifact(source.filename);
+      setOpenedArtifactId(source.id);
+      setEditorOpen(true);
+      setLibraryView("documents");
+      setEditorContextOpen(false);
+      setMobileLibraryOpen(false);
+      setNotice("Opened " + source.filename + ". Save your changes as a new copy; the uploaded original remains unchanged.");
+      return true;
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : "The uploaded file could not be opened.");
+      return false;
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function downloadSourceDocument(source: SourceDocument) {
+    if (!client || busy) return;
+    setBusy(source.id);
+    setDocumentsError("");
+    try {
+      await client.downloadSourceDocument(source);
+      setNotice("Download started for " + source.filename + ".");
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : "The uploaded file could not be downloaded.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function downloadArtifactFile(item: ArtifactItem) {
+    if (!client || busy) return;
+    setBusy(item.artifact.id);
+    setDocumentsError("");
+    try {
+      await client.download(item.artifact);
+      setNotice("Download started for " + item.artifact.filename + ".");
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : "The generated file could not be downloaded.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function removeSourceDocument(source: SourceDocument) {
+    if (!client || busy || !window.confirm("Remove " + source.filename + " from your active workspace?")) return;
+    setBusy(source.id);
+    setDocumentsError("");
+    try {
+      const result = await client.deleteDocument(source.id);
+      setSourceDocuments(previous => previous.filter(item => item.id !== source.id));
+      setNotice(result.message || source.filename + " was removed from Documents.");
+      setReload(value => value + 1);
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : "The document could not be removed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function uploadSourceDocument(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    if (!client) {
+      setDocumentsError("Sign in to AI Coworker before uploading files to your workspace.");
+      return;
+    }
+    if (busy) return;
+    setBusy("upload");
+    setDocumentsError("");
+    setNotice("");
+    try {
+      const uploaded = await client.upload(file);
+      setSourceDocuments(previous => [uploaded, ...previous.filter(item => item.id !== uploaded.id)]);
+      setReload(value => value + 1);
+      setNotice("Uploaded " + uploaded.filename + ". It is now available in Documents.");
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : "The document could not be uploaded.");
     } finally {
       setBusy("");
     }
@@ -402,9 +620,9 @@ export default function App() {
       setSaveError("Add text to the editor before saving.");
       return;
     }
-    const baseName = (openedArtifact || "rukh-editor-draft").replace(/\.[^.]+$/, "");
+    const baseName = (openedArtifact || "Untitled document").replace(/\.[^.]+$/, "");
     const safeName = baseName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^\.+/, "").slice(0, 88) || "rukh-editor-draft";
-    const filename = `${safeName}-edited.txt`;
+    const filename = openedArtifact ? `${safeName}-edited.txt` : `${safeName}.txt`;
     const fingerprint = JSON.stringify({ userId: session?.user.id, text: editorText, filename });
     if (saveAttempt.current?.fingerprint !== fingerprint) saveAttempt.current = { fingerprint };
     const attempt = saveAttempt.current;
@@ -429,6 +647,7 @@ export default function App() {
       setSaveStatus("Saved to workspace");
       setSaveError("");
       setNotice(`Saved ${saved.name} as a new workspace copy. The original artifact was not overwritten.`);
+      setReload(value => value + 1);
       saveAttempt.current = null;
     } catch (error) {
       setSaveStatus("Save failed");
@@ -526,7 +745,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div className="rukh-editor-app">
+      <div className={"rukh-editor-app" + (editorOpen ? "" : " rukh-editor-app--documents")}>
         <header className="rukh-editor-topbar" aria-hidden={mobileLibraryOpen ? true : undefined}>
           <div className="rukh-editor-topbar-heading">
             {coworkerEnabled && <button
@@ -541,28 +760,37 @@ export default function App() {
             <strong>Writing Assistant</strong>
           </div>
           <div className="rukh-editor-top-actions">
-            {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
-            {coworkerEnabled && <>
-              {saveStatus && <span className="rukh-editor-save-status" role="status">{saveStatus}</span>}
-              {saveError && <span className="rukh-editor-save-error" role="alert">{saveError}</span>}
-              <button type="button" className="rukh-save-workspace-button" onClick={() => void saveToWorkspace()}
-                disabled={!editorText.trim() || busy === "save" || saveStatus === "Verifying saved copy…" || (Boolean(savedDocumentId) && saveStatus === "Saved to workspace")}
-                aria-label="Save editor copy to workspace">
-                {busy === "save" ? "Saving…" : saveStatus === "Verifying saved copy…" ? "Verifying…" : savedDocumentId && saveStatus === "Saved to workspace" ? "Saved" : "Save to workspace"}
-              </button>
-              <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
-                {busy === "handoff" ? "Sending…" : "Send to AI Coworker ↗"}
-              </button>
-              <a href={coworkerReturnUrl} className="rukh-coworker-link">{originConversationId ? "Return to Coworker" : "AI Coworker"}</a>
-            </>}
-            {coworkerEnabled && <button
-              type="button"
-              className="rukh-editor-context-trigger"
-              aria-controls="rukh-editor-context"
-              aria-expanded={editorContextOpen}
-              onClick={() => { setMobileLibraryOpen(false); setEditorContextOpen(value => !value); }}
-            >Activity &amp; context</button>}
-            {!coworkerEnabled && <a className="rukh-workspace-home" href="/workspaces" target="_blank" rel="noreferrer">All workspaces</a>}
+            {!editorOpen ? (
+              <span className="rukh-documents-session-status" role="status">
+                {authLoading ? "Restoring workspace…" : client ? "Private workspace" : "Sign in to upload documents"}
+              </span>
+            ) : (
+              <>
+                <button type="button" className="rukh-editor-back-button" onClick={backToDocuments}>← Documents</button>
+                {openedArtifact && <span className="rukh-opened-file" title={openedArtifact}>Editing a copy of {openedArtifact}</span>}
+                {coworkerEnabled && <>
+                  {saveStatus && <span className="rukh-editor-save-status" role="status">{saveStatus}</span>}
+                  {saveError && <span className="rukh-editor-save-error" role="alert">{saveError}</span>}
+                  <button type="button" className="rukh-save-workspace-button" onClick={() => void saveToWorkspace()}
+                    disabled={!editorText.trim() || busy === "save" || saveStatus === "Verifying saved copy…" || (Boolean(savedDocumentId) && saveStatus === "Saved to workspace")}
+                    aria-label="Save editor copy to workspace">
+                    {busy === "save" ? "Saving…" : saveStatus === "Verifying saved copy…" ? "Verifying…" : savedDocumentId && saveStatus === "Saved to workspace" ? "Saved" : "Save to workspace"}
+                  </button>
+                  <button type="button" className="rukh-handoff-button" onClick={() => void sendToCoworker()} disabled={busy === "handoff"}>
+                    {busy === "handoff" ? "Sending…" : "Send to AI Coworker ↗"}
+                  </button>
+                  <a href={coworkerReturnUrl} className="rukh-coworker-link">{originConversationId ? "Return to Coworker" : "AI Coworker"}</a>
+                </>}
+                {coworkerEnabled && <button
+                  type="button"
+                  className="rukh-editor-context-trigger"
+                  aria-controls="rukh-editor-context"
+                  aria-expanded={editorContextOpen}
+                  onClick={() => { setMobileLibraryOpen(false); setEditorContextOpen(value => !value); }}
+                >Activity &amp; context</button>}
+                {!coworkerEnabled && <a className="rukh-workspace-home" href="/workspaces" target="_blank" rel="noreferrer">All workspaces</a>}
+              </>
+            )}
           </div>
         </header>
         <div className={`rukh-editor-content${coworkerEnabled ? "" : " rukh-editor-content--standalone"}`}>
@@ -581,6 +809,15 @@ export default function App() {
             </div>
             <a href="/coworker" className="rukh-design-new rukh-editor-new-chat">+ New chat</a>
             <WorkspaceNavigation active="writing" writingHref="/writing" onNavigate={view => window.location.assign("/coworker?view=" + encodeURIComponent(view))} />
+            {!editorOpen && <nav className="rukh-writing-library-nav" aria-label="Writing Assistant document sections">
+              <span className="rukh-writing-library-nav__label">DOCUMENTS</span>
+              <button type="button" className={libraryView === "documents" ? "is-active" : ""} aria-current={libraryView === "documents" ? "page" : undefined}
+                onClick={() => { setLibraryView("documents"); setMobileLibraryOpen(false); }}><span aria-hidden="true">▤</span>Documents</button>
+              <button type="button" className={libraryView === "history" ? "is-active" : ""} aria-current={libraryView === "history" ? "page" : undefined}
+                onClick={() => { setLibraryView("history"); setMobileLibraryOpen(false); }}><span aria-hidden="true">◷</span>Version history</button>
+              <button type="button" className={libraryView === "trash" ? "is-active" : ""} aria-current={libraryView === "trash" ? "page" : undefined}
+                onClick={() => { setLibraryView("trash"); setMobileLibraryOpen(false); }}><span aria-hidden="true">▱</span>Trash</button>
+            </nav>}
             <section className="rukh-editor-recent-chats" aria-labelledby="rukh-editor-recent-chats-title">
               <div className="rukh-editor-sidebar-heading">
                 <span id="rukh-editor-recent-chats-title">RECENT CHATS</span>
@@ -625,8 +862,107 @@ export default function App() {
               <a href="/coworker?view=settings" aria-label="Settings" className="rukh-editor-settings-link">⚙</a>
             </div>
           </aside>}
+          <section className="rukh-document-dashboard" aria-label="Writing Assistant documents" hidden={editorOpen} aria-hidden={mobileLibraryOpen ? true : undefined}>
+            <input ref={uploadInputRef} className="rukh-document-upload-input" type="file" accept=".txt,.docx,.pdf,.csv,.xlsx,.pptx"
+              aria-label="Upload a document file" onChange={uploadSourceDocument} />
+            <header className="rukh-documents-heading">
+              <div>
+                <p className="rukh-documents-eyebrow">WRITING ASSISTANT</p>
+                <h1>{libraryView === "documents" ? "Documents" : libraryView === "history" ? "Version history" : "Trash"}</h1>
+                <p>{libraryView === "documents" ? "Your drafts and saved files, together in one place." : libraryView === "history" ? "Review earlier versions of your writing." : "Manage documents removed from your active workspace."}</p>
+              </div>
+              {libraryView === "documents" && <div className="rukh-documents-actions">
+                {editorText.trim() && <button type="button" className="rukh-document-button rukh-document-button--quiet" onClick={() => setEditorOpen(true)}>Continue editing</button>}
+                <button type="button" className="rukh-document-button rukh-document-button--primary" onClick={createNewDocument}><span aria-hidden="true">＋</span>New document</button>
+                <button type="button" className="rukh-document-button rukh-document-button--secondary" onClick={() => uploadInputRef.current?.click()}
+                  disabled={!client || authLoading || busy === "upload"} title={!client ? "Sign in to upload files" : "Upload a document"}><span aria-hidden="true">↑</span>{busy === "upload" ? "Uploading…" : "Upload file"}</button>
+              </div>}
+            </header>
+            {libraryView === "documents" ? (
+              <>
+                <div className="rukh-documents-toolbar">
+                  <label className="rukh-documents-search">
+                    <span aria-hidden="true">⌕</span>
+                    <input type="search" value={documentSearch} onChange={event => setDocumentSearch(event.target.value)} placeholder="Search documents…" aria-label="Search documents" />
+                  </label>
+                  <span className="rukh-documents-count">{filteredLibraryItems.length} {filteredLibraryItems.length === 1 ? "document" : "documents"}</span>
+                </div>
+                {documentsError && <p className="rukh-documents-message rukh-documents-message--error" role="alert">{documentsError}</p>}
+                {libraryError && <p className="rukh-documents-message rukh-documents-message--error" role="alert">{libraryError}</p>}
+                {notice && <p className="rukh-documents-message" role="status">{notice}</p>}
+                {documentsLoading || libraryLoading ? (
+                  <div className="rukh-document-empty-state" role="status">Loading your documents…</div>
+                ) : filteredLibraryItems.length ? (
+                  <section className="rukh-document-grid" aria-label="Saved documents">
+                    {filteredLibraryItems.map(item => {
+                      const isSource = item.kind === "source";
+                      const canOpen = isSource ? isEditableSourceDocument(item.source) : isTextArtifact(item.artifactItem.artifact);
+                      const typeLabel = isSource ? item.source.kind.toUpperCase() : "AI OUTPUT";
+                      const busyForItem = busy === item.id;
+                      const preview = item.preview.length > 180 ? item.preview.slice(0, 177) + "…" : item.preview;
+                      return (
+                        <article className="rukh-document-card" key={item.kind + ":" + item.id}>
+                          <div className="rukh-document-card__meta">
+                            <span className="rukh-document-card__file-icon" aria-hidden="true">▤</span>
+                            <time dateTime={item.createdAt || undefined}>{formatDocumentDate(item.createdAt)}</time>
+                          </div>
+                          <h2 title={item.filename}>{item.filename}</h2>
+                          <p className="rukh-document-card__preview">{preview}</p>
+                          <div className="rukh-document-card__footer">
+                            <span className="rukh-document-card__type">{typeLabel}</span>
+                            <div className="rukh-document-card__actions">
+                              <button type="button" className="rukh-document-card__open" disabled={busyForItem}
+                                onClick={() => {
+                                  if (isSource) {
+                                    if (canOpen) void openSourceDocument(item.source);
+                                    else void downloadSourceDocument(item.source);
+                                  } else {
+                                    void openArtifact(item.artifactItem);
+                                  }
+                                }}>{busyForItem ? "Working…" : canOpen ? "Open" : "Download"}</button>
+                              <button type="button" className="rukh-document-card__icon-action" aria-label={"Download " + item.filename} title="Download"
+                                disabled={busyForItem} onClick={() => {
+                                  if (isSource) void downloadSourceDocument(item.source);
+                                  else void downloadArtifactFile(item.artifactItem);
+                                }}>↓</button>
+                              {isSource && <button type="button" className="rukh-document-card__icon-action" aria-label={"Remove " + item.filename} title="Remove from workspace"
+                                disabled={busyForItem} onClick={() => void removeSourceDocument(item.source)}>⌫</button>}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </section>
+                ) : (
+                  <div className="rukh-document-empty-state">
+                    <span className="rukh-document-empty-state__icon" aria-hidden="true">▤</span>
+                    <h2>{documentSearch.trim() ? "No matching documents" : "No documents yet"}</h2>
+                    <p>{documentSearch.trim() ? "Try another search term or clear your search." : client ? "Create a new document or upload a file to start your writing library." : "Create a local draft now, or sign in to upload and access saved workspace files."}</p>
+                    {!documentSearch.trim() && <div className="rukh-document-empty-state__actions">
+                      <button type="button" className="rukh-document-button rukh-document-button--primary" onClick={createNewDocument}>Create a document</button>
+                      <button type="button" className="rukh-document-button rukh-document-button--secondary" onClick={() => uploadInputRef.current?.click()} disabled={!client || authLoading}>Upload a file</button>
+                    </div>}
+                  </div>
+                )}
+              </>
+            ) : libraryView === "history" ? (
+              <div className="rukh-document-empty-state">
+                <span className="rukh-document-empty-state__icon" aria-hidden="true">◷</span>
+                <h2>Version history is not available yet</h2>
+                <p>The current workspace API stores saved copies as separate documents and does not expose earlier versions for browsing.</p>
+                <button type="button" className="rukh-document-button rukh-document-button--secondary" onClick={() => setLibraryView("documents")}>Back to Documents</button>
+              </div>
+            ) : (
+              <div className="rukh-document-empty-state">
+                <span className="rukh-document-empty-state__icon" aria-hidden="true">▱</span>
+                <h2>Trash and restore are not available yet</h2>
+                <p>Removing a document hides it from the active library. The current workspace API does not expose a recoverable Trash view.</p>
+                <button type="button" className="rukh-document-button rukh-document-button--secondary" onClick={() => setLibraryView("documents")}>Back to Documents</button>
+              </div>
+            )}
+          </section>
           {mobileLibraryOpen && <button className="rukh-editor-mobile-backdrop" type="button" aria-hidden="true" tabIndex={-1} onClick={() => setMobileLibraryOpen(false)} />}
-          <section className="rukh-editor-canvas" aria-label="Writing editor" aria-hidden={mobileLibraryOpen ? true : undefined}>
+          <section className="rukh-editor-canvas" aria-label="Writing editor" hidden={!editorOpen} aria-hidden={mobileLibraryOpen || !editorOpen ? true : undefined}>
             <div className="rukh-writing-mode">
             <WritingAssistant initialText={initialText} onTextChange={onTextChange} documentTitle={savedDocumentName || openedArtifact || "Untitled document"} />
             </div>
