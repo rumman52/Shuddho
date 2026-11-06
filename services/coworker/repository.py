@@ -1079,7 +1079,7 @@ class Repository:
     def _document_dto(self, document, version):
         return {"id": document.id, "version_id": version.id, "filename": document.filename,
                 "kind": version.kind, "byte_size": version.byte_size, "sha256": version.sha256,
-                "state": version.state, "expires_at": iso(version.expires_at)}
+                "state": version.state, "created_at": iso(document.created_at), "expires_at": iso(version.expires_at)}
 
     def get_upload(self, owner, document_id):
         with self.sessions() as db:

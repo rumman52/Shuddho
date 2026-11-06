@@ -30,3 +30,27 @@ test("Editor standalone app entry resolves every local module and stylesheet", (
   assertRelativeImportsResolve(app);
   assert.match(readFileSync(app, "utf8"), /export\s+default/);
 });
+
+
+test("Writing Assistant exposes a document-library landing page with real document actions", () => {
+  const app = readFileSync(resolve(sourceRoot, "App.tsx"), "utf8");
+  assert.match(app, /Documents/);
+  assert.match(app, /New document/);
+  assert.match(app, /Upload file/);
+  assert.match(app, /Search documents/);
+  assert.match(app, /Version history/);
+  assert.match(app, /Trash/);
+  assert.match(app, /client\.documents\(/);
+  assert.match(app, /client\.upload\(/);
+  assert.match(app, /client\.deleteDocument\(/);
+  assert.match(app, /client\.readTextDocument\(/);
+});
+
+test("Writing Assistant document cards use responsive Rukh theme tokens", () => {
+  const css = readFileSync(resolve(sourceRoot, "styles.css"), "utf8");
+  assert.match(css, /\.rukh-document-dashboard/);
+  assert.match(css, /\.rukh-document-dashboard\s*\{[^}]*grid-area:\s*canvas/s);
+  assert.match(css, /\.rukh-document-card/);
+  assert.match(css, /var\(--rukh-accent\)/);
+  assert.match(css, /@media\s*\(max-width:\s*900px\)/);
+});

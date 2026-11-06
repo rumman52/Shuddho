@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { CoworkerClient, WorkspaceError, parseProgress, sourceLink, trustedBase } from "./client";
 import { publicAuthConfig } from "./authConfig";
 
@@ -452,4 +453,54 @@ test("conversation reply stream enforces the 16 KB UTF-8 response limit", async 
       () => undefined,
     ));
   } finally { globalThis.fetch = original; }
+});
+
+
+
+test("source text documents reject a response with a mismatched SHA-256 digest", async () => {
+  const original = globalThis.fetch;
+  const bytes = new TextEncoder().encode("tampered body");
+  globalThis.fetch = (async () => new Response(bytes)) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-document-token");
+    const document = {
+      id: "00000000-0000-4000-8000-000000000000",
+      filename: "notes.txt",
+      kind: "txt",
+      state: "uploaded",
+      byte_size: bytes.byteLength,
+      sha256: "0".repeat(64),
+    };
+    const read = (client as unknown as { readTextDocument: (value: typeof document) => Promise<string> }).readTextDocument;
+    await assert.rejects(read.call(client, document), /failed its integrity check/i);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+
+test("source text documents are read through the owner-authenticated content route and SHA-256 is verified", async () => {
+  const original = globalThis.fetch;
+  const seen: { url: string; options?: RequestInit }[] = [];
+  const body = "A saved writing draft. বাংলা লেখা।";
+  const bytes = new TextEncoder().encode(body);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const id = "00000000-0000-4000-8000-000000000000";
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(bytes, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-document-token");
+    const document = { id, filename: "notes.txt", kind: "txt", state: "uploaded", byte_size: bytes.byteLength, sha256 };
+    const read = (client as unknown as { readTextDocument: (value: typeof document) => Promise<string> }).readTextDocument;
+    assert.equal(await read.call(client, document), body);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, `/backend/api/v1/documents/${id}/content`);
+    assert.equal(new Headers(seen[0].options?.headers).get("Authorization"), "Bearer owner-document-token");
+    assert.equal(seen[0].options?.credentials, "omit");
+    assert.equal(seen[0].options?.redirect, "error");
+  } finally {
+    globalThis.fetch = original;
+  }
 });

@@ -11,6 +11,9 @@
 ## Interface delivered
 
 - Persistent Rukh workspace rail with Coworker, Fly, Writing Assistant, recent chats/files and account controls.
+- Documents-first Writing Assistant landing page with new-document creation, authenticated file upload, search, recent source documents and generated artifacts, download and owner-scoped removal actions.
+- Source uploads are limited to TXT, DOCX and PDF (8 MB maximum). TXT files up to 1 MB can open in the editor; DOCX and PDF files are stored securely and downloaded, not converted into editable text yet.
+- Version history and Trash navigation are present, but their views clearly state that the current workspace API does not expose version browsing or restore; no synthetic history or trash data is shown.
 - Dedicated document toolbar with the current artifact title, document word count, runtime status, settings and Deep AI Review.
 - Focused center writing canvas with Bangla typography, document status, writing goal and tone controls, inline issue marks and word/character status.
 - Separate right-hand suggestions inspector with category filters, source labels, apply/ignore/explain actions, safe batch application, rewrite options and corrected-text preview.
@@ -23,12 +26,13 @@
 - Existing quick local checks, Deep AI Review, backend/provider diagnostics, cancellation and request sequencing remain in the shared writing engine.
 - Existing suggestion validation, apply/dismiss, dictionary and rewrite flows are unchanged.
 - Existing user-scoped draft storage, owner-authenticated artifact reading, explicit copy-save behavior, and Coworker handoff remain unchanged.
-- No new backend endpoint, schema, database migration, provider activation, external permission or API secret was added.
+- Added an owner-authenticated source-document content GET route with server-side size and SHA-256 verification; no database schema or migration, provider activation, external permission or API secret was added.
 - This UI does not claim cloud autosave; saved artifact copies remain explicit user actions.
 
 ## Verification
 
-- Added SSR assertions for the document title, editor canvas, suggestions inspector, review filters and Deep AI Review control.
+- Added SSR assertions for the document title, editor canvas, suggestions inspector, review filters, Deep AI Review control and document-library entry points.
+- Added client and backend tests for owner-authenticated source-document reads, content integrity and cross-account isolation.
 - Added CSS contract assertions for the three-pane desktop layout and mobile review sheet.
 - Extended the Chromium browser workflow to open and close the mobile review sheet and check narrow-screen horizontal overflow.
 - Exact-head CI and the Vercel preview must pass before merge. A preview build is not production qualification.
