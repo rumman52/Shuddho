@@ -15,6 +15,8 @@ const iconPaths: Record<string, string[]> = {
   globe: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M3 12h18", "M12 3a15 15 0 0 1 0 18", "M12 3a15 15 0 0 0 0 18"],
   "file-text": ["M6 3h8l4 4v14H6z", "M14 3v5h4", "M9 12h6", "M9 16h6"],
   folder: ["M3 6h7l2 2h9v11H3z", "M3 9h18"],
+  "arrow-left": ["M19 12H5", "m12 19-7-7 7-7"],
+  "arrow-right": ["M5 12h14", "m12 5 7 7-7 7"],
   shield: ["M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z", "m9 12 2 2 4-4"],
   terminal: ["M4 5h16v14H4z", "m8 9 3 3-3 3", "M13 15h3"],
   wallet: ["M4 6h16v14H4z", "M6 6l2-3h10", "M15 12h5", "M16.5 12h.01"],
