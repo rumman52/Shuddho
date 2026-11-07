@@ -54,3 +54,14 @@ test("Coworker follows the approved palette and keeps its composer outside trans
   assert.match(css, /\.rukh-conversation-list\.rukh-mobile-panel-open/);
   assert.match(css, /@media\s*\(max-width:\s*900px\)/);
 });
+
+test("Writing Assistant desktop documents and editor views share one explicit canvas grid area", async () => {
+  const css = await readFile(join(cwd, "../editor/src/styles.css"), "utf8");
+  const desktopShell = css.slice(css.lastIndexOf(".rukh-editor-app:has(.rukh-editor-library) {"));
+
+  assert.match(desktopShell, /grid-template-areas:\s*"library topbar"\s*"library canvas"/);
+  assert.match(desktopShell, /\.rukh-editor-app:has\(\.rukh-editor-library\)\s+\.rukh-editor-topbar\s*\{[^}]*grid-area:\s*topbar/s);
+  assert.match(desktopShell, /\.rukh-editor-app:has\(\.rukh-editor-library\)\s+\.rukh-editor-library\s*\{[^}]*grid-area:\s*library/s);
+  assert.match(desktopShell, /\.rukh-editor-app:has\(\.rukh-editor-library\)\s+\.rukh-editor-canvas\s*\{[^}]*grid-area:\s*canvas/s);
+  assert.match(css, /\.rukh-document-dashboard\s*\{[^}]*grid-area:\s*canvas/s);
+});
