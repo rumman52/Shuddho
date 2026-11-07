@@ -2,10 +2,11 @@ import NavigationIcon from "./WorkspaceNavigationIcon";
 import type { CoworkerView } from "./client";
 import { coworkerNavigation } from "../../../coworker/src/navigation.mjs";
 
-export default function WorkspaceNavigation({ active, onNavigate, writingHref = "/writing" }: {
+export default function WorkspaceNavigation({ active, onNavigate, writingHref = "/writing", settingsInFooter = false }: {
   active: CoworkerView | "writing";
   onNavigate: (view: CoworkerView) => void;
   writingHref?: string;
+  settingsInFooter?: boolean;
 }) {
   function item(view: CoworkerView, label: string, icon: string) {
     return <button key={view} type="button" className={"rukh-design-nav-link" + (active === view ? " is-active" : "")} aria-current={active === view ? "page" : undefined} onClick={() => onNavigate(view)}><NavigationIcon name={icon} />{label}</button>;
@@ -24,7 +25,7 @@ export default function WorkspaceNavigation({ active, onNavigate, writingHref = 
       {item("goals", "Goals", "target")}
       {item("automations", "Automations", "clock")}
     </nav>
-    <button type="button" className="rukh-design-settings" onClick={() => onNavigate("settings")}>Settings</button>
+    {!settingsInFooter && <button type="button" className="rukh-design-settings" onClick={() => onNavigate("settings")}>Settings</button>}
     <details className="rukh-design-more-tools">
       <summary>More tools</summary>
       <nav aria-label="Additional tools">{coworkerNavigation.filter(value => ["drafts", "agent", "browser", "transactions", "negotiations"].includes(value.view)).map(value => item(value.view as CoworkerView, value.label, value.icon))}</nav>
