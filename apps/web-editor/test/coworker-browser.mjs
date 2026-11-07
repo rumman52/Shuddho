@@ -91,7 +91,7 @@ try {
   await page.getByRole("heading", { name: "What are we building?", exact: true }).waitFor();
   await page.getByRole("region", { name: "Terminal output" }).waitFor();
   await page.getByRole("textbox", { name: "Ask Rukh about this code" }).waitFor();
-  await page.locator(".rukh-fly-runtime-badge").waitFor();
+  await page.locator(".rukh-fly-v2-runtime").waitFor();
   // A Fly → Coworker switch must change both the visible application and its
   // canonical URL. Otherwise a refresh silently reopens Fly.
   await page.getByRole("link", { name: "Coworker", exact: true }).click();
