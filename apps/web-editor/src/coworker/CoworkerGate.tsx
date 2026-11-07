@@ -34,7 +34,13 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
   const [authOpen, setAuthOpen] = useState(false);
   const currentPath = typeof window === "undefined" ? "/" : String(window.location?.pathname ?? "/");
   const flyIntent = currentPath.replace(/\/+$/, "") === "/fly";
-  const authReturnUrl = () => new URL(flyIntent ? "/fly" : "/coworker", window.location.origin).href;
+  const authReturnUrl = () => {
+    const destination = new URL(flyIntent ? "/fly" : "/coworker", window.location.origin);
+    if (!flyIntent && new URLSearchParams(window.location.search ?? "").get("view") === "projects") {
+      destination.searchParams.set("view", "projects");
+    }
+    return destination.href;
+  };
 
   const client = useMemo(() => auth && session ? new CoworkerClient(
     import.meta.env.VITE_COWORKER_API_BASE_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8000" : "/backend"),
