@@ -44,6 +44,33 @@
 .rukh-design-history { margin: 22px 8px 0; padding-top: 10px; border-top: 1px solid var(--rukh-border); }
 .rukh-design-history .rukh-design-section-label { padding-left: 4px; }
 .rukh-design-history p { padding: 0 4px; color: var(--rukh-muted); font-size: 12px; line-height: 1.7; }
+.rukh-design-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rukh-design-history-search { display: grid; place-items: center; width: 28px; height: 28px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--rukh-muted); }
+.rukh-design-history-search:hover { background: var(--rukh-surface); color: var(--rukh-text); }
+.rukh-design-history-search svg { width: 16px; height: 16px; }
+.rukh-design-history-search-input { width: 100%; min-height: 34px; margin: 3px 0 8px; padding: 7px 9px; border: 1px solid var(--rukh-border); border-radius: 8px; background: var(--rukh-surface); color: var(--rukh-text); font: inherit; font-size: 11px; }
+.rukh-design-history-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.rukh-design-history-list li { min-width: 0; }
+.rukh-design-history-list li button { display: block; width: 100%; min-width: 0; min-height: 32px; overflow: hidden; padding: 7px 5px; border: 0; border-radius: 7px; background: transparent; color: var(--rukh-muted); text-align: left; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: 11px; }
+.rukh-design-history-list li button:hover { background: var(--rukh-surface); color: var(--rukh-text); }
+.rukh-cw-account-footer { flex-wrap: nowrap; gap: 6px; }
+.rukh-cw-account-footer > div { flex: 1; }
+.rukh-design-settings-icon, .rukh-design-signout-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--rukh-muted); }
+.rukh-design-settings-icon svg, .rukh-design-signout-icon svg { width: 18px; height: 18px; }
+.rukh-design-settings-icon:hover, .rukh-design-settings-icon.is-active, .rukh-design-signout-icon:hover { background: var(--rukh-surface); color: var(--rukh-accent); }
+.rukh-section-context { position: relative; margin-left: auto; }
+.rukh-section-context > summary { list-style: none; cursor: pointer; }
+.rukh-section-context > summary::-webkit-details-marker { display: none; }
+.rukh-section-context-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 200; width: min(360px, calc(100vw - 24px)); padding: 16px; border: 1px solid var(--rukh-border); border-radius: 12px; background: var(--rukh-surface); box-shadow: 0 16px 44px #10181020; }
+.rukh-section-context-heading { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.rukh-section-context-heading strong { color: var(--rukh-text); font-size: 13px; }
+.rukh-section-context-heading small, .rukh-section-context-panel button small { color: var(--rukh-muted); font-size: 10px; }
+.rukh-section-context-panel > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; padding: 9px 6px; border: 0; border-radius: 7px; background: transparent; color: var(--rukh-text); text-align: left; }
+.rukh-section-context-panel > button:hover { background: var(--rukh-surface-soft); }
+.rukh-section-context-panel > button span { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.rukh-section-context-panel > button small { flex: 0 0 auto; }
+.rukh-section-context-panel > p { margin: 8px 0 0; color: var(--rukh-muted); font-size: 11px; line-height: 1.6; }
+.rukh-section-context-panel .rukh-section-context-note { padding-top: 10px; border-top: 1px solid var(--rukh-border); }
 .rukh-design-account { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: auto 8px 0; padding-top: 18px; border-top: 1px solid var(--rukh-border); }
 .rukh-design-account > button:first-child, .rukh-design-account > div { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; padding: 0; background: transparent; color: var(--rukh-text); text-align: left; }
 .rukh-design-account-avatar { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 50%; background: var(--rukh-accent-soft); color: var(--rukh-accent); font-size: 13px; font-weight: 700; }
