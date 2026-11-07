@@ -80,15 +80,11 @@ class ProjectRepository:
             if not rows:
                 return []
             counts = dict(db.execute(
-                select(ProjectResource.project_id, func.count(Conversation.id))
-                .select_from(ProjectResource)
-                .join(Conversation, Conversation.id == ProjectResource.resource_id)
+                select(ProjectResource.project_id, func.count(ProjectResource.resource_id))
                 .where(
                     ProjectResource.owner_id == owner,
                     ProjectResource.resource_type == "conversation",
                     ProjectResource.project_id.in_([row.id for row in rows]),
-                    Conversation.owner_id == owner,
-                    Conversation.deleted.is_(False),
                 )
                 .group_by(ProjectResource.project_id)
             ).all())

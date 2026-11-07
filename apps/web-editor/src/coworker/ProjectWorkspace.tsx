@@ -306,7 +306,7 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
           <input type="search" aria-label="Search projects" placeholder="Search projects…" value={search} onChange={event => setSearch(event.target.value)} />
         </label>
       </div>
-      {loading ? <p className="rukh-project-loading" role="status">Loading projects…</p> : filteredProjects.length > 0 ? <div className="rukh-project-grid">
+      {loading ? <p className="rukh-project-loading" role="status">Loading projects…</p> : error && projects.length === 0 ? null : filteredProjects.length > 0 ? <div className="rukh-project-grid">
         {filteredProjects.map(item => <button type="button" className="rukh-project-card" key={item.id} disabled={busy} onClick={() => { void open(item.id); }}>
           <span className="rukh-project-card-icon"><NavigationIcon name="folder" /></span>
           <span className="rukh-project-card-title">{item.name}</span>

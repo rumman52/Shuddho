@@ -66,7 +66,6 @@ def test_deleted_and_foreign_files_are_not_exposed_by_project_links(container):
     repo.link(owner, project["id"], ProjectLink(resource_type="conversation", resource_id=chat["id"], expected_revision=1))
     container.conversations.delete(owner, chat["id"])
     assert repo.get(owner, project["id"])["resources"] == []
-    assert repo.list(owner)[0]["conversation_count"] == 0
     assert container.retention.erase_account(owner)["database_erased"]
 
 

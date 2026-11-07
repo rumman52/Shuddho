@@ -116,6 +116,24 @@ test("Projects home searches real project records and opens the project workspac
   });
 });
 
+test("a disabled Projects backend does not show a misleading create-project empty state", async () => {
+  const client = {
+    projects: async () => { throw new Error("Projects are not available in this workspace yet."); },
+  } as unknown as CoworkerClient;
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(<ProjectWorkspace client={client} />);
+    });
+    assert.ok(tree.root.findAllByProps({ role: "alert" }).length > 0);
+    assert.equal(tree.root.findAllByType("button").some(item => item.children.join("") === "Create your first project"), false);
+    const createButton = tree.root.findAllByType("button").find(item => item.children.join("") === "+ New project");
+    assert.equal(createButton?.props.disabled, true);
+  } finally {
+    if (tree) await act(async () => tree.unmount());
+  }
+});
+
 test("project deletion is confirmed, revision-bound, and preserves conversations and files", async () => {
   await mount(async (tree, data) => {
     const card = tree.root.findByProps({ className: "rukh-project-card" });
