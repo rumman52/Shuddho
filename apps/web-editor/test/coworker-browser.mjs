@@ -141,6 +141,49 @@ try {
   await page.waitForURL(url => url.pathname === "/writing");
   await page.locator(".rukh-editor-topbar-heading strong").getByText("Writing Assistant", { exact: true }).waitFor();
   await page.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
+
+  // The Documents landing page and the writing canvas must occupy the same
+  // full-width desktop canvas slot; neither may create an implicit grid track.
+  await page.getByRole("button", { name: "← Documents", exact: true }).click();
+  await page.getByRole("heading", { name: "Documents", exact: true }).waitFor();
+  await page.setViewportSize({ width: 1366, height: 604 });
+  const documentsLayout = await page.evaluate(() => {
+    const rect = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) throw new Error("Missing Writing Assistant layout element: " + selector);
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, width: box.width };
+    };
+    return {
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      sidebar: rect(".rukh-editor-library"),
+      topbar: rect(".rukh-editor-topbar"),
+      dashboard: rect(".rukh-document-dashboard"),
+    };
+  });
+  assert.ok(documentsLayout.documentWidth <= documentsLayout.viewportWidth, `Writing Assistant documents overflow horizontally: ${JSON.stringify(documentsLayout)}`);
+  assert.ok(Math.abs(documentsLayout.topbar.left - documentsLayout.sidebar.right) <= 1, `Writing Assistant toolbar is detached from the sidebar: ${JSON.stringify(documentsLayout)}`);
+  assert.ok(Math.abs(documentsLayout.dashboard.left - documentsLayout.sidebar.right) <= 1, `Writing Assistant documents dashboard is detached from the sidebar: ${JSON.stringify(documentsLayout)}`);
+  assert.ok(documentsLayout.topbar.width > documentsLayout.viewportWidth * .75, `Writing Assistant toolbar is too narrow: ${JSON.stringify(documentsLayout)}`);
+  assert.ok(documentsLayout.dashboard.width > documentsLayout.viewportWidth * .75, `Writing Assistant documents dashboard is too narrow: ${JSON.stringify(documentsLayout)}`);
+  await page.screenshot({ path: join(folder, "screenshots/writing-assistant-documents-desktop.png"), fullPage: true });
+
+  await page.getByRole("button", { name: "New document", exact: true }).click();
+  await page.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
+  const editorLayout = await page.evaluate(() => {
+    const sidebarElement = document.querySelector(".rukh-editor-library");
+    const canvasElement = document.querySelector(".rukh-editor-canvas");
+    if (!sidebarElement || !canvasElement) throw new Error("Missing Writing Assistant editor grid elements.");
+    const sidebar = sidebarElement.getBoundingClientRect();
+    const canvas = canvasElement.getBoundingClientRect();
+    return { viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, sidebarRight: sidebar.right, canvasLeft: canvas.left, canvasWidth: canvas.width };
+  });
+  assert.ok(editorLayout.documentWidth <= editorLayout.viewportWidth, `Writing Assistant editor overflow horizontally: ${JSON.stringify(editorLayout)}`);
+  assert.ok(Math.abs(editorLayout.canvasLeft - editorLayout.sidebarRight) <= 1, `Writing Assistant editor canvas is detached from the sidebar: ${JSON.stringify(editorLayout)}`);
+  assert.ok(editorLayout.canvasWidth > editorLayout.viewportWidth * .75, `Writing Assistant editor canvas is too narrow: ${JSON.stringify(editorLayout)}`);
+  await page.screenshot({ path: join(folder, "screenshots/writing-assistant-editor-desktop.png"), fullPage: true });
+
   await page.setViewportSize({ width: 390, height: 844 });
   const reviewToggle = page.getByRole("button", { name: /^Review ·/ });
   await reviewToggle.click();
