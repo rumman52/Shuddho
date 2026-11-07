@@ -305,7 +305,10 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
-    const restoreView = () => setView(getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search));
+    const restoreView = () => {
+      const path = String(window.location.pathname ?? "").replace(/\\/+$/, "");
+      setView(path === "/fly" ? "sandbox" : getInitialCoworkerViewFromLocation(path, window.location.search));
+    };
     window.addEventListener("popstate", restoreView);
     return () => window.removeEventListener("popstate", restoreView);
   }, []);
