@@ -292,7 +292,6 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
     {!project ? <>
       <header className="rukh-page-heading rukh-projects-heading">
         <div>
-          <span className="rukh-project-eyebrow">YOUR WORKSPACE</span>
           <h1>Projects</h1>
           <p>Give every idea a place to grow.</p>
         </div>

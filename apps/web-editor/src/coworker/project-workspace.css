@@ -1,10 +1,10 @@
 /* ChatGPT-inspired project surfaces, using the approved Rukh palette and existing API flows. */
 .rukh-projects-page { width: 100%; max-width: 1320px; padding: 34px clamp(20px, 4vw, 52px) 56px; }
-.rukh-projects-page .rukh-projects-heading { align-items: flex-end; margin-bottom: 28px; }
+.rukh-projects-page .rukh-projects-heading { align-items: flex-start; padding-top: 14px; margin-bottom: 41px; }
 .rukh-project-eyebrow { display: block; margin-bottom: 8px; color: var(--rukh-muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; }
-.rukh-projects-page .rukh-projects-heading h1 { margin: 0; color: var(--rukh-text); font-size: clamp(27px, 3vw, 34px); font-weight: 650; letter-spacing: -.045em; line-height: 1.2; }
-.rukh-projects-page .rukh-projects-heading p { margin: 9px 0 0; color: var(--rukh-muted); font-size: 14px; line-height: 1.55; }
-.rukh-projects-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.rukh-projects-page .rukh-projects-heading h1 { margin: 0; color: var(--rukh-text); font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 39px; }
+.rukh-projects-page .rukh-projects-heading p { margin: 5px 0 0; color: var(--rukh-muted); font-size: 13px; line-height: 20px; }
+.rukh-projects-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 23px; }
 .rukh-projects-toolbar > span { color: var(--rukh-muted); font-size: 12px; white-space: nowrap; }
 .rukh-project-search { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 44px; padding: 0 14px; border: 1px solid var(--rukh-border); border-radius: 11px; background: var(--rukh-surface); }
 .rukh-project-search svg { width: 18px; height: 18px; color: var(--rukh-muted); }
@@ -117,7 +117,7 @@
 }
 @media (max-width: 640px) {
   .rukh-projects-page { padding: 22px 16px 32px; }
-  .rukh-projects-page .rukh-projects-heading { align-items: stretch; flex-direction: column; gap: 18px; }
+  .rukh-projects-page .rukh-projects-heading { align-items: stretch; flex-direction: column; gap: 18px; padding-top: 0; margin-bottom: 24px; }
   .rukh-projects-page .rukh-projects-heading .cw-primary { align-self: flex-start; }
   .rukh-projects-toolbar { align-items: flex-start; flex-direction: column; gap: 9px; }
   .rukh-project-search { width: 100%; }
