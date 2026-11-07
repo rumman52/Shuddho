@@ -148,7 +148,7 @@ try {
   await page.getByRole("heading", { name: "Documents", exact: true }).waitFor();
   await page.setViewportSize({ width: 1366, height: 604 });
   const documentsLayout = await page.evaluate(() => {
-    const rect = (selector: string) => {
+    const rect = (selector) => {
       const element = document.querySelector(selector);
       if (!element) throw new Error("Missing Writing Assistant layout element: " + selector);
       const box = element.getBoundingClientRect();
@@ -172,8 +172,11 @@ try {
   await page.getByRole("button", { name: "New document", exact: true }).click();
   await page.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
   const editorLayout = await page.evaluate(() => {
-    const sidebar = document.querySelector(".rukh-editor-library")!.getBoundingClientRect();
-    const canvas = document.querySelector(".rukh-editor-canvas")!.getBoundingClientRect();
+    const sidebarElement = document.querySelector(".rukh-editor-library");
+    const canvasElement = document.querySelector(".rukh-editor-canvas");
+    if (!sidebarElement || !canvasElement) throw new Error("Missing Writing Assistant editor grid elements.");
+    const sidebar = sidebarElement.getBoundingClientRect();
+    const canvas = canvasElement.getBoundingClientRect();
     return { viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, sidebarRight: sidebar.right, canvasLeft: canvas.left, canvasWidth: canvas.width };
   });
   assert.equal(editorLayout.documentWidth, editorLayout.viewportWidth, `Writing Assistant editor overflow horizontally: ${JSON.stringify(editorLayout)}`);
