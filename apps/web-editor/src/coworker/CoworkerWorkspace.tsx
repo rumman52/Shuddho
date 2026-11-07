@@ -304,7 +304,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   }, [navigationOpen]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
     const restoreView = () => setView(getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search));
     window.addEventListener("popstate", restoreView);
     return () => window.removeEventListener("popstate", restoreView);
