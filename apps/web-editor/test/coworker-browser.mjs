@@ -70,6 +70,21 @@ try {
   await page.locator("#cw-conversation-message").waitFor();
   await page.locator("#cw-conversation-message").waitFor();
 
+  // Projects must be reachable from the authenticated sidebar, use the approved
+  // section shell, and remain selected after a full refresh.
+  await navigateWorkspace(page, "Projects");
+  await page.waitForURL(url => url.pathname === "/coworker" && url.searchParams.get("view") === "projects");
+  await page.locator(".rukh-design-sidebar").waitFor();
+  await page.locator(".rukh-design-history").waitFor();
+  await page.locator(".rukh-cw-account-footer").waitFor();
+  await page.locator(".rukh-section-context > summary").waitFor();
+  await page.reload();
+  await page.waitForURL(url => url.pathname === "/coworker" && url.searchParams.get("view") === "projects");
+  await page.locator(".rukh-section-context > summary").waitFor();
+  await navigateWorkspace(page, "Coworker");
+  await page.waitForURL(url => url.pathname === "/coworker" && !url.searchParams.has("view"));
+  await page.locator("#cw-conversation-message").waitFor();
+
   // The workspace directory is optional and remains available at /workspaces.
   await page.goto("http://127.0.0.1:5173/workspaces");
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
