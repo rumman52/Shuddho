@@ -88,8 +88,15 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     // An explicit Fly deep link wins over a saved, unsent Coworker draft.
     // Previously the draft forced /fly to mount Coworker instead.
     if (typeof window !== "undefined" && String(window.location?.pathname ?? "").replace(/\/+$/, "") === "/fly") return "sandbox";
-    if (initialDraft.trim()) return "conversations";
-    if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search);
+    if (typeof window !== "undefined") {
+      const explicitView = new URLSearchParams(window.location.search).get("view");
+      const locationView = getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search);
+      // An explicit workspace destination (including Projects after sign-in)
+      // must win over a saved, unsent Coworker draft.
+      if (explicitView && explicitView !== "conversations") return locationView;
+      if (initialDraft.trim()) return "conversations";
+      return requestedNotificationView(window.location.search) ?? locationView;
+    }
     return "conversations";
   });
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
