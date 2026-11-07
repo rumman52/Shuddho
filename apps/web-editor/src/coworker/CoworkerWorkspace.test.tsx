@@ -40,7 +40,7 @@ test("Projects view uses the approved sidebar, recent chats, account footer and 
 
   let tree: ReactTestRenderer | undefined;
   try {
-    await act(async () => { tree = create(<CoworkerWorkspace client={client} email="anowar@example.test" signOut={async () => undefined} />); });
+    await act(async () => { tree = create(<CoworkerWorkspace client={client} email="anowar@example.test" initialDraft="Keep this unsent Coworker draft" signOut={async () => undefined} />); });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     assert.ok(tree!.root.findAllByType("h1").some(node => node.children.includes("Projects")));
     assert.ok(tree!.root.findByProps({ "aria-label": "Recent chats" }));
