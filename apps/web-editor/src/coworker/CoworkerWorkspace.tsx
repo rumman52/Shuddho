@@ -322,7 +322,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     <div className={"rukh-cw-shell" + (view === "conversations" ? " rukh-cw-shell-chat" : "")}>
       {view !== "conversations" && <>
         {navigationOpen && <button className="rukh-cw-navigation-backdrop" type="button" aria-label="Close workspace navigation" onClick={() => setNavigationOpen(false)} />}
-        <aside ref={navigationRef} id="rukh-cw-sidebar" className={"rukh-cw-sidebar rukh-design-sidebar" + (navigationOpen ? " rukh-cw-sidebar-open" : "")}
+        <aside ref={navigationRef} id="rukh-cw-sidebar" className={"rukh-cw-sidebar rukh-design-sidebar" + (navigationOpen ? " rukh-cw-sidebar-open is-open" : "")}
           aria-label="Coworker navigation" role={navigationOpen ? "dialog" : undefined} aria-modal={navigationOpen ? true : undefined}>
           <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
           <button type="button" className="rukh-design-new" onClick={() => { onInitialDraftChange?.(""); setNewChatRevision(value => value + 1); navigateView("conversations"); }}>+ New chat</button>
