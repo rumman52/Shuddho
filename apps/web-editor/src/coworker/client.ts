@@ -381,7 +381,7 @@ export type CoworkerTask = {
   research?: (ResearchOptions & { retrieved_at: string; skipped_results: number }) | null;
 };
 export type ProjectResource = { resource_type: "conversation" | "document"; resource_id: string; title: string };
-export type ProjectRecord = { id: string; name: string; description: string; revision: number; created_at: string; updated_at: string };
+export type ProjectRecord = { id: string; name: string; description: string; revision: number; created_at: string; updated_at: string; conversation_count?: number };
 export type ProjectDetail = ProjectRecord & { resources: ProjectResource[] };
 export type Workspace = {
   account_id: string; workspace_name: string; preferences: { language?: string; writing_goal?: string; tone_goal?: string; personal_dictionary?: string[] };

@@ -14,7 +14,7 @@ import type {
 const projectId = "11111111-1111-4111-8111-111111111111";
 const conversationId = "22222222-2222-4222-8222-222222222222";
 const fileId = "33333333-3333-4333-8333-333333333333";
-const timestamp = "2026-11-07T10:00:00Z";
+const timestamp = new Date().toISOString();
 const project: ProjectRecord = {
   id: projectId,
   name: "Research desk",
@@ -22,6 +22,7 @@ const project: ProjectRecord = {
   revision: 1,
   created_at: timestamp,
   updated_at: timestamp,
+  conversation_count: 1,
 };
 const conversation: ConversationRecord = {
   id: conversationId,
@@ -39,12 +40,14 @@ const source: SourceDocument = {
 
 function fixture() {
   let detail: ProjectDetail = { ...project, resources: [] };
+  let projectExists = true;
   const calls = {
     links: [] as { projectId: string; type: "conversation" | "document"; resourceId: string; revision: number }[],
     unlinks: [] as { type: "conversation" | "document"; resourceId: string }[],
+    deletions: [] as { projectId: string; revision: number }[],
   };
   const client = {
-    projects: async () => ({ items: [project] }),
+    projects: async () => ({ items: projectExists ? [project] : [] }),
     project: async () => ({ ...detail, resources: [...detail.resources] }),
     conversations: async () => ({ items: [conversation] }),
     documents: async () => ({ documents: [source] }),
@@ -71,6 +74,11 @@ function fixture() {
       };
       return { ...detail, resources: [...detail.resources] };
     },
+    deleteProject: async (id: string, revision: number) => {
+      calls.deletions.push({ projectId: id, revision });
+      projectExists = false;
+      return { message: "Project deleted. Its conversations and files are preserved." };
+    },
   } as unknown as CoworkerClient;
   return { client, calls };
 }
@@ -91,6 +99,7 @@ async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixt
 test("Projects home searches real project records and opens the project workspace", async () => {
   await mount(async tree => {
     assert.equal(tree.root.findAllByProps({ className: "rukh-project-card" }).length, 1);
+    assert.equal(tree.root.findByProps({ className: "rukh-project-card-meta" }).children.join(""), "1 chat · Updated today");
     await act(async () => {
       tree.root.findByProps({ "aria-label": "Search projects" }).props.onChange({ target: { value: "missing" } });
     });
@@ -104,6 +113,28 @@ test("Projects home searches real project records and opens the project workspac
     assert.ok(tree.root.findAllByProps({ role: "tab" }).some(item => item.children.includes("Chats")));
     assert.ok(tree.root.findAllByProps({ role: "tab" }).some(item => item.children.includes("Files")));
     assert.ok(tree.root.findAllByType("a").some(item => String(item.props.href).includes("project=" + projectId)));
+  });
+});
+
+test("project deletion is confirmed, revision-bound, and preserves conversations and files", async () => {
+  await mount(async (tree, data) => {
+    const card = tree.root.findByProps({ className: "rukh-project-card" });
+    await act(async () => card.props.onClick());
+    const trigger = tree.root.findByProps({ "aria-label": "Delete project Research desk" });
+    await act(async () => trigger.props.onClick());
+    assert.equal(tree.root.findByProps({ role: "alertdialog" }).props["aria-describedby"], "rukh-project-delete-description");
+    assert.ok(tree.root.findByProps({ id: "rukh-project-delete-description" }).children.join("").includes("conversations and files will remain"));
+    const cancel = tree.root.findAllByType("button").find(item => item.children.join("") === "Cancel");
+    assert.ok(cancel);
+    await act(async () => cancel!.props.onClick());
+    assert.deepEqual(data.calls.deletions, []);
+    assert.ok(tree.root.findAllByType("h1").some(item => item.children.includes("Research desk")));
+
+    await act(async () => tree.root.findByProps({ "aria-label": "Delete project Research desk" }).props.onClick());
+    await act(async () => tree.root.findByProps({ "aria-label": "Confirm delete project" }).props.onClick());
+    assert.deepEqual(data.calls.deletions, [{ projectId, revision: 1 }]);
+    assert.equal(tree.root.findAllByProps({ className: "rukh-project-card" }).length, 0);
+    assert.ok(tree.root.findAllByProps({ role: "status" }).some(item => item.children.join("").includes("conversations and files are preserved")));
   });
 });
 

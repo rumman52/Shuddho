@@ -6,17 +6,18 @@
 .rukh-projects-page .rukh-projects-heading p { margin: 9px 0 0; color: var(--rukh-muted); font-size: 14px; line-height: 1.55; }
 .rukh-projects-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 .rukh-projects-toolbar > span { color: var(--rukh-muted); font-size: 12px; white-space: nowrap; }
-.rukh-project-search { display: flex; align-items: center; gap: 11px; width: min(100%, 420px); min-height: 44px; padding: 0 14px; border: 1px solid var(--rukh-border); border-radius: 11px; background: var(--rukh-surface); }
+.rukh-project-search { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 44px; padding: 0 14px; border: 1px solid var(--rukh-border); border-radius: 11px; background: var(--rukh-surface); }
 .rukh-project-search svg { width: 18px; height: 18px; color: var(--rukh-muted); }
 .rukh-project-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--rukh-text); font: inherit; font-size: 13px; }
 .rukh-project-search input:focus-visible { outline: 0; }
-.rukh-project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.rukh-projects-page .rukh-project-card { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; min-height: 190px; padding: 20px; border: 1px solid var(--rukh-border) !important; border-radius: 15px; background: var(--rukh-surface); color: var(--rukh-text); text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.rukh-project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.rukh-projects-page .rukh-project-card { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; min-height: 132px; padding: 16px; border: 1px solid var(--rukh-border) !important; border-radius: 14px; background: var(--rukh-surface); color: var(--rukh-text); text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
 .rukh-projects-page .rukh-project-card:hover:not(:disabled) { border-color: var(--rukh-border-strong) !important; background: var(--rukh-surface-raised); transform: translateY(-2px); }
 .rukh-project-card-icon, .rukh-project-hero-icon { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; border-radius: 12px; background: var(--rukh-accent-soft); color: var(--rukh-accent); }
-.rukh-project-card-icon svg { width: 21px; height: 21px; }
-.rukh-project-card-title { display: block; width: 100%; margin-top: 18px; overflow: hidden; color: var(--rukh-text); font-size: 15px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.rukh-project-card-description { display: -webkit-box; width: 100%; min-height: 40px; margin-top: 7px; overflow: hidden; color: var(--rukh-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.rukh-project-card-icon { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; background: var(--rukh-surface-soft); }
+.rukh-project-card-icon svg { width: 20px; height: 20px; }
+.rukh-project-card-title { display: block; width: 100%; margin-top: 14px; overflow: hidden; color: var(--rukh-text); font-size: 15px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.rukh-project-card-meta { display: block; width: 100%; margin-top: 7px; color: var(--rukh-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .rukh-project-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin-top: auto; padding-top: 18px; }
 .rukh-project-card-footer small { color: var(--rukh-muted); font-size: 11px; }
 .rukh-project-card-footer > span { display: inline-flex; align-items: center; gap: 5px; color: var(--rukh-accent); font-size: 11px; font-weight: 650; white-space: nowrap; }
@@ -34,7 +35,12 @@
 .rukh-project-detail-actions { display: flex; align-items: center; gap: 9px; }
 .rukh-projects-page .rukh-project-detail-actions .cw-primary,
 .rukh-projects-page .rukh-project-detail-actions .cw-secondary,
-.rukh-projects-page .rukh-project-panel-heading .cw-primary { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; width: auto; margin: 0; padding: 9px 14px; border-radius: 10px; font-size: 12px; text-decoration: none; }
+.rukh-projects-page .rukh-project-panel-heading .cw-primary,
+.rukh-projects-page .rukh-project-detail-actions .rukh-project-danger { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; width: auto; margin: 0; padding: 9px 14px; border-radius: 10px; font-size: 12px; text-decoration: none; }
+.rukh-project-danger { border: 1px solid #E7C6C2; background: var(--rukh-surface); color: #A23636; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.rukh-project-danger:hover:not(:disabled) { border-color: #D9A7A1; background: #FBEDEC; }
+.rukh-project-danger:focus-visible { outline: 2px solid #A23636; outline-offset: 2px; }
+.rukh-project-danger:disabled { cursor: not-allowed; opacity: .65; }
 .rukh-project-hero { display: flex; align-items: center; gap: 20px; padding: 24px 26px; border: 1px solid var(--rukh-border); border-radius: 16px; background: var(--rukh-surface); }
 .rukh-project-hero-icon { width: 54px; height: 54px; flex-basis: 54px; border-radius: 15px; }
 .rukh-project-hero-icon svg { width: 26px; height: 26px; }
@@ -92,7 +98,10 @@
 .rukh-project-form input::placeholder, .rukh-project-form textarea::placeholder { color: var(--rukh-muted); opacity: .8; }
 .rukh-project-privacy-note { margin: 0; padding: 11px 12px; border-radius: 9px; background: var(--rukh-surface-soft); color: var(--rukh-muted); font-size: 10px; line-height: 1.6; }
 .rukh-project-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 4px; }
-.rukh-project-dialog-actions .cw-primary, .rukh-project-dialog-actions .cw-secondary { min-height: 40px; width: auto; margin: 0; padding: 9px 14px; border-radius: 9px; font-size: 12px; }
+.rukh-project-dialog-actions .cw-primary, .rukh-project-dialog-actions .cw-secondary, .rukh-project-dialog-actions .rukh-project-danger { min-height: 40px; width: auto; margin: 0; padding: 9px 14px; border-radius: 9px; font-size: 12px; }
+.rukh-project-delete-dialog .rukh-project-form { gap: 16px; }
+.rukh-project-delete-dialog .rukh-project-form h2 { font-size: 21px; }
+.rukh-project-delete-dialog .rukh-project-form > p { margin: -4px 0 2px; color: var(--rukh-muted); font-size: 13px; line-height: 1.65; }
 @media (max-width: 1050px) {
   .rukh-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rukh-project-hero { align-items: flex-start; flex-wrap: wrap; }
@@ -113,7 +122,7 @@
   .rukh-projects-toolbar { align-items: flex-start; flex-direction: column; gap: 9px; }
   .rukh-project-search { width: 100%; }
   .rukh-project-grid, .rukh-project-overview-grid { grid-template-columns: minmax(0, 1fr); }
-  .rukh-projects-page .rukh-project-card { min-height: 170px; }
+  .rukh-projects-page .rukh-project-card { min-height: 132px; }
   .rukh-project-detail-topbar { flex-direction: column; gap: 12px; }
   .rukh-project-detail-actions { width: 100%; }
   .rukh-project-detail-actions > * { flex: 1; }
