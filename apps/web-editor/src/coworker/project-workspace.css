@@ -13,6 +13,7 @@
 .rukh-project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
 .rukh-projects-page .rukh-project-card { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; min-height: 132px; padding: 16px; border: 1px solid var(--rukh-border) !important; border-radius: 14px; background: var(--rukh-surface); color: var(--rukh-text); text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
 .rukh-projects-page .rukh-project-card:hover:not(:disabled) { border-color: var(--rukh-border-strong) !important; background: var(--rukh-surface-raised); transform: translateY(-2px); }
+.rukh-projects-page .rukh-project-card:focus-visible { outline: 2px solid #345E85; outline-offset: 0; border-color: #345E85 !important; }
 .rukh-project-card-icon, .rukh-project-hero-icon { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; border-radius: 12px; background: var(--rukh-accent-soft); color: var(--rukh-accent); }
 .rukh-project-card-icon { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 9px; background: var(--rukh-surface-soft); }
 .rukh-project-card-icon svg { width: 20px; height: 20px; }

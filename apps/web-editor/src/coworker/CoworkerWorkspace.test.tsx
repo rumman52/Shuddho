@@ -5,6 +5,57 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import CoworkerWorkspace from "./CoworkerWorkspace";
 import { WorkspaceError, type CoworkerClient, type WorkspaceManifest } from "./client";
 
+test("Projects view uses the approved sidebar, recent chats, account footer and Activity & context control", async () => {
+  const previousWindow = globalThis.window;
+  const location = { origin: "https://rukh.test", pathname: "/coworker", search: "?view=projects" };
+  globalThis.window = {
+    location,
+    history: {
+      pushState: (_state: unknown, _title: string, url?: string | URL | null) => {
+        if (!url) return;
+        const next = new URL(String(url), location.origin);
+        location.pathname = next.pathname;
+        location.search = next.search;
+      },
+      replaceState() {},
+    },
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }),
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener() {}, removeEventListener() {},
+    requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0) as unknown as number,
+    cancelAnimationFrame: (id: number) => clearTimeout(id),
+    sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  } as unknown as Window & typeof globalThis;
+
+  const now = new Date().toISOString();
+  const conversation = { id: "44444444-4444-4444-8444-444444444444", title: "Launch plan for Rukh", message_sequence: 2, created_at: now, updated_at: now };
+  const client = {
+    me: async () => ({ account_id: "account-test", workspace_name: "Anowar", preferences: {}, usage: { tasks_today: 0 }, limits: { daily_tasks: 10, upload_bytes: 1024 } }),
+    list: async () => ({ tasks: [] }),
+    documents: async () => ({ documents: [] }),
+    skills: async () => ({ skills: [], upload_formats: ["txt", "docx", "pdf"] }),
+    conversations: async () => ({ items: [conversation] }),
+    projects: async () => ({ items: [] }),
+  } as unknown as CoworkerClient;
+
+  let tree: ReactTestRenderer | undefined;
+  try {
+    await act(async () => { tree = create(<CoworkerWorkspace client={client} email="anowar@example.test" initialDraft="Keep this unsent Coworker draft" signOut={async () => undefined} />); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    assert.ok(tree!.root.findAllByType("h1").some(node => node.children.includes("Projects")));
+    assert.ok(tree!.root.findByProps({ "aria-label": "Recent chats" }));
+    assert.ok(tree!.root.findAllByProps({ className: "rukh-design-history-list" }).length > 0);
+    assert.ok(tree!.root.findAllByType("button").some(node => node.children.includes("Launch plan for Rukh")));
+    assert.ok(tree!.root.findByProps({ className: "rukh-section-context" }));
+    assert.ok(tree!.root.findByProps({ "aria-label": "Settings" }));
+    assert.ok(tree!.root.findByProps({ "aria-label": "Sign out" }));
+    assert.ok(tree!.root.findAllByType("strong").some(node => node.children.includes("Anowar")));
+  } finally {
+    if (tree) await act(async () => tree!.unmount());
+    globalThis.window = previousWindow;
+  }
+});
+
 test("Coworker keeps the message composer visible when workspace profile metadata is unavailable", async () => {
   const previousWindow = globalThis.window;
   globalThis.window = {

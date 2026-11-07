@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, WorkspaceError, isTextArtifact, terminal, type CoworkerTask, type CoworkerView, type EmailDraft, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
+import { CoworkerClient, WorkspaceError, isTextArtifact, terminal, type ConversationRecord, type CoworkerTask, type CoworkerView, type EmailDraft, type ResearchOptions, type SkillId, type SourceDocument, type WorkSkill, type Workspace } from "./client";
 import DraftPreview, { draftTitle } from "./DraftPreview";
 import ActionWorkspace from "./ActionWorkspace";
 import AgentWorkspace from "./AgentWorkspace";
@@ -10,6 +10,7 @@ import ProjectWorkspace from "./ProjectWorkspace";
 import FilesWorkspace from "./FilesWorkspace";
 import SettingsWorkspace from "./SettingsWorkspace";
 import { RukhCompanionMark } from "./CoworkerWelcome";
+import NavigationIcon from "./WorkspaceNavigationIcon";
 import GoalWorkspace from "./GoalWorkspace";
 import AutomationWorkspace from "./AutomationWorkspace";
 import BrowserWorkspace from "./BrowserWorkspace";
@@ -87,8 +88,15 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     // An explicit Fly deep link wins over a saved, unsent Coworker draft.
     // Previously the draft forced /fly to mount Coworker instead.
     if (typeof window !== "undefined" && String(window.location?.pathname ?? "").replace(/\/+$/, "") === "/fly") return "sandbox";
-    if (initialDraft.trim()) return "conversations";
-    if (typeof window !== "undefined") return requestedNotificationView(window.location.search) ?? getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search);
+    if (typeof window !== "undefined") {
+      const explicitView = new URLSearchParams(window.location.search).get("view");
+      const locationView = getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search);
+      // An explicit workspace destination (including Projects after sign-in)
+      // must win over a saved, unsent Coworker draft.
+      if (explicitView && explicitView !== "conversations") return locationView;
+      if (initialDraft.trim()) return "conversations";
+      return requestedNotificationView(window.location.search) ?? locationView;
+    }
     return "conversations";
   });
   const [actionDraft, setActionDraft] = useState<EmailDraft | null>(null);
@@ -99,6 +107,9 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   const navigationRef = useRef<HTMLElement | null>(null);
   const navigationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [recentConversations, setRecentConversations] = useState<ConversationRecord[]>([]);
+  const [recentSearch, setRecentSearch] = useState("");
+  const [recentSearchOpen, setRecentSearchOpen] = useState(false);
   const [skills, setSkills] = useState<WorkSkill[]>([originalService]);
   const [uploadFormats, setUploadFormats] = useState(["txt", "docx", "pdf"]);
   const [skillId, setSkillId] = useState<SkillId>("report_email");
@@ -122,6 +133,10 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   const notesInput = useRef<HTMLTextAreaElement>(null);
   const outputColumn = useRef<HTMLDivElement>(null);
   const activeSkill = skills.find(skill => skill.id === skillId);
+  const accountLabel = workspace?.workspace_name?.trim() || email;
+  const recentChatItems = recentConversations
+    .filter(item => !recentSearch.trim() || item.title.toLocaleLowerCase().includes(recentSearch.trim().toLocaleLowerCase()))
+    .slice(0, 3);
 
   useEffect(() => {
     if (accountEmail.current === email) return;
@@ -151,6 +166,31 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     setConnection("");
     submission.current = undefined;
   }, [email]);
+
+  function navigateView(nextView: CoworkerView) {
+    if (typeof window !== "undefined" && window.history?.pushState) {
+      const destination = new URL(nextView === "sandbox" ? "/fly" : "/coworker", window.location.origin);
+      if (nextView !== "conversations" && nextView !== "sandbox") destination.searchParams.set("view", nextView);
+      const nextLocation = destination.pathname + destination.search;
+      if (window.location.pathname + window.location.search !== nextLocation) {
+        window.history.pushState({ rukhView: nextView }, "", nextLocation);
+      }
+    }
+    setView(nextView);
+    setNavigationOpen(false);
+  }
+
+  function openRecentConversation(conversationId: string) {
+    if (typeof window !== "undefined" && window.history?.pushState) {
+      const destination = new URL("/coworker", window.location.origin);
+      destination.searchParams.set("conversation", conversationId);
+      window.history.pushState({ rukhView: "conversations" }, "", destination.pathname + destination.search);
+    }
+    setRecentSearch("");
+    setRecentSearchOpen(false);
+    setView("conversations");
+    setNavigationOpen(false);
+  }
 
   function viewTask() {
     const scroll = () => {
@@ -183,6 +223,17 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     }).catch(error => { if (!controller.signal.aborted) setError(message(error)); });
     return () => controller.abort();
   }, [client, reload]);
+
+  useEffect(() => {
+    if (view === "conversations") return;
+    const controller = new AbortController();
+    client.conversations(controller.signal).then(({ items }) => {
+      if (!controller.signal.aborted) setRecentConversations(items);
+    }).catch(() => {
+      if (!controller.signal.aborted) setRecentConversations([]);
+    });
+    return () => controller.abort();
+  }, [client, view]);
 
   useEffect(() => {
     if (!selected || !workspace) return;
@@ -252,39 +303,69 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     };
   }, [navigationOpen]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+    const restoreView = () => {
+      const path = String(window.location.pathname ?? "").replace(/\/+$/, "");
+      setView(path === "/fly" ? "sandbox" : getInitialCoworkerViewFromLocation(path, window.location.search));
+    };
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, []);
+
   return <main className={`cw-workspace rukh-cw-workspace${view === "conversations" ? " rukh-cw-chat" : " rukh-cw-sections"}`}>
     <header className="cw-header"><button ref={navigationTriggerRef} className="rukh-mobile-nav-trigger" type="button"
       aria-label="Open workspace navigation" aria-controls="rukh-cw-sidebar" aria-expanded={navigationOpen}
       onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div><span className="cw-eyebrow">{view === "sandbox" ? "RUKH AI / FLY" : "RUKH AI / COWORKER"}</span><h1>{view === "conversations" ? "What are we working on?" : ({ projects: "Projects", library: "Files", settings: "Settings", actions: "Plugins", goals: "Goals", automations: "Automations", drafts: "Files & drafts", agent: "Agent activity", browser: "Browser", sandbox: "Fly", transactions: "Transactions", negotiations: "Negotiations" } as Record<string, string>)[view]}</h1><p>{view === "sandbox" ? "A dedicated coding environment with a multi-file explorer, source editor, isolated runtime output and Rukh Agent handoff. Repository write access and additional runtimes are not connected yet." : "A persistent workspace for conversations, focused work and connected tools."}</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
-      <div className="cw-account"><span title={email}>{email}</span><button className="cw-text-button" type="button" disabled={Boolean(busy)} onClick={async () => {
-        setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); }
-      }}>Sign out</button></div>
+      <details className="rukh-section-context">
+        <summary className="rukh-design-context" aria-label="Activity and context"><span>Activity &amp; context</span><NavigationIcon name="sliders" /></summary>
+        <div className="rukh-section-context-panel" role="region" aria-label="Activity and context details">
+          <div className="rukh-section-context-heading"><strong>Recent activity</strong><small>Your personal workspace</small></div>
+          {recentConversations.slice(0, 5).map(item => <button type="button" key={item.id} onClick={() => openRecentConversation(item.id)}><span>{item.title}</span><small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small></button>)}
+          {recentConversations.length === 0 && <p>No recent activity yet. Conversations you create will appear here.</p>}
+          <p className="rukh-section-context-note">Projects keep related conversations and files together in your private workspace.</p>
+        </div>
+      </details>
     </header>
     {error && <div className="cw-error cw-banner" role="alert">{error} {!workspace && <button className="cw-text-button" onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
     {notice && <p className="cw-notice cw-banner" role="status">{notice}</p>}
     <div className={"rukh-cw-shell" + (view === "conversations" ? " rukh-cw-shell-chat" : "")}>
       {view !== "conversations" && <>
         {navigationOpen && <button className="rukh-cw-navigation-backdrop" type="button" aria-label="Close workspace navigation" onClick={() => setNavigationOpen(false)} />}
-        <aside ref={navigationRef} id="rukh-cw-sidebar" className={"rukh-cw-sidebar" + (navigationOpen ? " rukh-cw-sidebar-open" : "")}
+        <aside ref={navigationRef} id="rukh-cw-sidebar" className={"rukh-cw-sidebar rukh-design-sidebar" + (navigationOpen ? " rukh-cw-sidebar-open is-open" : "")}
           aria-label="Coworker navigation" role={navigationOpen ? "dialog" : undefined} aria-modal={navigationOpen ? true : undefined}>
           <a href="/coworker" className="rukh-design-brand"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
-          <button type="button" className="rukh-design-new" onClick={() => { onInitialDraftChange?.(""); setNewChatRevision(value => value + 1); setView("conversations"); setNavigationOpen(false); }}>+ New chat</button>
-          <WorkspaceNavigation active={view} onNavigate={nextView => { if (nextView === "agent") setFocusAgentRunId(null); setView(nextView); setNavigationOpen(false); }} />
-          <div className="rukh-cw-sidebar-foot"><span className="rukh-cw-private-dot" aria-hidden="true" /><div><strong>Private workspace</strong><small>External actions require review.</small></div></div>
+          <button type="button" className="rukh-design-new" onClick={() => { onInitialDraftChange?.(""); setNewChatRevision(value => value + 1); navigateView("conversations"); }}>+ New chat</button>
+          <WorkspaceNavigation active={view} settingsInFooter onNavigate={nextView => { if (nextView === "agent") setFocusAgentRunId(null); navigateView(nextView); }} />
+          <section className="rukh-design-history" aria-label="Recent chats">
+            <div className="rukh-design-history-heading"><span className="rukh-design-section-label">RECENT CHATS</span>
+              <button type="button" className="rukh-design-history-search" aria-label="Search recent chats" aria-expanded={recentSearchOpen} onClick={() => { setRecentSearchOpen(value => !value); if (recentSearchOpen) setRecentSearch(""); }}><NavigationIcon name="search" /></button>
+            </div>
+            {recentSearchOpen && <input className="rukh-design-history-search-input" type="search" aria-label="Filter recent chats" placeholder="Search chats…" value={recentSearch} onChange={event => setRecentSearch(event.target.value)} />}
+            <ul className="rukh-design-history-list">
+              {recentChatItems.map(item => <li key={item.id}><button type="button" title={item.title} onClick={() => openRecentConversation(item.id)}>{item.title}</button></li>)}
+            </ul>
+            {recentChatItems.length === 0 && <p role="status">{recentSearch ? "No chats match your search." : "Your recent chats will appear here."}</p>}
+          </section>
+          <div className="rukh-design-account rukh-cw-account-footer">
+            <div><span className="rukh-design-account-avatar">{accountLabel.trim().charAt(0).toUpperCase() || "A"}</span><span><strong title={accountLabel}>{accountLabel}</strong><small>Personal workspace</small></span></div>
+            <button type="button" className={"rukh-design-settings-icon" + (view === "settings" ? " is-active" : "")} aria-label="Settings" title="Settings" aria-current={view === "settings" ? "page" : undefined} onClick={() => navigateView("settings")}><NavigationIcon name="settings" /></button>
+            <button type="button" className="rukh-design-signout-icon" aria-label="Sign out" title="Sign out" disabled={Boolean(busy)} onClick={async () => { setBusy("signout"); try { await signOut(); } catch (error) { setError(message(error)); setBusy(""); } }}><NavigationIcon name="log-out" /></button>
+          </div>
         </aside>
       </>}
       <section className="rukh-cw-content" aria-label={view === "sandbox" ? "Fly workspace" : "Coworker workspace"}>
     {view === "library" && <FilesWorkspace client={client} />}
     {view === "settings" && <SettingsWorkspace client={client} email={email} />}
     {view === "projects" && <ProjectWorkspace client={client} />}
-    {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); setView("agent"); }} openAutomations={() => setView("automations")} />}
+    {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); navigateView("agent"); }} openAutomations={() => navigateView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
     {view === "sandbox" && workspace && <FlyWorkspace client={client} accountId={workspace.account_id} />}
     {view === "transactions" && workspace && <TransactionWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "negotiations" && workspace && <NegotiationWorkspace client={client} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     {view === "actions" && workspace && <PluginsWorkspace client={client}>{onConnectionsChanged => <ActionWorkspace onConnectionsChanged={onConnectionsChanged} client={client} account={workspace.account_id} emailDraft={actionDraft} socialDraft={socialActionDraft} focusActionId={focusActionId} onFocused={() => setFocusActionId(null)} />}</PluginsWorkspace>}
-    {view === "conversations" && <ConversationWorkspace key={newChatRevision} startEmpty={newChatRevision > 0} client={client} email={email} signOut={async () => { try { await signOut(); } catch (error) { setError(message(error)); } }} initialDraft={initialDraft} onInitialDraftChange={onInitialDraftChange} onNavigate={nextView => setView(nextView)} openAgent={runId => { setFocusAgentRunId(runId); setView("agent"); }} />}
+    {view === "conversations" && <ConversationWorkspace key={newChatRevision} startEmpty={newChatRevision > 0} client={client} email={email} signOut={async () => { try { await signOut(); } catch (error) { setError(message(error)); } }} initialDraft={initialDraft} onInitialDraftChange={onInitialDraftChange} onNavigate={navigateView} openAgent={runId => { setFocusAgentRunId(runId); navigateView("agent"); }} />}
     {view === "agent" && workspace && <AgentWorkspace key={focusAgentRunId ?? "recent"} client={client} focusRunId={focusAgentRunId} documents={documents} openActions={() => setView("actions")} reviewAction={action => { setFocusActionId(action.id); setView("actions"); }} />}
     <div className="cw-layout" hidden={view !== "drafts"}><section className="cw-compose" aria-label="Create a coworker task">
       <div className="cw-card-title"><span className="cw-step-number">01</span><div><h2>Give your coworker a brief</h2><p>Bring the facts. Describe the outcome.</p></div></div>

@@ -70,12 +70,27 @@ try {
   await page.locator("#cw-conversation-message").waitFor();
   await page.locator("#cw-conversation-message").waitFor();
 
+  // Projects must be reachable from the authenticated sidebar, use the approved
+  // section shell, and remain selected after a full refresh.
+  await navigateWorkspace(page, "Projects");
+  await page.waitForURL(url => url.pathname === "/coworker" && url.searchParams.get("view") === "projects");
+  await page.locator(".rukh-design-sidebar").waitFor();
+  await page.locator(".rukh-design-history").waitFor();
+  await page.locator(".rukh-cw-account-footer").waitFor();
+  await page.locator(".rukh-section-context > summary").waitFor();
+  await page.reload();
+  await page.waitForURL(url => url.pathname === "/coworker" && url.searchParams.get("view") === "projects");
+  await page.locator(".rukh-section-context > summary").waitFor();
+  await navigateWorkspace(page, "Coworker");
+  await page.waitForURL(url => url.pathname === "/coworker" && !url.searchParams.has("view"));
+  await page.locator("#cw-conversation-message").waitFor();
+
   // The workspace directory is optional and remains available at /workspaces.
   await page.goto("http://127.0.0.1:5173/workspaces");
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
   await page.getByRole("heading", { name: "AI Coworker", exact: true }).waitFor();
   assert.equal(await page.getByRole("heading", { name: "Web Editor", exact: true }).count(), 0);
-  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Fly", exact: true }).first().waitFor();
   await page.getByRole("heading", { name: "Writing Assistant", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/rukh-workspaces-desktop.png"), fullPage: true });
@@ -87,11 +102,11 @@ try {
   await page.locator("#cw-conversation-message").waitFor();
   await navigateWorkspace(page, "Fly");
   await page.waitForURL(url => url.pathname === "/fly");
-  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Fly", exact: true }).first().waitFor();
   await page.getByRole("heading", { name: "What are we building?", exact: true }).waitFor();
   await page.getByRole("region", { name: "Terminal output" }).waitFor();
   await page.getByRole("textbox", { name: "Ask Rukh about this code" }).waitFor();
-  await page.locator(".rukh-fly-runtime-badge").waitFor();
+  await page.locator(".rukh-fly-v2-runtime").waitFor();
   // A Fly → Coworker switch must change both the visible application and its
   // canonical URL. Otherwise a refresh silently reopens Fly.
   await page.getByRole("link", { name: "Coworker", exact: true }).click();
@@ -105,15 +120,15 @@ try {
   // even after a full reload. Verify both directions repeatedly.
   await navigateWorkspace(page, "Fly");
   await page.waitForURL(url => url.pathname === "/fly");
-  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Fly", exact: true }).first().waitFor();
   await page.reload();
-  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Fly", exact: true }).first().waitFor();
   await page.getByRole("link", { name: "Coworker", exact: true }).click();
   await page.waitForURL(url => url.pathname === "/coworker");
   await page.locator("#cw-conversation-message").waitFor();
   await navigateWorkspace(page, "Fly");
   await page.waitForURL(url => url.pathname === "/fly");
-  await page.getByRole("heading", { name: "Fly", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Fly", exact: true }).first().waitFor();
   await navigateWorkspace(page, "Files & drafts");
   await page.getByLabel("Your notes").fill("The team completed 12 reviews on 10 September 2026.");
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });
