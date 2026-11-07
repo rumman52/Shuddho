@@ -36,8 +36,17 @@ const TestableGate = CoworkerGate as unknown as React.ComponentType<{ authClient
 async function withGate(factory: (() => unknown) | undefined, run: (tree: ReactTestRenderer, auth: ReturnType<typeof authFixture> | null) => Promise<void>, pathname?: string) {
   const previousWindow = globalThis.window;
   const sessionValues = new Map<string, string>();
+  const location = { origin: "https://rukh.test", pathname: pathname ?? "/", search: "" };
   globalThis.window = {
-    location: { origin: "https://rukh.test", ...(pathname === undefined ? {} : { pathname }) },
+    location,
+    history: {
+      replaceState: (_state: unknown, _title: string, url?: string | URL | null) => {
+        if (!url) return;
+        const next = new URL(String(url), location.origin);
+        location.pathname = next.pathname;
+        location.search = next.search;
+      },
+    },
     sessionStorage: {
       getItem: (key: string) => sessionValues.get(key) ?? null,
       setItem: (key: string, value: string) => { sessionValues.set(key, value); },
@@ -122,6 +131,20 @@ test("Fly sign-in returns OAuth callbacks to the Fly workspace", async () => {
   }, "/fly");
 });
 
+
+
+test("signed-out Projects entry opens sign-in and preserves the Projects destination through OAuth", async () => {
+  await withGate(() => ({}), async (tree, auth) => {
+    const projects = tree.root.findAllByProps({ className: "rukh-design-nav-link" }).find(item => item.children.includes("Projects"));
+    assert.ok(projects, "Projects must remain available in signed-out navigation");
+    assert.equal(projects!.props.disabled, false);
+    await act(async () => projects!.props.onClick());
+    assert.ok(tree.root.findByProps({ className: "rukh-login-page" }));
+    assert.equal((globalThis.window as unknown as Window).location.search, "?view=projects");
+    await act(async () => tree.root.findByProps({ className: "rukh-login-google" }).props.onClick());
+    assert.deepEqual(auth!.calls.redirectUrls, ["https://rukh.test/coworker?view=projects"]);
+  });
+});
 
 test("prompt starters populate the first-message composer without sending", async () => {
   await withGate(undefined, async tree => {
