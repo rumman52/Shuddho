@@ -162,7 +162,7 @@ try {
       dashboard: rect(".rukh-document-dashboard"),
     };
   });
-  assert.equal(documentsLayout.documentWidth, documentsLayout.viewportWidth, `Writing Assistant documents overflow horizontally: ${JSON.stringify(documentsLayout)}`);
+  assert.ok(documentsLayout.documentWidth <= documentsLayout.viewportWidth, `Writing Assistant documents overflow horizontally: ${JSON.stringify(documentsLayout)}`);
   assert.ok(Math.abs(documentsLayout.topbar.left - documentsLayout.sidebar.right) <= 1, `Writing Assistant toolbar is detached from the sidebar: ${JSON.stringify(documentsLayout)}`);
   assert.ok(Math.abs(documentsLayout.dashboard.left - documentsLayout.sidebar.right) <= 1, `Writing Assistant documents dashboard is detached from the sidebar: ${JSON.stringify(documentsLayout)}`);
   assert.ok(documentsLayout.topbar.width > documentsLayout.viewportWidth * .75, `Writing Assistant toolbar is too narrow: ${JSON.stringify(documentsLayout)}`);
@@ -179,7 +179,7 @@ try {
     const canvas = canvasElement.getBoundingClientRect();
     return { viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, sidebarRight: sidebar.right, canvasLeft: canvas.left, canvasWidth: canvas.width };
   });
-  assert.equal(editorLayout.documentWidth, editorLayout.viewportWidth, `Writing Assistant editor overflow horizontally: ${JSON.stringify(editorLayout)}`);
+  assert.ok(editorLayout.documentWidth <= editorLayout.viewportWidth, `Writing Assistant editor overflow horizontally: ${JSON.stringify(editorLayout)}`);
   assert.ok(Math.abs(editorLayout.canvasLeft - editorLayout.sidebarRight) <= 1, `Writing Assistant editor canvas is detached from the sidebar: ${JSON.stringify(editorLayout)}`);
   assert.ok(editorLayout.canvasWidth > editorLayout.viewportWidth * .75, `Writing Assistant editor canvas is too narrow: ${JSON.stringify(editorLayout)}`);
   await page.screenshot({ path: join(folder, "screenshots/writing-assistant-editor-desktop.png"), fullPage: true });
