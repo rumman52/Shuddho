@@ -15,7 +15,14 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Th
 function updatedLabel(value: string) {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return "Recently updated";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(timestamp));
+  const date = new Date(timestamp);
+  const today = new Date();
+  const dayNumber = (day: Date) => Date.UTC(day.getFullYear(), day.getMonth(), day.getDate());
+  const age = Math.floor((dayNumber(today) - dayNumber(date)) / 86400000);
+  if (age === 0) return "today";
+  if (age === 1) return "yesterday";
+  if (age > 1 && age < 7) return new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
 }
 
 type ProjectTab = "overview" | "chats" | "files";
@@ -31,6 +38,7 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [resource, setResource] = useState("");
@@ -123,6 +131,30 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
       setRevision(value => value + 1);
       setNotice("Project saved.");
     } catch (cause) {
+      setError(message(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeProject() {
+    if (!project || busy) return;
+    const current = project;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await client.deleteProject(current.id, current.revision);
+      ++sequence.current;
+      setProject(null);
+      setProjects(items => items.filter(item => item.id !== current.id));
+      setConfirmDelete(false);
+      setResource("");
+      setActiveTab("overview");
+      setNotice(result.message || "Project deleted.");
+      setRevision(value => value + 1);
+    } catch (cause) {
+      setConfirmDelete(false);
       setError(message(cause));
     } finally {
       setBusy(false);
@@ -260,9 +292,8 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
     {!project ? <>
       <header className="rukh-page-heading rukh-projects-heading">
         <div>
-          <span className="rukh-project-eyebrow">YOUR WORKSPACE</span>
           <h1>Projects</h1>
-          <p>Keep your chats, files and ongoing work together.</p>
+          <p>Give every idea a place to grow.</p>
         </div>
         <button className="cw-primary" disabled={loading || Boolean(error)} onClick={() => edit(null)}>+ New project</button>
       </header>
@@ -273,14 +304,12 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
           <NavigationIcon name="search" />
           <input type="search" aria-label="Search projects" placeholder="Search projects…" value={search} onChange={event => setSearch(event.target.value)} />
         </label>
-        <span>{projects.length} {projects.length === 1 ? "project" : "projects"}</span>
       </div>
-      {loading ? <p className="rukh-project-loading" role="status">Loading projects…</p> : filteredProjects.length > 0 ? <div className="rukh-project-grid">
+      {loading ? <p className="rukh-project-loading" role="status">Loading projects…</p> : error && projects.length === 0 ? null : filteredProjects.length > 0 ? <div className="rukh-project-grid">
         {filteredProjects.map(item => <button type="button" className="rukh-project-card" key={item.id} disabled={busy} onClick={() => { void open(item.id); }}>
           <span className="rukh-project-card-icon"><NavigationIcon name="folder" /></span>
           <span className="rukh-project-card-title">{item.name}</span>
-          <span className="rukh-project-card-description">{item.description || "A dedicated space for related conversations and files."}</span>
-          <span className="rukh-project-card-footer"><small>Updated {updatedLabel(item.updated_at)}</small><span>Open project <NavigationIcon name="arrow-right" /></span></span>
+          <span className="rukh-project-card-meta">{typeof item.conversation_count === "number" ? `${item.conversation_count} ${item.conversation_count === 1 ? "chat" : "chats"} · ` : ""}Updated {updatedLabel(item.updated_at)}</span>
         </button>)}
       </div> : projects.length === 0 ? <div className="rukh-project-empty-home">
         <span className="rukh-project-empty-icon"><NavigationIcon name="folder" /></span>
@@ -294,6 +323,7 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
         <div className="rukh-project-detail-actions">
           <button type="button" className="cw-secondary" disabled={busy} onClick={() => edit(project)}>Edit project</button>
           <a className="cw-primary" href={"/coworker?project=" + encodeURIComponent(project.id)}>+ New project chat</a>
+          <button type="button" className="rukh-project-danger" disabled={busy} aria-label={"Delete project " + project.name} onClick={() => setConfirmDelete(true)}>Delete project</button>
         </div>
       </div>
       <header className="rukh-project-hero">
@@ -371,6 +401,19 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
         {linkExistingWork}
       </div>}
     </>}
+    {confirmDelete && project && <div className="rukh-project-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setConfirmDelete(false); }}>
+      <section className="rukh-project-dialog rukh-project-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="rukh-project-delete-title" aria-describedby="rukh-project-delete-description" onKeyDown={event => { if (event.key === "Escape" && !busy) setConfirmDelete(false); }}>
+        <div className="rukh-project-form">
+          <span className="rukh-project-eyebrow">DELETE PROJECT</span>
+          <h2 id="rukh-project-delete-title">Delete “{project.name}”?</h2>
+          <p id="rukh-project-delete-description">This removes the project and its links. Your conversations and files will remain in your workspace.</p>
+          <div className="rukh-project-dialog-actions">
+            <button className="cw-secondary" type="button" autoFocus disabled={busy} onClick={() => setConfirmDelete(false)}>Cancel</button>
+            <button className="rukh-project-danger" type="button" disabled={busy} aria-label="Confirm delete project" onClick={() => { void removeProject(); }}>{busy ? "Deleting…" : "Delete project"}</button>
+          </div>
+        </div>
+      </section>
+    </div>}
     {editing && <div className="rukh-project-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setEditing(false); }}>
       <section className="rukh-project-dialog" role="dialog" aria-modal="true" aria-labelledby="rukh-project-dialog-title" onKeyDown={event => { if (event.key === "Escape" && !busy) setEditing(false); }}>
         <form className="rukh-project-form" onSubmit={save}>

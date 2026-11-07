@@ -28,6 +28,7 @@ def test_project_replay_revision_and_owner_isolation(container):
     payload = ProjectCreate(name="বাংলা প্রকল্প", description="Research")
     project, created = repo.create(owner, payload, "project-key")
     assert created
+    assert repo.list(owner)[0]["conversation_count"] == 0
     assert repo.create(owner, payload, "project-key") == (project, False)
     with pytest.raises(CoworkerError): repo.create(owner, ProjectCreate(name="Changed"), "project-key")
     assert repo.list(other) == []
@@ -49,6 +50,7 @@ def test_project_links_are_owned_and_deletion_preserves_chats(container):
     assert repo.get(owner, project["id"])["revision"] == 1
     linked = repo.link(owner, project["id"], ProjectLink(resource_type="conversation", resource_id=chat["id"], expected_revision=1))
     assert linked["resources"][0]["title"] == "Chat"
+    assert repo.list(owner)[0]["conversation_count"] == 1
     assert repo.link(owner, project["id"], ProjectLink(resource_type="conversation", resource_id=chat["id"], expected_revision=1))["revision"] == 2
     repo.delete(owner, project["id"], 2)
     assert container.conversations.get(owner, chat["id"])["title"] == "Chat"
@@ -75,7 +77,9 @@ def test_project_routes_require_auth_and_enforce_ownership(container, signed_cli
     assert result.status_code == 201
     project_id = result.json()["id"]
     assert client.get(f"/api/v1/projects/{project_id}", headers=headers("bob")).status_code == 404
-    assert client.get("/api/v1/projects", headers=headers()).json()["items"][0]["id"] == project_id
+    listed = client.get("/api/v1/projects", headers=headers()).json()["items"][0]
+    assert listed["id"] == project_id
+    assert listed["conversation_count"] == 0
     assert client.get("/api/v1/runtime-manifest", headers=headers()).json()["capabilities"]["projects"] is True
 
 

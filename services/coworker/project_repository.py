@@ -74,7 +74,25 @@ class ProjectRepository:
     def list(self, owner):
         self.enabled()
         with self.sessions() as db:
-            return [self._dto(row) for row in db.scalars(select(Project).where(Project.owner_id == owner, Project.deleted.is_(False)).order_by(Project.updated_at.desc(), Project.id).limit(100))]
+            rows = list(db.scalars(select(Project).where(
+                Project.owner_id == owner, Project.deleted.is_(False)
+            ).order_by(Project.updated_at.desc(), Project.id).limit(100)))
+            if not rows:
+                return []
+            counts = dict(db.execute(
+                select(ProjectResource.project_id, func.count(Conversation.id))
+                .select_from(ProjectResource)
+                .join(Conversation, Conversation.id == ProjectResource.resource_id)
+                .where(
+                    ProjectResource.owner_id == owner,
+                    ProjectResource.resource_type == "conversation",
+                    ProjectResource.project_id.in_([row.id for row in rows]),
+                    Conversation.owner_id == owner,
+                    Conversation.deleted.is_(False),
+                )
+                .group_by(ProjectResource.project_id)
+            ).all())
+            return [{**self._dto(row), "conversation_count": counts.get(row.id, 0)} for row in rows]
 
     def get(self, owner, project_id):
         self.enabled()
