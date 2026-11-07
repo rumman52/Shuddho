@@ -53,6 +53,15 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
   }
   function newChat() { onDraftChange(""); setNavigationOpen(false); composerRef.current?.focus(); }
   function accountAccess() { setNavigationOpen(false); onOpenSignIn(); }
+  function projectsAccess() {
+    setNavigationOpen(false);
+    if (typeof window !== "undefined" && window.history?.replaceState) {
+      const destination = new URL("/coworker", window.location.origin);
+      destination.searchParams.set("view", "projects");
+      window.history.replaceState({}, "", destination.pathname + destination.search);
+    }
+    onOpenSignIn();
+  }
   function starter(prompt: string) { onDraftChange(prompt); composerRef.current?.focus(); }
 
   return <main className="rukh-entry rukh-design-entry" aria-label={flyIntent ? "Rukh AI Fly" : "Rukh AI Coworker"}>
@@ -65,7 +74,7 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
         <a href="/coworker" className={"rukh-design-nav-link" + (!flyIntent ? " is-active" : "")} aria-current={!flyIntent ? "page" : undefined}><NavigationIcon name="chat" />Coworker</a>
         <a href="/fly" className={"rukh-design-nav-link" + (flyIntent ? " is-active" : "")} aria-current={flyIntent ? "page" : undefined}><NavigationIcon name="terminal" />Fly</a>
         <a href="/writing" className="rukh-design-nav-link"><NavigationIcon name="file-text" />Writing Assistant</a>
-        <button type="button" className="rukh-design-nav-link" disabled title="Projects are not available yet"><NavigationIcon name="folder" />Projects<small>Unavailable</small></button>
+        <button type="button" className="rukh-design-nav-link" onClick={projectsAccess} disabled={loading} title="Sign in to open Projects"><NavigationIcon name="folder" />Projects</button>
         <button type="button" className="rukh-design-nav-link" onClick={accountAccess}><NavigationIcon name="grid" />Plugins</button>
       </nav>
       <nav className="rukh-design-workspace-links" aria-label="Workspace tools">
