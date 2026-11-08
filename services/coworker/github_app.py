@@ -495,12 +495,66 @@ class GitHubAppService:
             raise not_found()
         return row
 
-    def _list_repositories_for_installation(self, installation_id: int):
-        token = self._installation_token(installation_id)
+    def _user_token(self, owner: str, installation_record_id: str):
+        expired = False
+        token = None
+        try:
+            with self.sessions.begin() as db:
+                installation = self._installation(db, owner, installation_record_id)
+                binding = owner + ":github-installation:" + installation.id
+                bundle = self._vault().open(installation.user_token_bundle_ciphertext, binding)
+                access_token = bundle.get("access_token")
+                refresh_token = bundle.get("refresh_token")
+                if not isinstance(access_token, str) or not access_token or not isinstance(refresh_token, str) or not refresh_token:
+                    installation.active = False
+                    installation.user_token_bundle_ciphertext = ""
+                    expired = True
+                else:
+                    access_expiry = installation.access_token_expires_at
+                    refresh_expiry = installation.refresh_token_expires_at
+                    if access_expiry.tzinfo is None:
+                        access_expiry = access_expiry.replace(tzinfo=utcnow().tzinfo)
+                    if refresh_expiry.tzinfo is None:
+                        refresh_expiry = refresh_expiry.replace(tzinfo=utcnow().tzinfo)
+                    if access_expiry > utcnow() + timedelta(minutes=1):
+                        token = access_token
+                    elif refresh_expiry <= utcnow():
+                        installation.active = False
+                        installation.user_token_bundle_ciphertext = ""
+                        expired = True
+                    else:
+                        refreshed = self._oauth_refresh(refresh_token)
+                        installation.user_token_bundle_ciphertext = self._vault().seal(refreshed, binding)
+                        installation.access_token_expires_at = datetime.fromisoformat(refreshed["access_token_expires_at"])
+                        installation.refresh_token_expires_at = datetime.fromisoformat(refreshed["refresh_token_expires_at"])
+                        installation.updated_at = utcnow()
+                        token = refreshed["access_token"]
+        except CoworkerError as error:
+            if error.code == "github_oauth_expired":
+                with self.sessions.begin() as db:
+                    row = db.scalar(select(GitHubInstallation).where(
+                        GitHubInstallation.id == installation_record_id,
+                        GitHubInstallation.owner_id == owner,
+                    ).with_for_update())
+                    if row is not None:
+                        row.active = False
+                        row.user_token_bundle_ciphertext = ""
+                        row.updated_at = utcnow()
+                raise CoworkerError("github_reconnect_required", "GitHub authorization expired or was revoked. Reconnect this GitHub account in Fly.", 409) from None
+            raise
+        if expired:
+            raise CoworkerError("github_reconnect_required", "GitHub authorization expired. Reconnect this GitHub account in Fly.", 409)
+        if not token:
+            raise CoworkerError("github_token_unavailable", "A usable GitHub access token is unavailable.", 503)
+        return token
+
+    def _list_repositories_for_user(self, access_token: str, installation_id: int):
         repositories = []
         for page in range(1, 6):
             data = self._api(
-                "GET", "/installation/repositories", token,
+                "GET",
+                f"/user/installations/{installation_id}/repositories",
+                access_token,
                 params={"per_page": 100, "page": page},
             )
             items = data.get("repositories")
@@ -533,9 +587,10 @@ class GitHubAppService:
         with self.sessions() as db:
             installation = self._installation(db, owner, installation_record_id)
             installation_id = installation.installation_id
+        token = self._user_token(owner, installation_record_id)
         return {
             "installation": installation_record_id,
-            "repositories": self._list_repositories_for_installation(installation_id),
+            "repositories": self._list_repositories_for_user(token, installation_id),
         }
 
     def bind_repository(self, owner: str, project_id: str, installation_record_id: str, repository_id: int, expected_revision: int):
