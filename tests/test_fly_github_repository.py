@@ -298,7 +298,7 @@ def test_disconnect_github_installation_revokes_tokens_and_all_project_bindings(
 
 
 def test_github_paths_reject_traversal_and_credential_files():
-    for value in ("../app.py", "src/../app.py", "/etc/passwd", r"src\\..\\app.py", ".env", "config/.env.production", "certs/private.pem"):
+    for value in ("../app.py", "src/../app.py", "/etc/passwd", r"src\..\app.py", ".env", "config/.env.production", "certs/private.pem"):
         with pytest.raises(CoworkerError):
             safe_repository_path(value)
     assert safe_repository_path("src/main.py") == "src/main.py"
