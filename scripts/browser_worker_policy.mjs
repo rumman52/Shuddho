@@ -240,6 +240,49 @@ export function browserProxyClaimValid(state, claim) {
   );
 }
 
+export async function installBrowserRequestFence(context, page, state) {
+  if (
+    !context
+    || typeof context.route !== "function"
+    || !page
+    || typeof page.mainFrame !== "function"
+    || !state
+  ) {
+    throw new Error("browser_request_fence_unavailable");
+  }
+  await context.route("**/*", async (route) => {
+    const request = route.request();
+    const navigationRequest = request.isNavigationRequest();
+    let mainFrame = false;
+    if (navigationRequest) {
+      try {
+        mainFrame = request.frame() === page.mainFrame();
+      } catch {
+        // Requests without an owning frame are never top-level navigation.
+        mainFrame = false;
+      }
+    }
+    const methodAllowed = browserRequestAllowed({
+      kind: state.kind,
+      agentReadOnly: state.agentReadOnly,
+      method: request.method(),
+      preparingForm: state.preparingForm,
+      humanInteractionArmed: state.humanInteractionArmed,
+      navigationRequest,
+      mainFrame,
+    });
+    const targetAllowed = browserRequestTargetAllowed(request.url(), state.allowedOrigin);
+    if (!methodAllowed || !targetAllowed) {
+      state.formMutationBlocked = state.formMutationBlocked || (
+        state.kind === "prepare_form" && !methodAllowed
+      );
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.continue();
+  });
+}
+
 export function browserWorkerMayReuseStorageState(command) {
   return command?.policy?.agent_read_only !== true;
 }

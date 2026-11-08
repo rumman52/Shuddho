@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, installAgentReadOnlyBrowserGuards, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, installAgentReadOnlyBrowserGuards, installBrowserRequestFence, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -279,5 +279,62 @@ test("Agent read-only browser guards disable realtime APIs and close every WebSo
   await assert.rejects(
     installAgentReadOnlyBrowserGuards({}, state),
     /browser_read_only_guard_unavailable/,
+  );
+});
+
+
+test("context-wide browser request fence blocks worker mutations and off-origin requests", async () => {
+  const mainFrame = {};
+  const routes = [];
+  const context = {
+    async route(pattern, handler) {
+      routes.push({ pattern, handler });
+    },
+  };
+  const page = { mainFrame: () => mainFrame };
+  const state = {
+    kind: "agent_read_only",
+    agentReadOnly: true,
+    allowedOrigin: "https://example.com",
+    preparingForm: false,
+    humanInteractionArmed: false,
+    formMutationBlocked: false,
+  };
+  await installBrowserRequestFence(context, page, state);
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].pattern, "**/*");
+
+  async function dispatch({ url, method, navigationRequest = false, frame = mainFrame }) {
+    const result = { aborted: false, continued: false };
+    const route = {
+      request: () => ({
+        url: () => url,
+        method: () => method,
+        isNavigationRequest: () => navigationRequest,
+        frame: () => frame,
+      }),
+      async abort() { result.aborted = true; },
+      async continue() { result.continued = true; },
+    };
+    await routes[0].handler(route);
+    return result;
+  }
+
+  assert.deepEqual(
+    await dispatch({ url: "https://example.com/read", method: "GET" }),
+    { aborted: false, continued: true },
+  );
+  assert.deepEqual(
+    await dispatch({ url: "https://example.com/mutate", method: "POST" }),
+    { aborted: true, continued: false },
+  );
+  assert.deepEqual(
+    await dispatch({ url: "https://other.example/read", method: "GET" }),
+    { aborted: true, continued: false },
+  );
+  assert.equal(state.formMutationBlocked, false);
+  await assert.rejects(
+    installBrowserRequestFence({}, page, state),
+    /browser_request_fence_unavailable/,
   );
 });

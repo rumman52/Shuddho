@@ -22,7 +22,7 @@
    - Keep the proxy endpoint restricted to the worker-owned `127.0.0.1` listener.
 
 2. **Request target policy**
-   - Every routed request must be HTTPS on port 443 and remain on the server-admitted origin.
+   - Context-wide request routing applies the HTTPS/443, same-origin and method policy to page and dedicated-worker requests.
    - Reject IP-literal, single-label, localhost, metadata and local/internal suffix destinations before continuing a request.
    - Preserve method-level Agent read-only checks and the existing broker/proxy DNS checks as independent layers.
 
@@ -31,7 +31,7 @@
    - Route a real browser navigation through the production CONNECT handler.
    - Verify a redirect to `localhost` reaches the proxy and is denied before a second TCP dial.
    - Verify a fresh Chromium process cannot reuse a prior public DNS authorization after the same hostname is rebound to a private address.
-   - Verify an Agent read-only page cannot open a WebSocket or access WebRTC/WebTransport APIs.
+   - Verify an Agent read-only page cannot open a WebSocket, access WebRTC/WebTransport APIs, or send a POST from a dedicated Web Worker.
    - The fixture uses a local TLS server and a test-only dial mapping. It is not live Internet or staging evidence.
    - WebSocket-backed page features intentionally fail closed in Agent read-only mode; use the human-supervised path when such interaction is necessary.
 

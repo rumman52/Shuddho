@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, installAgentReadOnlyBrowserGuards, normalizedBaseUrl, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserSurfaceViolation, formFieldPolicy, installAgentReadOnlyBrowserGuards, installBrowserRequestFence, normalizedBaseUrl, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 import { createPinnedProxy } from "./browser_pinned_proxy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
@@ -234,30 +234,13 @@ async function createRuntime(command, evidence) {
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
   page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
 
-  await page.route("**/*", async (route) => {
-    const request = route.request();
-    const methodAllowed = browserRequestAllowed({
-      kind: state.kind,
-      agentReadOnly: state.agentReadOnly,
-      method: request.method(),
-      preparingForm: state.preparingForm,
-      humanInteractionArmed: state.humanInteractionArmed,
-      navigationRequest: request.isNavigationRequest(),
-      mainFrame: request.frame() === page.mainFrame(),
-    });
-    const targetAllowed = browserRequestTargetAllowed(request.url(), state.allowedOrigin);
-    if (!methodAllowed || !targetAllowed) {
-      state.formMutationBlocked = state.formMutationBlocked || (
-        state.kind === "prepare_form" && !methodAllowed
-      );
-      await route.abort("blockedbyclient");
-      return;
-    }
-    await route.continue();
-  });
+  await installBrowserRequestFence(context, page, state);
   page.on("request", (request) => {
-    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
-      state.navigationUrls.push(request.url());
+    if (!request.isNavigationRequest()) return;
+    try {
+      if (request.frame() === page.mainFrame()) state.navigationUrls.push(request.url());
+    } catch {
+      // A request without a frame cannot be a trusted top-level navigation.
     }
   });
   context.on("page", (candidate) => {

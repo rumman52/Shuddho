@@ -13,6 +13,7 @@ import {
   browserChromiumLaunchOptions,
   browserContextOptions,
   installAgentReadOnlyBrowserGuards,
+  installBrowserRequestFence,
 } from "./browser_worker_policy.mjs";
 
 async function createTlsFixture(handler) {
@@ -204,12 +205,22 @@ test("real Chromium revalidates a hostname after a public-to-private DNS answer 
 test("real Chromium Agent read-only context blocks WebSockets and realtime transports", {
   timeout: 30000,
 }, async () => {
-  const fixture = await createTlsFixture((_request, response) => {
+  const receivedRequests = [];
+  const fixture = await createTlsFixture((request, response) => {
+    receivedRequests.push({ method: request.method, url: request.url });
     response.writeHead(200, { "Content-Type": "text/html", Connection: "close" });
     response.end("<!doctype html><title>read-only fixture</title>");
   });
   const stats = { dials: 0, targets: [] };
-  const state = { surfaceViolation: null };
+  const state = {
+    surfaceViolation: null,
+    kind: "agent_read_only",
+    agentReadOnly: true,
+    allowedOrigin: "https://example.test",
+    preparingForm: false,
+    humanInteractionArmed: false,
+    formMutationBlocked: false,
+  };
   let browser;
   let proxy;
   try {
@@ -225,10 +236,41 @@ test("real Chromium Agent read-only context blocks WebSockets and realtime trans
     });
     await installAgentReadOnlyBrowserGuards(context, state);
     const page = await context.newPage();
+    await installBrowserRequestFence(context, page, state);
     await page.goto("https://example.test/", {
       waitUntil: "domcontentloaded",
       timeout: 8000,
     });
+    const workerMutation = await page.evaluate(() => new Promise((resolve) => {
+      const workerSource = `self.onmessage = async () => {
+        try {
+          await fetch("https://example.test/mutate", {
+            method: "POST",
+            body: "must-not-reach-server",
+          });
+          self.postMessage("sent");
+        } catch {
+          self.postMessage("blocked");
+        }
+      };`;
+      const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));
+      const worker = new Worker(workerUrl);
+      const timeout = setTimeout(() => {
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+        resolve("timeout");
+      }, 3000);
+      worker.addEventListener("message", (event) => {
+        clearTimeout(timeout);
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+        resolve(event.data);
+      }, { once: true });
+      worker.postMessage("start");
+    }));
+    assert.equal(workerMutation, "blocked");
+    assert.equal(receivedRequests.some((request) => request.method === "POST"), false);
+
     const dialsBeforeWebSocket = stats.dials;
     const targetsBeforeWebSocket = stats.targets.length;
     const transportApis = await page.evaluate(() => ({
