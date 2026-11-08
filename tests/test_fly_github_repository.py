@@ -93,6 +93,11 @@ def _transport(*, accessible_installation=True):
                 "token_type": "bearer",
             })
         if request.url.host == "api.github.com":
+            if request.method == "DELETE" and path == "/applications/Iv1.test-client/token":
+                assert request.headers.get("Authorization", "").startswith("Basic ")
+                body = json.loads(request.content or b"{}")
+                assert body["access_token"] in {"short-lived-user-token", "rotated-user-token"}
+                return httpx.Response(204)
             if path == "/user":
                 return httpx.Response(200, json={"id": 9001, "login": "rukh-user"})
             if path == "/user/installations":
