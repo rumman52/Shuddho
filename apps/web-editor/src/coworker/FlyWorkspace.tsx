@@ -68,10 +68,15 @@ export function normalizeStoredDraft(value: unknown): FlyDraft {
       ? savedValue as SavedSource
       : undefined;
     const originValue: unknown = file.origin;
+    const originPath = originValue && typeof originValue === "object" && "path" in originValue && typeof originValue.path === "string"
+      ? originValue.path
+      : "";
+    const originParts = originPath.split("/");
     const origin = originValue && typeof originValue === "object" &&
-      "repository" in originValue && typeof originValue.repository === "string" &&
-      "path" in originValue && typeof originValue.path === "string" &&
-      "branch" in originValue && typeof originValue.branch === "string" &&
+      "repository" in originValue && typeof originValue.repository === "string" && /^[A-Za-z0-9_.-]{1,100}\\/[A-Za-z0-9_.-]{1,100}$/.test(originValue.repository) &&
+      originPath.length > 0 && originPath.length <= 512 && !originPath.startsWith("/") && !originPath.includes("\\\\") && !originPath.includes("\\x00") &&
+      originParts.every(part => part.length > 0 && part !== "." && part !== "..") &&
+      "branch" in originValue && typeof originValue.branch === "string" && originValue.branch.length > 0 && originValue.branch.length <= 255 &&
       "commitSha" in originValue && typeof originValue.commitSha === "string" && /^[a-f0-9]{40}$/i.test(originValue.commitSha) &&
       "repositorySha" in originValue && typeof originValue.repositorySha === "string" && /^[a-f0-9]{40}$/i.test(originValue.repositorySha)
       ? originValue as RepositoryOrigin
@@ -242,6 +247,11 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
 
   const importRepositoryFiles = useCallback(async (items: GitHubRepositoryFile[]) => {
     if (!items.length) return;
+    const expectedCommit = items[0].commit_sha;
+    const expectedBranch = items[0].branch;
+    if (items.some(item => item.repository !== repositoryName || item.commit_sha !== expectedCommit || item.branch !== expectedBranch)) {
+      throw new Error("The selected files do not share one repository, branch and commit snapshot. Refresh the tree and retry.");
+    }
     const existing = new Set(files.filter(file => file.origin).map(file =>
       [file.origin!.repository, file.origin!.path, file.origin!.commitSha].join("|"),
     ));
