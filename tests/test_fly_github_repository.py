@@ -122,6 +122,7 @@ def _transport(*, accessible_installation=True):
                     "type": "file",
                     "encoding": "base64",
                     "size": len(source),
+                    "sha": "c" * 40,
                     "content": base64.b64encode(source).decode("ascii")[:12] + "\n" + base64.b64encode(source).decode("ascii")[12:],
                 })
         return httpx.Response(404, json={"message": "not found"})
