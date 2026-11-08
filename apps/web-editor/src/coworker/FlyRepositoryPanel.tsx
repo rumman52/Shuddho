@@ -342,7 +342,7 @@ export default function FlyRepositoryPanel({
         {busy === "connect" || busy === "oauth" ? "Connecting…" : "Connect GitHub"}
       </button>
     </>}
-    {enabled === true && projectId && !binding && !pickerOpen && installations.length > 0 && <>
+    {enabled === true && !binding && !pickerOpen && installations.length > 0 && <>
       <p className="rukh-fly-github-muted">Choose a verified GitHub App installation to browse its repositories.</p>
       <label className="rukh-fly-github-label">GitHub installation
         <select value={installationRecordId} onChange={event => setInstallationRecordId(event.target.value)} disabled={Boolean(busy)}>
@@ -350,9 +350,11 @@ export default function FlyRepositoryPanel({
           {installations.map(item => <option key={item.id} value={item.id}>{item.account_login} · @{item.github_login}</option>)}
         </select>
       </label>
-      <button type="button" className="rukh-fly-github-primary" onClick={() => void openRepositoryPicker()} disabled={Boolean(busy) || !installationRecordId}>
-        {busy === "repositories" ? "Loading…" : "Choose repository"}
-      </button>
+      {projectId
+        ? <button type="button" className="rukh-fly-github-primary" onClick={() => void openRepositoryPicker()} disabled={Boolean(busy) || !installationRecordId}>
+            {busy === "repositories" ? "Loading…" : "Choose repository"}
+          </button>
+        : <p className="rukh-fly-github-muted">Select or create a Fly project to browse repositories. You can revoke this GitHub authorization without selecting a project.</p>}
       <p className="rukh-fly-github-muted">One GitHub user authorization is supported per Rukh account. Revoke the current authorization before connecting a different GitHub account.</p>
     </>}
     {enabled === true && projectId && pickerOpen && <>
@@ -398,7 +400,7 @@ export default function FlyRepositoryPanel({
         <p className="rukh-fly-github-muted">Up to {MAX_IMPORT_FILES} selected text files are added to the Fly workspace. Rukh Files creates owner-private snapshots before the Agent receives them.</p>
       </>}
     </>}
-    {enabled === true && projectId && installationRecordId && !confirmRevoke &&
+    {enabled === true && installationRecordId && !confirmRevoke &&
       <button type="button" className="rukh-fly-github-text" onClick={() => setConfirmRevoke(true)} disabled={Boolean(busy)}>
         Revoke GitHub authorization for @{installation?.github_login ?? installations.find(item => item.id === installationRecordId)?.github_login ?? "this account"}
       </button>}
