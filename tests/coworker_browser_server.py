@@ -238,7 +238,7 @@ def _set_agent_runtime_v3(enabled: bool):
 
 
 @app.post("/fixture/agent/enable-v3")
-def enable_agent_runtime_v3():
+async def enable_agent_runtime_v3():
     if browser_agent_planner is None:
         raise RuntimeError("Browser Agent planner is not ready.")
     browser_agent_planner.reset()
@@ -247,7 +247,7 @@ def enable_agent_runtime_v3():
 
 
 @app.post("/fixture/agent/disable-v3")
-def disable_agent_runtime_v3():
+async def disable_agent_runtime_v3():
     if browser_agent_planner is not None:
         browser_agent_planner.release.set()
     _set_agent_runtime_v3(False)
@@ -255,7 +255,7 @@ def disable_agent_runtime_v3():
 
 
 @app.post("/fixture/agent/release-planner")
-def release_agent_planner():
+async def release_agent_planner():
     if browser_agent_planner is None:
         raise RuntimeError("Browser Agent planner is not ready.")
     browser_agent_planner.release.set()
