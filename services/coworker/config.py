@@ -75,6 +75,7 @@ class Settings:
     agent_runtime_enabled: bool = False
     projects_enabled: bool = False
     conversations_enabled: bool = False
+    fly_github_enabled: bool = False
     conversation_replies_enabled: bool = False
     max_conversations: int = 100
     max_conversation_messages: int = 500
@@ -120,6 +121,16 @@ class Settings:
     linkedin_client_secret: str = field(default="", repr=False)
     linkedin_redirect_uri: str = ""
     linkedin_api_version: str = "202609"
+    github_app_id: str = ""
+    github_app_slug: str = ""
+    github_app_client_id: str = ""
+    github_app_client_secret: str = field(default="", repr=False)
+    github_app_private_key: str = field(default="", repr=False)
+    github_app_redirect_uri: str = ""
+    github_api_version: str = "2026-03-10"
+    github_timeout_seconds: int = 15
+    github_max_file_bytes: int = 262144
+    github_max_tree_files: int = 500
     connector_encryption_key: str = field(default="", repr=False)
     max_daily_actions: int = 20
     max_action_recipients: int = 100
@@ -266,6 +277,7 @@ class Settings:
             conversation_replies_enabled=os.getenv("SHUDDHO_CONVERSATION_REPLIES_ENABLED", "false").lower() == "true",
             projects_enabled=os.getenv("SHUDDHO_PROJECTS_ENABLED", "false").lower() == "true",
             conversations_enabled=os.getenv("SHUDDHO_CONVERSATIONS_ENABLED", "false").lower() == "true",
+            fly_github_enabled=os.getenv("SHUDDHO_FLY_GITHUB_ENABLED", "false").lower() == "true",
             agent_runtime_v3_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_V3_ENABLED", "false").lower() == "true",
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
             automations_enabled=os.getenv("SHUDDHO_AUTOMATIONS_ENABLED", "false").lower() == "true",
@@ -312,6 +324,16 @@ class Settings:
             linkedin_client_secret=os.getenv("SHUDDHO_LINKEDIN_CLIENT_SECRET", ""),
             linkedin_redirect_uri=os.getenv("SHUDDHO_LINKEDIN_REDIRECT_URI", ""),
             linkedin_api_version=os.getenv("SHUDDHO_LINKEDIN_API_VERSION", "202609"),
+            github_app_id=os.getenv("SHUDDHO_GITHUB_APP_ID", ""),
+            github_app_slug=os.getenv("SHUDDHO_GITHUB_APP_SLUG", ""),
+            github_app_client_id=os.getenv("SHUDDHO_GITHUB_APP_CLIENT_ID", ""),
+            github_app_client_secret=os.getenv("SHUDDHO_GITHUB_APP_CLIENT_SECRET", ""),
+            github_app_private_key=os.getenv("SHUDDHO_GITHUB_APP_PRIVATE_KEY", ""),
+            github_app_redirect_uri=os.getenv("SHUDDHO_GITHUB_APP_REDIRECT_URI", ""),
+            github_api_version=os.getenv("SHUDDHO_GITHUB_API_VERSION", "2026-03-10"),
+            github_timeout_seconds=int(os.getenv("SHUDDHO_GITHUB_TIMEOUT_SECONDS", "15")),
+            github_max_file_bytes=int(os.getenv("SHUDDHO_GITHUB_MAX_FILE_BYTES", "262144")),
+            github_max_tree_files=int(os.getenv("SHUDDHO_GITHUB_MAX_TREE_FILES", "500")),
             connector_encryption_key=os.getenv("SHUDDHO_CONNECTOR_ENCRYPTION_KEY", ""),
             max_daily_actions=int(os.getenv("SHUDDHO_COWORKER_DAILY_ACTIONS", "20")),
             max_action_recipients=int(os.getenv("SHUDDHO_ACTION_RECIPIENTS_MAX", "100")),
@@ -457,6 +479,48 @@ class Settings:
                 raise ValueError("SHUDDHO_GOOGLE_GMAIL_PUBSUB_SUBSCRIPTION is invalid")
             if self.google_gmail_push_service_account and not re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com", self.google_gmail_push_service_account):
                 raise ValueError("SHUDDHO_GOOGLE_GMAIL_PUSH_SERVICE_ACCOUNT is invalid")
+        if self.fly_github_enabled:
+            from cryptography.hazmat.primitives import serialization
+            from .action_security import TokenVault
+            if not (self.projects_enabled and self.conversations_enabled):
+                raise ValueError("Fly GitHub access requires projects and conversations to be enabled")
+            if (
+                not self.github_app_id.isdigit()
+                or int(self.github_app_id) <= 0
+                or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?", self.github_app_slug)
+                or not self.github_app_client_id
+                or not self.github_app_client_secret
+                or not self.github_app_private_key
+            ):
+                raise ValueError("Fly GitHub access requires a valid GitHub App ID, slug, client ID, client secret and private key")
+            callback = urlparse(self.github_app_redirect_uri)
+            local = self.environment == "development" and callback.hostname in {"localhost", "127.0.0.1"}
+            if (
+                not callback.netloc
+                or callback.scheme != "https" and not (local and callback.scheme == "http")
+                or callback.username
+                or callback.password
+                or callback.query
+                or callback.fragment
+                or callback.path != "/coworker"
+            ):
+                raise ValueError("SHUDDHO_GITHUB_APP_REDIRECT_URI must be the clean HTTPS frontend /coworker callback")
+            if not 3 <= self.github_timeout_seconds <= 30:
+                raise ValueError("SHUDDHO_GITHUB_TIMEOUT_SECONDS must be between 3 and 30")
+            if not 1024 <= self.github_max_file_bytes <= 524288:
+                raise ValueError("SHUDDHO_GITHUB_MAX_FILE_BYTES must be between 1 KB and 512 KB")
+            if not 1 <= self.github_max_tree_files <= 1000:
+                raise ValueError("SHUDDHO_GITHUB_MAX_TREE_FILES must be between 1 and 1000")
+            try:
+                key = serialization.load_pem_private_key(
+                    self.github_app_private_key.replace("\\n", "\n").encode("utf-8"),
+                    password=None,
+                )
+                if not hasattr(key, "key_size") or key.key_size < 2048:
+                    raise ValueError()
+            except Exception:
+                raise ValueError("SHUDDHO_GITHUB_APP_PRIVATE_KEY must be a valid RSA private key of at least 2048 bits") from None
+            TokenVault(self.connector_encryption_key)
         if self.actions_enabled:
             from .action_security import TokenVault
             TokenVault(self.connector_encryption_key)
