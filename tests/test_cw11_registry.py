@@ -406,8 +406,9 @@ def test_selected_publication_revocation_fails_closed_until_explicit_reselection
 
     # There is no automatic fallback. The operator must explicitly select
     # the previously declared baseline before new reviewed work can be admitted.
+    blocked_owner = account(container, "blocked-admission")
     with pytest.raises(CoworkerError) as admission_blocked:
-        reviewed_task(container, owner, "must-not-auto-fallback")
+        reviewed_task(container, blocked_owner, "must-not-auto-fallback")
     assert admission_blocked.value.code == "skill_publication_unavailable"
 
     selected = container.repository.select_reviewed_skill(
@@ -418,7 +419,8 @@ def test_selected_publication_revocation_fails_closed_until_explicit_reselection
         worker_source_revision=REV_A,
     )
     assert selected["publication_version"] == "research_revoke_baseline"
-    resumed_task = reviewed_task(container, owner, "explicit-reselection-task")
+    resumed_owner = account(container, "explicit-reselection-recovery")
+    resumed_task = reviewed_task(container, resumed_owner, "explicit-reselection-task")
     with container.repository.sessions() as db:
         resumed_pin = db.get(
             Step, (resumed_task["id"], "reviewed_skill_identity"),
