@@ -27,9 +27,10 @@ function updatedLabel(value: string) {
 
 type ProjectTab = "overview" | "chats" | "files";
 
-export default function ProjectWorkspace({ client, onCreateModeChange }: {
+export default function ProjectWorkspace({ client, onCreateModeChange, initialCreate = false }: {
   client: CoworkerClient;
   onCreateModeChange?: (creating: boolean) => void;
+  initialCreate?: boolean;
 }) {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [project, setProject] = useState<ProjectDetail | null>(null);
@@ -40,7 +41,7 @@ export default function ProjectWorkspace({ client, onCreateModeChange }: {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(initialCreate);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -52,6 +53,10 @@ export default function ProjectWorkspace({ client, onCreateModeChange }: {
   const uploadRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (editing || project) {
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     setError("");
@@ -60,7 +65,7 @@ export default function ProjectWorkspace({ client, onCreateModeChange }: {
       .catch(cause => { if (!controller.signal.aborted) setError(message(cause)); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [client, revision]);
+  }, [client, revision, editing, project]);
 
   useEffect(() => {
     onCreateModeChange?.(editing && !project);
