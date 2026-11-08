@@ -1,10 +1,11 @@
-"""Least-privilege GitHub App connection and read-only repository browsing for Fly.
+"""Least-privilege GitHub App user authorization and Fly repository browsing.
 
-User OAuth is used only to verify that the authenticated GitHub user can access
-an installation. The short-lived user token is encrypted in a one-time attempt,
-then erased. Repository operations use a one-hour installation token scoped to
-one repository and the exact permissions needed for that operation.
+GitHub user access tokens are restricted to the intersection of the App's
+granted repository permissions and the user's own access. Access/refresh
+tokens are encrypted at rest; installation IDs from setup callbacks are never
+trusted until verified against that exact user's accessible installations.
 """
+
 from __future__ import annotations
 
 import base64
@@ -13,13 +14,12 @@ import hmac
 import json
 import re
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 import httpx
-import jwt
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from .action_security import TokenVault
 from .errors import CoworkerError
@@ -167,14 +167,7 @@ class GitHubAppService:
             raise CoworkerError("github_redirect_denied", "GitHub returned an unexpected redirect; the request was not followed.", 502)
         return self._decode_response(response, expected=expected)
 
-    def _oauth_exchange(self, code: str, verifier: str):
-        body = {
-            "client_id": self.settings.github_app_client_id,
-            "client_secret": self.settings.github_app_client_secret,
-            "code": code,
-            "redirect_uri": self.settings.github_app_redirect_uri,
-            "code_verifier": verifier,
-        }
+    def _oauth_post(self, body: dict):
         try:
             with self._client() as client:
                 response = client.post(
@@ -190,39 +183,53 @@ class GitHubAppService:
             data = response.json()
         except ValueError:
             raise CoworkerError("github_response_invalid", "GitHub returned an invalid authorization response.", 502) from None
-        token = data.get("access_token") if isinstance(data, dict) else None
-        if not isinstance(token, str) or not token or len(token) > 4096 or data.get("error"):
-            raise CoworkerError("github_oauth_failed", "GitHub did not issue a usable user access token.", 502)
-        return token
+        if not isinstance(data, dict):
+            raise CoworkerError("github_response_invalid", "GitHub returned an invalid authorization response.", 502)
+        if data.get("error") == "bad_refresh_token":
+            raise CoworkerError("github_oauth_expired", "The GitHub refresh token expired or was revoked. Reconnect GitHub.", 409)
+        if data.get("error"):
+            raise CoworkerError("github_oauth_failed", "GitHub authorization failed. Reconnect GitHub.", 502)
+        return data
 
-    def _app_jwt(self):
-        try:
-            import time
-            now = int(time.time())
-            key = self.settings.github_app_private_key.replace("\\n", "\n")
-            return jwt.encode(
-                {"iat": now - 60, "exp": now + 540, "iss": str(self.settings.github_app_id)},
-                key,
-                algorithm="RS256",
-            )
-        except Exception:
-            raise CoworkerError("github_not_configured", "The GitHub App private key is invalid or unavailable.", 503) from None
+    @staticmethod
+    def _token_bundle(data: dict):
+        access_token = data.get("access_token")
+        refresh_token = data.get("refresh_token")
+        expires_in = data.get("expires_in")
+        refresh_expires_in = data.get("refresh_token_expires_in")
+        if (
+            not isinstance(access_token, str) or not access_token or len(access_token) > 4096
+            or not isinstance(refresh_token, str) or not refresh_token or len(refresh_token) > 4096
+            or type(expires_in) is not int or not 60 <= expires_in <= 86400
+            or type(refresh_expires_in) is not int or not 3600 <= refresh_expires_in <= 31536000
+        ):
+            raise CoworkerError("github_oauth_failed", "GitHub did not issue the expected expiring user and refresh tokens.", 502)
+        now = utcnow()
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "access_token_expires_at": (now + timedelta(seconds=expires_in)).isoformat(),
+            "refresh_token_expires_at": (now + timedelta(seconds=refresh_expires_in)).isoformat(),
+        }
 
-    def _installation_token(self, installation_id: int, repository_id: int | None = None, *, write=False):
-        body = {"permissions": {"metadata": "read", "contents": "write" if write else "read"}}
-        if repository_id is not None:
-            body["repository_ids"] = [repository_id]
-        data = self._api(
-            "POST",
-            f"/app/installations/{installation_id}/access_tokens",
-            self._app_jwt(),
-            body=body,
-            expected=(201,),
-        )
-        token = data.get("token")
-        if not isinstance(token, str) or not token or len(token) > 4096:
-            raise CoworkerError("github_response_invalid", "GitHub did not issue a usable installation token.", 502)
-        return token
+    def _oauth_exchange(self, code: str, verifier: str):
+        data = self._oauth_post({
+            "client_id": self.settings.github_app_client_id,
+            "client_secret": self.settings.github_app_client_secret,
+            "code": code,
+            "redirect_uri": self.settings.github_app_redirect_uri,
+            "code_verifier": verifier,
+        })
+        return self._token_bundle(data)
+
+    def _oauth_refresh(self, refresh_token: str):
+        data = self._oauth_post({
+            "client_id": self.settings.github_app_client_id,
+            "client_secret": self.settings.github_app_client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        })
+        return self._token_bundle(data)
 
     @staticmethod
     def _project(db, owner: str, project_id: str):
@@ -266,6 +273,7 @@ class GitHubAppService:
             "code_challenge": challenge,
             "code_challenge_method": "S256",
             "allow_signup": "false",
+            "scope": "offline_access",
         })
         return {"authorization_url": GITHUB_AUTHORIZE + "?" + query, "expires_in_seconds": 600}
 
@@ -291,7 +299,8 @@ class GitHubAppService:
             row.stage = "oauth_processing"
             attempt_id = row.id
         # Never hold an application row lock while making provider network calls.
-        access_token = self._oauth_exchange(code, verifier)
+        token_bundle = self._oauth_exchange(code, verifier)
+        access_token = token_bundle["access_token"]
         user = self._api("GET", "/user", access_token)
         user_id, login = user.get("id"), user.get("login")
         if type(user_id) is not int or user_id <= 0 or not isinstance(login, str) or not LOGIN_RE.fullmatch(login):
@@ -308,7 +317,7 @@ class GitHubAppService:
             row.stage = "awaiting_install"
             row.code_verifier_ciphertext = ""
             row.user_access_token_ciphertext = self._vault().seal(
-                {"access_token": access_token}, owner + ":github-connect:" + row.id,
+                token_bundle, owner + ":github-connect:" + row.id,
             )
             row.github_user_id = user_id
             row.github_login = login
