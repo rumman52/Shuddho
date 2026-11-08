@@ -181,15 +181,20 @@ def _make_worker(env, runner, runtime):
 def _new_run(container, owner: str, language: str, *, allowlist=None):
     goals = {
         "en": (
-            "Create a concise project document using this fact: the team completed "
-            "12 reviews on 9 November 2026. Then draft a follow-up email that uses "
-            "the same verified fact from the created document. Do not send the email."
+            "First use document.create to create a concise document titled "
+            "'Project review summary' containing this exact fact: 'The team completed "
+            "12 reviews on 9 November 2026.' Then use email.draft to prepare a "
+            "follow-up email to team@example.test with subject 'Project review update' "
+            "that repeats the same fact from the created document. Do not send the "
+            "email or perform any external action."
         ),
         "bn": (
-            "এই তথ্য ব্যবহার করে একটি সংক্ষিপ্ত প্রকল্পের নথি তৈরি করো: দলটি "
-            "৯ নভেম্বর ২০২৬ তারিখে ১২টি পর্যালোচনা সম্পন্ন করেছে। এরপর তৈরি করা "
-            "নথির যাচাইকৃত একই তথ্য ব্যবহার করে একটি ফলো-আপ ইমেইলের খসড়া তৈরি করো। "
-            "ইমেইলটি পাঠাবে না।"
+            "প্রথমে document.create ব্যবহার করে 'প্রকল্প পর্যালোচনা সারাংশ' শিরোনামে "
+            "একটি সংক্ষিপ্ত নথি তৈরি করো, যেখানে এই তথ্যটি থাকবে: 'দলটি ৯ নভেম্বর "
+            "২০২৬ তারিখে ১২টি পর্যালোচনা সম্পন্ন করেছে।' এরপর email.draft ব্যবহার "
+            "করে team@example.test ঠিকানায় 'প্রকল্প পর্যালোচনার আপডেট' বিষয়ে একটি "
+            "ফলো-আপ ইমেইলের খসড়া তৈরি করো এবং তৈরি করা নথির একই তথ্য ব্যবহার করো। "
+            "ইমেইলটি পাঠাবে না বা কোনো বাহ্যিক কাজ করবে না।"
         ),
     }
     run, _created = container.agent.create(
