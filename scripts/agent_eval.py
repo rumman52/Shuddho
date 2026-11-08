@@ -320,7 +320,6 @@ async def evaluate_live_v3(
                         case_error = "tool_context_or_memory_boundary"
                         break
                     observations.append({
-                        "ordinal": ordinal,
                         "tool": expected_tool,
                         "status": "completed",
                         "resource_type": "task",
