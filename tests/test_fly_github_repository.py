@@ -252,6 +252,16 @@ def test_github_repository_bindings_are_owner_and_project_scoped(container):
     assert foreign.value.status_code == 404
 
 
+def test_github_binding_requires_user_repository_read_permission(container):
+    _enabled(container, _transport(repo_pull=False))
+    owner = account(container)
+    project, finished = _connect(container, owner)
+    connected = container.github.complete_install(owner, finished["state"], 321)
+    with pytest.raises(CoworkerError) as failure:
+        container.github.bind_repository(owner, project["id"], connected["installation"]["id"], 777, project["revision"])
+    assert failure.value.code == "github_contents_permission_missing"
+
+
 def test_github_user_access_token_refreshes_and_rotates_encrypted_refresh_token(container):
     _enabled(container, _transport())
     owner = account(container)
