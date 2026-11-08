@@ -215,6 +215,22 @@ def _evidence_path() -> Path:
     ))
 
 
+def _assert_model_metrics(transport: RecordingTransport, settings) -> dict[str, Any]:
+    metrics = summarize_model_calls(
+        transport.records,
+        settings.agent_v3_planner_cost_microusd_per_1k_tokens,
+    )
+    assert metrics["model_call_count"] > 0
+    assert metrics["successful_model_call_count"] == metrics["model_call_count"]
+    assert metrics["failed_model_call_count"] == 0
+    assert metrics["token_usage_complete"] is True
+    assert metrics["total_tokens"] > 0
+    assert metrics["estimated_cost_microusd"] > 0
+    assert metrics["p50_latency_ms"] is not None
+    assert metrics["p95_latency_ms"] is not None
+    return metrics
+
+
 def _write_run_evidence(
     *,
     case_id: str,
@@ -349,8 +365,19 @@ def test_runtime_v3_live_bilingual_grounded_multistep_temporal_workflow(containe
                 if source.get("id") == handoff_source_id
             )
             assert len(handoff_source["sha256"]) == 64
+            assert hashlib.sha256(
+                handoff_source["text"].encode("utf-8")
+            ).hexdigest() == handoff_source["sha256"]
             output = _draft_text(email_draft["draft"])
             assert output.strip()
+            assert {source["id"] for source in email_draft["sources"]} == {
+                "brief", handoff_source_id
+            }
+            assert set(email_draft["draft"]["source_ids"]) == {
+                "brief", handoff_source_id
+            }
+            assert any(value in handoff_source["text"] for value in ("12", "১২"))
+            assert any(value in output for value in ("12", "১২", "twelve"))
             assert email_draft["draft"]["output_language"].lower() == language
             if language == "bn":
                 assert any("\u0980" <= char <= "\u09ff" for char in output)
@@ -358,18 +385,8 @@ def test_runtime_v3_live_bilingual_grounded_multistep_temporal_workflow(containe
             assert run["goal"] not in history
             assert config["api_key"] not in history
 
-            metrics = summarize_model_calls(
-                transport.records,
-                settings.agent_v3_planner_cost_microusd_per_1k_tokens,
-            )
+            metrics = _assert_model_metrics(transport, settings)
             assert metrics["model_call_count"] == 5
-            assert metrics["successful_model_call_count"] == 5
-            assert metrics["failed_model_call_count"] == 0
-            assert metrics["token_usage_complete"] is True
-            assert metrics["total_tokens"] > 0
-            assert metrics["estimated_cost_microusd"] > 0
-            assert metrics["p50_latency_ms"] is not None
-            assert metrics["p95_latency_ms"] is not None
             assert sum(item["kind"] == "planner" for item in transport.records) == 3
             assert sum(item["kind"] == "draft" for item in transport.records) == 2
 
@@ -428,6 +445,7 @@ def test_runtime_v3_live_temporal_worker_restart_replays_saved_draft_once(contai
             assert [item["tool"] for item in saved["tool_invocations"]] == TOOL_SCOPE
             assert sum(item["kind"] == "planner" for item in transport.records) == 3
             assert sum(item["kind"] == "draft" for item in transport.records) == 2
+            _assert_model_metrics(transport, settings)
             assert len([
                 item for item in saved["tool_invocations"]
                 if (item.get("receipt") or {}).get("status") == "completed"
@@ -484,6 +502,7 @@ def test_runtime_v3_live_cancellation_discards_late_provider_response(container)
                     )
                     cancelled = container.agent.cancel(owner, run["id"])
                     assert cancelled["cancel_requested"] is True
+                    assert cancelled["state"] == "cancelled"
                     transport.release_response.set()
                     handle = env.client.get_workflow_handle(
                         "shuddho-agent-" + run["id"]
@@ -506,6 +525,7 @@ def test_runtime_v3_live_cancellation_discards_late_provider_response(container)
             assert transport.records[0]["kind"] == "planner"
             assert transport.records[0]["status_code"] == 200
             assert transport.records[0]["total_tokens"] is not None
+            _assert_model_metrics(transport, settings)
             assert run["goal"] not in history
             assert config["api_key"] not in history
 
