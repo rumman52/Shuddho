@@ -32,6 +32,7 @@ from .reviewed_skill_registry import (
     REVIEWED_RESEARCH_TASK_WORKFLOW_VERSION,
     WORKER_ACTIVE_STATES,
     WORKER_HEARTBEAT_TTL_SECONDS,
+    binding_from_row,
     build_pilot_publication,
     require_pinned_publication,
     require_selected_pilot,
@@ -398,6 +399,127 @@ class Repository:
                 },
             )
             return self._reviewed_selection_dto(selection, target)
+
+    def revoke_reviewed_skill(
+        self, skill_name: str, publication_version: str, *,
+        actor_reference: str, reason: str,
+    ) -> dict:
+        """Revoke one publication without selecting an implicit replacement.
+
+        This is an emergency deny operation, so it deliberately does not
+        require a healthy or homogeneous worker fleet. It does serialize with
+        worker registration, dispatch claims, admission and runtime reservations
+        using the established registry lock order.
+        """
+        if skill_name != REVIEWED_RESEARCH_SKILL:
+            raise CoworkerError("skill_publication_untrusted", "Unsupported reviewed skill.", 409)
+        if (
+            type(actor_reference) is not str
+            or not actor_reference.strip()
+            or len(actor_reference) > 200
+        ):
+            raise CoworkerError("skill_publication_operator", "A non-empty operator reference is required.", 409)
+        if type(reason) is not str or not reason.strip() or len(reason) > 500:
+            raise CoworkerError("skill_publication_operator", "A non-empty revocation reason is required.", 409)
+        if type(publication_version) is not str or not publication_version.strip():
+            raise CoworkerError("skill_revocation_unavailable", "A publication version is required.", 409)
+
+        with self.sessions.begin() as db:
+            # Match admission/selection lock ordering. Revocation remains
+            # available during a mixed rollout, but cannot race a new worker,
+            # dispatcher claim, admission, or a runtime reservation.
+            self._lock_worker_queue_membership(
+                db, task_queue=self.settings.task_queue,
+            )
+            worker_ids = db.scalars(
+                select(WorkerInstance.id)
+                .where(WorkerInstance.task_queue == self.settings.task_queue)
+                .order_by(WorkerInstance.id)
+                .with_for_update()
+            ).all()
+            if worker_ids:
+                db.scalars(
+                    select(WorkerClaim.id)
+                    .where(
+                        WorkerClaim.worker_id.in_(worker_ids),
+                        WorkerClaim.state == "active",
+                    )
+                    .order_by(
+                        WorkerClaim.worker_id,
+                        WorkerClaim.claimed_at,
+                        WorkerClaim.id,
+                    )
+                    .with_for_update()
+                ).all()
+
+            selection = db.scalar(
+                select(ReviewedSkillSelection)
+                .where(ReviewedSkillSelection.skill_name == skill_name)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            publication = db.scalar(
+                select(ReviewedSkillPublication)
+                .where(
+                    ReviewedSkillPublication.skill_name == skill_name,
+                    ReviewedSkillPublication.publication_version == publication_version,
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if publication is None:
+                raise CoworkerError(
+                    "skill_publication_unavailable",
+                    "The requested reviewed publication does not exist.",
+                    409,
+                )
+            if publication.state != "published":
+                raise CoworkerError(
+                    "skill_revocation_unavailable",
+                    "Only a currently published skill version can be revoked.",
+                    409,
+                )
+
+            # Validate immutable fields before changing lifecycle state.
+            # Revocation must not bless a corrupt or unreviewed publication.
+            binding_from_row(publication)
+            was_selected = (
+                selection is not None
+                and selection.publication_id == publication.id
+            )
+            publication.state = "revoked"
+            publication.updated_at = utcnow()
+
+            generation = None
+            if was_selected:
+                # Preserve the selection pointer as an auditable tombstone,
+                # but make it unavailable. Recovery requires explicit select.
+                selection.state = "revoked"
+                selection.generation = int(selection.generation or 0) + 1
+                selection.updated_by = actor_reference
+                selection.reason = reason
+                selection.updated_at = utcnow()
+                generation = selection.generation
+
+            db.flush()
+            self._record_reviewed_control_event(
+                db,
+                skill_name=skill_name,
+                publication_id=publication.id,
+                event_type="publication_revoked",
+                actor_reference=actor_reference,
+                reason=reason,
+                metadata={
+                    "publication_version": publication.publication_version,
+                    "source_revision": publication.source_revision,
+                    "was_selected": was_selected,
+                    "selection_generation": generation,
+                },
+            )
+            return self._reviewed_publication_dto(publication) | {
+                "was_selected": was_selected,
+                "selection_generation": generation,
+            }
 
     def list_reviewed_publications(self, skill_name: str = REVIEWED_RESEARCH_SKILL) -> list[dict]:
         if skill_name != REVIEWED_RESEARCH_SKILL:
@@ -1219,8 +1341,15 @@ class Repository:
             )
         return manifest.review_sha256()
 
-    def _reviewed_research_worker_task(self, db, task: Task) -> None:
-        """Rebuild pinned task inputs and recheck manifest/grants before each phase."""
+    def _reviewed_research_worker_task(
+        self, db, task: Task, *, lock_publication: bool = False,
+    ) -> None:
+        """Rebuild pinned inputs and recheck the publication before each phase.
+
+        Only side-effecting authorization transactions request a row lock.
+        Read-only task inspection must not serialize every task on the same
+        publication row.
+        """
         from .schemas import ResearchOptions
 
         document_ids = []
@@ -1256,10 +1385,16 @@ class Repository:
             stored_review.output.get("publication_id")
             if isinstance(stored_review.output, dict) else None
         )
-        publication = (
-            db.get(ReviewedSkillPublication, publication_id)
-            if publication_id else None
-        )
+        publication = None
+        if publication_id:
+            publication_query = select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.id == publication_id,
+            )
+            if lock_publication:
+                publication_query = publication_query.with_for_update()
+            publication = db.scalar(
+                publication_query.execution_options(populate_existing=True)
+            )
         binding = require_pinned_publication(
             publication,
             stored_review.output,
@@ -1640,7 +1775,9 @@ class Repository:
                     raise CoworkerError(
                         "skill_run_scope", "A reviewed task requires its distinct workflow version.", 409,
                     )
-                self._reviewed_research_worker_task(db, task)
+                self._reviewed_research_worker_task(
+                    db, task, lock_publication=True,
+                )
             if db.get(Step, (task_id, "search_attempt")):
                 raise CoworkerError("search_outcome_unknown", "The previous search could not be recovered. Create a new task to search again.", 409)
             db.add(Step(task_id=task_id, phase="search_attempt", output={
@@ -1684,6 +1821,13 @@ class Repository:
             self._account(db, owner)
             task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
             self._check_live(task)
+            if (
+                task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
+                or db.get(Step, (task.id, "reviewed_skill_identity")) is not None
+            ):
+                self._reviewed_research_worker_task(
+                    db, task, lock_publication=True,
+                )
             attempts = db.scalars(select(ModelAttempt).where(ModelAttempt.task_id == task_id)).all()
             if parent_run is not None:
                 run_attempts = list(db.scalars(
@@ -1769,6 +1913,13 @@ class Repository:
             if task.state in {"completed", "needs_input"}:
                 return
             self._check_live(task)
+            if (
+                task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
+                or db.get(Step, (task.id, "reviewed_skill_identity")) is not None
+            ):
+                self._reviewed_research_worker_task(
+                    db, task, lock_publication=True,
+                )
             new_bytes = sum(item["byte_size"] for item in artifacts)
             if account.storage_bytes + new_bytes > self.settings.max_account_bytes:
                 raise CoworkerError("storage_limit", "Your workspace has reached its file storage limit.", 429)
