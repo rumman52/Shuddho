@@ -33,6 +33,7 @@
    - Verify a fresh Chromium process cannot reuse a prior public DNS authorization after the same hostname is rebound to a private address.
    - Verify an Agent read-only page cannot open a WebSocket or access WebRTC/WebTransport APIs.
    - The fixture uses a local TLS server and a test-only dial mapping. It is not live Internet or staging evidence.
+   - WebSocket-backed page features intentionally fail closed in Agent read-only mode; use the human-supervised path when such interaction is necessary.
 
 4. **Source cleanup regression**
    - Extend the browser-source deletion-outage test to invoke `RetentionService.cleanup_orphans` with an age-qualified synthetic inventory record.
@@ -43,7 +44,7 @@
 - `node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs`
 - `node --test scripts/browser_worker_chromium.test.mjs` after installing Playwright Chromium.
 - `uv run --extra coworker pytest tests/test_agent_browser_tool.py -q -rs`
-- Exact-head `test-and-build`, `frontend`, `coworker`, and `ci-merge-gate`; inspect skipped tests and logs.
+- Exact-head `test-and-build`, `frontend`, `coworker`, dedicated `browser-qualification`, and `ci-merge-gate`; inspect skipped tests and logs.
 - Independent security review of proxy bypass semantics, browser transport flags, redirect behavior and DNS/CNAME edge cases.
 
 ## Explicit qualification boundary

@@ -361,8 +361,6 @@ jobs:
         run: node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs
       - name: Install browser
         run: npx playwright install --with-deps chromium --only-shell
-      - name: Qualify real Chromium browser-worker network boundary without skips
-        run: node --test scripts/browser_worker_chromium.test.mjs
       - name: Check coworker workflow in the browser
         env:
           SHUDDHO_BROWSER_TESTS: "true"
@@ -412,6 +410,23 @@ jobs:
           name: coworker-browser-screenshots
           path: /tmp/shuddho-coworker-browser/screenshots/
 
+  browser-qualification:
+    name: browser-qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium --only-shell
+      - name: Qualify real Chromium browser-worker network boundary without skips
+        run: node --test scripts/browser_worker_chromium.test.mjs
+
   ci-merge-gate:
     name: ci-merge-gate
     if: always()
@@ -419,6 +434,7 @@ jobs:
       - test-and-build
       - frontend
       - coworker
+      - browser-qualification
       - governance-audit
     runs-on: ubuntu-latest
     steps:
@@ -428,14 +444,16 @@ jobs:
           TEST_AND_BUILD_RESULT: ${{ needs.test-and-build.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           COWORKER_RESULT: ${{ needs.coworker.result }}
+          BROWSER_QUALIFICATION_RESULT: ${{ needs['browser-qualification'].result }}
           GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}
           CI_EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "test-and-build=$TEST_AND_BUILD_RESULT"
           echo "frontend=$FRONTEND_RESULT"
           echo "coworker=$COWORKER_RESULT"
+          echo "browser-qualification=$BROWSER_QUALIFICATION_RESULT"
           echo "governance-audit=$GOVERNANCE_AUDIT_RESULT"
-          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$FRONTEND_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ]; then
+          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$FRONTEND_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ] || [ "$BROWSER_QUALIFICATION_RESULT" != "success" ]; then
             echo "CI merge gate failed: every required upstream job must succeed."
             exit 1
           fi
