@@ -71,6 +71,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState(initialDraft);
   const [working, setWorking] = useState(false);
+  const [steeringMessageId, setSteeringMessageId] = useState("");
+  const [steeringDraft, setSteeringDraft] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [disabled, setDisabled] = useState(false);
@@ -464,7 +466,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     if (!selected || working) return;
     setWorking(true); setError(""); setNotice("");
     try {
-      await client.dispatchConversationMessage(selected, item.id, item.sequence);
+      await client.dispatchConversationMessage(selected, item.id, item.sequence, projectId);
       await reloadConversation(selected);
       setNotice("Task started. Follow progress below or open Agent activity.");
     } catch (cause) {
@@ -481,6 +483,23 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       setNotice("Agent cancellation recorded. Continue with a new reviewed message.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Agent cancellation was not accepted.");
+    } finally { setWorking(false); }
+  }
+
+  async function steer(item: ConversationMessageRecord, run: ConversationActivityRecord) {
+    if (!selected || !selectedConversation || working || !steeringDraft.trim()) return;
+    setWorking(true); setError(""); setNotice("");
+    try {
+      await client.steerConversationAgent(
+        selected, item.id, selectedConversation.message_sequence,
+        run.steering_revision, steeringDraft.trim(),
+      );
+      setSteeringMessageId(""); setSteeringDraft("");
+      await reloadConversation(selected);
+      setNotice("Instruction added. Rukh will apply it at the next planning checkpoint.");
+    } catch (cause) {
+      await reloadConversation(selected).catch(() => undefined);
+      setError(cause instanceof Error ? cause.message : "Agent steering was not accepted.");
     } finally { setWorking(false); }
   }
 
@@ -710,6 +729,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
               const run = statusByMessage.get(item.id);
               const linked = item.resource_links.find(link => link.resource_type === "agent_run");
               const activeRun = run && !["completed", "failed", "cancelled", "needs_input", "blocked"].includes(run.state);
+              const canSteer = Boolean(activeRun && run?.runtime_version === 3
+                && ["queued", "planning", "running"].includes(run.state) && !run.cancel_requested);
               const canDispatch = !linked && item.sequence === selectedConversation?.message_sequence;
               return <li className="rukh-message rukh-chat-turn" key={item.id}>
                 <div className="rukh-user-message">
@@ -724,13 +745,30 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                 </div>
                 {(activeRun || canDispatch || linked || chatAvailable) && <div className="rukh-message-actions">
                   {chatAvailable && !item.assistant_reply && item.sequence === selectedConversation?.message_sequence && <button type="button" disabled={composerDisabled || item.selected_sources.length > 0} onClick={() => { void askForReply(item); }}>Ask Rukh</button>}
+                  {canSteer && <button type="button" aria-label="Steer Agent task" disabled={working}
+                    onClick={() => { setSteeringMessageId(current => current === item.id ? "" : item.id); setSteeringDraft(""); }}>
+                    {steeringMessageId === item.id ? "Close steering" : "Steer"}
+                  </button>}
                   {activeRun && run && <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>Cancel Agent work</button>}
                   {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start task</button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
+                {canSteer && steeringMessageId === item.id && run && <form className="rukh-steer-form" aria-label="Steer Agent form"
+                  onSubmit={event => { event.preventDefault(); void steer(item, run); }}>
+                  <label className="rukh-sr-only" htmlFor={`cw-steer-${item.id}`}>Instruction for Agent</label>
+                  <textarea id={`cw-steer-${item.id}`} aria-label="Instruction for Agent" dir="auto" rows={2}
+                    maxLength={4000} value={steeringDraft} disabled={working}
+                    onChange={event => setSteeringDraft(event.target.value)}
+                    placeholder="Add an instruction for the next planning checkpoint…" />
+                  <div className="rukh-steer-form-actions">
+                    <small>Applies to this Agent run only. It does not approve external actions.</small>
+                    <button type="submit" disabled={working || !steeringDraft.trim()}>Send instruction</button>
+                  </div>
+                </form>}
                 {(item.assistant_reply || replyingId === item.id || replyErrors[item.id]) && <ConversationReply reply={item.assistant_reply}
                   pending={replyingId === item.id} error={replyErrors[item.id]} disabled={composerDisabled} retry={() => { void askForReply(item); }} />}
-                {linked && <ConversationRunStatus client={client} runId={linked.resource_id} eager={item.id === latestRunMessageId} />}
+                {linked && <ConversationRunStatus client={client} runId={linked.resource_id}
+                  eager={Boolean(activeRun) || item.id === latestRunMessageId} />}
               </li>;
             })}
           </ol>}
