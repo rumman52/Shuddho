@@ -236,7 +236,6 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     setActivity([]);
     setSession(null);
     setExecutions([]);
-    setRunningExecutionId("");
     setRuntimeError("");
   }, [accountId, draftOwner]);
 
