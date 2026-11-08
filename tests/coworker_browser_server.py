@@ -124,27 +124,41 @@ class BrowserAgentPlanner:
 
     async def decide(self, goal, tools, observations, *, remaining_budget, dependencies):
         steering = dependencies.get("steering") or {}
-        self.calls.append({
+        call = {
             "goal": goal,
             "steering_revision": int(steering.get("revision", 0)),
             "steering_instructions": list(steering.get("instructions") or []),
             "observation_count": len(observations),
             "available_tools": list(tools),
-        })
+        }
+        self.calls.append(call)
         await self.release.wait()
         if observations:
             decision = AgentV3Decision(decision="complete")
         elif "document.create" in tools:
+            steering_text = " ".join(
+                str(item.get("instruction", ""))
+                for item in call["steering_instructions"]
+                if isinstance(item, dict)
+            ).lower()
+            objective = (
+                "Create a concise Bangla summary document that satisfies the user's task."
+                if "bangla" in steering_text
+                else "Create a concise document that satisfies the user's task."
+            )
             decision = AgentV3Decision(
                 decision="next_step",
                 tool="document.create",
-                objective="Create a concise document that satisfies the user's task.",
+                objective=objective,
             )
         else:
             decision = AgentV3Decision(
                 decision="blocked",
                 message="The browser fixture has no eligible document tool.",
             )
+        call["decision"] = decision.decision
+        call["selected_tool"] = decision.tool
+        call["objective"] = decision.objective
         return decision, 42, 1, {
             "model": "browser-fixture-v3",
             "prompt_sha256": "a" * 64,
