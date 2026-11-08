@@ -253,6 +253,11 @@ async def evaluate_live_v3(
         dependencies = {
             "steps": step_states,
             "consequential_actions_require_explicit_approval": True,
+            "steering": {
+                "revision": 0,
+                "instructions": "",
+                "authority": "user_task_guidance_only_no_permission_or_approval_grant",
+            },
         }
         if context:
             dependencies["context"] = context
