@@ -44,7 +44,13 @@ SOURCE_EXTENSIONS = {
     ".txt", ".yaml", ".yml", ".toml", ".xml", ".sql", ".sh", ".bash",
     ".go", ".rs", ".java", ".kt", ".dart", ".swift", ".c", ".h",
     ".cpp", ".hpp", ".cs", ".php", ".rb", ".vue", ".svelte",
-    ".astro", ".graphql", ".gql",
+    ".astro", ".graphql", ".gql", ".lock", ".mod", ".sum",
+}
+SPECIAL_SOURCE_NAMES = {
+    "dockerfile", "makefile", "procfile", "justfile", "gemfile",
+    "rakefile", "pipfile", "brewfile", ".gitignore", ".dockerignore",
+    ".editorconfig", "go.mod", "go.sum", "cargo.lock", "poetry.lock",
+    "uv.lock", "yarn.lock", "pnpm-lock.yaml",
 }
 DENIED_PARTS = {
     ".git", ".venv", "venv", "node_modules", "vendor", "dist", "build",
@@ -84,7 +90,9 @@ def safe_repository_path(value: str) -> str:
         raise CoworkerError("github_source_denied", "This repository path is excluded from source context.", 403)
     if filename in DENIED_NAMES or filename.startswith(".env.") or any(filename.endswith(ext) for ext in DENIED_SUFFIXES):
         raise CoworkerError("github_source_denied", "Credential and environment files cannot be read into Fly.", 403)
-    if "." not in filename or ("." + filename.rsplit(".", 1)[-1]) not in SOURCE_EXTENSIONS:
+    if filename not in SPECIAL_SOURCE_NAMES and (
+        "." not in filename or ("." + filename.rsplit(".", 1)[-1]) not in SOURCE_EXTENSIONS
+    ):
         raise CoworkerError("github_file_type_unsupported", "This file type is not supported for repository context.", 415)
     return value
 
