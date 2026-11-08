@@ -1090,6 +1090,12 @@ def disconnect_github_installation(installation_record_id: UUID, identity: Ident
     return services.github.disconnect_installation(identity.account_id, str(installation_record_id))
 
 
+@router.get("/github/installations")
+def list_github_installations(identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return services.github.list_installations(identity.account_id)
+
+
 @router.get("/github/installations/{installation_record_id}/repositories")
 async def list_github_repositories(installation_record_id: UUID, identity: Identity, services: Services, response: Response):
     response.headers["Cache-Control"] = "no-store"
