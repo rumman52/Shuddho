@@ -116,9 +116,17 @@ export async function verifyConversationAgentContinuity(page) {
     const completedA = runs.runs.find(run => run.goal === taskA);
     const cancelledB = runs.runs.find(run => run.goal === taskB);
     const completedC = runs.runs.find(run => run.goal === taskC);
+    assert.equal(completedA.decision_count, 2);
     assert.equal(completedA.tool_invocation_count, 1);
+    assert.equal(completedA.tool_receipts.length, 1);
+    assert.ok(completedA.tool_receipts[0].resource_id);
+    assert.equal(cancelledB.decision_count, 0);
     assert.equal(cancelledB.tool_invocation_count, 0);
+    assert.equal(cancelledB.tool_receipts.length, 0);
+    assert.equal(completedC.decision_count, 2);
     assert.equal(completedC.tool_invocation_count, 1);
+    assert.equal(completedC.tool_receipts.length, 1);
+    assert.ok(completedC.tool_receipts[0].resource_id);
     assert.equal(completedA.steering_instructions.at(-1).instruction, steering);
     assert.equal(completedC.steering_revision, 0);
 
