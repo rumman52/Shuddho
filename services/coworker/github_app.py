@@ -599,6 +599,7 @@ class GitHubAppService:
         except CoworkerError as error:
             if error.code == "github_oauth_expired":
                 with self.sessions.begin() as db:
+                    ConversationRepository._lock_account(db, owner)
                     row = db.scalar(select(GitHubInstallation).where(
                         GitHubInstallation.id == installation_record_id,
                         GitHubInstallation.owner_id == owner,
