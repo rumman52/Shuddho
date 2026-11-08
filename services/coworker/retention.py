@@ -29,9 +29,10 @@ class RetentionService:
     Operators/scripts must explicitly choose the owned task/account being erased.
     """
 
-    def __init__(self, sessions, storage):
+    def __init__(self, sessions, storage, github=None):
         self.sessions = sessions
         self.storage = storage
+        self.github = github
 
     @staticmethod
     def _step_object_keys(rows: list[Step]) -> set[str]:
@@ -201,6 +202,12 @@ class RetentionService:
                     "Wait for AI replies to finish, cancel or finish other active work, close browser/sandbox sessions, and reconcile automation schedule deletion before erasing this account.",
                     409,
                 )
+
+            # Revoke provider tokens before deleting their encrypted local
+            # copies. If GitHub cannot confirm revocation, abort account
+            # erasure rather than leave a live credential without a retry path.
+            if self.github is not None:
+                self.github.revoke_installations_in_transaction(db, owner)
 
             documents = list(db.scalars(select(DocumentVersion).where(DocumentVersion.owner_id == owner)).all())
             artifacts = list(db.scalars(select(Artifact).where(Artifact.owner_id == owner)).all())
