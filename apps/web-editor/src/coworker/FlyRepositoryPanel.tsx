@@ -173,6 +173,11 @@ export default function FlyRepositoryPanel({
     return () => { alive = false; };
   }, [client, enabled, projectId, onBindingChange]);
 
+  const eligibleRepositories = useMemo(
+    () => repositories.filter(repo => repo.permissions?.pull === true),
+    [repositories],
+  );
+
   const visibleFiles = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (tree?.files ?? []).filter(file => !query || file.path.toLowerCase().includes(query)).slice(0, 120);
@@ -351,9 +356,10 @@ export default function FlyRepositoryPanel({
       <label className="rukh-fly-github-label">Repository
         <select value={repositoryId} onChange={event => setRepositoryId(event.target.value)} disabled={Boolean(busy)}>
           <option value="">Choose a repository…</option>
-          {repositories.map(repo => <option key={repo.id} value={String(repo.id)}>{repo.full_name}{repo.private ? " · private" : ""}</option>)}
+          {eligibleRepositories.map(repo => <option key={repo.id} value={String(repo.id)}>{repo.full_name}{repo.private ? " · private" : ""}</option>)}
         </select>
       </label>
+      {eligibleRepositories.length === 0 && <p className="rukh-fly-github-warning">No repository in this installation currently grants this GitHub user read access.</p>}
       <div className="rukh-fly-github-actions">
         <button type="button" className="rukh-fly-github-primary" onClick={() => void bindRepository()} disabled={Boolean(busy) || !repositoryId}>
           {busy === "bind" ? "Connecting…" : "Connect repository"}
