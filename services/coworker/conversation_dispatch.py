@@ -13,14 +13,14 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
-from .agent_repository import ACTIVE_RUN_STATES, AGENT_TERMINAL_STATES
+from .agent_repository import ACTIVE_RUN_STATES
 from .agent_router import qualify_agent_goal
 from .agent_schemas import AgentRunCreate
 from .conversation_context import require_current_selected_sources
 from .errors import CoworkerError
 from .models import (
     Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, Conversation,
-    Artifact, ConversationMessage, Project, ProjectResource, Workspace, utcnow,
+    ConversationMessage, Project, ProjectResource, Workspace, utcnow,
 )
 from .repository import iso, not_found
 
