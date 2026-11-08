@@ -170,6 +170,9 @@ def test_github_app_oauth_pkce_install_verification_and_repository_browsing(cont
     installation = connected["installation"]
     assert installation["account_login"] == "acme"
     assert [item["full_name"] for item in connected["repositories"]] == ["acme/demo"]
+    with pytest.raises(CoworkerError) as already_connected:
+        container.github.start_connection(owner, project["id"])
+    assert already_connected.value.code == "github_installation_exists"
     listed = container.github.list_installations(owner)["items"]
     assert len(listed) == 1
     assert "user_token_bundle_ciphertext" not in listed[0]
