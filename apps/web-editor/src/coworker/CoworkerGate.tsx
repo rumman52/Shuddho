@@ -33,7 +33,9 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
   const [entryError, setEntryError] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
   const currentPath = typeof window === "undefined" ? "/" : String(window.location?.pathname ?? "/");
+  const currentSearch = typeof window === "undefined" ? "" : String(window.location?.search ?? "");
   const flyIntent = currentPath.replace(/\/+$/, "") === "/fly";
+  const projectsIntent = !flyIntent && new URLSearchParams(currentSearch).get("view") === "projects";
   const authReturnUrl = () => {
     const destination = new URL(flyIntent ? "/fly" : "/coworker", window.location.origin);
     if (!flyIntent && new URLSearchParams(window.location.search ?? "").get("view") === "projects") {
@@ -85,6 +87,15 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
     return () => { alive = false; data.subscription.unsubscribe(); };
   }, [auth]);
 
+  // A Projects deep link must never silently fall back to the Coworker landing
+  // screen. Wait for session restoration, then request authentication while
+  // retaining ?view=projects for the post-login workspace.
+  useEffect(() => {
+    if (!loading && auth && !session && projectsIntent && mode !== "recovery") {
+      setAuthOpen(true);
+    }
+  }, [auth, loading, session?.user.id, projectsIntent, mode]);
+
   useEffect(() => {
     try {
       if (draft) window.sessionStorage.setItem(ENTRY_DRAFT_STORAGE_KEY, draft);
@@ -94,7 +105,10 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
 
   function openAuth() {
     if (!auth) {
-      setEntryError("Sign-in is not configured for this deployment. Your draft has not been sent.");
+      const requestedProjects = typeof window !== "undefined" && new URLSearchParams(window.location.search ?? "").get("view") === "projects";
+      setEntryError(requestedProjects
+        ? "Account access is not configured for this deployment. Your projects remain private."
+        : "Sign-in is not configured for this deployment. Your draft has not been sent.");
       return;
     }
     setEntryError("");
@@ -212,13 +226,13 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
           <p className="rukh-login-story-footer">Designed around the way you work.</p>
         </aside>
         <section className="rukh-login-form-panel">
-          {mode !== "recovery" && <button type="button" className="rukh-login-back" onClick={closeAuth}>← Back to {flyIntent ? "Fly" : "Coworker"}</button>}
+          {mode !== "recovery" && <button type="button" className="rukh-login-back" onClick={closeAuth}>← Back to {flyIntent ? "Fly" : projectsIntent ? "Projects" : "Coworker"}</button>}
           <div className="rukh-login-form-content">
             <h2 id="rukh-login-title">
               {mode === "signup" ? "Create your account" : mode === "reset" ? "Reset your password" : mode === "recovery" ? "Choose a new password" : "Welcome back"}
             </h2>
             <p id="rukh-login-description">
-              {mode === "signup" ? (flyIntent ? "Create an account to open Fly." : "Create an account to open your personal AI workspace.") : mode === "reset" ? "Enter your email and we will send you a password reset link." : mode === "recovery" ? "Choose a new password for your Rukh account." : (flyIntent ? "Sign in to open Fly." : "Sign in to your AI coworker.")}
+              {mode === "signup" ? (flyIntent ? "Create an account to open Fly." : projectsIntent ? "Create an account to open Projects." : "Create an account to open your personal AI workspace.") : mode === "reset" ? "Enter your email and we will send you a password reset link." : mode === "recovery" ? "Choose a new password for your Rukh account." : (flyIntent ? "Sign in to open Fly." : projectsIntent ? "Sign in to open Projects." : "Sign in to your AI coworker.")}
             </p>
             {mode === "signin" && (
               <>
@@ -276,7 +290,7 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
       onDraftChange={value => { setDraft(value); setEntryError(""); }}
       onSubmit={requestFirstMessage}
       onOpenSignIn={openAuth}
-      workspaceIntent={flyIntent ? "fly" : "coworker"}
+      workspaceIntent={flyIntent ? "fly" : projectsIntent ? "projects" : "coworker"}
     />
   );
 }

@@ -309,3 +309,59 @@
 .rukh-plugin-management { margin-top: 26px; padding: 16px 18px; border: 1px solid var(--rukh-border); border-radius: 12px; background: var(--rukh-surface); }
 .rukh-plugin-management > summary { color: var(--rukh-text); font-size: 13px; font-weight: 650; cursor: pointer; }
 .rukh-plugin-management[open] > summary { margin-bottom: 16px; }
+
+
+/* Signed-out deep links keep the requested Projects destination visible. */
+.rukh-project-entry {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
+  padding: clamp(36px, 9vh, 88px) 24px;
+  text-align: center;
+}
+.rukh-project-entry-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 18px;
+  border-radius: 16px;
+  background: var(--rukh-accent-soft);
+  color: var(--rukh-accent);
+}
+.rukh-project-entry-mark svg { width: 26px; height: 26px; }
+.rukh-project-entry h1 {
+  max-width: 640px;
+  margin: 20px 0 10px;
+  color: var(--rukh-text);
+  font-size: clamp(28px, 2.5vw, 36px);
+  font-weight: 650;
+  letter-spacing: -.045em;
+  line-height: 1.2;
+}
+.rukh-project-entry > p:not(.rukh-entry-error):not(.rukh-entry-hint) {
+  max-width: 480px;
+  margin: 0;
+  color: var(--rukh-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.rukh-project-entry-primary {
+  min-height: 44px;
+  margin-top: 24px;
+  padding: 11px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--rukh-accent);
+  color: #FFFFFF;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.rukh-project-entry-primary:hover:not(:disabled) { background: var(--rukh-accent-hover); }
+.rukh-project-entry-primary:disabled { cursor: wait; opacity: .6; }
+.rukh-project-entry-primary:focus-visible { outline: 2px solid var(--rukh-accent); outline-offset: 3px; }

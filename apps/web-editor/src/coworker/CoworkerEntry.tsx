@@ -11,11 +11,12 @@ type CoworkerEntryProps = {
   onDraftChange: (value: string) => void;
   onSubmit: () => void;
   onOpenSignIn: () => void;
-  workspaceIntent?: "coworker" | "fly";
+  workspaceIntent?: "coworker" | "fly" | "projects";
 };
 
 export default function CoworkerEntry({ authConfigured, loading, draft, error, onDraftChange, onSubmit, onOpenSignIn, workspaceIntent = "coworker" }: CoworkerEntryProps) {
   const flyIntent = workspaceIntent === "fly";
+  const projectsIntent = workspaceIntent === "projects";
   const formRef = useRef<HTMLFormElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
@@ -64,17 +65,17 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
   }
   function starter(prompt: string) { onDraftChange(prompt); composerRef.current?.focus(); }
 
-  return <main className="rukh-entry rukh-design-entry" aria-label={flyIntent ? "Rukh AI Fly" : "Rukh AI Coworker"}>
+  return <main className="rukh-entry rukh-design-entry" aria-label={flyIntent ? "Rukh AI Fly" : projectsIntent ? "Rukh AI Projects" : "Rukh AI Coworker"}>
     {navigationOpen && <button type="button" className="rukh-design-backdrop" aria-label="Close navigation" onClick={() => setNavigationOpen(false)} />}
     <aside ref={drawerRef} id="rukh-entry-navigation" className={"rukh-design-sidebar" + (navigationOpen ? " is-open" : "")}
       role={navigationOpen ? "dialog" : undefined} aria-modal={navigationOpen ? true : undefined} aria-label="Workspace navigation">
       <a href="/coworker" className="rukh-design-brand" aria-label="Rukh AI Coworker home"><RukhCompanionMark /><strong>rukh<sup>AI</sup></strong></a>
       <button type="button" className="rukh-design-new" aria-label="New chat" onClick={newChat}>+ New chat</button>
       <nav aria-label="Primary workspace navigation">
-        <a href="/coworker" className={"rukh-design-nav-link" + (!flyIntent ? " is-active" : "")} aria-current={!flyIntent ? "page" : undefined}><NavigationIcon name="chat" />Coworker</a>
+        <a href="/coworker" className={"rukh-design-nav-link" + (!flyIntent && !projectsIntent ? " is-active" : "")} aria-current={!flyIntent && !projectsIntent ? "page" : undefined}><NavigationIcon name="chat" />Coworker</a>
         <a href="/fly" className={"rukh-design-nav-link" + (flyIntent ? " is-active" : "")} aria-current={flyIntent ? "page" : undefined}><NavigationIcon name="terminal" />Fly</a>
         <a href="/writing" className="rukh-design-nav-link"><NavigationIcon name="file-text" />Writing Assistant</a>
-        <button type="button" className="rukh-design-nav-link" onClick={projectsAccess} disabled={loading} title="Sign in to open Projects"><NavigationIcon name="folder" />Projects</button>
+        <button type="button" className={"rukh-design-nav-link" + (projectsIntent ? " is-active" : "")} aria-current={projectsIntent ? "page" : undefined} onClick={projectsAccess} disabled={loading} title="Sign in to open Projects"><NavigationIcon name="folder" />Projects</button>
         <button type="button" className="rukh-design-nav-link" onClick={accountAccess}><NavigationIcon name="grid" />Plugins</button>
       </nav>
       <nav className="rukh-design-workspace-links" aria-label="Workspace tools">
@@ -88,7 +89,7 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
     <section className="rukh-design-main" aria-hidden={navigationOpen ? true : undefined}>
       <header className="rukh-design-header">
         <button ref={menuRef} type="button" className="rukh-design-menu" aria-label="Open navigation" aria-controls="rukh-entry-navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen(true)}><NavigationIcon name="menu" /></button>
-        <strong>{flyIntent ? "Fly" : "Coworker"}</strong>
+        <strong>{flyIntent ? "Fly" : projectsIntent ? "Projects" : "Coworker"}</strong>
         <button type="button" className="rukh-design-context" onClick={onOpenSignIn} aria-label="Activity and context"><span>Activity &amp; context</span><NavigationIcon name="sliders" /></button>
       </header>
       <div className="rukh-entry-inner">
@@ -99,6 +100,14 @@ export default function CoworkerEntry({ authConfigured, loading, draft, error, o
           {error && <p className="rukh-entry-error" role="alert">{error}</p>}
           <button type="button" className="rukh-fly-entry-primary" onClick={onOpenSignIn} disabled={loading}>Sign in to open Fly</button>
           <p className="rukh-entry-hint" role="status">{loading ? "Checking your account…" : authConfigured ? "Sign in to open your private coding workspace." : "Account access is not configured for this deployment."}</p>
+        </section> : projectsIntent ? <section className="rukh-project-entry" aria-labelledby="rukh-project-entry-title">
+          <div className="rukh-project-entry-mark"><NavigationIcon name="folder" /></div>
+          <span className="rukh-welcome-badge">PROJECT WORKSPACE</span>
+          <h1 id="rukh-project-entry-title">Your projects, ready when you are.</h1>
+          <p>Sign in to create projects and keep their conversations, instructions and files together.</p>
+          {error && <p className="rukh-entry-error" role="alert">{error}</p>}
+          <button type="button" className="rukh-project-entry-primary" onClick={onOpenSignIn} disabled={loading}>Sign in to open Projects</button>
+          <p className="rukh-entry-hint" role="status">{loading ? "Checking your account…" : authConfigured ? "Sign in to access your saved projects." : "Account access is not configured for this deployment."}</p>
         </section> : <>
           <CoworkerWelcome disabled={loading} onChoose={starter} />
           <div className="rukh-entry-bottom">

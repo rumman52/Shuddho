@@ -47,6 +47,16 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/coworker-entry-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
+  // A direct Projects deep link on a fresh preview origin has no inherited
+  // production session. It must request Projects access, never render Coworker.
+  const projectsEntryPage = await context.newPage();
+  await projectsEntryPage.goto("http://127.0.0.1:5173/coworker?view=projects");
+  await projectsEntryPage.getByRole("heading", { name: /^Welcome back\.?$/ }).waitFor();
+  await projectsEntryPage.getByText("Sign in to open Projects.", { exact: true }).waitFor();
+  assert.equal(await projectsEntryPage.locator("#rukh-first-message").count(), 0);
+  await projectsEntryPage.screenshot({ path: join(folder, "screenshots/projects-sign-in-desktop.png"), fullPage: true });
+  await projectsEntryPage.close();
+
   // Signed-out navigation must work too: the Coworker control on /fly
   // previously did nothing except close the mobile menu.
   await page.getByRole("link", { name: "Fly", exact: true }).click();
