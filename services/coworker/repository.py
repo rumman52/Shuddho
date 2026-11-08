@@ -1341,8 +1341,15 @@ class Repository:
             )
         return manifest.review_sha256()
 
-    def _reviewed_research_worker_task(self, db, task: Task) -> None:
-        """Rebuild pinned task inputs and recheck manifest/grants before each phase."""
+    def _reviewed_research_worker_task(
+        self, db, task: Task, *, lock_publication: bool = False,
+    ) -> None:
+        """Rebuild pinned inputs and recheck the publication before each phase.
+
+        Only side-effecting authorization transactions request a row lock.
+        Read-only task inspection must not serialize every task on the same
+        publication row.
+        """
         from .schemas import ResearchOptions
 
         document_ids = []
@@ -1378,15 +1385,16 @@ class Repository:
             stored_review.output.get("publication_id")
             if isinstance(stored_review.output, dict) else None
         )
-        publication = (
-            db.scalar(
-                select(ReviewedSkillPublication)
-                .where(ReviewedSkillPublication.id == publication_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
+        publication = None
+        if publication_id:
+            publication_query = select(ReviewedSkillPublication).where(
+                ReviewedSkillPublication.id == publication_id,
             )
-            if publication_id else None
-        )
+            if lock_publication:
+                publication_query = publication_query.with_for_update()
+            publication = db.scalar(
+                publication_query.execution_options(populate_existing=True)
+            )
         binding = require_pinned_publication(
             publication,
             stored_review.output,
@@ -1767,7 +1775,9 @@ class Repository:
                     raise CoworkerError(
                         "skill_run_scope", "A reviewed task requires its distinct workflow version.", 409,
                     )
-                self._reviewed_research_worker_task(db, task)
+                self._reviewed_research_worker_task(
+                    db, task, lock_publication=True,
+                )
             if db.get(Step, (task_id, "search_attempt")):
                 raise CoworkerError("search_outcome_unknown", "The previous search could not be recovered. Create a new task to search again.", 409)
             db.add(Step(task_id=task_id, phase="search_attempt", output={
@@ -1815,7 +1825,9 @@ class Repository:
                 task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
                 or db.get(Step, (task.id, "reviewed_skill_identity")) is not None
             ):
-                self._reviewed_research_worker_task(db, task)
+                self._reviewed_research_worker_task(
+                    db, task, lock_publication=True,
+                )
             attempts = db.scalars(select(ModelAttempt).where(ModelAttempt.task_id == task_id)).all()
             if parent_run is not None:
                 run_attempts = list(db.scalars(
@@ -1905,7 +1917,9 @@ class Repository:
                 task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
                 or db.get(Step, (task.id, "reviewed_skill_identity")) is not None
             ):
-                self._reviewed_research_worker_task(db, task)
+                self._reviewed_research_worker_task(
+                    db, task, lock_publication=True,
+                )
             new_bytes = sum(item["byte_size"] for item in artifacts)
             if account.storage_bytes + new_bytes > self.settings.max_account_bytes:
                 raise CoworkerError("storage_limit", "Your workspace has reached its file storage limit.", 429)
