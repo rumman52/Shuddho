@@ -49,6 +49,14 @@ def main() -> None:
     rollback.add_argument("--actor-reference", required=True)
     rollback.add_argument("--reason", required=True)
 
+    revoke = sub.add_parser(
+        "revoke",
+        help="Revoke a publication without selecting an implicit replacement.",
+    )
+    revoke.add_argument("--publication-version", required=True)
+    revoke.add_argument("--actor-reference", required=True)
+    revoke.add_argument("--reason", required=True)
+
     inventory = sub.add_parser("inventory", help="Print the durable worker-version inventory.")
     inventory.add_argument("--task-queue")
 
@@ -108,6 +116,13 @@ def main() -> None:
                 actor_reference=args.actor_reference,
                 reason=args.reason,
                 worker_source_revision=args.worker_source_revision,
+            )
+        elif args.command == "revoke":
+            result = repository.revoke_reviewed_skill(
+                REVIEWED_RESEARCH_SKILL,
+                args.publication_version,
+                actor_reference=args.actor_reference,
+                reason=args.reason,
             )
         elif args.command == "inventory":
             result = {"workers": repository.worker_inventory(task_queue=args.task_queue)}

@@ -45,6 +45,7 @@ The operator-only CLI is:
 uv run --extra coworker python scripts/cw11_reviewed_skill_ops.py publish ...
 uv run --extra coworker python scripts/cw11_reviewed_skill_ops.py select ...
 uv run --extra coworker python scripts/cw11_reviewed_skill_ops.py rollback ...
+uv run --extra coworker python scripts/cw11_reviewed_skill_ops.py revoke ...
 uv run --extra coworker python scripts/cw11_reviewed_skill_ops.py inventory ...
 uv run --extra coworker python scripts/cw11_reviewed_skill_ops.py drain ...
 uv run --extra coworker python scripts/cw11_reviewed_skill_ops.py verify-drain ...
@@ -180,6 +181,27 @@ Rollback is explicit and constrained to the publication's declared rollback targ
 The target must already be a published compatible publication and must exactly equal the current publication's declared `rollback_target_version`.
 
 The current publication is moved to `rolled_back`; tasks pinned to it subsequently fail closed. This is intentional: rollback must not silently reinterpret an already accepted task under another skill release.
+
+## Explicit revocation
+
+Revocation is an emergency deny operation and does not require a compatible worker fleet or a declared rollback target:
+
+```text
+... revoke \
+    --publication-version <publication-to-revoke> \
+    --actor-reference <operator> \
+    --reason "review withdrawn or release compromised"
+```
+
+Only a currently published version can be revoked. The operation validates its immutable publication and manifest hashes, serializes with worker registration, dispatch claims, task admission and runtime reservations, and appends a `publication_revoked` audit event.
+
+Revoking the selected version marks the selection unavailable; it does **not** select the rollback target or any other version. New reviewed tasks remain blocked until an operator explicitly selects another published version after the normal compatible-worker gate. Revoking a non-selected version leaves the current selection unchanged.
+
+Tasks retain their original publication identity. A task pinned to a revoked version fails closed on its next runtime identity check. A provider reservation that committed before revocation is already authorized; its external outcome cannot be recalled and must be reconciled separately. A later selection never rebinds an existing task to a different publication.
+
+## Version pinning
+
+Every admitted reviewed Task stores the publication ID, version, publication hash, review hash, source revision and task-workflow version. A normal selection change does not mutate that identity. Rollback or revocation changes the referenced publication's lifecycle state, so the pinned Task is rejected rather than silently running under another release.
 
 ## CI
 
