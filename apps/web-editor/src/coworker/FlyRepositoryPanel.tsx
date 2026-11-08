@@ -309,8 +309,12 @@ export default function FlyRepositoryPanel({
       await client.githubDisconnectInstallation(installationRecordId);
       setBinding(null);
       setTree(null);
+      const revokedUserId = binding?.github_user_id ?? installation?.github_user_id ??
+        installations.find(item => item.id === installationRecordId)?.github_user_id;
       setInstallation(null);
-      setInstallations(current => current.filter(item => item.id !== installationRecordId));
+      setInstallations(current => revokedUserId === undefined
+        ? current.filter(item => item.id !== installationRecordId)
+        : current.filter(item => item.github_user_id !== revokedUserId));
       setInstallationRecordId("");
       setRepositories([]);
       setPickerOpen(false);
@@ -349,7 +353,7 @@ export default function FlyRepositoryPanel({
       <button type="button" className="rukh-fly-github-primary" onClick={() => void openRepositoryPicker()} disabled={Boolean(busy) || !installationRecordId}>
         {busy === "repositories" ? "Loading…" : "Choose repository"}
       </button>
-      <button type="button" className="rukh-fly-github-text" onClick={() => void connectGitHub()} disabled={Boolean(busy)}>Add another GitHub installation</button>
+      <p className="rukh-fly-github-muted">One GitHub user authorization is supported per Rukh account. Revoke the current authorization before connecting a different GitHub account.</p>
     </>}
     {enabled === true && projectId && pickerOpen && <>
       <p className="rukh-fly-github-muted">Installation: <strong>{installation?.account_login ?? installations.find(item => item.id === installationRecordId)?.account_login ?? "Verified GitHub installation"}</strong></p>
@@ -397,7 +401,7 @@ export default function FlyRepositoryPanel({
         <p>This revokes the GitHub App authorization for this GitHub user, including every active installation and Fly project connected through that account. The App may remain installed in GitHub settings, but Rukh will no longer have an authorization token.</p>
         <button type="button" onClick={() => void revokeInstallation()} disabled={Boolean(busy)}>{busy === "revoke" ? "Revoking…" : "Confirm revoke access"}</button>
         <button type="button" onClick={() => setConfirmRevoke(false)} disabled={Boolean(busy)}>Cancel</button>
-      </div> : <button type="button" className="rukh-fly-github-text" onClick={() => setConfirmRevoke(true)} disabled={Boolean(busy)}>Revoke this GitHub connection</button>}
+      </div> : <button type="button" className="rukh-fly-github-text" onClick={() => setConfirmRevoke(true)} disabled={Boolean(busy)}>Revoke GitHub authorization for @{installation?.github_login ?? "this account"}</button>}
     </>}
     {error && <p className="rukh-fly-github-error" role="alert">{error}</p>}
     {notice && <p className="rukh-fly-github-notice" role="status">{notice}</p>}
