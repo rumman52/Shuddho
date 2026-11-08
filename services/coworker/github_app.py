@@ -561,7 +561,7 @@ class GitHubAppService:
                     if access_expiry > now:
                         self._revoke_github_user_authorization_in_transaction(
                             db, owner, installation.github_user_id, access_token,
-                            "github.authorization_expired",
+                            "github.authorization_expired", refresh_token,
                         )
                     else:
                         self._deactivate_github_user_installations_in_transaction(
