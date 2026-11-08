@@ -103,7 +103,6 @@ class GitHubAppService:
             self.settings.github_app_slug,
             self.settings.github_app_client_id,
             self.settings.github_app_client_secret,
-            self.settings.github_app_private_key,
             self.settings.github_app_redirect_uri,
             self.settings.connector_encryption_key,
         )):
