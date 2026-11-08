@@ -12,7 +12,7 @@ from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .agent_schemas import AgentObservation
 from .errors import CoworkerError
-from .context_retrieval import filter_sensitive
+from .context_policy import filter_sensitive
 from .runner import DocumentRunner
 from .tool_execution import execute_tool_contract, normalize_tool_error, validate_tool_result
 from .schemas import ResearchOptions, TaskCreate
