@@ -1151,6 +1151,7 @@ async def get_github_repository_tree(project_id: UUID, identity: Identity, servi
 async def get_github_repository_file(
     project_id: UUID,
     path: Annotated[str, Query(min_length=1, max_length=512)],
+    commit_sha: Annotated[str, Query(min_length=40, max_length=40, pattern="^[0-9a-f]{40}$")],
     identity: Identity,
     services: Services,
     response: Response,
@@ -1161,6 +1162,7 @@ async def get_github_repository_file(
         identity.account_id,
         str(project_id),
         path,
+        commit_sha,
     )
 
 
