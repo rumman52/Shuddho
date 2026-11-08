@@ -734,7 +734,11 @@ class GitHubAppService:
                 response = client.delete(
                     GITHUB_API + f"/applications/{quote(self.settings.github_app_client_id, safe='')}/token",
                     auth=(self.settings.github_app_client_id, self.settings.github_app_client_secret),
-                    headers={"Accept": "application/vnd.github+json", "User-Agent": "Rukh-AI-Fly"},
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "Rukh-AI-Fly",
+                        "X-GitHub-Api-Version": self.settings.github_api_version,
+                    },
                     json={"access_token": access_token},
                 )
         except httpx.HTTPError:
