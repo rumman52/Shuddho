@@ -485,6 +485,15 @@ class GitHubAppService:
             "active": bool(row.active),
         }
 
+    def list_installations(self, owner: str):
+        self._enabled()
+        with self.sessions() as db:
+            rows = db.scalars(select(GitHubInstallation).where(
+                GitHubInstallation.owner_id == owner,
+                GitHubInstallation.active.is_(True),
+            ).order_by(GitHubInstallation.account_login.asc(), GitHubInstallation.created_at.asc())).all()
+            return {"items": [self._installation_dto(row) for row in rows]}
+
     def _installation(self, db, owner: str, installation_record_id: str):
         row = db.scalar(select(GitHubInstallation).where(
             GitHubInstallation.id == installation_record_id,
