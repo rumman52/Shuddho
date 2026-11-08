@@ -78,7 +78,7 @@ export function normalizeStoredDraft(value: unknown): FlyDraft {
     const originParts = originPath.split("/");
     const origin = originValue && typeof originValue === "object" &&
       originRepositoryParts.length === 2 && originRepositoryParts.every(part => /^[A-Za-z0-9_.-]{1,100}$/.test(part)) &&
-      originPath.length > 0 && originPath.length <= 512 && !originPath.startsWith("/") && !originPath.includes("\\\\") && !originPath.includes("\\x00") &&
+      originPath.length > 0 && originPath.length <= 512 && !originPath.startsWith("/") && !originPath.includes("\\") && !originPath.includes("\x00") &&
       originParts.every(part => part.length > 0 && part !== "." && part !== "..") &&
       "branch" in originValue && typeof originValue.branch === "string" && originValue.branch.length > 0 && originValue.branch.length <= 255 &&
       "commitSha" in originValue && typeof originValue.commitSha === "string" && /^[a-f0-9]{40}$/i.test(originValue.commitSha) &&
