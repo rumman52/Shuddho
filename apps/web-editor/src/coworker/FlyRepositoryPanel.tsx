@@ -397,12 +397,16 @@ export default function FlyRepositoryPanel({
         </button>
         <p className="rukh-fly-github-muted">Up to {MAX_IMPORT_FILES} selected text files are added to the Fly workspace. Rukh Files creates owner-private snapshots before the Agent receives them.</p>
       </>}
-      {confirmRevoke ? <div className="rukh-fly-github-revoke">
-        <p>This revokes the GitHub App authorization for this GitHub user, including every active installation and Fly project connected through that account. The App may remain installed in GitHub settings, but Rukh will no longer have an authorization token.</p>
-        <button type="button" onClick={() => void revokeInstallation()} disabled={Boolean(busy)}>{busy === "revoke" ? "Revoking…" : "Confirm revoke access"}</button>
-        <button type="button" onClick={() => setConfirmRevoke(false)} disabled={Boolean(busy)}>Cancel</button>
-      </div> : <button type="button" className="rukh-fly-github-text" onClick={() => setConfirmRevoke(true)} disabled={Boolean(busy)}>Revoke GitHub authorization for @{installation?.github_login ?? "this account"}</button>}
     </>}
+    {enabled === true && projectId && installationRecordId && !confirmRevoke &&
+      <button type="button" className="rukh-fly-github-text" onClick={() => setConfirmRevoke(true)} disabled={Boolean(busy)}>
+        Revoke GitHub authorization for @{installation?.github_login ?? installations.find(item => item.id === installationRecordId)?.github_login ?? "this account"}
+      </button>}
+    {confirmRevoke && <div className="rukh-fly-github-revoke">
+      <p>This revokes the GitHub App authorization for this GitHub user, including every active installation and Fly project connected through that account. The App may remain installed in GitHub settings, but Rukh will no longer have an authorization token.</p>
+      <button type="button" onClick={() => void revokeInstallation()} disabled={Boolean(busy)}>{busy === "revoke" ? "Revoking…" : "Confirm revoke access"}</button>
+      <button type="button" onClick={() => setConfirmRevoke(false)} disabled={Boolean(busy)}>Cancel</button>
+    </div>}
     {error && <p className="rukh-fly-github-error" role="alert">{error}</p>}
     {notice && <p className="rukh-fly-github-notice" role="status">{notice}</p>}
   </section>;
