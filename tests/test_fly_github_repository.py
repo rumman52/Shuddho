@@ -138,7 +138,11 @@ def _connect(container, owner):
     started = service.start_connection(owner, project["id"])
     query = parse_qs(urlparse(started["authorization_url"]).query)
     oauth_state = query["state"][0]
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["scope"] == ["offline_access"]
+    assert len(query["code_challenge"][0]) == 43
     finished = service.finish_oauth(owner, oauth_state, "single-use-code")
+    assert "access_token" not in finished and "refresh_token" not in finished
     return project, finished
 
 
@@ -175,6 +179,7 @@ def test_github_app_oauth_pkce_install_verification_and_repository_browsing(cont
     file = container.github.read_repository_file(owner, project["id"], "src/app.py", "a" * 40)
     assert file["repository"] == "acme/demo"
     assert file["commit_sha"] == "a" * 40
+    assert file["blob_sha"] == "c" * 40
     assert file["content"] == "print('repository context')\n"
     assert file["sha256"] == hashlib.sha256(file["content"].encode()).hexdigest()
     with pytest.raises(CoworkerError) as stale:
@@ -298,6 +303,8 @@ def test_github_paths_reject_traversal_and_credential_files():
             safe_repository_path(value)
     assert safe_repository_path("src/main.py") == "src/main.py"
     assert safe_repository_path("docs/README.md") == "docs/README.md"
+    assert safe_repository_path("Dockerfile") == "Dockerfile"
+    assert safe_repository_path(".github/workflows/ci.yml") == ".github/workflows/ci.yml"
 
 
 def test_github_repository_credentials_and_bindings_are_erased_with_account(container):
