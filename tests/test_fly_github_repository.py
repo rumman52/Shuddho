@@ -97,7 +97,7 @@ def _transport(*, accessible_installation=True):
                 assert request.headers.get("Authorization", "").startswith("Basic ")
                 body = json.loads(request.content or b"{}")
                 assert body["access_token"] in {"short-lived-user-token", "rotated-user-token"}
-                return httpx.Response(204)
+                return httpx.Response(revoke_status)
             if path == "/user":
                 return httpx.Response(200, json={"id": 9001, "login": "rukh-user"})
             if path == "/user/installations":
@@ -304,6 +304,24 @@ def test_disconnect_github_installation_revokes_tokens_and_all_project_bindings(
         assert row.active is False
         assert row.user_token_bundle_ciphertext == ""
         assert binding.active is False
+
+
+def test_github_disconnect_keeps_encrypted_token_when_provider_revocation_fails(container):
+    _enabled(container, _transport(revoke_status=503))
+    owner = account(container)
+    project, finished = _connect(container, owner)
+    connected = container.github.complete_install(owner, finished["state"], 321)
+    installation_id = connected["installation"]["id"]
+    with pytest.raises(CoworkerError) as failure:
+        container.github.disconnect_installation(owner, installation_id)
+    assert failure.value.code == "github_revoke_failed"
+    with container.repository.sessions() as db:
+        row = db.scalar(select(GitHubInstallation).where(
+            GitHubInstallation.owner_id == owner,
+            GitHubInstallation.id == installation_id,
+        ))
+        assert row.active is True
+        assert row.user_token_bundle_ciphertext
 
 
 def test_github_paths_reject_traversal_and_credential_files():
