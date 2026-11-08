@@ -86,6 +86,12 @@ def _configure_container(container, config: dict[str, Any]):
         container.agent,
         container.memory,
         container.context,
+        container.automations,
+        container.actions,
+        container.notifications,
+        container.connector_reads,
+        container.browser,
+        container.sandbox,
     ):
         if hasattr(service, "settings"):
             service.settings = settings
@@ -262,8 +268,8 @@ def _write_run_evidence(
         "decisions": [
             {
                 "decision": item.get("decision"),
-                "tool": item.get("tool"),
-                "ordinal": item.get("ordinal"),
+                "tool": (item.get("payload") or {}).get("tool"),
+                "ordinal": (item.get("payload") or {}).get("ordinal"),
             }
             for item in saved.get("decisions", [])
         ],
@@ -334,6 +340,8 @@ def test_runtime_v3_live_bilingual_grounded_multistep_temporal_workflow(containe
             assert saved["state"] == "completed"
             assert saved["runtime_version"] == 3
             assert saved["planner_mode"] == "v3"
+            assert saved["planner_calls"] == 3
+            assert saved["planner_actual_tokens"] > 0
             assert [item["tool"] for item in saved["tool_invocations"]] == TOOL_SCOPE
             assert all(
                 (item.get("receipt") or {}).get("status") == "completed"
@@ -519,6 +527,7 @@ def test_runtime_v3_live_cancellation_discards_late_provider_response(container)
 
             saved = container.agent.get(owner, run["id"])
             assert saved["state"] == "cancelled"
+            assert saved["planner_calls"] == 1
             assert saved["decisions"] == []
             assert saved["tool_invocations"] == []
             assert len(transport.records) == 1
