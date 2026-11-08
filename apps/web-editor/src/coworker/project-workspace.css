@@ -95,7 +95,7 @@
 .rukh-project-form h2 { margin: 0; color: var(--rukh-text); font-size: 22px; font-weight: 650; letter-spacing: -.025em; }
 .rukh-project-dialog-description { margin: -7px 0 3px; color: var(--rukh-muted); font-size: 12px; line-height: 1.6; }
 .rukh-project-form label { display: grid; gap: 7px; color: var(--rukh-text); font-size: 12px; font-weight: 600; }
-.rukh-project-form input, .rukh-project-form textarea { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--rukh-border); border-radius: 10px; background: var(--rukh-surface-raised); color: var(--rukh-text); font: inherit; font-size: 13px; resize: vertical; }
+.rukh-project-form input, .rukh-project-form textarea { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--rukh-border); border-radius: 10px; background: var(--rukh-bg); color: var(--rukh-text); font: inherit; font-size: 13px; resize: vertical; }
 .rukh-project-form input::placeholder, .rukh-project-form textarea::placeholder { color: var(--rukh-muted); opacity: .8; }
 .rukh-project-privacy-note { margin: 0; padding: 11px 12px; border-radius: 9px; background: var(--rukh-surface-soft); color: var(--rukh-muted); font-size: 10px; line-height: 1.6; }
 .rukh-project-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 4px; }
@@ -194,7 +194,7 @@
   padding: 12px;
   border: 1px solid var(--rukh-border);
   border-radius: 10px;
-  background: var(--rukh-surface-raised);
+  background: var(--rukh-bg);
   color: var(--rukh-text);
   font: inherit;
   font-size: 13px;
