@@ -454,6 +454,14 @@ class GitHubAppService:
                 )
                 db.add(existing)
             else:
+                if existing.user_token_bundle_ciphertext:
+                    previous_bundle = self._vault().open(
+                        existing.user_token_bundle_ciphertext,
+                        owner + ":github-installation:" + existing.id,
+                    )
+                    previous_access_token = previous_bundle.get("access_token")
+                    if isinstance(previous_access_token, str) and previous_access_token:
+                        self._revoke_user_token(previous_access_token)
                 existing.github_user_id = github_user_id
                 existing.github_login = github_login
                 existing.account_id = account_id
@@ -523,6 +531,8 @@ class GitHubAppService:
                 access_token = bundle.get("access_token")
                 refresh_token = bundle.get("refresh_token")
                 if not isinstance(access_token, str) or not access_token or not isinstance(refresh_token, str) or not refresh_token:
+                    if isinstance(access_token, str) and access_token:
+                        self._revoke_user_token(access_token)
                     installation.active = False
                     installation.user_token_bundle_ciphertext = ""
                     expired = True
@@ -536,6 +546,7 @@ class GitHubAppService:
                     if access_expiry > utcnow() + timedelta(minutes=1):
                         token = access_token
                     elif refresh_expiry <= utcnow():
+                        self._revoke_user_token(access_token)
                         installation.active = False
                         installation.user_token_bundle_ciphertext = ""
                         expired = True
@@ -554,6 +565,14 @@ class GitHubAppService:
                         GitHubInstallation.owner_id == owner,
                     ).with_for_update())
                     if row is not None:
+                        if row.user_token_bundle_ciphertext:
+                            bundle = self._vault().open(
+                                row.user_token_bundle_ciphertext,
+                                owner + ":github-installation:" + row.id,
+                            )
+                            stale_access_token = bundle.get("access_token")
+                            if isinstance(stale_access_token, str) and stale_access_token:
+                                self._revoke_user_token(stale_access_token)
                         row.active = False
                         row.user_token_bundle_ciphertext = ""
                         row.updated_at = utcnow()
@@ -759,7 +778,7 @@ class GitHubAppService:
             ).with_for_update())
             if installation is None:
                 raise not_found()
-            if installation.active and installation.user_token_bundle_ciphertext:
+            if installation.user_token_bundle_ciphertext:
                 bundle = self._vault().open(
                     installation.user_token_bundle_ciphertext,
                     owner + ":github-installation:" + installation.id,
