@@ -16,7 +16,7 @@ The live suite is opt-in because it calls the configured DeepSeek model and can 
 | Worker restart | A worker is stopped after the first child draft checkpoint; a replacement worker resumes the same workflow history and must not repeat that draft model call |
 | Cancellation | The provider response is received but held before delivery to the planner; the run is cancelled, then the late response is released and must not create a decision or tool invocation |
 | Bangla and English | Separate live multi-step tasks; language metadata and Bangla Unicode output are asserted |
-| Cost and latency | Provider-reported input/output/total tokens, per-call latency, p50/p95, and an estimated cost using the operator-reviewed blended rate |
+| Cost and latency | Provider-reported input/output/total tokens, full-response per-call latency, end-to-end workflow duration, p50/p95, and an estimated cost using the operator-reviewed blended rate |
 
 The evidence file contains run identifiers, state/decision metadata, tool receipt metadata, hashes, model usage and latency. It does not store API keys, prompts, original source text, provider response bodies, or workflow history content. It does include up to 1,600 characters of the generated draft preview so a human reviewer can inspect language quality.
 
@@ -41,7 +41,7 @@ A live run is not qualified unless all of the following are true:
 3. Bangla output includes Bengali Unicode and both cases report the requested output language.
 4. The worker-restart case completes after one worker replacement and records exactly one document-draft model call for the interrupted step.
 5. The cancellation case ends in cancelled, with no committed decision or tool invocation after the late provider response is released.
-6. Every successful provider call reports token usage; the report has non-zero token totals, non-zero estimated cost, and p50/p95 latency.
+6. Every successful provider call reports token usage; the report has non-zero token totals, non-zero estimated cost, per-call p50/p95 latency, and end-to-end workflow duration.
 7. A human reviewer marks the English and Bangla output as accepted. Automated language metadata is not a substitute for human quality review.
 
 ## Important boundary: Temporal test server versus operated staging

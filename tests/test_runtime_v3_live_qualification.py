@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 import uuid
 from dataclasses import replace
 from datetime import timedelta
@@ -254,6 +255,7 @@ def _write_run_evidence(
     restart_count: int = 0,
     cancelled_before_decision_commit: bool = False,
     output_preview: str = "",
+    workflow_duration_ms: int | None = None,
 ) -> None:
     rate = settings.agent_v3_planner_cost_microusd_per_1k_tokens
     metrics = summarize_model_calls(transport.records, rate)
@@ -268,6 +270,7 @@ def _write_run_evidence(
         "run_id": run["id"],
         "runtime_version": saved.get("runtime_version"),
         "final_state": saved.get("state"),
+        "workflow_duration_ms": workflow_duration_ms,
         "planner_calls": saved.get("planner_calls"),
         "planner_actual_tokens": saved.get("planner_actual_tokens"),
         "decisions": [
@@ -313,12 +316,14 @@ def _write_run_evidence(
 
 async def _run_to_completion(container, env, runner, runtime, run_id: str):
     async with _make_worker(env, runner, runtime):
+        started = time.perf_counter()
         await dispatch_tick(container, env.client)
         handle = env.client.get_workflow_handle("shuddho-agent-" + run_id)
         async with env.time_skipping_unlocked():
             await asyncio.wait_for(handle.result(), timeout=240)
         history = (await handle.fetch_history()).to_json()
-    return handle, history
+        workflow_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+    return handle, history, workflow_duration_ms
 
 
 @pytest.mark.parametrize("language", ["en", "bn"])
@@ -337,7 +342,7 @@ def test_runtime_v3_live_bilingual_grounded_multistep_temporal_workflow(containe
                 planner=RecordingPlanner(settings, transport),
             )
             async with await WorkflowEnvironment.start_time_skipping() as env:
-                _handle, history = await _run_to_completion(
+                _handle, history, workflow_duration_ms = await _run_to_completion(
                     container, env, runner, runtime, run["id"]
                 )
 
@@ -412,6 +417,7 @@ def test_runtime_v3_live_bilingual_grounded_multistep_temporal_workflow(containe
                 transport=transport,
                 history=history,
                 output_preview=output,
+                workflow_duration_ms=workflow_duration_ms,
             )
         finally:
             await transport.close()
@@ -437,6 +443,7 @@ def test_runtime_v3_live_temporal_worker_restart_replays_saved_draft_once(contai
                 planner=RecordingPlanner(settings, transport),
             )
             async with await WorkflowEnvironment.start_time_skipping() as env:
+                workflow_started = time.perf_counter()
                 first_worker = _make_worker(env, runner, runtime)
                 first_worker_task = asyncio.create_task(first_worker.run())
                 await dispatch_tick(container, env.client)
@@ -451,6 +458,9 @@ def test_runtime_v3_live_temporal_worker_restart_replays_saved_draft_once(contai
                     async with env.time_skipping_unlocked():
                         await asyncio.wait_for(handle.result(), timeout=240)
                 history = (await handle.fetch_history()).to_json()
+                workflow_duration_ms = max(
+                    0, int((time.perf_counter() - workflow_started) * 1000)
+                )
 
             saved = container.agent.get(owner, run["id"])
             assert saved["state"] == "completed"
@@ -480,6 +490,7 @@ def test_runtime_v3_live_temporal_worker_restart_replays_saved_draft_once(contai
                 transport=transport,
                 history=history,
                 restart_count=1,
+                workflow_duration_ms=workflow_duration_ms,
             )
         finally:
             transport.release_response.set()
@@ -509,6 +520,7 @@ def test_runtime_v3_live_cancellation_discards_late_provider_response(container)
             )
             async with await WorkflowEnvironment.start_time_skipping() as env:
                 async with _make_worker(env, runner, runtime):
+                    workflow_started = time.perf_counter()
                     await dispatch_tick(container, env.client)
                     await asyncio.wait_for(
                         transport.response_ready.wait(), timeout=180
@@ -529,6 +541,9 @@ def test_runtime_v3_live_cancellation_discards_late_provider_response(container)
                                 or "cancelled" in str(error).lower()
                             )
                     history = (await handle.fetch_history()).to_json()
+                    workflow_duration_ms = max(
+                        0, int((time.perf_counter() - workflow_started) * 1000)
+                    )
 
             saved = container.agent.get(owner, run["id"])
             assert saved["state"] == "cancelled"
@@ -552,6 +567,7 @@ def test_runtime_v3_live_cancellation_discards_late_provider_response(container)
                 transport=transport,
                 history=history,
                 cancelled_before_decision_commit=True,
+                workflow_duration_ms=workflow_duration_ms,
             )
         finally:
             transport.release_response.set()

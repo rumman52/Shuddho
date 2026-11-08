@@ -197,6 +197,7 @@ def summarize_model_calls(
         "failed_model_call_count": len(items) - len(successful),
         "token_usage_complete": token_usage_complete,
         "total_tokens": total_tokens,
+        "latency_scope": "DeepSeek provider round-trip through full response body",
         "p50_latency_ms": percentile(latencies, 0.50),
         "p95_latency_ms": percentile(latencies, 0.95),
         "max_latency_ms": max(latencies) if latencies else None,
