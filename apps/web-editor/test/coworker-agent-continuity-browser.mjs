@@ -68,6 +68,12 @@ export async function verifyConversationAgentContinuity(page) {
       const calls = await getJson(page, "/planner-calls");
       return calls.calls.filter(call => call.goal === taskA || call.goal === taskB || call.goal === taskC).length === 3;
     }, "three independent in-flight Agent runs");
+    // Let the conversation activity poll refresh event_sequence before optimistic steering.
+    await page.waitForTimeout(5500);
+    await waitFor(async () =>
+      (await page.getByRole("status").filter({ hasText: /Planning|Working/ }).count()) === 3,
+      "three visible active Agent progress states"
+    );
 
     const steerButtons = page.getByRole("button", { name: "Steer Agent task", exact: true });
     await waitFor(async () => (await steerButtons.count()) === 3, "three per-message steering controls");
