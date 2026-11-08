@@ -553,3 +553,44 @@ def test_v3_other_terminal_state_does_not_replay_completed_step(container, termi
         asyncio.run(runtime.execute_step(run_id, ordinal))
     assert caught.value.code == "agent_run_closed"
     assert container.agent.get(actor, run_id)["state"] == terminal
+
+
+def test_v3_discards_inference_when_steering_changes_before_commit(container, monkeypatch):
+    from services.coworker.models import AgentRun
+
+    actor, run_id, _runtime, _original_planner = setup(container, decision="wait")
+
+    class SteeringDuringInferencePlanner:
+        def __init__(self):
+            self.calls = 0
+
+        async def decide(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                with container.repository.sessions.begin() as db:
+                    run = db.get(AgentRun, run_id)
+                    run.steering_revision = 1
+                    run.steering_instructions = [{
+                        "revision": 1,
+                        "instruction": "Use the latest approved project requirements.",
+                        "created_at": "2026-11-09T00:00:00+00:00",
+                    }]
+            return AgentV3Decision.model_validate({"decision": "wait", "wait_seconds": 2}), 24, 1, {
+                "model": "test-model", "prompt_sha256": "a" * 64, "tool_schema_sha256": "b" * 64,
+            }
+
+    planner = SteeringDuringInferencePlanner()
+    runtime = AgentRuntime(container, None, planner=planner)
+    monkeypatch.setattr(
+        "services.coworker.agent_runtime.intelligent_tool_names",
+        lambda *_args, **_kwargs: ["email.draft"],
+    )
+    result = asyncio.run(runtime.decide_v3(run_id, activity_key="steering-race"))
+    saved = container.agent.get(actor, run_id)
+    assert result == {"decision": "wait", "wait_seconds": 2}
+    assert planner.calls == 2
+    assert saved["steering_revision"] == 1
+    assert saved["planner_calls"] == 2
+    assert saved["planner_actual_tokens"] == 48
+    assert len(saved["decisions"]) == 1
+    assert saved["decisions"][0]["planner_call"] == 2

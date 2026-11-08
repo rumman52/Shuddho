@@ -34,9 +34,9 @@ function fixture(initial = [] as typeof record[]) {
   };
   return { client, calls };
 }
-async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>, data = fixture(), extraProps: Partial<React.ComponentProps<typeof ConversationWorkspace>> = {}) {
+async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>, data = fixture(), extraProps: Partial<React.ComponentProps<typeof ConversationWorkspace>> = {}, search = "") {
   const previous = globalThis.window;
-  globalThis.window = { location: { search: "" }, setInterval, clearInterval } as unknown as Window & typeof globalThis;
+  globalThis.window = { location: { search }, setInterval, clearInterval } as unknown as Window & typeof globalThis;
   let tree!: ReactTestRenderer;
   try {
     await act(async () => { tree = create(<ConversationWorkspace client={data.client as unknown as CoworkerClient} openAgent={() => undefined} {...extraProps} />); });
@@ -403,4 +403,55 @@ test("failed first-message admission keeps the pre-auth draft available for retr
     initialDraft: "keep this draft",
     onInitialDraftChange: (value: string) => { latestDraft = value; },
   });
+});
+
+
+test("active Runtime v3 conversation task can be steered at its current revision", async () => {
+  const data = fixture([{ ...record, message_sequence: 1 }]);
+  const message = {
+    id: "message-steer", conversation_id: record.id, sequence: 1, text: "Prepare a report",
+    selected_sources: [], resource_links: [{ resource_type: "agent_run", resource_id: "run-steer" }],
+    created_at: timestamp,
+  };
+  data.client.conversationHistory = async () => ({ items: [message] });
+  data.client.conversationActivityHistory = async () => ({ items: [{
+    message_id: message.id, sequence: 1, run_id: "run-steer", state: "running", phase: "planning",
+    cancel_requested: false, event_sequence: 4, steering_revision: 2, runtime_version: 3,
+    updated_at: timestamp, detail: "Planning the report",
+  }] });
+  const steers: unknown[][] = [];
+  Object.assign(data.client, {
+    steerConversationAgent: async (...args: unknown[]) => {
+      steers.push(args);
+      return { run_id: "run-steer", steering_revision: 3 };
+    },
+  });
+  await mount(async tree => {
+    await act(async () => tree.root.findByProps({ "aria-label": "Steer Agent task" }).props.onClick());
+    const input = tree.root.findByProps({ "aria-label": "Instruction for Agent" });
+    await act(async () => input.props.onChange({ target: { value: "Prioritize the Bangla summary." } }));
+    const form = tree.root.findByProps({ "aria-label": "Steer Agent form" });
+    await act(async () => form.props.onSubmit({ preventDefault() {} }));
+    assert.deepEqual(steers, [[record.id, message.id, 1, 2, "Prioritize the Bangla summary."]]);
+  }, data, {}, "?conversation=conversation-1");
+});
+
+
+test("multiple active conversation tasks load progress independently", async () => {
+  const data = fixture([{ ...record, message_sequence: 2 }]);
+  const messages = [1, 2].map(sequence => ({
+    id: "message-" + sequence, conversation_id: record.id, sequence,
+    text: "Task " + sequence, selected_sources: [],
+    resource_links: [{ resource_type: "agent_run", resource_id: "run-" + sequence }],
+    created_at: timestamp,
+  }));
+  data.client.conversationHistory = async () => ({ items: messages });
+  data.client.conversationActivityHistory = async () => ({ items: [1, 2].map(sequence => ({
+    message_id: "message-" + sequence, sequence, run_id: "run-" + sequence,
+    state: "running", phase: "planning", cancel_requested: false, event_sequence: 1,
+    steering_revision: 0, runtime_version: 3, updated_at: timestamp, detail: "Working",
+  })) });
+  await mount(async (_tree, { calls }) => {
+    assert.deepEqual(calls.reads.sort(), ["run-1", "run-2"]);
+  }, data, {}, "?conversation=conversation-1");
 });

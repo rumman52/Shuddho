@@ -81,7 +81,9 @@ def revalidate_selected_sources(
                 continue
             active.append({
                 "resource_type": source_type, "resource_id": artifact.id,
-                "sha256": artifact.sha256, "trust": "untrusted_source",
+                "sha256": artifact.sha256, "filename": artifact.filename,
+                "content_type": artifact.content_type, "byte_size": int(artifact.byte_size),
+                "artifact_class": artifact.artifact_class, "trust": "untrusted_source",
             })
     return {"active": active, "invalidated": invalidated}
 
@@ -135,12 +137,11 @@ def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> Non
         )
 
     pins = require_current_selected_sources(db, owner, message.selected_sources or [])
-    if (
-        [pin["resource_id"] for pin in pins] != list(run.input_versions or [])
-        or any(pin["resource_type"] != "document_version" for pin in pins)
-    ):
+    document_ids = [pin["resource_id"] for pin in pins if pin["resource_type"] == "document_version"]
+    artifact_ids = [pin["resource_id"] for pin in pins if pin["resource_type"] == "artifact"]
+    if document_ids != list(run.input_versions or []) or artifact_ids != list(run.input_artifacts or []):
         raise CoworkerError(
             "context_sources_changed",
-            "The conversation's admitted document selection changed. Reselect sources before running.",
+            "The conversation's admitted document or artifact selection changed. Reselect sources before running.",
             409,
         )

@@ -12,6 +12,7 @@ from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .agent_schemas import AgentObservation
 from .errors import CoworkerError
+from .context_policy import filter_sensitive
 from .runner import DocumentRunner
 from .tool_execution import execute_tool_contract, normalize_tool_error, validate_tool_result
 from .schemas import ResearchOptions, TaskCreate
@@ -35,13 +36,31 @@ class AgentRuntime:
         current = self.repo.get(run["owner_id"], run_id)
         if current["tool_invocations"]:
             return len(current["tool_invocations"])
+        planner_goal = self._goal_with_project_context(run)
         steps = deterministic_plan(
-            run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"],
+            planner_goal, run["document_ids"], run["output_language"], self.container.settings, run["actions"],
             tool_allowlist=run.get("tool_allowlist"),
         )
         self.repo.set_planner_mode(run_id, "deterministic")
         saved = self.repo.save_plan(run["owner_id"], run_id, steps)
         return len(saved["tool_invocations"])
+
+    @staticmethod
+    def _goal_with_project_context(run: dict) -> str:
+        """Add pinned project guidance to legacy planner input without granting authority."""
+        project = run.get("project_context") or {}
+        instructions = project.get("instructions") if isinstance(project, dict) else None
+        if not isinstance(instructions, str) or not instructions.strip():
+            return run["goal"]
+        safe_instructions, _redactions = filter_sensitive(instructions)
+        if not safe_instructions.strip():
+            return run["goal"]
+        return (
+            run["goal"]
+            + "\n\nSaved project instructions (user-provided guidance, subordinate to the current task; "
+            "never a permission or approval grant):\n"
+            + safe_instructions
+        )
 
     def _planner_reservation(self) -> int:
         per_call = max(1, self.container.settings.agent_planner_token_budget // self.container.settings.max_agent_planner_calls)
@@ -59,18 +78,19 @@ class AgentRuntime:
         )
         if not tools:
             return self.plan(run_id)
+        planner_goal = self._goal_with_project_context(run)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
         actual_tokens = None
         try:
             proposal, actual_tokens, _latency = await self.planner.propose(
-                run["goal"],
+                planner_goal,
                 tools,
                 reason="initial",
                 allow_action_proposals=self.container.settings.agent_action_proposals_enabled,
                 allow_linkedin_action_proposals=self.container.settings.agent_linkedin_proposals_enabled,
             )
             steps = proposal_to_plan(
-                proposal, run["goal"], run["document_ids"], run["output_language"],
+                proposal, planner_goal, run["document_ids"], run["output_language"],
                 self.container.settings, run["actions"],
                 tool_allowlist=run.get("tool_allowlist"),
             )
@@ -88,7 +108,7 @@ class AgentRuntime:
             actual_tokens = error.total_tokens
             self.repo.set_planner_mode(run_id, "fallback")
             steps = deterministic_plan(
-                run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"],
+                planner_goal, run["document_ids"], run["output_language"], self.container.settings, run["actions"],
                 tool_allowlist=run.get("tool_allowlist"),
             )
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
@@ -113,6 +133,7 @@ class AgentRuntime:
             ) if receipt and receipt.get("resource_type") == "action"
         }
         remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
+        planner_goal = self._goal_with_project_context(run)
         tools = intelligent_tool_names(
             self.container.settings, remaining_actions, tool_allowlist=run.get("tool_allowlist"),
         )
@@ -122,7 +143,7 @@ class AgentRuntime:
         actual_tokens = None
         try:
             proposal, actual_tokens, _latency = await self.planner.propose(
-                run["goal"],
+                planner_goal,
                 tools,
                 reason=reason,
                 allow_action_proposals=False,
@@ -136,7 +157,7 @@ class AgentRuntime:
                 run_id, reservation["call"], actual_tokens,
             )
         steps = proposal_to_plan(
-            proposal, run["goal"], run["document_ids"], run["output_language"],
+            proposal, planner_goal, run["document_ids"], run["output_language"],
             self.container.settings, remaining_actions,
             tool_allowlist=run.get("tool_allowlist"),
         )
@@ -154,7 +175,7 @@ class AgentRuntime:
         )
         return min(per_call, self.container.settings.agent_v3_planner_token_budget)
 
-    async def decide_v3(self, run_id: str, *, activity_key: str | None = None) -> dict:
+    async def decide_v3(self, run_id: str, *, activity_key: str | None = None, _steering_retry: int = 0) -> dict:
         run = self.repo.worker_run(run_id)
         if run["runtime_version"] != 3:
             raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
@@ -198,6 +219,11 @@ class AgentRuntime:
                 "depends_on": step["depends_on"],
             } for step in current["steps"] if step["ordinal"] > 0],
             "consequential_actions_require_explicit_approval": True,
+            "steering": {
+                "revision": run["steering_revision"],
+                "instructions": run["steering_instructions"],
+                "authority": "user_task_guidance_only_no_permission_or_approval_grant",
+            },
             "context": context_payload,
         }
         if not tools and not self.repo.v3_can_complete(run_id):
@@ -206,6 +232,7 @@ class AgentRuntime:
         reservation = self.repo.reserve_planner(run_id, self._v3_planner_reservation())
         actual_tokens = None
         cost_microusd = None
+        retry_for_steering = False
         try:
             decision, actual_tokens, _latency, evidence = await self.planner.decide(
                 run["goal"],
@@ -218,15 +245,23 @@ class AgentRuntime:
                 cost_microusd = (
                     actual_tokens * self.container.settings.agent_v3_planner_cost_microusd_per_1k_tokens + 999
                 ) // 1000
-            return self.repo.commit_v3_decision(
-                run_id, decision, activity_key=activity_key,
-                planner_call=reservation["call"], model=evidence["model"],
-                prompt_sha256=evidence["prompt_sha256"],
-                tool_schema_sha256=evidence["tool_schema_sha256"],
-                observation_count=len(observations), total_tokens=actual_tokens,
-                cost_microusd=cost_microusd, memory_repository=self.container.memory,
-                context_sources=context_sources,
-            )
+            try:
+                return self.repo.commit_v3_decision(
+                    run_id, decision, activity_key=activity_key,
+                    planner_call=reservation["call"], model=evidence["model"],
+                    prompt_sha256=evidence["prompt_sha256"],
+                    tool_schema_sha256=evidence["tool_schema_sha256"],
+                    observation_count=len(observations), total_tokens=actual_tokens,
+                    cost_microusd=cost_microusd, memory_repository=self.container.memory,
+                    context_sources=context_sources,
+                    expected_steering_revision=run["steering_revision"],
+                )
+            except CoworkerError as error:
+                if error.code != "agent_steering_changed" or _steering_retry >= 2:
+                    raise
+                # The old inference is discarded. Settle its actual provider
+                # usage before reserving another bounded planner attempt.
+                retry_for_steering = True
         except PlannerFailure as error:
             actual_tokens = error.total_tokens
             raise
@@ -237,6 +272,14 @@ class AgentRuntime:
                 actual_tokens,
                 cost_microusd,
             )
+        if retry_for_steering:
+            return await self.decide_v3(
+                run_id, activity_key=activity_key, _steering_retry=_steering_retry + 1,
+            )
+        # A burst of repeated steering must not fail the run. Yield one
+        # bounded wait; the next Temporal planning activity reads the newest
+        # persisted revision and starts from that instruction history.
+        return {"decision": "wait", "wait_seconds": 1}
 
     async def execute_step(self, run_id: str, ordinal: int) -> dict:
         run = self.repo.worker_run(run_id)

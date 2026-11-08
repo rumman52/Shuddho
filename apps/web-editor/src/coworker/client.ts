@@ -234,7 +234,10 @@ export type CodeProposalDetail = {
 };
 
 export type AgentRun = {
-  id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; action_ids: string[]; action_proposals: AgentActionProposal[];
+  id: string; persistent_goal_id: string | null; persistent_goal_revision: number | null; goal: string; output_language: string; document_ids: string[]; artifact_ids: string[];
+  project_context: Record<string, unknown>; steering_revision: number;
+  steering_instructions: { revision: number; instruction: string; created_at: string }[];
+  action_ids: string[]; action_proposals: AgentActionProposal[];
   plan: { step_id: string; ordinal: number; tool: string | null; state: string; invocation_id: string | null; depends_on: number[] }[];
   current_step: { step_id: string; ordinal: number; tool: string | null; state: string; invocation_id: string | null } | null;
   completed_steps: { id: string; ordinal: number; tool: string | null; invocation_id: string | null }[];
@@ -482,7 +485,8 @@ export type ConversationMessageRecord = {
 };
 export type ConversationActivityRecord = {
   message_id: string; sequence: number; run_id: string; state: string; phase: string;
-  cancel_requested: boolean; event_sequence: number; updated_at: string; detail: string;
+  cancel_requested: boolean; event_sequence: number; steering_revision: number; runtime_version: number;
+  updated_at: string; detail: string;
 };
 
 export class CoworkerClient {
@@ -684,11 +688,25 @@ export class CoworkerClient {
       body: JSON.stringify({ text, client_request_key: key, selected_resource_ids: selectedResourceIds }),
     });
   }
-  dispatchConversationMessage(id: string, messageId: string, sequence: number) {
+  dispatchConversationMessage(id: string, messageId: string, sequence: number, projectId?: string | null) {
     return this.json<{ run_id: string; state: string; replayed: boolean }>(
       `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/dispatch`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expected_sequence: sequence, output_language: "auto" }),
+        body: JSON.stringify({
+          expected_sequence: sequence, output_language: "auto",
+          ...(projectId ? { project_id: identifier(projectId) } : {}),
+        }),
+      });
+  }
+  steerConversationAgent(id: string, messageId: string, sequence: number, expectedSteeringRevision: number, instruction: string) {
+    return this.json<{ run_id: string; state: string; steering_revision: number; event_sequence: number }>(
+      `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/steer`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_sequence: sequence,
+          expected_steering_revision: expectedSteeringRevision,
+          instruction,
+        }),
       });
   }
   cancelConversationAgent(id: string, messageId: string, sequence: number, eventSequence: number) {

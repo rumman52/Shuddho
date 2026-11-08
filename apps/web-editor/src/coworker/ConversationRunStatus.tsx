@@ -46,6 +46,12 @@ export default function ConversationRunStatus({ client, runId, eager = true }: {
     {error ? <><p className="cw-error" role="alert">{error}</p><button type="button" className="cw-text-button" aria-label="Retry Agent progress" onClick={() => setRevision(value => value + 1)}>Retry</button></> :
       run ? <>
         <p className="rukh-run-message" dir="auto">{run.message}</p>
+        {run.steering_instructions?.length > 0 && <details>
+          <summary>User instructions · {run.steering_instructions.length}</summary>
+          <ol>{run.steering_instructions.map(item => <li key={item.revision}>
+            <span dir="auto">{item.instruction}</span><small>Revision {item.revision}</small>
+          </li>)}</ol>
+        </details>}
         {run.plan?.length > 0 && <details><summary>Plan · {run.plan.length} steps</summary><ol>{run.plan.map(step =>
           <li key={step.step_id}><span>{step.tool ?? "Plan step"}</span><small>{step.state.replace(/_/g, " ")}</small></li>)}</ol></details>}
         {run.tool_results?.length > 0 && <details><summary>Tool results · {run.tool_results.length}</summary>

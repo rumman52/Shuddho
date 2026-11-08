@@ -51,6 +51,20 @@ class ConversationDispatchCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
     output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
+    project_id: UUID | None = None
+
+
+class ConversationSteerRequest(BaseModel):
+    """A bounded user instruction for one active Runtime v3 run."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    expected_sequence: int = Field(ge=1)
+    expected_steering_revision: int = Field(ge=0)
+    instruction: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("instruction")
+    @classmethod
+    def safe_instruction(cls, value: str) -> str:
+        return _safe_text(value)
 
 
 class ConversationCancelRequest(BaseModel):

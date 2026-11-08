@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from datetime import datetime
+from pathlib import PurePath
 
 from sqlalchemy import or_, select
 
@@ -18,7 +19,7 @@ from .context_policy import (
 from .errors import CoworkerError
 from .extraction import extract_in_subprocess
 from .conversation_context import require_admitted_conversation_run_sources
-from .models import AgentRun, ConnectorSnapshot, Document, DocumentVersion, Step, Task, utcnow
+from .models import AgentRun, Artifact, ConnectorSnapshot, Document, DocumentVersion, Step, Task, utcnow
 from .repository import aware, iso, not_found
 
 
@@ -134,11 +135,49 @@ class ContextService:
                     sources.append(base | {"state": "invalidated", "reason": reason})
                     continue
                 sources.append(base | {"state": "active"})
+            for index, artifact_id in enumerate(list(run.input_artifacts or []), start=len(sources) + 1):
+                source_id = f"ctx-{index}"
+                artifact = db.scalar(select(Artifact).where(
+                    Artifact.id == artifact_id,
+                    Artifact.owner_id == owner,
+                ))
+                if artifact is None:
+                    sources.append({"source_id": source_id, "state": "invalidated", "reason": "artifact_missing"})
+                    continue
+                base = {
+                    "source_id": source_id,
+                    "resource_type": "artifact",
+                    "artifact_id": artifact.id,
+                    "artifact_class": artifact.artifact_class,
+                    "label": artifact.filename,
+                    "kind": PurePath(artifact.filename).suffix.lower().lstrip("."),
+                    "sha256": artifact.sha256,
+                    "byte_size": int(artifact.byte_size),
+                    "object_key": artifact.object_key,
+                    "content_type": artifact.content_type,
+                }
+                if artifact.expires_at is not None and aware(artifact.expires_at) <= utcnow():
+                    sources.append(base | {"state": "invalidated", "reason": "expired"})
+                else:
+                    sources.append(base | {"state": "active"})
             return run, sources
 
     def _source_current(self, owner: str, source: dict) -> bool:
         """Check retained owner/version/hash/expiry before and after object reading."""
         with self.sessions() as db:
+            if source.get("resource_type") == "artifact":
+                artifact = db.scalar(select(Artifact).where(
+                    Artifact.id == source["artifact_id"],
+                    Artifact.owner_id == owner,
+                ))
+                return bool(
+                    artifact is not None
+                    and artifact.sha256 == source["sha256"]
+                    and int(artifact.byte_size) == source["byte_size"]
+                    and artifact.object_key == source["object_key"]
+                    and artifact.filename == source["label"]
+                    and (artifact.expires_at is None or aware(artifact.expires_at) > utcnow())
+                )
             record = db.execute(
                 select(DocumentVersion, Document)
                 .join(Document, Document.id == DocumentVersion.document_id)
@@ -163,6 +202,13 @@ class ContextService:
     def _resolved(self, owner: str, run_id: str) -> dict:
         run, sources = self._run_and_sources(owner, run_id)
         memory = self.memory.context_for_run(owner, run_id)
+        project_context = dict(run.project_context or {})
+        if project_context.get("instructions"):
+            safe_instructions, redactions = filter_sensitive(str(project_context["instructions"]))
+            project_context["instructions"] = safe_instructions
+            project_context["redactions"] = redactions
+        project_context["precedence"] = "saved_project_instructions"
+        project_context["authority"] = "user_context_only_no_permission_or_approval_grant"
         if not self.settings.context_retrieval_enabled:
             return {
                 "enabled": False,
@@ -170,6 +216,7 @@ class ContextService:
                 "invalidated": [],
                 "memory": memory,
                 "source_map": {},
+                "project_context": project_context,
                 "hierarchy": list(CONTEXT_HIERARCHY),
                 "budget": {"limit_bytes": self.settings.max_agent_context_bytes, "used_bytes": 0},
             }
@@ -306,19 +353,21 @@ class ContextService:
                     "reason": "unavailable_or_changed",
                 })
                 continue
+            is_artifact = source.get("resource_type") == "artifact"
             added = add_item(
                 source_id=source["source_id"],
                 label=source["label"],
                 text=text,
                 sha256=source["sha256"],
-                source_type="workspace_document",
-                precedence="workspace_document",
-                provenance={
-                    "document_id": source["document_id"],
-                    "version_id": source["version_id"],
-                },
+                source_type="workspace_artifact" if is_artifact else "workspace_document",
+                precedence="workspace_artifact" if is_artifact else "workspace_document",
+                provenance=(
+                    {"artifact_id": source["artifact_id"], "artifact_class": source["artifact_class"]}
+                    if is_artifact else
+                    {"document_id": source["document_id"], "version_id": source["version_id"]}
+                ),
             )
-            if added:
+            if added and not is_artifact:
                 # Memory proposal source revalidation relies on this legacy
                 # trusted type. Planner-facing source_type remains
                 # workspace_document.
@@ -554,6 +603,7 @@ class ContextService:
             "invalidated": invalidated,
             "memory": memory,
             "source_map": source_map,
+            "project_context": project_context,
             "hierarchy": list(CONTEXT_HIERARCHY),
             "budget": {
                 "limit_bytes": self.settings.max_agent_context_bytes,
@@ -584,6 +634,7 @@ class ContextService:
             "enabled": value["enabled"],
             "hierarchy": value.get("hierarchy", list(CONTEXT_HIERARCHY)),
             "current_instruction": value.get("current_instruction"),
+            "project_context": value.get("project_context", {}),
             "items": items,
             "explicit_memory": value["memory"]["facts"],
             "memory_provenance": value["memory"]["provenance"],

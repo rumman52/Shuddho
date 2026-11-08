@@ -1147,6 +1147,10 @@ class AgentRepository:
             },
             "output_language": run.output_language,
             "document_ids": documents,
+            "artifact_ids": list(run.input_artifacts or []),
+            "project_context": dict(run.project_context or {}),
+            "steering_revision": run.steering_revision,
+            "steering_instructions": list(run.steering_instructions or []),
             "action_ids": list(run.action_ids),
             "action_proposals": [self._proposal_dto(item) for item in proposals],
             "memory_namespaces": list(run.memory_namespaces),
@@ -1927,6 +1931,10 @@ class AgentRepository:
                 "id": run.id, "owner_id": run.owner_id, "goal": run.goal,
                 "persistent_goal_id": run.goal_id, "persistent_goal_revision": run.goal_revision,
                 "output_language": run.output_language, "document_ids": documents,
+                "artifact_ids": list(run.input_artifacts or []),
+                "project_context": dict(run.project_context or {}),
+                "steering_revision": run.steering_revision,
+                "steering_instructions": list(run.steering_instructions or []),
                 "tool_allowlist": list(run.tool_allowlist or []),
                 "actions": [{"id": action_rows[action_id].id, "kind": action_rows[action_id].kind,
                              "state": action_rows[action_id].state}
@@ -2194,7 +2202,7 @@ class AgentRepository:
         self, run_id: str, decision: AgentV3Decision, *, activity_key: str | None,
         planner_call: int, model: str, prompt_sha256: str, tool_schema_sha256: str,
         observation_count: int, total_tokens: int | None, cost_microusd: int | None,
-        memory_repository, context_sources: dict,
+        memory_repository, context_sources: dict, expected_steering_revision: int | None = None,
     ) -> dict:
         """Commit a decision, its local effects and retry result as one run transaction.
 
@@ -2218,6 +2226,15 @@ class AgentRepository:
                     # attempt while reusing the winning local decision and effects.
                     self.settle_planner_capacity(run_id, planner_call, total_tokens, cost_microusd, _db=db)
                     return dict(existing.evidence["result"])
+            if (
+                expected_steering_revision is not None
+                and run.steering_revision != expected_steering_revision
+            ):
+                raise CoworkerError(
+                    "agent_steering_changed",
+                    "A newer user instruction arrived while the planner was working; replan before committing.",
+                    409,
+                )
             self.record_v3_decision(
                 run_id, decision, planner_call=planner_call, model=model,
                 prompt_sha256=prompt_sha256, tool_schema_sha256=tool_schema_sha256,
