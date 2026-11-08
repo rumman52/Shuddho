@@ -16,7 +16,9 @@ from typing import Iterable
 CONTEXT_HIERARCHY = (
     "current_user_message",
     "current_run",
+    "saved_project_instructions",
     "workspace_document",
+    "workspace_artifact",
     "prior_task",
     "durable_memory",
     "external_connector",
@@ -24,6 +26,7 @@ CONTEXT_HIERARCHY = (
 
 _SOURCE_BASE = {
     "workspace_document": 1.00,
+    "workspace_artifact": 0.98,
     "prior_task": 0.82,
     "durable_memory": 0.72,
     "external_connector": 0.62,
