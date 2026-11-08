@@ -448,10 +448,10 @@ def setup_v3(container, *, key="cw-p2-v3"):
 
 def test_two_conversation_runs_progress_and_cancel_independently(container):
     owner, conv, conversations, dispatch = setup(container, key="p2-independent-runs")
-    first_message = message(conversations, owner, conv, "Prepare a project research brief")
+    first_message = message(conversations, owner, conv, "Create a detailed report about quarterly sales")
     first, _ = dispatch.dispatch(owner, conv["id"], first_message["id"], expected_sequence=1)
     second_message, _ = conversations.append_message(
-        owner, conv["id"], MessageCreate(text="Prepare a separate project summary", client_request_key="second-run"),
+        owner, conv["id"], MessageCreate(text="Create a detailed report about quarterly expenses", client_request_key="second-run"),
     )
     second, _ = dispatch.dispatch(owner, conv["id"], second_message["id"], expected_sequence=2)
 
@@ -574,7 +574,7 @@ def test_dispatch_rejects_unsupported_selected_artifact(container):
         db.add(artifact)
     saved, _ = conversations.append_message(
         owner, conv["id"], MessageCreate(
-            text="Review this file", client_request_key="p2-unsupported-artifact",
+            text="Create a detailed report about quarterly sales", client_request_key="p2-unsupported-artifact",
             selected_resource_ids=[UUID(artifact.id)],
         ),
     )
