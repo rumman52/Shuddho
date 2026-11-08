@@ -57,8 +57,8 @@ class AgentRuntime:
             return run["goal"]
         return (
             run["goal"]
-            + "\\n\\nSaved project instructions (user-provided guidance, subordinate to the current task; "
-            "never a permission or approval grant):\\n"
+            + "\n\nSaved project instructions (user-provided guidance, subordinate to the current task; "
+            "never a permission or approval grant):\n"
             + safe_instructions
         )
 
