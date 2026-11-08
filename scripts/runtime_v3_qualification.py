@@ -68,9 +68,19 @@ class RecordingTransport(httpx.AsyncBaseTransport):
         status_code = response.status_code
 
         if status_code != 200:
+            error_chunks: list[bytes] = []
+            error_size = 0
+            try:
+                async for chunk in response.aiter_bytes():
+                    error_size += len(chunk)
+                    if error_size > MAX_CAPTURE_BYTES:
+                        raise RuntimeError(
+                            "Runtime v3 provider error response exceeded the 1 MiB capture limit."
+                        )
+                    error_chunks.append(chunk)
+            finally:
+                await response.aclose()
             latency_ms = max(0, int((time.perf_counter() - started) * 1000))
-            retry_after = response.headers.get("retry-after")
-            await response.aclose()
             self.records.append({
                 "kind": self._call_kind.get(),
                 "model": self.model,
@@ -80,8 +90,17 @@ class RecordingTransport(httpx.AsyncBaseTransport):
                 "total_tokens": None,
                 "latency_ms": latency_ms,
             })
-            headers = {"retry-after": retry_after} if retry_after else {}
-            return httpx.Response(status_code, headers=headers, request=request)
+            headers = {
+                key: value
+                for key, value in response.headers.items()
+                if key.lower() not in {"content-length", "content-encoding", "transfer-encoding"}
+            }
+            return httpx.Response(
+                status_code,
+                headers=headers,
+                content=b"".join(error_chunks),
+                request=request,
+            )
 
         chunks: list[bytes] = []
         size = 0
