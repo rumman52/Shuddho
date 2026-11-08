@@ -218,6 +218,51 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
       latestExecution.error_code ? "Execution error: " + latestExecution.error_code : ""].filter(Boolean).join("\n\n")
     : "No Python execution yet. Run a Python file when the isolated runtime is enabled.";
 
+  const onRepositoryBindingChange = useCallback((binding: GitHubRepositoryBinding | null) => {
+    setRepositoryName(binding?.full_name ?? "");
+  }, []);
+
+  const importRepositoryFiles = useCallback(async (items: GitHubRepositoryFile[]) => {
+    if (!items.length) return;
+    const existing = new Set(files.filter(file => file.origin).map(file =>
+      [file.origin!.repository, file.origin!.path, file.origin!.commitSha].join("|"),
+    ));
+    const fresh = items.filter(item => !existing.has([item.repository, item.path, item.commit_sha].join("|")));
+    if (!fresh.length) throw new Error("Those repository files are already present at this commit.");
+    if (files.length + fresh.length > MAX_FILES) throw new Error("Fly can hold up to " + MAX_FILES + " files. Remove a local file before importing more repository context.");
+    const imported: FlyFile[] = [];
+    for (const item of fresh) {
+      if (item.repository !== repositoryName) throw new Error("The repository changed while these files were being imported. Refresh the repository panel.");
+      if (encodedBytes(item.content) !== item.byte_size || item.byte_size > MAX_FILE_BYTES) {
+        throw new Error(item.path + " failed the repository file size check.");
+      }
+      if (!/^[a-f0-9]{40}$/i.test(item.commit_sha) || !/^[a-f0-9]{40}$/i.test(item.blob_sha) || !/^[a-f0-9]{64}$/i.test(item.sha256)) {
+        throw new Error(item.path + " is missing valid GitHub source provenance.");
+      }
+      if (await sha256(item.content) !== item.sha256) throw new Error(item.path + " failed its SHA-256 integrity check.");
+      imported.push({
+        id: "github-" + globalThis.crypto.randomUUID(),
+        name: safeFilename(item.path.replace(/\\//g, "__")),
+        language: languageForFilename(item.path),
+        content: item.content,
+        origin: {
+          repository: item.repository,
+          path: item.path,
+          branch: item.branch,
+          commitSha: item.commit_sha,
+          repositorySha: item.blob_sha,
+        },
+      });
+    }
+    setDraft(current => ({ files: [...current.files, ...imported], activeId: imported[0].id }));
+    setSavedSnapshots(current => ({
+      ...current,
+      ...Object.fromEntries(imported.map(file => [file.id, file.content])),
+    }));
+    setWorkspacePanel("editor");
+    setNotice("Imported " + imported.length + " repository file(s) from commit " + fresh[0].commit_sha.slice(0, 12) + ". Fly will save verified private snapshots before attaching them to the Agent.");
+  }, [files, repositoryName]);
+
   useEffect(() => {
     try { window.sessionStorage.setItem(storageKey(accountId), JSON.stringify(draft)); setStorageWarning(false); }
     catch { setStorageWarning(true); }
@@ -617,7 +662,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
         <small>{projects.find(project => project.id === selectedProject)?.name ?? "Personal workspace"}</small>
       </div>
       <div className="rukh-fly-v2-top-actions">
-        <span className="rukh-fly-v2-repo-badge" title="Repository checkout is not connected">Local workspace</span>
+        <span className="rukh-fly-v2-repo-badge" title={repositoryName ? "Connected GitHub repository · read-only source access" : "No GitHub repository connected"}>{repositoryName ? "GitHub · " + repositoryName : "Local workspace"}</span>
         <span className={"rukh-fly-v2-runtime" + (runtimeEnabled ? " is-enabled" : "")} role="status">
           <i />{runtimeLoading ? "Checking runtime" : runtimeEnabled ? "Python 3.11 ready" : "Runtime unavailable"}
         </span>
@@ -652,6 +697,14 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
           </select>
         </label>
 
+        <FlyRepositoryPanel
+          client={client}
+          projectId={selectedProject}
+          onProjectChange={setSelectedProject}
+          onBindingChange={onRepositoryBindingChange}
+          onImportFiles={importRepositoryFiles}
+        />
+
         <section className="rukh-fly-v2-sidebar-section" aria-label="Recent coding tasks">
           <div className="rukh-fly-v2-section-title"><span>RECENT TASKS</span><small>{flyTasks.length}</small></div>
           {flyTasks.length ? <ul className="rukh-fly-v2-task-list">
@@ -682,7 +735,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
             <strong>{runtimeLabel}</strong>
             <small>Isolated Python 3.11 execution</small>
           </div>
-          <p>Git clone/push, repository checkout, arbitrary shell and other language runtimes are not connected yet.</p>
+          <p>GitHub repository browsing and multi-file source context are available when connected. Repository patch approval/application and isolated multi-language tests are not connected yet.</p>
           <a href="/coworker?view=projects">Manage projects ↗</a>
         </footer>
       </aside>
