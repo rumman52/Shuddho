@@ -232,6 +232,57 @@ def test_github_repository_bindings_are_owner_and_project_scoped(container):
     assert foreign.value.status_code == 404
 
 
+def test_github_user_access_token_refreshes_and_rotates_encrypted_refresh_token(container):
+    _enabled(container, _transport())
+    owner = account(container)
+    project, finished = _connect(container, owner)
+    connected = container.github.complete_install(owner, finished["state"], 321)
+    installation_id = connected["installation"]["id"]
+    with container.repository.sessions.begin() as db:
+        row = db.scalar(select(GitHubInstallation).where(
+            GitHubInstallation.owner_id == owner,
+            GitHubInstallation.id == installation_id,
+        ))
+        row.access_token_expires_at = utcnow() - timedelta(seconds=1)
+    result = container.github.list_repositories(owner, installation_id)
+    assert result["repositories"][0]["full_name"] == "acme/demo"
+    with container.repository.sessions() as db:
+        row = db.scalar(select(GitHubInstallation).where(
+            GitHubInstallation.owner_id == owner,
+            GitHubInstallation.id == installation_id,
+        ))
+        bundle = container.github._vault().open(
+            row.user_token_bundle_ciphertext,
+            owner + ":github-installation:" + installation_id,
+        )
+        assert bundle["access_token"] == "rotated-user-token"
+        assert bundle["refresh_token"] == "rotated-refresh-token"
+        assert row.access_token_expires_at > utcnow()
+
+
+def test_disconnect_github_installation_revokes_tokens_and_all_project_bindings(container):
+    _enabled(container, _transport())
+    owner = account(container)
+    project, finished = _connect(container, owner)
+    connected = container.github.complete_install(owner, finished["state"], 321)
+    installation_id = connected["installation"]["id"]
+    container.github.bind_repository(owner, project["id"], installation_id, 777, project["revision"])
+    container.github.disconnect_installation(owner, installation_id)
+    assert container.github.get_repository(owner, project["id"])["repository"] is None
+    with container.repository.sessions() as db:
+        row = db.scalar(select(GitHubInstallation).where(
+            GitHubInstallation.owner_id == owner,
+            GitHubInstallation.id == installation_id,
+        ))
+        binding = db.scalar(select(GitHubRepositoryBinding).where(
+            GitHubRepositoryBinding.owner_id == owner,
+            GitHubRepositoryBinding.project_id == project["id"],
+        ))
+        assert row.active is False
+        assert row.user_token_bundle_ciphertext == ""
+        assert binding.active is False
+
+
 def test_github_paths_reject_traversal_and_credential_files():
     for value in ("../app.py", "src/../app.py", "/etc/passwd", r"src\\..\\app.py", ".env", "config/.env.production", "certs/private.pem"):
         with pytest.raises(CoworkerError):
@@ -257,3 +308,16 @@ def test_github_status_and_start_routes_require_auth_and_return_no_store(contain
     client, headers = signed_client
     assert client.get("/api/v1/github/status").status_code == 401
     assert client.get("/api/v1/github/status", headers=headers()).json() == {"enabled": False}
+
+    _enabled(container)
+    owner = account(container)
+    project = _project(container, owner)
+    status = client.get("/api/v1/github/status", headers=headers())
+    assert status.json() == {"enabled": True}
+    response = client.post(
+        f"/api/v1/projects/{project['id']}/github/connect/start",
+        headers=headers(),
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["authorization_url"].startswith("https://github.com/login/oauth/authorize?")
