@@ -671,7 +671,7 @@ export class CoworkerClient {
     );
   }
   githubCompleteInstall(state: string, installationId: number) {
-    return this.json<{ installation: GitHubInstallation; repositories: GitHubRepository[] }>(
+    return this.json<{ project_id: string; installation: GitHubInstallation; repositories: GitHubRepository[] }>(
       "/api/v1/github/connect/complete",
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, installation_id: installationId }) },
     );
