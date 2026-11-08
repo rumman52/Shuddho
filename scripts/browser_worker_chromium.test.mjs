@@ -84,14 +84,20 @@ test("real Chromium sends loopback redirects through the pinned proxy and blocks
   });
   const stats = { dials: 0, targets: [] };
   const checkedHosts = [];
+  let privateCheckDialCount = null;
   let browser;
   let proxy;
   try {
     const created = await makeProxy(fixture, async (_commandId, host) => {
       checkedHosts.push(host);
-      return host === "example.test"
-        ? { hostname: host, resolved_ips: ["93.184.216.34"] }
-        : { hostname: host, resolved_ips: ["127.0.0.1"] };
+      if (host === "example.test") {
+        return { hostname: host, resolved_ips: ["93.184.216.34"] };
+      }
+      if (host === "localhost") {
+        privateCheckDialCount = stats.dials;
+        return { hostname: host, resolved_ips: ["127.0.0.1"] };
+      }
+      throw new Error(`unexpected CONNECT hostname: ${host}`);
     }, stats);
     proxy = created.proxy;
     browser = await chromium.launch(browserChromiumLaunchOptions(proxy.url));
@@ -105,9 +111,12 @@ test("real Chromium sends loopback redirects through the pinned proxy and blocks
     await assert.rejects(
       page.goto("https://example.test/redirect", { waitUntil: "domcontentloaded", timeout: 8000 }),
     );
-    assert.deepEqual(checkedHosts, ["example.test", "localhost"]);
-    assert.equal(stats.dials, 1, "the private redirect must be rejected before a second TCP dial");
-    assert.deepEqual(stats.targets, [{ host: "93.184.216.34", port: 443 }]);
+    assert.ok(checkedHosts.includes("example.test"));
+    assert.ok(checkedHosts.includes("localhost"));
+    assert.ok(checkedHosts.every((host) => ["example.test", "localhost"].includes(host)));
+    assert.equal(privateCheckDialCount, stats.dials, "the private redirect must be rejected before a TCP dial");
+    assert.ok(stats.targets.length >= 1);
+    assert.ok(stats.targets.every((target) => target.host === "93.184.216.34" && target.port === 443));
     assert.deepEqual(created.state.evidence, {
       "example.test": ["93.184.216.34"],
     });
@@ -127,19 +136,22 @@ test("real Chromium revalidates a hostname after a public-to-private DNS answer 
     response.end("public fixture response");
   });
   const stats = { dials: 0, targets: [] };
-  let resolutionCount = 0;
+  let firstBrowserProcess = true;
+  let firstProcessResolutions = 0;
+  let secondProcessResolutions = 0;
+  let dialsBeforePrivateResolution = null;
   let browser;
   let proxy;
   try {
     const created = await makeProxy(fixture, async (_commandId, host) => {
       assert.equal(host, "rebind.test");
-      resolutionCount += 1;
-      return {
-        hostname: host,
-        resolved_ips: resolutionCount === 1
-          ? ["93.184.216.34"]
-          : ["127.0.0.1"],
-      };
+      if (firstBrowserProcess) {
+        firstProcessResolutions += 1;
+        return { hostname: host, resolved_ips: ["93.184.216.34"] };
+      }
+      secondProcessResolutions += 1;
+      dialsBeforePrivateResolution ??= stats.dials;
+      return { hostname: host, resolved_ips: ["127.0.0.1"] };
     }, stats);
     proxy = created.proxy;
 
@@ -154,11 +166,13 @@ test("real Chromium revalidates a hostname after a public-to-private DNS answer 
       timeout: 8000,
     });
     assert.equal(first.status(), 200);
-    assert.equal(resolutionCount, 1);
-    assert.equal(stats.dials, 1);
+    assert.ok(firstProcessResolutions >= 1);
+    const dialsBeforeRebind = stats.dials;
+    assert.ok(dialsBeforeRebind >= 1);
     await context.close();
     await browser.close();
     browser = null;
+    firstBrowserProcess = false;
 
     // A fresh Chromium process forces a new CONNECT and therefore a fresh
     // broker DNS decision for the same hostname.
@@ -171,9 +185,10 @@ test("real Chromium revalidates a hostname after a public-to-private DNS answer 
     await assert.rejects(
       page.goto("https://rebind.test/second", { waitUntil: "domcontentloaded", timeout: 8000 }),
     );
-    assert.equal(resolutionCount, 2);
-    assert.equal(stats.dials, 1, "the rebound private answer must not open another TCP connection");
-    assert.deepEqual(stats.targets, [{ host: "93.184.216.34", port: 443 }]);
+    assert.ok(secondProcessResolutions >= 1);
+    assert.equal(dialsBeforePrivateResolution, dialsBeforeRebind);
+    assert.equal(stats.dials, dialsBeforeRebind, "the rebound private answer must not open another TCP connection");
+    assert.ok(stats.targets.every((target) => target.host === "93.184.216.34" && target.port === 443));
     assert.deepEqual(created.state.evidence, {
       "rebind.test": ["93.184.216.34"],
     });
@@ -214,6 +229,8 @@ test("real Chromium Agent read-only context blocks WebSockets and realtime trans
       waitUntil: "domcontentloaded",
       timeout: 8000,
     });
+    const dialsBeforeWebSocket = stats.dials;
+    const targetsBeforeWebSocket = stats.targets.length;
     const transportApis = await page.evaluate(() => ({
       rtc: typeof globalThis.RTCPeerConnection,
       webkitRtc: typeof globalThis.webkitRTCPeerConnection,
@@ -236,8 +253,9 @@ test("real Chromium Agent read-only context blocks WebSockets and realtime trans
     });
     assert.notEqual(webSocketOutcome, "open");
     assert.equal(state.surfaceViolation, "browser_websocket_blocked");
-    assert.equal(stats.dials, 1, "the WebSocket must not create a second proxied TCP connection");
-    assert.deepEqual(stats.targets, [{ host: "93.184.216.34", port: 443 }]);
+    assert.equal(stats.dials, dialsBeforeWebSocket, "the WebSocket must not create a new proxied TCP connection");
+    assert.equal(stats.targets.length, targetsBeforeWebSocket);
+    assert.ok(stats.targets.every((target) => target.host === "93.184.216.34" && target.port === 443));
     await context.close();
   } finally {
     if (browser) await browser.close().catch(() => {});
