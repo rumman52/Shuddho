@@ -275,3 +275,67 @@
   .rukh-voice-controls select { max-width: 124px; font-size: 16px; }
   .rukh-speech-actions { gap: 6px; }
 }
+
+
+.rukh-project-chat-context {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 13px;
+  background: var(--rukh-surface);
+}
+.rukh-project-chat-context-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 9px;
+  background: var(--rukh-surface-soft);
+  color: var(--rukh-accent);
+}
+.rukh-project-chat-context-icon svg { width: 18px; height: 18px; }
+.rukh-project-chat-context-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.rukh-project-chat-context-eyebrow {
+  color: var(--rukh-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .09em;
+}
+.rukh-project-chat-context-copy strong {
+  color: var(--rukh-text);
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.rukh-project-chat-context-copy p {
+  margin: 2px 0 0;
+  color: var(--rukh-text);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rukh-project-chat-context-copy small {
+  color: var(--rukh-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.rukh-project-chat-back {
+  flex: 0 0 auto;
+  align-self: center;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .rukh-project-chat-context { align-items: flex-start; flex-wrap: wrap; }
+  .rukh-project-chat-context-copy { flex-basis: calc(100% - 48px); }
+  .rukh-project-chat-back { margin-inline-start: 46px; }
+}

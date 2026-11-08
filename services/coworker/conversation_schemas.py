@@ -63,3 +63,4 @@ class ConversationCancelRequest(BaseModel):
 class ConversationReplyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
+    project_id: UUID | None = None

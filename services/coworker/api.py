@@ -1685,7 +1685,10 @@ def delete_conversation(conversation_id: UUID, identity: Identity, services: Ser
 async def reply_to_conversation_message(conversation_id: UUID, message_id: UUID,
     payload: ConversationReplyCreate, identity: Identity, services: Services, response: Response):
     response.headers["Cache-Control"] = "no-store"
-    return await services.conversation_replies.reply(identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence)
+    return await services.conversation_replies.reply(
+        identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence,
+        str(payload.project_id) if payload.project_id else None,
+    )
 
 
 @router.post("/conversations/{conversation_id}/messages/{message_id}/reply/stream")
@@ -1695,6 +1698,7 @@ async def stream_reply_to_conversation_message(
 ):
     claim_result, queue = await services.conversation_replies.prepare_stream(
         identity.account_id, str(conversation_id), str(message_id), payload.expected_sequence,
+        str(payload.project_id) if payload.project_id else None,
     )
 
     async def generate():

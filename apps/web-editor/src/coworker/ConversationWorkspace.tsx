@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type AssistantReply, type ConversationRecord,
-  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, CoworkerView,
+  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, type ProjectDetail, CoworkerView,
 } from "./client";
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
@@ -37,6 +37,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const projectId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("project") : null;
   const projectNewChat = useRef(Boolean(projectId && !getInitialConversationId(typeof window !== "undefined" ? window.location.search : "")));
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
+  const [projectContext, setProjectContext] = useState<ProjectDetail | null>(null);
+  const [projectContextLoading, setProjectContextLoading] = useState(Boolean(projectId));
+  const [projectContextError, setProjectContextError] = useState("");
   const [selected, setSelected] = useState(() => startEmpty ? "" : typeof window !== "undefined" ? getInitialConversationId(window.location.search) ?? "" : "");
   const [messages, setMessages] = useState<ConversationMessageRecord[]>([]);
   const [activity, setActivity] = useState<ConversationActivityRecord[]>([]);
@@ -160,7 +163,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       setDisabled(false);
       setListReady(true);
       setConversations(items);
-      setSelected(current => items.some(item => item.id === current) ? current : (startEmpty || projectNewChat.current ? "" : items[0]?.id ?? ""));
+      setSelected(current => items.some(item => item.id === current)
+        ? current
+        : (startEmpty || projectId || projectNewChat.current ? "" : items[0]?.id ?? ""));
     }).catch(cause => {
       if (controller.signal.aborted) return;
       setDisabled(cause instanceof WorkspaceError && [403, 404, 409].includes(cause.status));
@@ -168,6 +173,42 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     });
     return () => controller.abort();
   }, [client, listRevision]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setProjectContext(null);
+      setProjectContextLoading(false);
+      setProjectContextError("");
+      return;
+    }
+    const controller = new AbortController();
+    setProjectContext(null);
+    setProjectContextLoading(true);
+    setProjectContextError("");
+    client.project(projectId, controller.signal).then(detail => {
+      if (!controller.signal.aborted) setProjectContext(detail);
+    }).catch(cause => {
+      if (!controller.signal.aborted) {
+        setProjectContextError(cause instanceof Error ? cause.message : "This project is unavailable.");
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setProjectContextLoading(false);
+    });
+    return () => controller.abort();
+  }, [client, projectId]);
+
+  useEffect(() => {
+    if (!projectId || !projectContext || !selected) return;
+    const linked = projectContext.resources.some(item =>
+      item.resource_type === "conversation" && item.resource_id === selected
+    );
+    if (linked) return;
+    selectedRef.current = "";
+    setSelected("");
+    setMessages([]);
+    setActivity([]);
+    setError("This conversation is not linked to the selected project.");
+  }, [projectId, projectContext, selected]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -232,8 +273,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     };
     try {
       const reply = typeof client.replyToConversationMessageStream === "function"
-        ? await client.replyToConversationMessageStream(id, item.id, item.sequence, applyReply, controller.signal)
-        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal);
+        ? await client.replyToConversationMessageStream(id, item.id, item.sequence, applyReply, controller.signal, projectId ?? undefined)
+        : await client.replyToConversationMessage(id, item.id, item.sequence, controller.signal, projectId ?? undefined);
       applyReply(reply);
     } catch (cause) {
       if (!controller.signal.aborted && selectedRef.current === id)
@@ -331,7 +372,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   async function linkProjectConversation(conversationId: string) {
     if (!projectId) return;
     const project = await client.project(projectId);
-    await client.linkProjectResource(project.id, "conversation", conversationId, project.revision);
+    const linked = await client.linkProjectResource(project.id, "conversation", conversationId, project.revision);
+    setProjectContext(linked);
   }
 
   async function create(event: FormEvent) {
@@ -457,13 +499,20 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     } finally { setWorking(false); }
   }
 
-  const filteredConversations = conversations.filter(item => item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const projectConversationIds = projectId && projectContext
+    ? new Set(projectContext.resources.filter(item => item.resource_type === "conversation").map(item => item.resource_id))
+    : null;
+  const visibleConversations = projectId
+    ? conversations.filter(item => projectConversationIds?.has(item.id))
+    : conversations;
+  const filteredConversations = visibleConversations.filter(item => item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   const hasGeneratingReply = messages.some(item => item.assistant_reply?.state === "generating");
-  const composerDisabled = working || uploadingSource || Boolean(replyingId) || hasGeneratingReply || disabled || !listReady;
+  const composerDisabled = working || uploadingSource || Boolean(replyingId) || hasGeneratingReply || disabled || !listReady
+    || projectContextLoading || Boolean(projectContextError);
   // Load the newest result eagerly; older histories may contain thousands of runs.
   const latestRunMessageId = [...messages].reverse().find(item => item.resource_links.some(link => link.resource_type === "agent_run"))?.id;
   const statusByMessage = new Map(activity.map(item => [item.message_id, item]));
-  const selectedConversation = conversations.find(item => item.id === selected);
+  const selectedConversation = visibleConversations.find(item => item.id === selected);
 
   function beginRename() {
     if (!selectedConversation || working) return;
@@ -581,7 +630,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       <button type="button" className="rukh-design-new" aria-label="New chat" disabled={composerDisabled} onClick={startNew}>+ New chat</button>
       <WorkspaceNavigation active="conversations" writingHref={selected || projectId ? "/writing?" + new URLSearchParams({ ...(selected ? { conversation: selected } : {}), ...(projectId ? { project: projectId } : {}) }) : "/writing"} onNavigate={view => { onNavigate?.(view); setMobilePanel(null); }} />
       <div className="rukh-panel-heading"><div><span className="cw-eyebrow">HISTORY</span><h2 id="rukh-conversations-heading">Conversations</h2></div>
-        <div className="rukh-panel-heading-actions"><span className="rukh-count">{conversations.length}</span>
+        <div className="rukh-panel-heading-actions"><span className="rukh-count">{visibleConversations.length}</span>
           <button className="rukh-mobile-panel-close" ref={mobilePanel === "conversations" ? mobilePanelCloseRef : null}
             type="button" aria-label="Close conversations" onClick={closeMobilePanel}>×</button>
         </div>
@@ -607,7 +656,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
           </li>)}
         </ul>
         {search.trim() && filteredConversations.length === 0 && <p className="rukh-muted" role="status">No conversations match your search.</p>}
-        {conversations.length === 0 && <p className="rukh-muted">Your private conversations will appear here.</p>}
+        {!search.trim() && visibleConversations.length === 0 && <p className="rukh-muted">{projectId ? "No chats in this project yet." : "Your private conversations will appear here."}</p>}
       </>}
       <p className="rukh-panel-footnote">Messages are private. Agent work starts only when you choose Start task.</p>
       {email && <div className="rukh-design-account"><div><span className="rukh-design-account-avatar">{email[0].toUpperCase()}</span><span><strong title={email}>{email}</strong><small>Personal workspace</small></span></div><ThemeToggle />{signOut && <button type="button" className="cw-text-button" onClick={signOut}>Sign out</button>}</div>}
@@ -638,6 +687,17 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
           {selectedConversation && <button type="button" className="cw-text-button" onClick={() => { void remove(); }} disabled={working}>Delete conversation</button>}
         </div>
       </header>
+      {projectId && <section className="rukh-project-chat-context" aria-label="Project context" aria-busy={projectContextLoading}>
+        <span className="rukh-project-chat-context-icon"><NavigationIcon name="folder" /></span>
+        <div className="rukh-project-chat-context-copy">
+          <span className="rukh-project-chat-context-eyebrow">PROJECT CHAT</span>
+          <strong>{projectContext?.name ?? (projectContextLoading ? "Loading project…" : "Project unavailable")}</strong>
+          {projectContext?.description && <p>{projectContext.description}</p>}
+          <small>{projectContext?.description ? "Saved project instructions are applied to Rukh’s replies." : "No custom instructions saved. Edit this project to guide Rukh’s replies."} Linked files are not read automatically; attach a file and choose Start task.</small>
+          {projectContextError && <span className="cw-error" role="alert">{projectContextError}</span>}
+        </div>
+        <button type="button" className="cw-text-button rukh-project-chat-back" onClick={() => onNavigate?.("projects")}>All projects</button>
+      </section>}
       {error && <div className="rukh-thread-error"><p className="cw-error" role="alert">{error}</p>
         {!listReady && <button type="button" className="cw-text-button" aria-label="Retry conversations" onClick={() => setListRevision(value => value + 1)}>Retry loading conversations</button>}
       </div>}

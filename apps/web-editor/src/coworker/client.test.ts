@@ -385,11 +385,14 @@ test("conversation reply stream uses authenticated fetch and publishes partial r
   try {
     const client = new CoworkerClient("/backend", async () => "stream-test-token");
     const updates: { state: string; text: string }[] = [];
+    const projectId = "00000003-0000-4000-8000-000000000000";
     const reply = await client.replyToConversationMessageStream(
       "00000001-0000-4000-8000-000000000000",
       "00000002-0000-4000-8000-000000000000",
       3,
       value => updates.push({ state: value.state, text: value.text }),
+      undefined,
+      projectId,
     );
     assert.equal(reply.state, "completed");
     assert.equal(reply.text, "বাংলা উত্তর");
@@ -408,6 +411,9 @@ test("conversation reply stream uses authenticated fetch and publishes partial r
     assert.equal(seen[0].options?.credentials, "omit");
     assert.equal(seen[0].options?.redirect, "error");
     assert.equal(seen[0].options?.cache, "no-store");
+    assert.deepEqual(JSON.parse(String(seen[0].options?.body)), {
+      expected_sequence: 3, project_id: projectId,
+    });
   } finally { globalThis.fetch = original; }
 });
 

@@ -141,3 +141,88 @@
   .rukh-project-form { padding: 22px 18px 26px; }
   .rukh-project-resource-list li { gap: 9px; }
 }
+
+
+/* Figma "New project" state: a quiet, centered full-page form, not a modal. */
+.rukh-project-create-page {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: calc(100dvh - 96px);
+  padding: 28px 24px 104px;
+}
+.rukh-project-create-form {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(100%, 532px);
+  min-height: 472px;
+  padding: 28px 24px 24px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 14px;
+  background: var(--rukh-surface);
+  color: var(--rukh-text);
+}
+.rukh-project-create-form h2 {
+  margin: 0;
+  color: var(--rukh-text);
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.25;
+}
+.rukh-project-create-form > p {
+  margin: -10px 0 8px;
+  color: var(--rukh-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.rukh-project-create-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--rukh-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.rukh-project-create-form input,
+.rukh-project-create-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 12px;
+  border: 1px solid var(--rukh-border);
+  border-radius: 10px;
+  background: var(--rukh-bg);
+  color: var(--rukh-text);
+  font: inherit;
+  font-size: 13px;
+}
+.rukh-project-create-form textarea { min-height: 104px; resize: vertical; }
+.rukh-project-create-form input::placeholder,
+.rukh-project-create-form textarea::placeholder { color: var(--rukh-muted); opacity: .82; }
+.rukh-project-create-form input:focus-visible,
+.rukh-project-create-form textarea:focus-visible {
+  outline: 2px solid var(--rukh-accent);
+  outline-offset: 1px;
+  border-color: var(--rukh-accent);
+}
+.rukh-project-create-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: auto;
+}
+.rukh-project-create-actions button {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  margin: 0;
+  border-radius: 9px;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .rukh-project-create-page { min-height: calc(100dvh - 88px); align-items: start; padding: 18px 16px 32px; }
+  .rukh-project-create-form { min-height: min(500px, calc(100dvh - 130px)); padding: 22px 18px 20px; }
+}

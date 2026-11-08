@@ -81,6 +81,34 @@ try {
   await page.reload();
   await page.waitForURL(url => url.pathname === "/coworker" && url.searchParams.get("view") === "projects");
   await page.locator(".rukh-section-context > summary").waitFor();
+
+  // The creation screen follows the approved Figma state and the first
+  // project chat receives the saved project instructions on every reply.
+  await page.getByRole("button", { name: "+ New project", exact: true }).click();
+  await page.getByRole("heading", { name: "New project", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Create a project", exact: true }).waitFor();
+  await page.getByLabel("Project name").fill("Project chatbot QA");
+  await page.getByLabel("Project instructions").fill("Always answer concisely and use the project name in context.");
+  await page.getByRole("button", { name: "Create project", exact: true }).click();
+  await page.getByRole("heading", { name: "Project chatbot QA", exact: true }).waitFor();
+  await page.getByRole("link", { name: "+ New project chat", exact: true }).first().click();
+  await page.waitForURL(url => url.pathname === "/coworker" && Boolean(url.searchParams.get("project")));
+  await page.getByRole("region", { name: "Project context" }).waitFor();
+  await page.getByText("Always answer concisely and use the project name in context.", { exact: true }).waitFor();
+  const projectMessage = page.locator("#cw-conversation-message");
+  await projectMessage.fill("What should Rukh know about this project?");
+  await page.locator(".rukh-design-send").click();
+  await page.getByText("This reply used the project instructions.", { exact: true }).waitFor();
+  const chatContextResponse = await page.request.get("http://127.0.0.1:8000/fixture/chat/context");
+  const chatContext = await chatContextResponse.json();
+  assert.match(chatContext.messages[0].content, /Project name: Project chatbot QA/);
+  assert.match(chatContext.messages[0].content, /Always answer concisely and use the project name in context\./);
+  await page.getByRole("button", { name: "All projects", exact: true }).click();
+  await page.waitForURL(url => url.pathname === "/coworker" && url.searchParams.get("view") === "projects");
+  await page.locator(".rukh-project-card").filter({ hasText: "Project chatbot QA" }).click();
+  await page.getByRole("tab", { name: /Chats/ }).click();
+  await page.getByRole("link", { name: "What should Rukh know about this project?" }).waitFor();
+
   await navigateWorkspace(page, "Coworker");
   await page.waitForURL(url => url.pathname === "/coworker" && !url.searchParams.has("view"));
   await page.locator("#cw-conversation-message").waitFor();
