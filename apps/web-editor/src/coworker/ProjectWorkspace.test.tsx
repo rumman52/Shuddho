@@ -45,10 +45,24 @@ function fixture() {
     links: [] as { projectId: string; type: "conversation" | "document"; resourceId: string; revision: number }[],
     unlinks: [] as { type: "conversation" | "document"; resourceId: string }[],
     deletions: [] as { projectId: string; revision: number }[],
+    creates: [] as { name: string; description: string; key: string }[],
   };
   const client = {
     projects: async () => ({ items: projectExists ? [project] : [] }),
     project: async () => ({ ...detail, resources: [...detail.resources] }),
+    createProject: async (name: string, description: string, key: string) => {
+      calls.creates.push({ name, description, key });
+      detail = {
+        ...project,
+        id: "44444444-4444-4444-8444-444444444444",
+        name,
+        description,
+        revision: 1,
+        updated_at: timestamp,
+        resources: [],
+      };
+      return { ...detail, conversation_count: 0 };
+    },
     conversations: async () => ({ items: [conversation] }),
     documents: async () => ({ documents: [source] }),
     linkProjectResource: async (id: string, type: "conversation" | "document", resourceId: string, revision: number) => {
@@ -83,12 +97,15 @@ function fixture() {
   return { client, calls };
 }
 
-async function mount(run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>) {
+async function mount(
+  run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>,
+  onCreateModeChange?: (creating: boolean) => void,
+) {
   const data = fixture();
   let tree!: ReactTestRenderer;
   try {
     await act(async () => {
-      tree = create(<ProjectWorkspace client={data.client} />);
+      tree = create(<ProjectWorkspace client={data.client} onCreateModeChange={onCreateModeChange} />);
     });
     await run(tree, data);
   } finally {
@@ -114,6 +131,35 @@ test("Projects home searches real project records and opens the project workspac
     assert.ok(tree.root.findAllByProps({ role: "tab" }).some(item => item.children.includes("Files")));
     assert.ok(tree.root.findAllByType("a").some(item => String(item.props.href).includes("project=" + projectId)));
   });
+});
+
+test("New project opens the dedicated reference form and saves its instructions", async () => {
+  const createModes: boolean[] = [];
+  await mount(async (tree, data) => {
+    const trigger = tree.root.findAllByType("button").find(item => item.children.join("") === "+ New project");
+    assert.ok(trigger);
+    await act(async () => trigger!.props.onClick());
+
+    assert.equal(tree.root.findByProps({ className: "rukh-project-create-page" }).props["aria-label"], "New project form");
+    assert.equal(tree.root.findAllByProps({ className: "rukh-project-dialog-backdrop" }).length, 0);
+    assert.equal(tree.root.findByProps({ id: "rukh-project-create-title" }).children.join(""), "Create a project");
+    assert.ok(tree.root.findByProps({ id: "rukh-project-create-description" }).children.join("").includes("Keep related chats and files together."));
+
+    await act(async () => {
+      tree.root.findByProps({ "aria-label": "Project name" }).props.onChange({ target: { value: "Rukh launch" } });
+      tree.root.findByProps({ "aria-label": "Project instructions" }).props.onChange({ target: { value: "Use concise Bangla-first project updates." } });
+    });
+    const form = tree.root.findByProps({ className: "rukh-project-create-form" });
+    await act(async () => form.props.onSubmit({ preventDefault() {} }));
+
+    assert.deepEqual(data.calls.creates.map(({ name, description }) => ({ name, description })), [{
+      name: "Rukh launch",
+      description: "Use concise Bangla-first project updates.",
+    }]);
+    assert.ok(tree.root.findAllByType("h1").some(item => item.children.includes("Rukh launch")));
+  }, value => createModes.push(value));
+  assert.ok(createModes.includes(true));
+  assert.equal(createModes[createModes.length - 1], false);
 });
 
 test("a disabled Projects backend does not show a misleading create-project empty state", async () => {

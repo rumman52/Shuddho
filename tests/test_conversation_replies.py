@@ -10,6 +10,7 @@ from services.coworker.conversation_replies import ConversationReplyService, bui
 from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
 from services.coworker.errors import CoworkerError
 from services.coworker.models import ConversationMessage, DailyUsage, ProviderLease
+from services.coworker.project_schemas import ProjectCreate, ProjectLink
 from sqlalchemy import select
 
 class Model:
@@ -100,6 +101,82 @@ def test_context_is_bounded_and_preserves_latest_user_message():
     assert len(json.dumps(messages, ensure_ascii=False).encode()) <= 32000
     assert messages[-1] == {"role": "user", "content": "নতুন প্রশ্ন"}
     assert truncated
+
+def link_project_for_reply(container, data, description="Use concise Bangla-first project updates."):
+    service, _, owner, conversation, _ = data
+    settings = replace(service.settings, projects_enabled=True)
+    service.settings = settings
+    container.projects.settings = settings
+    project, _ = container.projects.create(
+        owner,
+        ProjectCreate(name="Rukh launch", description=description),
+        "project-chat-key",
+    )
+    container.projects.link(
+        owner,
+        project["id"],
+        ProjectLink(
+            resource_type="conversation",
+            resource_id=conversation["id"],
+            expected_revision=1,
+        ),
+    )
+    return project
+
+
+def test_project_reply_uses_saved_instructions_for_a_linked_conversation(container):
+    data = setup(container)
+    service, model, owner, conversation, message = data
+    project = link_project_for_reply(container, data)
+
+    result = asyncio.run(service.reply(
+        owner, conversation["id"], message["id"], 1, project["id"],
+    ))
+
+    assert result["state"] == "completed"
+    system_message = model.history[0]
+    assert system_message["role"] == "system"
+    assert "Project name: Rukh launch" in system_message["content"]
+    assert "Use concise Bangla-first project updates." in system_message["content"]
+    assert "no tools, live web access, file contents" in system_message["content"]
+    assert model.calls == 1
+
+
+def test_project_reply_rejects_an_unlinked_project_before_model_inference(container):
+    data = setup(container)
+    service, model, owner, conversation, message = data
+    settings = replace(service.settings, projects_enabled=True)
+    service.settings = settings
+    container.projects.settings = settings
+    project, _ = container.projects.create(
+        owner, ProjectCreate(name="Unlinked project"), "unlinked-project-key",
+    )
+
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(service.reply(
+            owner, conversation["id"], message["id"], 1, project["id"],
+        ))
+
+    assert error.value.status_code == 404
+    assert model.calls == 0
+
+
+def test_project_reply_route_passes_owner_verified_project_context(container, signed_client):
+    data = setup(container)
+    service, model, owner, conversation, message = data
+    project = link_project_for_reply(container, data)
+    client, headers = signed_client
+    path = f'/api/v1/conversations/{conversation["id"]}/messages/{message["id"]}/reply'
+
+    response = client.post(
+        path,
+        json={"expected_sequence": 1, "project_id": project["id"]},
+        headers=headers(),
+    )
+
+    assert response.status_code == 200
+    assert "Project name: Rukh launch" in model.history[0]["content"]
+
 
 def test_public_reply_route_is_owned_and_not_cacheable(container, signed_client):
     data = setup(container); client, headers = signed_client

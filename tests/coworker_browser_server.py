@@ -42,9 +42,13 @@ folder.mkdir(parents=True, exist_ok=True)
 issuer = "https://identity.example.test/auth/v1"
 settings = Settings(database_url=f"sqlite:///{folder / 'browser.sqlite3'}", auth_issuer=issuer,
                     environment="development", storage_backend="local", local_storage_path=folder / "files", work_services_enabled=True,
-                    artifact_services_enabled=True, research_services_enabled=True, search_api_key="fixture-only-search-key")
+                    artifact_services_enabled=True, research_services_enabled=True, search_api_key="fixture-only-search-key",
+                    conversations_enabled=True, projects_enabled=True, conversation_replies_enabled=True,
+                    deepseek_api_key="browser-fixture-only-chat-key")
 upgrade(settings.database_url)
 container = Container.create(settings)
+chat_model = BrowserChatModel()
+container.conversation_replies.model = chat_model
 google_fixture = enable_actions(container)
 settings = replace(
     container.settings,
@@ -57,6 +61,9 @@ settings = replace(
 settings.validate()
 container.settings = settings
 container.repository.settings = settings
+container.projects.settings = settings
+container.conversations.settings = settings
+container.conversation_replies.settings = settings
 container.actions.repo.settings = settings
 container.agent.settings = settings
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -72,6 +79,15 @@ for subject in ["alice", "bob"]:
     sessions[subject] = {"access_token": token, "refresh_token": "test-only-refresh-" + subject, "token_type": "bearer", "expires_in": 3600, "expires_at": now + 3600, "user": user}
 (folder / "sessions.json").write_text(json.dumps(sessions))
 (folder / "sessions.json").chmod(0o600)
+
+
+class BrowserChatModel:
+    def __init__(self):
+        self.messages = []
+
+    async def generate(self, messages):
+        self.messages = messages
+        return "This reply used the project instructions."
 
 
 class BrowserModel(FakeModel):
@@ -142,6 +158,11 @@ mount(app, container)
 @app.get("/health")
 def health():
     return {"status": "ok", "fixture": True}
+
+
+@app.get("/fixture/chat/context")
+def chat_context():
+    return {"messages": chat_model.messages}
 
 
 @app.get("/fixture/actions/counts")
