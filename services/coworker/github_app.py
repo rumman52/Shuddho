@@ -673,6 +673,7 @@ class GitHubAppService:
             revision = project.revision
             installation = self._installation(db, owner, installation_record_id)
             installation_id = installation.installation_id
+            github_user_id = installation.github_user_id
         if revision != expected_revision:
             raise CoworkerError("project_revision_conflict", "This project changed elsewhere. Refresh and review it before connecting a repository.", 409)
         access_token = self._user_token(owner, installation_record_id)
@@ -718,10 +719,10 @@ class GitHubAppService:
                 row.active = True
                 row.updated_at = utcnow()
             ConversationRepository._audit(db, owner, project_id, "github.repository_connected")
-            return self._binding_dto(row)
+            return self._binding_dto(row, github_user_id)
 
     @staticmethod
-    def _binding_dto(row):
+    def _binding_dto(row, github_user_id: int | None = None):
         permissions = dict(row.permissions or {})
         app_permissions = dict(permissions.get("app") or {})
         repository_permissions = dict(permissions.get("repository") or {})
@@ -731,6 +732,7 @@ class GitHubAppService:
             "id": row.id,
             "project_id": row.project_id,
             "installation_record_id": row.installation_record_id,
+            "github_user_id": github_user_id,
             "repository_id": row.repository_id,
             "full_name": row.full_name,
             "default_branch": row.default_branch,
@@ -752,14 +754,14 @@ class GitHubAppService:
             ))
             if row is None:
                 return {"repository": None}
-            installation_active = db.scalar(select(GitHubInstallation.id).where(
+            installation = db.scalar(select(GitHubInstallation).where(
                 GitHubInstallation.id == row.installation_record_id,
                 GitHubInstallation.owner_id == owner,
                 GitHubInstallation.active.is_(True),
             ))
-            if installation_active is None:
+            if installation is None:
                 return {"repository": None}
-            return {"repository": self._binding_dto(row)}
+            return {"repository": self._binding_dto(row, installation.github_user_id)}
 
     def _revoke_user_grant(self, access_token: str, refresh_token: str | None = None):
         if not self.settings.github_app_client_id or not self.settings.github_app_client_secret:
@@ -947,7 +949,7 @@ class GitHubAppService:
                 raise not_found()
             installation = self._installation(db, owner, row.installation_record_id)
             return {
-                "binding": self._binding_dto(row),
+                "binding": self._binding_dto(row, installation.github_user_id),
                 "installation_id": installation.installation_id,
                 "installation_record_id": installation.id,
             }
