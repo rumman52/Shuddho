@@ -689,6 +689,25 @@ class GitHubAppService:
                 return {"repository": None}
             return {"repository": self._binding_dto(row)}
 
+    def disconnect_installation(self, owner: str, installation_record_id: str):
+        with self.sessions.begin() as db:
+            ConversationRepository._lock_account(db, owner)
+            installation = db.scalar(select(GitHubInstallation).where(
+                GitHubInstallation.id == installation_record_id,
+                GitHubInstallation.owner_id == owner,
+            ).with_for_update())
+            if installation is None:
+                raise not_found()
+            installation.active = False
+            installation.user_token_bundle_ciphertext = ""
+            installation.updated_at = utcnow()
+            db.execute(update(GitHubRepositoryBinding).where(
+                GitHubRepositoryBinding.installation_record_id == installation_record_id,
+                GitHubRepositoryBinding.owner_id == owner,
+            ).values(active=False, updated_at=utcnow()))
+            ConversationRepository._audit(db, owner, installation_record_id, "github.installation_disconnected")
+        return {"message": "GitHub authorization and all repository bindings for this installation were disconnected."}
+
     def disconnect_repository(self, owner: str, project_id: str):
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
@@ -724,9 +743,9 @@ class GitHubAppService:
         self._enabled()
         bound = self._bound(owner, project_id)
         binding = bound["binding"]
-        token = self._installation_token(
-            bound["installation_id"], binding["repository_id"],
-        )
+        if not binding["can_read_contents"]:
+            raise CoworkerError("github_contents_permission_missing", "The connected GitHub user and App do not have repository read access.", 403)
+        token = self._user_token(owner, bound["installation_record_id"])
         full_name = binding["full_name"]
         branch = quote(binding["default_branch"], safe="")
         ref = self._api(
@@ -780,9 +799,9 @@ class GitHubAppService:
         path = safe_repository_path(path)
         bound = self._bound(owner, project_id)
         binding = bound["binding"]
-        token = self._installation_token(
-            bound["installation_id"], binding["repository_id"],
-        )
+        if not binding["can_read_contents"]:
+            raise CoworkerError("github_contents_permission_missing", "The connected GitHub user and App do not have repository read access.", 403)
+        token = self._user_token(owner, bound["installation_record_id"])
         full_name = binding["full_name"]
         branch = quote(binding["default_branch"], safe="")
         ref = self._api("GET", f"/repos/{full_name}/git/ref/heads/{branch}", token)
