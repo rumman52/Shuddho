@@ -343,6 +343,15 @@ class GitHubAppService:
                 return values
         raise CoworkerError("github_installation_limit", "This GitHub account has too many App installations to verify safely.", 413)
 
+    def _reset_install_attempt(self, owner: str, attempt_id: str):
+        with self.sessions.begin() as db:
+            row = db.scalar(select(GitHubConnectAttempt).where(
+                GitHubConnectAttempt.id == attempt_id,
+                GitHubConnectAttempt.owner_id == owner,
+            ).with_for_update())
+            if row is not None and row.stage == "install_processing" and row.expires_at > utcnow():
+                row.stage = "awaiting_install"
+
     def complete_install(self, owner: str, state: str, installation_id: int):
         self._enabled()
         if not isinstance(state, str) or not 32 <= len(state) <= 256 or type(installation_id) is not int or installation_id <= 0:
@@ -366,25 +375,28 @@ class GitHubAppService:
             row.stage = "install_processing"
             attempt_id, project_id = row.id, row.project_id
             github_user_id, github_login = row.github_user_id, row.github_login
-        # GitHub explicitly warns that installation_id on a setup URL can be
-        # spoofed. Verify it against this exact user's accessible installations.
-        installations = self._user_installations(access_token)
-        selected = next((item for item in installations if item.get("id") == installation_id), None)
-        if selected is None or selected.get("app_id") != int(self.settings.github_app_id):
-            with self.sessions.begin() as db:
-                row = db.get(GitHubConnectAttempt, attempt_id)
-                if row is not None and row.owner_id == owner:
-                    row.stage = "awaiting_install"
-            raise CoworkerError("github_install_not_owned", "This GitHub installation is not accessible to the GitHub account you just connected.", 403)
-        if selected.get("suspended_at"):
-            raise CoworkerError("github_install_suspended", "This GitHub App installation is suspended.", 409)
-        account = selected.get("account") or {}
-        account_id, account_login, account_type = account.get("id"), account.get("login"), account.get("type")
-        if type(account_id) is not int or not isinstance(account_login, str) or account_type not in {"User", "Organization", "Enterprise"}:
-            raise CoworkerError("github_response_invalid", "GitHub returned an invalid installation owner.", 502)
-        permissions = selected.get("permissions") or {}
-        if not isinstance(permissions, dict) or permissions.get("contents") not in {"read", "write"}:
-            raise CoworkerError("github_contents_permission_missing", "The GitHub App installation needs repository Contents: read permission.", 403)
+        try:
+            # GitHub explicitly warns that installation_id on a setup URL can
+            # be spoofed. Verify it against this exact user's accessible installations.
+            installations = self._user_installations(access_token)
+            selected = next((item for item in installations if item.get("id") == installation_id), None)
+            if selected is None or selected.get("app_id") != int(self.settings.github_app_id):
+                raise CoworkerError("github_install_not_owned", "This GitHub installation is not accessible to the GitHub account you just connected.", 403)
+            if selected.get("suspended_at"):
+                raise CoworkerError("github_install_suspended", "This GitHub App installation is suspended.", 409)
+            account = selected.get("account") or {}
+            account_id, account_login, account_type = account.get("id"), account.get("login"), account.get("type")
+            if type(account_id) is not int or not isinstance(account_login, str) or account_type not in {"User", "Organization", "Enterprise"}:
+                raise CoworkerError("github_response_invalid", "GitHub returned an invalid installation owner.", 502)
+            permissions = selected.get("permissions") or {}
+            if not isinstance(permissions, dict) or permissions.get("contents") not in {"read", "write"}:
+                raise CoworkerError("github_contents_permission_missing", "The GitHub App installation needs repository Contents: read permission.", 403)
+            # Prove the installation can issue a bounded read token and list
+            # repositories before persisting the connection as active.
+            repositories = self._list_repositories_for_installation(installation_id)
+        except Exception:
+            self._reset_install_attempt(owner, attempt_id)
+            raise
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
             attempt = db.scalar(select(GitHubConnectAttempt).where(
@@ -428,10 +440,11 @@ class GitHubAppService:
             attempt.state_hash = _sha(secrets.token_urlsafe(32))
             attempt.expires_at = utcnow()
             installation_record_id = existing.id
+            installation_dto = self._installation_dto(existing)
             ConversationRepository._audit(db, owner, project_id, "github.installation_connected")
         return {
-            "installation": self._installation_dto(existing),
-            "repositories": self.list_repositories(owner, installation_record_id),
+            "installation": installation_dto,
+            "repositories": repositories,
         }
 
     @staticmethod
@@ -580,7 +593,6 @@ class GitHubAppService:
             return {"repository": self._binding_dto(row)}
 
     def disconnect_repository(self, owner: str, project_id: str):
-        self._enabled()
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
             self._project(db, owner, project_id)
@@ -691,7 +703,7 @@ class GitHubAppService:
         if type(size) is not int or size < 0 or size > self.settings.github_max_file_bytes or not isinstance(encoded, str):
             raise CoworkerError("github_file_too_large", "This repository file exceeds Fly's safe context limit.", 413)
         try:
-            raw = base64.b64decode(encoded, validate=True)
+            raw = base64.b64decode("".join(encoded.split()), validate=True)
             text = raw.decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             raise CoworkerError("github_file_not_text", "This repository file is not valid UTF-8 text.", 415) from None
