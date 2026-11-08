@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import timedelta
+from pathlib import PurePath
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -19,7 +20,7 @@ from .conversation_context import require_current_selected_sources
 from .errors import CoworkerError
 from .models import (
     Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, Conversation,
-    ConversationMessage, Workspace, utcnow,
+    Artifact, ConversationMessage, Project, ProjectResource, Workspace, utcnow,
 )
 from .repository import iso, not_found
 
@@ -63,8 +64,49 @@ class ConversationDispatchService:
             raise not_found()
         return row
 
+    @staticmethod
+    def _dispatch_fingerprint(request: AgentRunCreate, selected_sources: list[dict], project_context: dict) -> str:
+        sources = [{
+            "resource_type": item.get("resource_type"),
+            "resource_id": item.get("resource_id"),
+            "document_id": item.get("document_id"),
+            "version": item.get("version"),
+            "sha256": item.get("sha256"),
+        } for item in selected_sources]
+        payload = {
+            "request": request.model_dump(mode="json"),
+            "selected_sources": sources,
+            "project_context": project_context or {},
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    def _project_snapshot(self, db, owner: str, conversation_id: str, project_id: str | None) -> dict:
+        if project_id is None:
+            return {}
+        if not self.settings.projects_enabled:
+            raise CoworkerError("projects_unavailable", "Project context is not available in this workspace.", 409)
+        project = db.scalar(select(Project).where(
+            Project.id == project_id,
+            Project.owner_id == owner,
+            Project.deleted.is_(False),
+        ).with_for_update())
+        linked = db.scalar(select(ProjectResource.project_id).where(
+            ProjectResource.project_id == project_id,
+            ProjectResource.owner_id == owner,
+            ProjectResource.resource_type == "conversation",
+            ProjectResource.resource_id == conversation_id,
+        ))
+        if project is None or linked is None:
+            raise not_found()
+        return {
+            "project_id": project.id,
+            "name": project.name,
+            "revision": project.revision,
+            "instructions": project.description or "",
+        }
+
     def dispatch(self, owner: str, conversation_id: str, message_id: str, *, expected_sequence: int,
-                 output_language: str = "auto") -> tuple[dict, bool]:
+                 output_language: str = "auto", project_id: str | None = None) -> tuple[dict, bool]:
         """Commit message link, run, initial event/checkpoint and outbox together."""
         self._enabled()
         if expected_sequence < 1:
@@ -83,10 +125,23 @@ class ConversationDispatchService:
                 if run is None:
                     raise CoworkerError("conversation_run_missing", "The linked run is unavailable.", 409)
                 replay_request = AgentRunCreate(goal=message.text, output_language=output_language)
-                fingerprint = hashlib.sha256(json.dumps(
+                saved_project_context = dict(run.project_context or {})
+                requested_project_id = saved_project_context.get("project_id")
+                if (str(project_id) if project_id is not None else None) != requested_project_id:
+                    raise CoworkerError(
+                        "idempotency_conflict", "This message was dispatched with different project context.", 409,
+                    )
+                fingerprint = self._dispatch_fingerprint(
+                    replay_request, message.selected_sources or [], saved_project_context,
+                )
+                legacy_fingerprint = hashlib.sha256(json.dumps(
                     replay_request.model_dump(mode="json"), sort_keys=True,
                 ).encode()).hexdigest()
-                if run.fingerprint != fingerprint:
+                if run.fingerprint != fingerprint and not (
+                    run.fingerprint == legacy_fingerprint
+                    and not saved_project_context
+                    and not list(getattr(run, "input_artifacts", []) or [])
+                ):
                     raise CoworkerError(
                         "idempotency_conflict", "This message was dispatched with different options.", 409,
                     )
@@ -107,13 +162,37 @@ class ConversationDispatchService:
                     409,
                 )
             pins = require_current_selected_sources(db, owner, message.selected_sources or [])
-            if any(pin["resource_type"] != "document_version" for pin in pins):
-                raise CoworkerError(
-                    "conversation_source_unsupported",
-                    "This Agent run supports selected documents only. Remove other attachments.", 409,
-                )
             if len(pins) > 5:
-                raise CoworkerError("conversation_source_limit", "Select at most five documents.", 409)
+                raise CoworkerError("conversation_source_limit", "Select at most five sources.", 409)
+            document_pins = [pin for pin in pins if pin["resource_type"] == "document_version"]
+            artifact_pins = [pin for pin in pins if pin["resource_type"] == "artifact"]
+            runtime_version = (3 if self.settings.agent_runtime_v3_enabled else 2 if (
+                self.settings.agent_dependency_graph_enabled and
+                self.settings.agent_parallel_execution_enabled
+            ) else 1)
+            if artifact_pins:
+                if runtime_version != 3 or not self.settings.context_retrieval_enabled:
+                    raise CoworkerError(
+                        "conversation_artifact_context_unavailable",
+                        "Generated artifacts require Agent Runtime v3 with context retrieval enabled.",
+                        409,
+                    )
+                supported_extensions = {"txt", "docx", "pdf", "csv", "xlsx", "pptx"}
+                for pin in artifact_pins:
+                    extension = PurePath(str(pin.get("filename") or "")).suffix.lower().lstrip(".")
+                    if extension not in supported_extensions:
+                        raise CoworkerError(
+                            "context_source_unsupported",
+                            "This generated artifact format cannot be safely extracted as Agent context.",
+                            409,
+                        )
+                    if int(pin.get("byte_size", 0)) < 1 or int(pin["byte_size"]) > self.settings.max_upload_bytes:
+                        raise CoworkerError(
+                            "context_source_too_large",
+                            "A selected generated artifact exceeds the supported context size.",
+                            409,
+                        )
+            project_context = self._project_snapshot(db, owner, conversation_id, project_id)
             if db.scalar(select(func.count()).select_from(AgentRun).where(
                 AgentRun.owner_id == owner, AgentRun.state.in_(ACTIVE_RUN_STATES),
             )) >= self.settings.max_active_agent_runs:
@@ -124,20 +203,19 @@ class ConversationDispatchService:
             # AgentRepository.create uses the same owner lock and run/outbox contracts.
             # This method does not open a second transaction or invoke that method.
             run_id = str(uuid4())
-            payload = request.model_dump(mode="json")
-            fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+            fingerprint = self._dispatch_fingerprint(request, pins, project_context)
             now = utcnow()
             run = AgentRun(
                 id=run_id, owner_id=owner, workspace_id=workspace_id,
                 idempotency_key="conversation:" + message.id, fingerprint=fingerprint,
                 goal=request.goal, output_language=request.output_language,
-                input_versions=[pin["resource_id"] for pin in pins],
+                input_versions=[pin["resource_id"] for pin in document_pins],
+                input_artifacts=[pin["resource_id"] for pin in artifact_pins],
+                project_context=project_context,
+                steering_revision=0, steering_instructions=[],
                 action_ids=[], memory_namespaces=[], connector_read_grant_ids=[],
                 connector_snapshot_ids=[], tool_allowlist=[],
-                runtime_version=(3 if self.settings.agent_runtime_v3_enabled else 2 if (
-                    self.settings.agent_dependency_graph_enabled and
-                    self.settings.agent_parallel_execution_enabled
-                ) else 1),
+                runtime_version=runtime_version,
                 state="queued", phase="planning",
                 message="Conversation work accepted; awaiting the bounded Agent runtime.",
                 deadline_at=now + timedelta(seconds=self.settings.agent_run_timeout_seconds),
@@ -192,6 +270,78 @@ class ConversationDispatchService:
                 )
             self.agent.cancel_in_session(db, owner, run.id)
             return {"run_id": run.id, "state": run.state, "event_sequence": run.event_sequence}
+
+    def steer(self, owner: str, conversation_id: str, message_id: str, *,
+              expected_sequence: int, expected_steering_revision: int, instruction: str) -> dict:
+        """Append one revision-bound instruction to one active Runtime v3 run."""
+        self._enabled()
+        instruction = instruction.strip() if isinstance(instruction, str) else ""
+        if not instruction or len(instruction) > 4000:
+            raise CoworkerError("agent_steering_invalid", "Use an instruction of 1 to 4000 characters.", 422)
+        with self.sessions.begin() as db:
+            self._lock_account(db, owner)
+            conversation = self._conversation(db, owner, conversation_id)
+            message = self._message(db, owner, conversation_id, message_id)
+            if conversation.message_sequence != expected_sequence:
+                raise CoworkerError(
+                    "conversation_revision_conflict", "The conversation changed. Reload before steering.", 409,
+                )
+            links = [link for link in (message.resource_links or [])
+                     if isinstance(link, dict) and link.get("resource_type") == "agent_run"]
+            if len(links) != 1:
+                raise CoworkerError("conversation_run_missing", "This message has no linked Agent run.", 409)
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == links[0].get("resource_id"),
+                AgentRun.owner_id == owner,
+            ).with_for_update())
+            if run is None:
+                raise not_found()
+            if run.runtime_version != 3:
+                raise CoworkerError(
+                    "agent_steering_unavailable",
+                    "Live steering is supported by Agent Runtime v3 runs only.",
+                    409,
+                )
+            if run.state not in {"queued", "planning", "running"} or run.cancel_requested:
+                raise CoworkerError(
+                    "agent_run_closed",
+                    "This Agent run cannot accept new instructions in its current state.",
+                    409,
+                )
+            if run.steering_revision != expected_steering_revision:
+                raise CoworkerError(
+                    "agent_steering_revision_conflict",
+                    "Agent instructions changed. Refresh the task before steering again.",
+                    409,
+                )
+            history = list(run.steering_instructions or [])
+            if len(history) >= 20 or sum(
+                len(str(item.get("instruction", "")).encode("utf-8")) for item in history
+            ) + len(instruction.encode("utf-8")) > 12000:
+                raise CoworkerError(
+                    "agent_steering_limit",
+                    "This task has reached its bounded instruction history limit.",
+                    429,
+                )
+            revision = run.steering_revision + 1
+            history.append({
+                "revision": revision,
+                "instruction": instruction,
+                "created_at": iso(utcnow()),
+            })
+            run.steering_instructions = history
+            run.steering_revision = revision
+            self.agent._event(
+                db, run, run.state, run.phase,
+                "A new user instruction is queued for the next planning checkpoint.",
+            )
+            self.agent._audit(db, owner, run.id, "agent_run_steered")
+            return {
+                "run_id": run.id,
+                "state": run.state,
+                "steering_revision": run.steering_revision,
+                "event_sequence": run.event_sequence,
+            }
 
     @staticmethod
     def _activity_cursor(owner: str, conversation_id: str, sequence: int) -> str:
@@ -287,6 +437,8 @@ class ConversationDispatchService:
                                   "run_id": run.id, "state": run.state, "phase": run.phase,
                                   "cancel_requested": run.cancel_requested,
                                   "event_sequence": run.event_sequence,
+                                  "steering_revision": run.steering_revision,
+                                  "runtime_version": run.runtime_version,
                                   "updated_at": iso(run.updated_at),
                                   "detail": event.message if event is not None else run.message})
             return {
