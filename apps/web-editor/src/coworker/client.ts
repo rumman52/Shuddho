@@ -521,7 +521,7 @@ export class CoworkerClient {
   }
   async replyToConversationMessageStream(
     id: string, messageId: string, sequence: number,
-    onUpdate: (reply: AssistantReply) => void, signal?: AbortSignal,
+    onUpdate: (reply: AssistantReply) => void, signal?: AbortSignal, projectId?: string,
   ): Promise<AssistantReply> {
     const response = await this.response(
       `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply/stream`,
@@ -529,7 +529,7 @@ export class CoworkerClient {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
         signal,
-        body: JSON.stringify({ expected_sequence: sequence }),
+        body: JSON.stringify({ expected_sequence: sequence, ...(projectId ? { project_id: identifier(projectId) } : {}) }),
       },
       75000,
     );
@@ -618,10 +618,10 @@ export class CoworkerClient {
     }
   }
 
-  async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal) {
+  async replyToConversationMessage(id: string, messageId: string, sequence: number, signal?: AbortSignal, projectId?: string) {
     return (await this.response(`/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/reply`, {
       method: "POST", headers: { "Content-Type": "application/json" }, signal,
-      body: JSON.stringify({ expected_sequence: sequence }),
+      body: JSON.stringify({ expected_sequence: sequence, ...(projectId ? { project_id: identifier(projectId) } : {}) }),
     }, 75000)).json() as Promise<AssistantReply>;
   }
   workspaceManifest(signal?: AbortSignal) {

@@ -27,7 +27,10 @@ function updatedLabel(value: string) {
 
 type ProjectTab = "overview" | "chats" | "files";
 
-export default function ProjectWorkspace({ client }: { client: CoworkerClient }) {
+export default function ProjectWorkspace({ client, onCreateModeChange }: {
+  client: CoworkerClient;
+  onCreateModeChange?: (creating: boolean) => void;
+}) {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [chats, setChats] = useState<ConversationRecord[]>([]);
@@ -58,6 +61,11 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [client, revision]);
+
+  useEffect(() => {
+    onCreateModeChange?.(editing && !project);
+    return () => onCreateModeChange?.(false);
+  }, [editing, project, onCreateModeChange]);
 
   async function open(id: string) {
     const current = ++sequence.current;
@@ -288,8 +296,27 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
     </div>
   </section> : null;
 
-  return <section className="rukh-designed-page rukh-projects-page" aria-label="Projects">
-    {!project ? <>
+  return <section className="rukh-designed-page rukh-projects-page" aria-label={editing && !project ? "New project form" : "Projects"}>
+    {editing && !project ? <div className="rukh-project-create-page" aria-label="New project form">
+      <form className="rukh-project-create-form" onSubmit={save}>
+        <h2 id="rukh-project-create-title">Create a project</h2>
+        <p id="rukh-project-create-description">Keep related chats and files together.</p>
+        {error && <div className="cw-error" role="alert">{error}</div>}
+        <label htmlFor="rukh-project-create-name">Project name
+          <input id="rukh-project-create-name" aria-label="Project name" autoFocus maxLength={100} required
+            value={name} onChange={event => setName(event.target.value)} disabled={busy} placeholder="Rukh launch" />
+        </label>
+        <label htmlFor="rukh-project-create-instructions">Instructions · optional
+          <textarea id="rukh-project-create-instructions" aria-label="Project instructions" maxLength={2000} rows={4}
+            value={description} onChange={event => setDescription(event.target.value)} disabled={busy}
+            placeholder="What should Rukh know about this project?" />
+        </label>
+        <div className="rukh-project-create-actions">
+          <button className="cw-secondary" type="button" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+          <button className="cw-primary" type="submit" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create project"}</button>
+        </div>
+      </form>
+    </div> : !project ? <>
       <header className="rukh-page-heading rukh-projects-heading">
         <div>
           <h1>Projects</h1>
@@ -414,14 +441,14 @@ export default function ProjectWorkspace({ client }: { client: CoworkerClient })
         </div>
       </section>
     </div>}
-    {editing && <div className="rukh-project-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setEditing(false); }}>
+    {editing && project && <div className="rukh-project-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setEditing(false); }}>
       <section className="rukh-project-dialog" role="dialog" aria-modal="true" aria-labelledby="rukh-project-dialog-title" onKeyDown={event => { if (event.key === "Escape" && !busy) setEditing(false); }}>
         <form className="rukh-project-form" onSubmit={save}>
           <span className="rukh-project-eyebrow">{project ? "PROJECT SETTINGS" : "NEW PROJECT"}</span>
           <h2 id="rukh-project-dialog-title">{project ? "Edit project" : "Create a new project"}</h2>
           <p className="rukh-project-dialog-description">Give this workspace a clear name and a short description so it is easy to find later.</p>
           <label>Project name<input autoFocus aria-label="Project name" maxLength={100} required value={name} onChange={event => setName(event.target.value)} disabled={busy} placeholder="e.g. Website redesign" /></label>
-          <label>Description<textarea aria-label="Project description" maxLength={2000} rows={4} value={description} onChange={event => setDescription(event.target.value)} disabled={busy} placeholder="What are you working on?" /></label>
+          <label>Instructions · optional<textarea aria-label="Project instructions" maxLength={2000} rows={4} value={description} onChange={event => setDescription(event.target.value)} disabled={busy} placeholder="What should Rukh know about this project?" /></label>
           <p className="rukh-project-privacy-note">Only you can access this project. Linking a file or conversation does not authorize an Agent to read or act on it.</p>
           <div className="rukh-project-dialog-actions">
             <button className="cw-secondary" type="button" disabled={busy} onClick={() => setEditing(false)}>Cancel</button>

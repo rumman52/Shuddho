@@ -47,8 +47,6 @@ settings = Settings(database_url=f"sqlite:///{folder / 'browser.sqlite3'}", auth
                     deepseek_api_key="browser-fixture-only-chat-key")
 upgrade(settings.database_url)
 container = Container.create(settings)
-chat_model = BrowserChatModel()
-container.conversation_replies.model = chat_model
 google_fixture = enable_actions(container)
 settings = replace(
     container.settings,
@@ -88,6 +86,10 @@ class BrowserChatModel:
     async def generate(self, messages):
         self.messages = messages
         return "This reply used the project instructions."
+
+
+chat_model = BrowserChatModel()
+container.conversation_replies.model = chat_model
 
 
 class BrowserModel(FakeModel):

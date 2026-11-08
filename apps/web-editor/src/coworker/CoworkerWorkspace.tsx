@@ -83,6 +83,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   onInitialDraftChange?: (draft: string) => void;
 }) {
   const [newChatRevision, setNewChatRevision] = useState(0);
+  const [projectCreateMode, setProjectCreateMode] = useState(false);
   const [view, setView] = useState<CoworkerView>(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
     // An explicit Fly deep link wins over a saved, unsent Coworker draft.
@@ -316,7 +317,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   return <main className={`cw-workspace rukh-cw-workspace${view === "conversations" ? " rukh-cw-chat" : " rukh-cw-sections"}`}>
     <header className="cw-header"><button ref={navigationTriggerRef} className="rukh-mobile-nav-trigger" type="button"
       aria-label="Open workspace navigation" aria-controls="rukh-cw-sidebar" aria-expanded={navigationOpen}
-      onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div><span className="cw-eyebrow">{view === "sandbox" ? "RUKH AI / FLY" : "RUKH AI / COWORKER"}</span><h1>{view === "conversations" ? "What are we working on?" : ({ projects: "Projects", library: "Files", settings: "Settings", actions: "Plugins", goals: "Goals", automations: "Automations", drafts: "Files & drafts", agent: "Agent activity", browser: "Browser", sandbox: "Fly", transactions: "Transactions", negotiations: "Negotiations" } as Record<string, string>)[view]}</h1><p>{view === "sandbox" ? "A dedicated coding environment with a multi-file explorer, source editor, isolated runtime output and Rukh Agent handoff. Repository write access and additional runtimes are not connected yet." : "A persistent workspace for conversations, focused work and connected tools."}</p>{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
+      onClick={() => setNavigationOpen(true)}><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg></button><div>{!(view === "projects" && projectCreateMode) && <span className="cw-eyebrow">{view === "sandbox" ? "RUKH AI / FLY" : "RUKH AI / COWORKER"}</span>}<h1>{view === "projects" && projectCreateMode ? "New project" : view === "conversations" ? "What are we working on?" : ({ projects: "Projects", library: "Files", settings: "Settings", actions: "Plugins", goals: "Goals", automations: "Automations", drafts: "Files & drafts", agent: "Agent activity", browser: "Browser", sandbox: "Fly", transactions: "Transactions", negotiations: "Negotiations" } as Record<string, string>)[view]}</h1>{!(view === "projects" && projectCreateMode) && <p>{view === "sandbox" ? "A dedicated coding environment with a multi-file explorer, source editor, isolated runtime output and Rukh Agent handoff. Repository write access and additional runtimes are not connected yet." : "A persistent workspace for conversations, focused work and connected tools."}</p>}{selected && <button className="cw-text-button cw-view-task" type="button" onClick={viewTask}>View current task <span aria-hidden="true">↓</span></button>}</div>
       <details className="rukh-section-context">
         <summary className="rukh-design-context" aria-label="Activity and context"><span>Activity &amp; context</span><NavigationIcon name="sliders" /></summary>
         <div className="rukh-section-context-panel" role="region" aria-label="Activity and context details">
@@ -357,7 +358,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
       <section className="rukh-cw-content" aria-label={view === "sandbox" ? "Fly workspace" : "Coworker workspace"}>
     {view === "library" && <FilesWorkspace client={client} />}
     {view === "settings" && <SettingsWorkspace client={client} email={email} />}
-    {view === "projects" && <ProjectWorkspace client={client} />}
+    {view === "projects" && <ProjectWorkspace client={client} onCreateModeChange={setProjectCreateMode} />}
     {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); navigateView("agent"); }} openAutomations={() => navigateView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
