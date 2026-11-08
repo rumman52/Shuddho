@@ -166,3 +166,36 @@ def test_live_quality_requires_reviewed_positive_cost_rate():
             max_total_cost_microusd=100,
             cost_rate_microusd_per_1k_tokens=0,
         ))
+
+
+
+def test_live_quality_retains_known_tokens_when_latency_evidence_is_invalid(monkeypatch):
+    cases = loaded()[:1]
+
+    class FakeDraftModel:
+        def __init__(self, _settings, _skill_id):
+            pass
+
+        def messages(self, _request, _sources):
+            return [{"role": "user", "content": "synthetic evaluation"}]
+
+        async def generate(self, _messages, _language, _source_ids):
+            return SimpleNamespace(
+                draft=SimpleNamespace(model_dump=lambda: cases[0]["draft"]),
+                total_tokens=10,
+                latency_ms=-1,
+                generation_metadata=lambda **kwargs: {"model": "test-model", **kwargs},
+            )
+
+    monkeypatch.setattr(quality, "DeepSeekDraftModel", FakeDraftModel)
+    result = asyncio.run(evaluate_live(
+        cases,
+        max_total_tokens=1000,
+        max_total_cost_microusd=100,
+        cost_rate_microusd_per_1k_tokens=1000,
+    ))
+
+    assert result["token_usage_complete"] is True
+    assert result["total_tokens"] == 10
+    assert result["estimated_cost_microusd"] == 10
+    assert "invalid_latency_metadata" in result["budget_failures"]
