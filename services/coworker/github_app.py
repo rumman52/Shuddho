@@ -548,7 +548,7 @@ class GitHubAppService:
                     if has_access and access_expiry > now:
                         self._revoke_github_user_authorization_in_transaction(
                             db, owner, installation.github_user_id, access_token,
-                            "github.authorization_expired",
+                            "github.authorization_expired", refresh_token,
                         )
                     else:
                         self._deactivate_github_user_installations_in_transaction(
@@ -605,7 +605,7 @@ class GitHubAppService:
                         if isinstance(stale_access_token, str) and stale_access_token and access_expiry > now:
                             self._revoke_github_user_authorization_in_transaction(
                                 db, owner, row.github_user_id, stale_access_token,
-                                "github.authorization_expired",
+                                "github.authorization_expired", bundle.get("refresh_token"),
                             )
                         else:
                             self._deactivate_github_user_installations_in_transaction(
@@ -846,7 +846,7 @@ class GitHubAppService:
                 if isinstance(access_token, str) and access_token and access_expiry > now:
                     self._revoke_github_user_authorization_in_transaction(
                         db, owner, github_user_id, access_token,
-                        "github.authorization_revoked_for_account_erasure",
+                        "github.authorization_revoked_for_account_erasure", refresh_token,
                     )
                     provider_revoked = True
                     revoked += 1
@@ -860,7 +860,7 @@ class GitHubAppService:
                         raise
                     self._revoke_github_user_authorization_in_transaction(
                         db, owner, github_user_id, refreshed["access_token"],
-                        "github.authorization_revoked_for_account_erasure",
+                        "github.authorization_revoked_for_account_erasure", refreshed.get("refresh_token"),
                     )
                     provider_revoked = True
                     revoked += 1
@@ -903,9 +903,15 @@ class GitHubAppService:
             if target is None:
                 raise not_found()
             github_user_id = target.github_user_id
+            token_bundle = self._vault().open(
+                target.user_token_bundle_ciphertext,
+                owner + ":github-installation:" + target.id,
+            ) if target.user_token_bundle_ciphertext else {}
+            refresh_token = token_bundle.get("refresh_token")
             if access_token:
                 self._revoke_github_user_authorization_in_transaction(
                     db, owner, github_user_id, access_token, "github.authorization_disconnected",
+                    refresh_token if isinstance(refresh_token, str) else None,
                 )
             else:
                 self._deactivate_github_user_installations_in_transaction(
