@@ -211,6 +211,24 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
   const highlightedSource = useMemo(() => highlightSource(active?.content ?? "", active?.language ?? "text"), [active?.content, active?.language]);
   const previewDocument = useMemo(() => active?.language === "html" ? htmlPreviewDocument(active.content) : "", [active?.content, active?.language]);
   const runtimeLabel = runtimeLoading ? "Checking Python runtime" : runtimeEnabled ? "Python 3.11 available" : "Python runtime disabled";
+  useEffect(() => {
+    if (draftOwner === accountId) return;
+    reviewAttempt.current = null;
+    setDraft(readDraft(accountId));
+    setDraftOwner(accountId);
+    setSavedSnapshots({});
+    setSelectedProject("");
+    setRepositoryName("");
+    setActiveConversationId("");
+    setConversations([]);
+    setMessages([]);
+    setActivity([]);
+    setSession(null);
+    setExecutions([]);
+    setRunningExecutionId("");
+    setRuntimeError("");
+  }, [accountId, draftOwner]);
+
   const terminalOutput = latestExecution
     ? [latestExecution.result.stdout, latestExecution.result.stderr,
       latestExecution.result.exit_code === undefined ? "" : "Exit code: " + latestExecution.result.exit_code,
@@ -264,9 +282,10 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
   }, [files, repositoryName]);
 
   useEffect(() => {
+    if (draftOwner !== accountId) return;
     try { window.sessionStorage.setItem(storageKey(accountId), JSON.stringify(draft)); setStorageWarning(false); }
     catch { setStorageWarning(true); }
-  }, [accountId, draft]);
+  }, [accountId, draft, draftOwner]);
 
   useEffect(() => {
     const controller = new AbortController();
