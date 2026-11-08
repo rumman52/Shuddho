@@ -186,9 +186,9 @@ async def evaluate_live(
             if not usage_valid:
                 token_usage_complete=False
                 raise RuntimeError("token_usage_incomplete")
+            total_tokens+=tokens
             if not isinstance(x.latency_ms,int) or isinstance(x.latency_ms,bool) or x.latency_ms<0:
                 raise RuntimeError("invalid_latency_metadata")
-            total_tokens+=tokens
             y=score(c,x.draft.model_dump())
             y["tokens"]=tokens
             y["latency_ms"]=x.latency_ms
@@ -222,7 +222,8 @@ async def evaluate_live(
             out.append({
                 "id":c["id"],"skill_id":c["skill_id"],"language":c["language"],
                 "task_type":c["expected_task_type"],"passed":False,"model_error":str(e),
-                "tokens":None,"latency_ms":None,"facts_total":len(c["required_terms"]),
+                "tokens":tokens if isinstance(tokens,int) and not isinstance(tokens,bool) and tokens>=0 else None,
+                "latency_ms":None,"facts_total":len(c["required_terms"]),
                 "facts_matched":0,"checks":{"model_generation":False},
                 "generation":{
                     "provider":"deepseek","model":settings.deepseek_model,
