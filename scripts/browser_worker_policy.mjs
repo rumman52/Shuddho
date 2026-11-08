@@ -37,9 +37,10 @@ export function normalizedBaseUrl(value) {
   return url.toString().replace(/\/$/, "");
 }
 
-// Chromium must not apply its implicit localhost/loopback proxy bypass. The
-// browser may reach only the worker-owned loopback CONNECT proxy; the proxy
-// process performs DNS authorization and pins the approved public IP.
+// Chromium must not apply its implicit localhost/loopback proxy bypass. Its
+// HTTP(S) request path is forced through the worker-owned loopback CONNECT
+// proxy, which performs broker DNS authorization and pins the approved IP.
+// This application-level policy does not replace host/container egress rules.
 export function browserChromiumLaunchOptions(proxyUrl) {
   let proxy;
   try {

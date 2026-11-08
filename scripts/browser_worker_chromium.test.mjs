@@ -56,9 +56,13 @@ function makeProxy(fixture, validateHost, stats) {
   return createPinnedProxy(state, {
     validateHost,
     dial: ({ host, port }) => {
+      // Record before assertions: createPinnedProxy intentionally catches
+      // dial failures, so a private-IP dial attempt must remain observable.
+      stats.dials += 1;
+      stats.targets ||= [];
+      stats.targets.push({ host, port });
       assert.equal(host, "93.184.216.34", "only the approved public fixture IP may be dialed");
       assert.equal(port, 443);
-      stats.dials += 1;
       // The test-only dialer maps the synthetic public IP to a local TLS
       // fixture. Production always uses the actual broker-approved IP.
       return net.connect({ host: "127.0.0.1", port: fixture.port });
@@ -77,7 +81,7 @@ test("real Chromium sends loopback redirects through the pinned proxy and blocks
     });
     response.end("redirecting to a private destination");
   });
-  const stats = { dials: 0 };
+  const stats = { dials: 0, targets: [] };
   const checkedHosts = [];
   let browser;
   let proxy;
@@ -102,6 +106,7 @@ test("real Chromium sends loopback redirects through the pinned proxy and blocks
     );
     assert.deepEqual(checkedHosts, ["example.test", "localhost"]);
     assert.equal(stats.dials, 1, "the private redirect must be rejected before a second TCP dial");
+    assert.deepEqual(stats.targets, [{ host: "93.184.216.34", port: 443 }]);
     assert.deepEqual(created.state.evidence, {
       "example.test": ["93.184.216.34"],
     });
@@ -120,7 +125,7 @@ test("real Chromium revalidates a hostname after a public-to-private DNS answer 
     response.writeHead(200, { "Content-Type": "text/plain", Connection: "close" });
     response.end("public fixture response");
   });
-  const stats = { dials: 0 };
+  const stats = { dials: 0, targets: [] };
   let resolutionCount = 0;
   let browser;
   let proxy;
@@ -167,6 +172,7 @@ test("real Chromium revalidates a hostname after a public-to-private DNS answer 
     );
     assert.equal(resolutionCount, 2);
     assert.equal(stats.dials, 1, "the rebound private answer must not open another TCP connection");
+    assert.deepEqual(stats.targets, [{ host: "93.184.216.34", port: 443 }]);
     assert.deepEqual(created.state.evidence, {
       "rebind.test": ["93.184.216.34"],
     });

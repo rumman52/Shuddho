@@ -46,6 +46,6 @@
 
 ## Explicit qualification boundary
 
-This increment adds browser-process egress restrictions and real Chromium/proxy integration tests. It does **not** prove kernel-enforced network namespace isolation, host/container firewall policy, live DNS resolver behavior, real CNAME rebinding, deployed worker identity, S3 deletion behavior, or protected-staging rollback. Those require an operated protected staging worker and independently captured evidence.
+This increment adds Chromium-level proxy, resolver, request-target and transport restrictions plus real Chromium/proxy integration tests. It does **not** prove kernel-enforced network namespace isolation, host/container firewall policy, live DNS resolver behavior, real CNAME rebinding, deployed worker identity, S3 deletion behavior, or protected-staging rollback. Those require an operated protected staging worker and independently captured evidence.
 
 Do not mark CW-09 production-qualified or enable `agent_browser_read` from these repository tests alone. Do not merge, deploy or activate automatically. Rollback is limited to reverting this review-branch commit.
