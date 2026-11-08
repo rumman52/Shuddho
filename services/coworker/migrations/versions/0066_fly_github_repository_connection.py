@@ -17,7 +17,7 @@ def upgrade():
     op.create_table(
         "cw_github_connect_attempts",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("owner_id", sa.String(length=64), sa.ForeignKey("cw_accounts.id"), nullable=False),
+        sa.Column("owner_id", sa.String(length=36), sa.ForeignKey("cw_accounts.id"), nullable=False),
         sa.Column("project_id", sa.String(length=36), nullable=False),
         sa.Column("state_hash", sa.String(length=64), nullable=False, unique=True),
         sa.Column("stage", sa.String(length=24), nullable=False),
@@ -51,7 +51,7 @@ def upgrade():
     op.create_table(
         "cw_github_installations",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("owner_id", sa.String(length=64), sa.ForeignKey("cw_accounts.id"), nullable=False),
+        sa.Column("owner_id", sa.String(length=36), sa.ForeignKey("cw_accounts.id"), nullable=False),
         sa.Column("installation_id", sa.BigInteger(), nullable=False),
         sa.Column("github_user_id", sa.BigInteger(), nullable=False),
         sa.Column("github_login", sa.String(length=39), nullable=False),
@@ -80,7 +80,7 @@ def upgrade():
     op.create_table(
         "cw_github_repository_bindings",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("owner_id", sa.String(length=64), sa.ForeignKey("cw_accounts.id"), nullable=False),
+        sa.Column("owner_id", sa.String(length=36), sa.ForeignKey("cw_accounts.id"), nullable=False),
         sa.Column("project_id", sa.String(length=36), nullable=False),
         sa.Column("installation_record_id", sa.String(length=36), nullable=False),
         sa.Column("repository_id", sa.BigInteger(), nullable=False),
