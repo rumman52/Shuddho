@@ -58,6 +58,7 @@ settings = replace(
     agent_action_proposals_enabled=True,
     action_attachments_enabled=True,
     action_reminders_enabled=True,
+    max_active_agent_runs=3,
 )
 settings.validate()
 container.settings = settings
