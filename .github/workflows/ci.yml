@@ -414,8 +414,10 @@ jobs:
     name: browser-qualification
     permissions:
       contents: read
+    env:
+      UV_HTTP_TIMEOUT: "120"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -428,6 +430,23 @@ jobs:
         run: npx playwright install --with-deps chromium --only-shell
       - name: Qualify real Chromium browser-worker network boundary without skips
         run: node --test scripts/browser_worker_chromium.test.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with: { version: "0.7.22", enable-cache: true }
+      - name: Install coworker test dependencies
+        run: uv sync --frozen --group dev --extra coworker
+      - name: Qualify browser source provenance and cleanup without skips
+        run: |
+          uv run --extra coworker pytest tests/test_agent_browser_tool.py -q -rs --junitxml=/tmp/browser-source-qualification.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/browser-source-qualification.xml --required-module tests.test_agent_browser_tool
+      - name: Keep browser source qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-source-qualification-evidence
+          path: /tmp/browser-source-qualification.xml
 
   ci-merge-gate:
     name: ci-merge-gate

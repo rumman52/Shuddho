@@ -38,6 +38,7 @@
 4. **Source cleanup regression**
    - Extend the browser-source deletion-outage test to invoke `RetentionService.cleanup_orphans` with an age-qualified synthetic inventory record.
    - Verify the unreferenced private object is removed by the real reconciler after deletion failure, while source metadata and access have already been revoked.
+   - Run the complete browser source/provenance test module in the dedicated required browser-qualification job with a no-skips JUnit gate and retained evidence artifact.
 
 ## Required verification
 
