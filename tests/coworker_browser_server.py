@@ -273,7 +273,7 @@ def agent_runs():
     owner = account(container, "alice")
     with container.repository.sessions() as db:
         ids = db.scalars(select(AgentRun.id).where(AgentRun.owner_id == owner)).all()
-    runs = [container.agent.get(owner, run_id) for run_id in ids]
+    runs = [container.agent.get(owner, str(run_id)) for run_id in ids]
     return {"runs": [{
         "id": run["id"],
         "goal": run["goal"],
