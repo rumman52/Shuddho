@@ -232,7 +232,7 @@ class Container:
                 self.settings,
             )
         if self.retention is None:
-            self.retention = RetentionService(self.repository.sessions, self.storage)
+            self.retention = RetentionService(self.repository.sessions, self.storage, self.github)
 
     @classmethod
     def create(cls, settings: Settings):
