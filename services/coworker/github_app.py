@@ -836,6 +836,9 @@ class GitHubAppService:
             raise CoworkerError("github_file_not_text", "This repository file is not valid UTF-8 text.", 415) from None
         if len(raw) != size or b"\x00" in raw:
             raise CoworkerError("github_file_not_text", "This repository file failed its content integrity check.", 415)
+        blob_sha = data.get("sha")
+        if not isinstance(blob_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", blob_sha):
+            raise CoworkerError("github_response_invalid", "GitHub returned an invalid source blob hash.", 502)
         digest = hashlib.sha256(raw).hexdigest()
         return {
             "repository": full_name,
@@ -843,6 +846,7 @@ class GitHubAppService:
             "commit_sha": commit_sha,
             "path": path,
             "content": text,
+            "blob_sha": blob_sha,
             "sha256": digest,
             "byte_size": len(raw),
         }
