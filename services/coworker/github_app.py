@@ -725,6 +725,31 @@ class GitHubAppService:
         if response.status_code not in {204, 404}:
             raise CoworkerError("github_revoke_failed", "GitHub did not confirm revocation. The local connection was kept so you can retry safely.", 502)
 
+    def revoke_installations_in_transaction(self, db, owner: str):
+        rows = db.scalars(select(GitHubInstallation).where(
+            GitHubInstallation.owner_id == owner,
+        ).order_by(GitHubInstallation.id).with_for_update()).all()
+        revoked = 0
+        for installation in rows:
+            if installation.user_token_bundle_ciphertext:
+                bundle = self._vault().open(
+                    installation.user_token_bundle_ciphertext,
+                    owner + ":github-installation:" + installation.id,
+                )
+                access_token = bundle.get("access_token")
+                if isinstance(access_token, str) and access_token:
+                    self._revoke_user_token(access_token)
+                    revoked += 1
+            installation.active = False
+            installation.user_token_bundle_ciphertext = ""
+            installation.updated_at = utcnow()
+            db.execute(update(GitHubRepositoryBinding).where(
+                GitHubRepositoryBinding.installation_record_id == installation.id,
+                GitHubRepositoryBinding.owner_id == owner,
+            ).values(active=False, updated_at=utcnow()))
+            ConversationRepository._audit(db, owner, installation.id, "github.installation_token_revoked_for_account_erasure")
+        return revoked
+
     def disconnect_installation(self, owner: str, installation_record_id: str):
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
