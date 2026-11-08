@@ -386,6 +386,28 @@ export type CoworkerTask = {
 export type ProjectResource = { resource_type: "conversation" | "document"; resource_id: string; title: string };
 export type ProjectRecord = { id: string; name: string; description: string; revision: number; created_at: string; updated_at: string; conversation_count?: number };
 export type ProjectDetail = ProjectRecord & { resources: ProjectResource[] };
+export type GitHubStatus = { enabled: boolean };
+export type GitHubRepository = {
+  id: number; full_name: string; default_branch: string; private: boolean;
+  permissions: { pull?: boolean; push?: boolean; admin?: boolean };
+};
+export type GitHubInstallation = {
+  id: string; installation_id: number; github_login: string; account_login: string;
+  account_type: string; permissions: Record<string, string>; active: boolean;
+};
+export type GitHubRepositoryBinding = {
+  id: string; project_id: string; installation_record_id: string; repository_id: number;
+  full_name: string; default_branch: string; permissions: Record<string, unknown>;
+  can_read_contents: boolean; can_write_contents: boolean; active: boolean; updated_at: string;
+};
+export type GitHubRepositoryTree = {
+  repository: string; branch: string; commit_sha: string;
+  files: { path: string; sha: string; size: number }[]; truncated: boolean;
+};
+export type GitHubRepositoryFile = {
+  repository: string; branch: string; commit_sha: string; path: string;
+  content: string; sha256: string; byte_size: number;
+};
 export type Workspace = {
   account_id: string; workspace_name: string; preferences: { language?: string; writing_goal?: string; tone_goal?: string; personal_dictionary?: string[] };
   usage: { tasks_today: number }; limits: { daily_tasks: number; upload_bytes: number };
@@ -521,7 +543,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   runtimeManifest(signal?: AbortSignal) {
-    return this.json<{ capabilities: { conversation_replies?: boolean; projects?: boolean } }>("/api/v1/runtime-manifest", { signal });
+    return this.json<{ capabilities: { conversation_replies?: boolean; projects?: boolean; fly_github?: boolean } }>("/api/v1/runtime-manifest", { signal });
   }
   async replyToConversationMessageStream(
     id: string, messageId: string, sequence: number,
@@ -633,6 +655,59 @@ export class CoworkerClient {
   }
   projects(signal?: AbortSignal) { return this.json<{ items: ProjectRecord[] }>("/api/v1/projects", { signal }); }
   project(id: string, signal?: AbortSignal) { return this.json<ProjectDetail>(`/api/v1/projects/${identifier(id)}`, { signal }); }
+  githubStatus(signal?: AbortSignal) {
+    return this.json<GitHubStatus>("/api/v1/github/status", { signal });
+  }
+  githubStart(projectId: string) {
+    return this.json<{ authorization_url: string; expires_in_seconds: number }>(
+      `/api/v1/projects/${identifier(projectId)}/github/connect/start`,
+      { method: "POST" },
+    );
+  }
+  githubFinishOAuth(code: string, state: string) {
+    return this.json<{ github_login: string; github_user_id: number; install_url: string; state: string; expires_in_seconds: number }>(
+      "/api/v1/github/connect/finish",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) },
+    );
+  }
+  githubCompleteInstall(state: string, installationId: number) {
+    return this.json<{ installation: GitHubInstallation; repositories: GitHubRepository[] }>(
+      "/api/v1/github/connect/complete",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, installation_id: installationId }) },
+    );
+  }
+  githubRepositories(installationRecordId: string, signal?: AbortSignal) {
+    return this.json<{ installation: string; repositories: GitHubRepository[] }>(
+      `/api/v1/github/installations/${identifier(installationRecordId)}/repositories`, { signal },
+    );
+  }
+  githubRepository(projectId: string, signal?: AbortSignal) {
+    return this.json<{ repository: GitHubRepositoryBinding | null }>(
+      `/api/v1/projects/${identifier(projectId)}/github/repository`, { signal },
+    );
+  }
+  githubBindRepository(projectId: string, installationRecordId: string, repositoryId: number, expectedRevision: number) {
+    return this.json<GitHubRepositoryBinding>(
+      `/api/v1/projects/${identifier(projectId)}/github/repository`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        installation_record_id: identifier(installationRecordId), repository_id: repositoryId, expected_revision: expectedRevision,
+      }) },
+    );
+  }
+  githubDisconnectRepository(projectId: string) {
+    return this.json<{ message: string }>(`/api/v1/projects/${identifier(projectId)}/github/repository`, { method: "DELETE" });
+  }
+  githubDisconnectInstallation(installationRecordId: string) {
+    return this.json<{ message: string }>(`/api/v1/github/installations/${identifier(installationRecordId)}`, { method: "DELETE" });
+  }
+  githubRepositoryTree(projectId: string, signal?: AbortSignal) {
+    return this.json<GitHubRepositoryTree>(`/api/v1/projects/${identifier(projectId)}/github/repository/tree`, { signal });
+  }
+  githubRepositoryFile(projectId: string, path: string, signal?: AbortSignal) {
+    return this.json<GitHubRepositoryFile>(
+      `/api/v1/projects/${identifier(projectId)}/github/repository/file?path=${encodeURIComponent(path)}`, { signal },
+    );
+  }
   createProject(name: string, description: string, key: string) {
     return this.json<ProjectRecord>("/api/v1/projects", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify({ name, description }) });
   }
