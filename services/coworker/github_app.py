@@ -761,13 +761,13 @@ class GitHubAppService:
                 return {"repository": None}
             return {"repository": self._binding_dto(row)}
 
-    def _revoke_user_token(self, access_token: str):
+    def _revoke_user_grant(self, access_token: str):
         if not self.settings.github_app_client_id or not self.settings.github_app_client_secret:
-            raise CoworkerError("github_revoke_unavailable", "GitHub token revocation is not configured; local disconnection was not performed.", 503)
+            raise CoworkerError("github_revoke_unavailable", "GitHub App authorization revocation is not configured; local disconnection was not performed.", 503)
         try:
             with self._client() as client:
                 response = client.delete(
-                    GITHUB_API + f"/applications/{quote(self.settings.github_app_client_id, safe='')}/token",
+                    GITHUB_API + f"/applications/{quote(self.settings.github_app_client_id, safe='')}/grant",
                     auth=(self.settings.github_app_client_id, self.settings.github_app_client_secret),
                     headers={
                         "Accept": "application/vnd.github+json",
@@ -777,66 +777,131 @@ class GitHubAppService:
                     json={"access_token": access_token},
                 )
         except httpx.HTTPError:
-            raise CoworkerError("github_revoke_unavailable", "GitHub could not confirm token revocation. The local connection was kept so you can retry safely.", 503) from None
-        # 404 means the token was already invalid/revoked. Other responses fail
-        # closed so Rukh never claims to revoke a still-live provider token.
-        if response.status_code not in {204, 404}:
-            raise CoworkerError("github_revoke_failed", "GitHub did not confirm revocation. The local connection was kept so you can retry safely.", 502)
+            raise CoworkerError("github_revoke_unavailable", "GitHub could not confirm authorization revocation. The local connection was kept so you can retry safely.", 503) from None
+        if response.status_code != 204:
+            raise CoworkerError("github_revoke_failed", "GitHub did not confirm authorization revocation. The local connection was kept so you can retry safely.", 502)
+
+    def _deactivate_github_user_installations_in_transaction(self, db, owner: str, github_user_id: int, audit_event: str):
+        rows = db.scalars(select(GitHubInstallation).where(
+            GitHubInstallation.owner_id == owner,
+            GitHubInstallation.github_user_id == github_user_id,
+        ).order_by(GitHubInstallation.id).with_for_update()).all()
+        now = utcnow()
+        installation_ids = []
+        for row in rows:
+            installation_ids.append(row.id)
+            row.active = False
+            row.user_token_bundle_ciphertext = ""
+            row.updated_at = now
+            ConversationRepository._audit(db, owner, row.id, audit_event)
+        if installation_ids:
+            db.execute(update(GitHubRepositoryBinding).where(
+                GitHubRepositoryBinding.owner_id == owner,
+                GitHubRepositoryBinding.installation_record_id.in_(installation_ids),
+            ).values(active=False, updated_at=now))
+        return len(rows)
+
+    def _revoke_github_user_authorization_in_transaction(self, db, owner: str, github_user_id: int, access_token: str, audit_event: str):
+        self._revoke_user_grant(access_token)
+        return self._deactivate_github_user_installations_in_transaction(db, owner, github_user_id, audit_event)
 
     def revoke_installations_in_transaction(self, db, owner: str):
         rows = db.scalars(select(GitHubInstallation).where(
             GitHubInstallation.owner_id == owner,
         ).order_by(GitHubInstallation.id).with_for_update()).all()
+        by_user: dict[int, list[GitHubInstallation]] = {}
+        for row in rows:
+            by_user.setdefault(row.github_user_id, []).append(row)
         revoked = 0
-        for installation in rows:
-            if installation.user_token_bundle_ciphertext:
+        for github_user_id, user_rows in by_user.items():
+            provider_revoked = False
+            for row in user_rows:
+                if not row.user_token_bundle_ciphertext:
+                    continue
                 bundle = self._vault().open(
-                    installation.user_token_bundle_ciphertext,
-                    owner + ":github-installation:" + installation.id,
+                    row.user_token_bundle_ciphertext,
+                    owner + ":github-installation:" + row.id,
                 )
                 access_token = bundle.get("access_token")
-                if isinstance(access_token, str) and access_token:
-                    self._revoke_user_token(access_token)
+                refresh_token = bundle.get("refresh_token")
+                now = utcnow()
+                access_expiry = row.access_token_expires_at
+                refresh_expiry = row.refresh_token_expires_at
+                if access_expiry.tzinfo is None:
+                    access_expiry = access_expiry.replace(tzinfo=now.tzinfo)
+                if refresh_expiry.tzinfo is None:
+                    refresh_expiry = refresh_expiry.replace(tzinfo=now.tzinfo)
+                if isinstance(access_token, str) and access_token and access_expiry > now:
+                    self._revoke_github_user_authorization_in_transaction(
+                        db, owner, github_user_id, access_token,
+                        "github.authorization_revoked_for_account_erasure",
+                    )
+                    provider_revoked = True
                     revoked += 1
-            installation.active = False
-            installation.user_token_bundle_ciphertext = ""
-            installation.updated_at = utcnow()
-            db.execute(update(GitHubRepositoryBinding).where(
-                GitHubRepositoryBinding.installation_record_id == installation.id,
-                GitHubRepositoryBinding.owner_id == owner,
-            ).values(active=False, updated_at=utcnow()))
-            ConversationRepository._audit(db, owner, installation.id, "github.installation_token_revoked_for_account_erasure")
+                    break
+                if isinstance(refresh_token, str) and refresh_token and refresh_expiry > now:
+                    try:
+                        refreshed = self._oauth_refresh(refresh_token)
+                    except CoworkerError as error:
+                        if error.code == "github_oauth_expired":
+                            continue
+                        raise
+                    self._revoke_github_user_authorization_in_transaction(
+                        db, owner, github_user_id, refreshed["access_token"],
+                        "github.authorization_revoked_for_account_erasure",
+                    )
+                    provider_revoked = True
+                    revoked += 1
+                    break
+            if not provider_revoked:
+                self._deactivate_github_user_installations_in_transaction(
+                    db, owner, github_user_id, "github.authorization_expired_or_absent_during_account_erasure",
+                )
         return revoked
 
     def disconnect_installation(self, owner: str, installation_record_id: str):
+        with self.sessions() as db:
+            target = db.scalar(select(GitHubInstallation).where(
+                GitHubInstallation.id == installation_record_id,
+                GitHubInstallation.owner_id == owner,
+            ))
+            if target is None:
+                raise not_found()
+            github_user_id = target.github_user_id
+            github_login = target.github_login
+            token_row = db.scalar(select(GitHubInstallation.id).where(
+                GitHubInstallation.owner_id == owner,
+                GitHubInstallation.github_user_id == github_user_id,
+                GitHubInstallation.active.is_(True),
+                GitHubInstallation.user_token_bundle_ciphertext != "",
+            ).order_by(GitHubInstallation.id).limit(1))
+        access_token = None
+        if token_row is not None:
+            try:
+                access_token = self._user_token(owner, token_row)
+            except CoworkerError as error:
+                if error.code != "github_reconnect_required":
+                    raise
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
-            installation = db.scalar(select(GitHubInstallation).where(
+            target = db.scalar(select(GitHubInstallation).where(
                 GitHubInstallation.id == installation_record_id,
                 GitHubInstallation.owner_id == owner,
             ).with_for_update())
-            if installation is None:
+            if target is None:
                 raise not_found()
-            if installation.user_token_bundle_ciphertext:
-                bundle = self._vault().open(
-                    installation.user_token_bundle_ciphertext,
-                    owner + ":github-installation:" + installation.id,
+            github_user_id = target.github_user_id
+            if access_token:
+                self._revoke_github_user_authorization_in_transaction(
+                    db, owner, github_user_id, access_token, "github.authorization_disconnected",
                 )
-                access_token = bundle.get("access_token")
-                if isinstance(access_token, str) and access_token:
-                    # Provider revocation occurs before local deletion. If it
-                    # cannot be confirmed, this transaction rolls back and the
-                    # encrypted token remains available for a safe retry.
-                    self._revoke_user_token(access_token)
-            installation.active = False
-            installation.user_token_bundle_ciphertext = ""
-            installation.updated_at = utcnow()
-            db.execute(update(GitHubRepositoryBinding).where(
-                GitHubRepositoryBinding.installation_record_id == installation_record_id,
-                GitHubRepositoryBinding.owner_id == owner,
-            ).values(active=False, updated_at=utcnow()))
-            ConversationRepository._audit(db, owner, installation_record_id, "github.installation_disconnected")
-        return {"message": "The GitHub user token was revoked and all Fly project bindings for this installation were disconnected. The GitHub App remains installed until you uninstall it in GitHub settings."}
+            else:
+                self._deactivate_github_user_installations_in_transaction(
+                    db, owner, github_user_id, "github.authorization_disconnected_after_expiry",
+                )
+        return {
+            "message": "The GitHub App authorization for @" + github_login + " was revoked. All Fly installations and project bindings for this GitHub user were disconnected. Uninstall the App separately in GitHub settings if you also want to remove the installation.",
+        }
 
     def disconnect_repository(self, owner: str, project_id: str):
         with self.sessions.begin() as db:
