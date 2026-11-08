@@ -392,11 +392,11 @@ export type GitHubRepository = {
   permissions: { pull?: boolean; push?: boolean; admin?: boolean };
 };
 export type GitHubInstallation = {
-  id: string; installation_id: number; github_login: string; account_login: string;
+  id: string; github_user_id: number; installation_id: number; github_login: string; account_login: string;
   account_type: string; permissions: Record<string, string>; active: boolean;
 };
 export type GitHubRepositoryBinding = {
-  id: string; project_id: string; installation_record_id: string; repository_id: number;
+  id: string; project_id: string; installation_record_id: string; github_user_id: number; repository_id: number;
   full_name: string; default_branch: string; permissions: Record<string, unknown>;
   can_read_contents: boolean; can_write_contents: boolean; active: boolean; updated_at: string;
 };
