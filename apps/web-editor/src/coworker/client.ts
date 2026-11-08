@@ -706,9 +706,9 @@ export class CoworkerClient {
   githubRepositoryTree(projectId: string, signal?: AbortSignal) {
     return this.json<GitHubRepositoryTree>(`/api/v1/projects/${identifier(projectId)}/github/repository/tree`, { signal });
   }
-  githubRepositoryFile(projectId: string, path: string, signal?: AbortSignal) {
+  githubRepositoryFile(projectId: string, path: string, commitSha: string, signal?: AbortSignal) {
     return this.json<GitHubRepositoryFile>(
-      `/api/v1/projects/${identifier(projectId)}/github/repository/file?path=${encodeURIComponent(path)}`, { signal },
+      `/api/v1/projects/${identifier(projectId)}/github/repository/file?path=${encodeURIComponent(path)}&commit_sha=${encodeURIComponent(commitSha)}`, { signal },
     );
   }
   createProject(name: string, description: string, key: string) {
