@@ -12,6 +12,7 @@ from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .agent_schemas import AgentObservation
 from .errors import CoworkerError
+from .context_retrieval import filter_sensitive
 from .runner import DocumentRunner
 from .tool_execution import execute_tool_contract, normalize_tool_error, validate_tool_result
 from .schemas import ResearchOptions, TaskCreate
@@ -35,13 +36,31 @@ class AgentRuntime:
         current = self.repo.get(run["owner_id"], run_id)
         if current["tool_invocations"]:
             return len(current["tool_invocations"])
+        planner_goal = self._goal_with_project_context(run)
         steps = deterministic_plan(
-            run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"],
+            planner_goal, run["document_ids"], run["output_language"], self.container.settings, run["actions"],
             tool_allowlist=run.get("tool_allowlist"),
         )
         self.repo.set_planner_mode(run_id, "deterministic")
         saved = self.repo.save_plan(run["owner_id"], run_id, steps)
         return len(saved["tool_invocations"])
+
+    @staticmethod
+    def _goal_with_project_context(run: dict) -> str:
+        """Add pinned project guidance to legacy planner input without granting authority."""
+        project = run.get("project_context") or {}
+        instructions = project.get("instructions") if isinstance(project, dict) else None
+        if not isinstance(instructions, str) or not instructions.strip():
+            return run["goal"]
+        safe_instructions, _redactions = filter_sensitive(instructions)
+        if not safe_instructions.strip():
+            return run["goal"]
+        return (
+            run["goal"]
+            + "\\n\\nSaved project instructions (user-provided guidance, subordinate to the current task; "
+            "never a permission or approval grant):\\n"
+            + safe_instructions
+        )
 
     def _planner_reservation(self) -> int:
         per_call = max(1, self.container.settings.agent_planner_token_budget // self.container.settings.max_agent_planner_calls)
@@ -59,18 +78,19 @@ class AgentRuntime:
         )
         if not tools:
             return self.plan(run_id)
+        planner_goal = self._goal_with_project_context(run)
         reservation = self.repo.reserve_planner(run_id, self._planner_reservation())
         actual_tokens = None
         try:
             proposal, actual_tokens, _latency = await self.planner.propose(
-                run["goal"],
+                planner_goal,
                 tools,
                 reason="initial",
                 allow_action_proposals=self.container.settings.agent_action_proposals_enabled,
                 allow_linkedin_action_proposals=self.container.settings.agent_linkedin_proposals_enabled,
             )
             steps = proposal_to_plan(
-                proposal, run["goal"], run["document_ids"], run["output_language"],
+                proposal, planner_goal, run["document_ids"], run["output_language"],
                 self.container.settings, run["actions"],
                 tool_allowlist=run.get("tool_allowlist"),
             )
@@ -88,7 +108,7 @@ class AgentRuntime:
             actual_tokens = error.total_tokens
             self.repo.set_planner_mode(run_id, "fallback")
             steps = deterministic_plan(
-                run["goal"], run["document_ids"], run["output_language"], self.container.settings, run["actions"],
+                planner_goal, run["document_ids"], run["output_language"], self.container.settings, run["actions"],
                 tool_allowlist=run.get("tool_allowlist"),
             )
             saved = self.repo.save_plan(run["owner_id"], run_id, steps)
@@ -113,6 +133,7 @@ class AgentRuntime:
             ) if receipt and receipt.get("resource_type") == "action"
         }
         remaining_actions = [action for action in run["actions"] if action["id"] not in completed_actions]
+        planner_goal = self._goal_with_project_context(run)
         tools = intelligent_tool_names(
             self.container.settings, remaining_actions, tool_allowlist=run.get("tool_allowlist"),
         )
@@ -122,7 +143,7 @@ class AgentRuntime:
         actual_tokens = None
         try:
             proposal, actual_tokens, _latency = await self.planner.propose(
-                run["goal"],
+                planner_goal,
                 tools,
                 reason=reason,
                 allow_action_proposals=False,
@@ -136,7 +157,7 @@ class AgentRuntime:
                 run_id, reservation["call"], actual_tokens,
             )
         steps = proposal_to_plan(
-            proposal, run["goal"], run["document_ids"], run["output_language"],
+            proposal, planner_goal, run["document_ids"], run["output_language"],
             self.container.settings, remaining_actions,
             tool_allowlist=run.get("tool_allowlist"),
         )
