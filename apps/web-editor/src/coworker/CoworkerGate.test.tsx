@@ -161,6 +161,8 @@ test("Projects deep links without auth configuration show a Projects access scre
     assert.ok(tree.root.findByProps({ "aria-label": "Rukh AI Projects" }));
     assert.ok(tree.root.findByProps({ id: "rukh-project-entry-title" }));
     assert.equal(tree.root.findAllByProps({ id: "rukh-first-message" }).length, 0);
+    await act(async () => tree.root.findByProps({ className: "rukh-project-entry-primary" }).props.onClick());
+    assert.match(tree.root.findByProps({ role: "alert" }).children.join(""), /projects remain private/i);
   }, "/coworker", "?view=projects");
 });
 

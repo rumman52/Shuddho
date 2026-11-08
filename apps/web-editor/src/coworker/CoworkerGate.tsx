@@ -105,7 +105,10 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
 
   function openAuth() {
     if (!auth) {
-      setEntryError("Sign-in is not configured for this deployment. Your draft has not been sent.");
+      const requestedProjects = typeof window !== "undefined" && new URLSearchParams(window.location.search ?? "").get("view") === "projects";
+      setEntryError(requestedProjects
+        ? "Account access is not configured for this deployment. Your projects remain private."
+        : "Sign-in is not configured for this deployment. Your draft has not been sent.");
       return;
     }
     setEntryError("");
