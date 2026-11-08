@@ -316,6 +316,32 @@ def test_github_paths_reject_traversal_and_credential_files():
     assert safe_repository_path(".github/workflows/ci.yml") == ".github/workflows/ci.yml"
 
 
+def test_project_deletion_deactivates_repository_binding_and_erases_pending_oauth_tokens(container):
+    _enabled(container, _transport())
+    owner = account(container)
+    project, finished = _connect(container, owner)
+    connected = container.github.complete_install(owner, finished["state"], 321)
+    container.github.bind_repository(owner, project["id"], connected["installation"]["id"], 777, project["revision"])
+
+    pending = container.github.start_connection(owner, project["id"])
+    pending_state = parse_qs(urlparse(pending["authorization_url"]).query)["state"][0]
+    container.github.finish_oauth(owner, pending_state, "second-single-use-code")
+    container.projects.delete(owner, project["id"], project["revision"])
+
+    with container.repository.sessions() as db:
+        binding = db.scalar(select(GitHubRepositoryBinding).where(
+            GitHubRepositoryBinding.owner_id == owner,
+            GitHubRepositoryBinding.project_id == project["id"],
+        ))
+        attempts = db.scalars(select(GitHubConnectAttempt).where(
+            GitHubConnectAttempt.owner_id == owner,
+            GitHubConnectAttempt.project_id == project["id"],
+        )).all()
+        assert binding.active is False
+        assert attempts
+        assert all(item.stage == "consumed" and item.user_access_token_ciphertext == "" for item in attempts)
+
+
 def test_github_repository_credentials_and_bindings_are_erased_with_account(container):
     _enabled(container, _transport())
     owner = account(container)
