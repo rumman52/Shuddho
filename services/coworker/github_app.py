@@ -701,6 +701,7 @@ class GitHubAppService:
             if project.revision != expected_revision:
                 raise CoworkerError("project_revision_conflict", "This project changed while the repository was being connected. Refresh and retry.", 409)
             installation = self._installation(db, owner, installation_record_id)
+            github_user_id = installation.github_user_id
             row = db.scalar(select(GitHubRepositoryBinding).where(
                 GitHubRepositoryBinding.owner_id == owner,
                 GitHubRepositoryBinding.project_id == project_id,
