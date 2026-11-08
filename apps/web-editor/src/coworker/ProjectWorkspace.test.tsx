@@ -100,18 +100,33 @@ function fixture() {
 async function mount(
   run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>,
   onCreateModeChange?: (creating: boolean) => void,
+  initialCreate = false,
 ) {
   const data = fixture();
   let tree!: ReactTestRenderer;
   try {
     await act(async () => {
-      tree = create(<ProjectWorkspace client={data.client} onCreateModeChange={onCreateModeChange} />);
+      tree = create(<ProjectWorkspace client={data.client} initialCreate={initialCreate} onCreateModeChange={onCreateModeChange} />);
     });
     await run(tree, data);
   } finally {
     if (tree) await act(async () => tree.unmount());
   }
 }
+
+test("Projects entry opens the reference New project screen before the project list", async () => {
+  const createModes: boolean[] = [];
+  await mount(async tree => {
+    assert.equal(tree.root.findByProps({ className: "rukh-project-create-page" }).props["aria-label"], "New project form");
+    assert.equal(tree.root.findByProps({ id: "rukh-project-create-title" }).children.join(""), "Create a project");
+    assert.ok(tree.root.findByProps({ id: "rukh-project-create-description" }).children.join("").includes("Keep related chats and files together."));
+    assert.equal(tree.root.findAllByProps({ className: "rukh-project-card" }).length, 0);
+    assert.equal(tree.root.findAllByType("button").some(item => item.children.join("") === "+ New project"), false);
+    assert.equal(tree.root.findAllByType("button").some(item => item.children.join("") === "Create project"), true);
+  }, value => createModes.push(value), true);
+  assert.ok(createModes.includes(true));
+  assert.equal(createModes[createModes.length - 1], false);
+});
 
 test("Projects home searches real project records and opens the project workspace", async () => {
   await mount(async tree => {
