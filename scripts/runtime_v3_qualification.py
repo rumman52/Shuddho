@@ -64,10 +64,11 @@ class RecordingTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         started = time.perf_counter()
         response = await self._inner_transport.handle_async_request(request)
-        latency_ms = max(0, int((time.perf_counter() - started) * 1000))
         status_code = response.status_code
 
         if status_code != 200:
+            latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+            retry_after = response.headers.get("retry-after")
             await response.aclose()
             self.records.append({
                 "kind": self._call_kind.get(),
@@ -78,7 +79,8 @@ class RecordingTransport(httpx.AsyncBaseTransport):
                 "total_tokens": None,
                 "latency_ms": latency_ms,
             })
-            return httpx.Response(status_code, request=request)
+            headers = {"retry-after": retry_after} if retry_after else {}
+            return httpx.Response(status_code, headers=headers, request=request)
 
         chunks: list[bytes] = []
         size = 0
@@ -93,6 +95,7 @@ class RecordingTransport(httpx.AsyncBaseTransport):
         finally:
             await response.aclose()
 
+        latency_ms = max(0, int((time.perf_counter() - started) * 1000))
         body = b"".join(chunks)
         try:
             envelope = json.loads(body)
@@ -248,8 +251,8 @@ def write_evidence(path: str | Path, payload: dict[str, Any]) -> None:
             previous = json.loads(destination.read_text(encoding="utf-8"))
             if isinstance(previous, list):
                 rows = previous
-        except (OSError, json.JSONDecodeError):
-            rows = []
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError("Existing Runtime v3 evidence is unreadable; refusing to overwrite it.") from error
     rows.append({
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
