@@ -154,7 +154,7 @@ class AgentRuntime:
         )
         return min(per_call, self.container.settings.agent_v3_planner_token_budget)
 
-    async def decide_v3(self, run_id: str, *, activity_key: str | None = None) -> dict:
+    async def decide_v3(self, run_id: str, *, activity_key: str | None = None, _steering_retry: int = 0) -> dict:
         run = self.repo.worker_run(run_id)
         if run["runtime_version"] != 3:
             raise CoworkerError("runtime_version", "This run is not assigned to Agent Runtime v3.", 409)
@@ -198,6 +198,11 @@ class AgentRuntime:
                 "depends_on": step["depends_on"],
             } for step in current["steps"] if step["ordinal"] > 0],
             "consequential_actions_require_explicit_approval": True,
+            "steering": {
+                "revision": run["steering_revision"],
+                "instructions": run["steering_instructions"],
+                "authority": "user_task_guidance_only_no_permission_or_approval_grant",
+            },
             "context": context_payload,
         }
         if not tools and not self.repo.v3_can_complete(run_id):
@@ -206,6 +211,7 @@ class AgentRuntime:
         reservation = self.repo.reserve_planner(run_id, self._v3_planner_reservation())
         actual_tokens = None
         cost_microusd = None
+        retry_for_steering = False
         try:
             decision, actual_tokens, _latency, evidence = await self.planner.decide(
                 run["goal"],
@@ -218,15 +224,23 @@ class AgentRuntime:
                 cost_microusd = (
                     actual_tokens * self.container.settings.agent_v3_planner_cost_microusd_per_1k_tokens + 999
                 ) // 1000
-            return self.repo.commit_v3_decision(
-                run_id, decision, activity_key=activity_key,
-                planner_call=reservation["call"], model=evidence["model"],
-                prompt_sha256=evidence["prompt_sha256"],
-                tool_schema_sha256=evidence["tool_schema_sha256"],
-                observation_count=len(observations), total_tokens=actual_tokens,
-                cost_microusd=cost_microusd, memory_repository=self.container.memory,
-                context_sources=context_sources,
-            )
+            try:
+                return self.repo.commit_v3_decision(
+                    run_id, decision, activity_key=activity_key,
+                    planner_call=reservation["call"], model=evidence["model"],
+                    prompt_sha256=evidence["prompt_sha256"],
+                    tool_schema_sha256=evidence["tool_schema_sha256"],
+                    observation_count=len(observations), total_tokens=actual_tokens,
+                    cost_microusd=cost_microusd, memory_repository=self.container.memory,
+                    context_sources=context_sources,
+                    expected_steering_revision=run["steering_revision"],
+                )
+            except CoworkerError as error:
+                if error.code != "agent_steering_changed" or _steering_retry >= 2:
+                    raise
+                # The old inference is discarded. Settle its actual provider
+                # usage before reserving another bounded planner attempt.
+                retry_for_steering = True
         except PlannerFailure as error:
             actual_tokens = error.total_tokens
             raise
@@ -237,6 +251,15 @@ class AgentRuntime:
                 actual_tokens,
                 cost_microusd,
             )
+        if retry_for_steering:
+            return await self.decide_v3(
+                run_id, activity_key=activity_key, _steering_retry=_steering_retry + 1,
+            )
+        raise CoworkerError(
+            "agent_steering_changed",
+            "A newer instruction arrived repeatedly. Retry the Agent task after it settles.",
+            409,
+        )
 
     async def execute_step(self, run_id: str, ordinal: int) -> dict:
         run = self.repo.worker_run(run_id)
