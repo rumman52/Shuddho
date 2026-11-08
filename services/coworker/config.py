@@ -125,7 +125,6 @@ class Settings:
     github_app_slug: str = ""
     github_app_client_id: str = ""
     github_app_client_secret: str = field(default="", repr=False)
-    github_app_private_key: str = field(default="", repr=False)
     github_app_redirect_uri: str = ""
     github_api_version: str = "2026-03-10"
     github_timeout_seconds: int = 15
@@ -328,7 +327,6 @@ class Settings:
             github_app_slug=os.getenv("SHUDDHO_GITHUB_APP_SLUG", ""),
             github_app_client_id=os.getenv("SHUDDHO_GITHUB_APP_CLIENT_ID", ""),
             github_app_client_secret=os.getenv("SHUDDHO_GITHUB_APP_CLIENT_SECRET", ""),
-            github_app_private_key=os.getenv("SHUDDHO_GITHUB_APP_PRIVATE_KEY", ""),
             github_app_redirect_uri=os.getenv("SHUDDHO_GITHUB_APP_REDIRECT_URI", ""),
             github_api_version=os.getenv("SHUDDHO_GITHUB_API_VERSION", "2026-03-10"),
             github_timeout_seconds=int(os.getenv("SHUDDHO_GITHUB_TIMEOUT_SECONDS", "15")),
@@ -480,7 +478,6 @@ class Settings:
             if self.google_gmail_push_service_account and not re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com", self.google_gmail_push_service_account):
                 raise ValueError("SHUDDHO_GOOGLE_GMAIL_PUSH_SERVICE_ACCOUNT is invalid")
         if self.fly_github_enabled:
-            from cryptography.hazmat.primitives import serialization
             from .action_security import TokenVault
             if not (self.projects_enabled and self.conversations_enabled):
                 raise ValueError("Fly GitHub access requires projects and conversations to be enabled")
@@ -490,9 +487,8 @@ class Settings:
                 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?", self.github_app_slug)
                 or not self.github_app_client_id
                 or not self.github_app_client_secret
-                or not self.github_app_private_key
             ):
-                raise ValueError("Fly GitHub access requires a valid GitHub App ID, slug, client ID, client secret and private key")
+                raise ValueError("Fly GitHub access requires a valid GitHub App ID, slug, client ID and client secret")
             callback = urlparse(self.github_app_redirect_uri)
             local = self.environment == "development" and callback.hostname in {"localhost", "127.0.0.1"}
             if (
@@ -511,15 +507,6 @@ class Settings:
                 raise ValueError("SHUDDHO_GITHUB_MAX_FILE_BYTES must be between 1 KB and 512 KB")
             if not 1 <= self.github_max_tree_files <= 1000:
                 raise ValueError("SHUDDHO_GITHUB_MAX_TREE_FILES must be between 1 and 1000")
-            try:
-                key = serialization.load_pem_private_key(
-                    self.github_app_private_key.replace("\\n", "\n").encode("utf-8"),
-                    password=None,
-                )
-                if not hasattr(key, "key_size") or key.key_size < 2048:
-                    raise ValueError()
-            except Exception:
-                raise ValueError("SHUDDHO_GITHUB_APP_PRIVATE_KEY must be a valid RSA private key of at least 2048 bits") from None
             TokenVault(self.connector_encryption_key)
         if self.actions_enabled:
             from .action_security import TokenVault
