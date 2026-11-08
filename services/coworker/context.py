@@ -602,6 +602,7 @@ class ContextService:
             "invalidated": invalidated,
             "memory": memory,
             "source_map": source_map,
+            "project_context": project_context,
             "hierarchy": list(CONTEXT_HIERARCHY),
             "budget": {
                 "limit_bytes": self.settings.max_agent_context_bytes,
