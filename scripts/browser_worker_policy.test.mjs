@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -208,3 +208,42 @@ test("Proxy rejects ABA reuse and evidence replacement across commands", () => {
   assert.equal(browserProxyClaimValid(null, snapshot), false);
 });
 
+
+
+test("browser worker request targets stay on the admitted HTTPS origin", () => {
+  const origin = "https://example.com";
+  assert.equal(browserRequestTargetAllowed("https://example.com/article", origin), true);
+  assert.equal(browserRequestTargetAllowed("https://example.com:443/article", origin), true);
+  for (const value of [
+    "http://example.com/article",
+    "https://example.com:8443/article",
+    "https://other.example/article",
+    "https://localhost/private",
+    "https://localhost./private",
+    "https://metadata.google.internal/computeMetadata",
+    "https://intranet/private",
+    "https://127.0.0.1/private",
+    "https://[::1]/private",
+    "https://user:secret@example.com/private",
+    "not a URL",
+  ]) {
+    assert.equal(browserRequestTargetAllowed(value, origin), false, value);
+  }
+});
+
+test("Chromium cannot silently bypass the pinned proxy for loopback or direct transports", () => {
+  const options = browserChromiumLaunchOptions("http://127.0.0.1:43127");
+  assert.equal(options.headless, true);
+  assert.equal(options.proxy.server, "http://127.0.0.1:43127");
+  assert.equal(options.proxy.bypass, "<-loopback>");
+  for (const flag of [
+    "--disable-quic",
+    "--dns-prefetch-disable",
+    "--host-resolver-rules=MAP * ~NOTFOUND",
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+  ]) {
+    assert.ok(options.args.includes(flag), flag);
+  }
+  assert.throws(() => browserChromiumLaunchOptions("http://localhost:43127"), /invalid_browser_proxy_url/);
+  assert.throws(() => browserChromiumLaunchOptions("https://proxy.example.com"), /invalid_browser_proxy_url/);
+});

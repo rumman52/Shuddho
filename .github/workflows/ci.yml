@@ -361,6 +361,8 @@ jobs:
         run: node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs
       - name: Install browser
         run: npx playwright install --with-deps chromium --only-shell
+      - name: Qualify real Chromium browser-worker network boundary without skips
+        run: node --test scripts/browser_worker_chromium.test.mjs
       - name: Check coworker workflow in the browser
         env:
           SHUDDHO_BROWSER_TESTS: "true"

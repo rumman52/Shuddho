@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 import { createPinnedProxy } from "./browser_pinned_proxy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
@@ -212,6 +212,7 @@ async function createRuntime(command, evidence) {
     evidence,
     proxyClaimEpoch: 0,
     kind: command.kind,
+    allowedOrigin: new URL(command.target_url).origin,
     agentReadOnly: command.policy?.agent_read_only === true,
     preparingForm: false,
     humanInteractionArmed: false,
@@ -222,11 +223,7 @@ async function createRuntime(command, evidence) {
   const proxy = await createPinnedProxy(state, { validateHost, navigationTimeoutMs: NAVIGATION_TIMEOUT_MS });
   let browser;
   try {
-    browser = await chromium.launch({
-      headless: true,
-      proxy: { server: proxy.url },
-      env: { HOME: process.env.HOME || "/tmp" },
-    });
+    browser = await chromium.launch(browserChromiumLaunchOptions(proxy.url));
     const context = await browser.newContext(browserContextOptions(
       browserWorkerMayReuseStorageState(command) ? command.storage_state : null,
     ));
@@ -236,7 +233,7 @@ async function createRuntime(command, evidence) {
 
   await page.route("**/*", async (route) => {
     const request = route.request();
-    const allowed = browserRequestAllowed({
+    const methodAllowed = browserRequestAllowed({
       kind: state.kind,
       agentReadOnly: state.agentReadOnly,
       method: request.method(),
@@ -245,8 +242,11 @@ async function createRuntime(command, evidence) {
       navigationRequest: request.isNavigationRequest(),
       mainFrame: request.frame() === page.mainFrame(),
     });
-    if (!allowed) {
-      state.formMutationBlocked = state.formMutationBlocked || state.kind === "prepare_form";
+    const targetAllowed = browserRequestTargetAllowed(request.url(), state.allowedOrigin);
+    if (!methodAllowed || !targetAllowed) {
+      state.formMutationBlocked = state.formMutationBlocked || (
+        state.kind === "prepare_form" && !methodAllowed
+      );
       await route.abort("blockedbyclient");
       return;
     }

@@ -37,6 +37,88 @@ export function normalizedBaseUrl(value) {
   return url.toString().replace(/\/$/, "");
 }
 
+// Chromium must not apply its implicit localhost/loopback proxy bypass. The
+// browser may reach only the worker-owned loopback CONNECT proxy; the proxy
+// process performs DNS authorization and pins the approved public IP.
+export function browserChromiumLaunchOptions(proxyUrl) {
+  let proxy;
+  try {
+    proxy = new URL(proxyUrl);
+  } catch {
+    throw new Error("invalid_browser_proxy_url");
+  }
+  if (
+    proxy.protocol !== "http:"
+    || proxy.hostname !== "127.0.0.1"
+    || !proxy.port
+    || proxy.username
+    || proxy.password
+    || proxy.pathname !== "/"
+    || proxy.search
+    || proxy.hash
+  ) {
+    throw new Error("invalid_browser_proxy_url");
+  }
+  return {
+    headless: true,
+    proxy: {
+      server: proxy.origin,
+      // Chromium otherwise bypasses its proxy for localhost and loopback.
+      bypass: "<-loopback>",
+    },
+    args: [
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-default-apps",
+      "--disable-extensions",
+      "--disable-quic",
+      "--disable-sync",
+      "--dns-prefetch-disable",
+      // Chromium never resolves page destinations directly. The worker proxy
+      // resolves each CONNECT target and asks the broker to authorize the
+      // complete answer set before dialing a pinned public address.
+      "--host-resolver-rules=MAP * ~NOTFOUND",
+      // Do not permit WebRTC to send UDP outside the configured proxy.
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ],
+    env: { HOME: process.env.HOME || "/tmp" },
+  };
+}
+
+// A browser request must remain on the server-admitted HTTPS origin. This is
+// a second guard in front of the CONNECT proxy, including for URLs Chromium
+// might otherwise try to send directly (localhost, IP literals, or HTTP).
+export function browserRequestTargetAllowed(rawUrl, allowedOrigin) {
+  let url;
+  let admitted;
+  try {
+    url = new URL(rawUrl);
+    admitted = new URL(allowedOrigin);
+  } catch {
+    return false;
+  }
+  if (
+    url.protocol !== "https:"
+    || !url.hostname
+    || url.username
+    || url.password
+    || (url.port && url.port !== "443")
+    || admitted.protocol !== "https:"
+    || url.origin !== admitted.origin
+  ) {
+    return false;
+  }
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  const ipHost = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+  if (isIP(ipHost) !== 0 || !hostname.includes(".")) return false;
+  if (["localhost", "metadata", "metadata.google.internal"].includes(hostname)) return false;
+  return ![".localhost", ".local", ".internal", ".home", ".lan"].some(
+    (suffix) => hostname.endsWith(suffix),
+  );
+}
+
 
 export function takeoverFieldPolicy(metadata) {
   const blockedTypes = new Set(["file", "hidden", "submit", "button", "image", "checkbox", "radio"]);
