@@ -78,7 +78,9 @@ export function browserChromiumLaunchOptions(proxyUrl) {
       // Chromium never resolves page destinations directly. The worker proxy
       // resolves each CONNECT target and asks the broker to authorize the
       // complete answer set before dialing a pinned public address.
-      "--host-resolver-rules=MAP * ~NOTFOUND",
+      // Permit only the numeric loopback address used by the local proxy;
+      // all page destinations remain unresolved in Chromium itself.
+      "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
       // Do not permit WebRTC to send UDP outside the configured proxy.
       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
     ],

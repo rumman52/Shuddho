@@ -17,7 +17,7 @@
 
 1. **Chromium proxy enforcement**
    - Remove Chromium's implicit loopback proxy bypass with `bypass: "<-loopback>"`.
-   - Disable QUIC and DNS prefetch, block Chromium-side destination DNS resolution, and disable non-proxied WebRTC UDP.
+   - Disable QUIC and DNS prefetch, block Chromium-side destination DNS resolution, and disable non-proxied WebRTC UDP. The sole Chromium resolver exception is the numeric loopback address of its worker-owned proxy.
    - For Agent read-only contexts, block all WebSocket upgrades and disable WebRTC/WebTransport page APIs before scripts execute.
    - Keep the proxy endpoint restricted to the worker-owned `127.0.0.1` listener.
 

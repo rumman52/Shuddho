@@ -240,7 +240,7 @@ test("Chromium cannot silently bypass the pinned proxy for loopback or direct tr
   for (const flag of [
     "--disable-quic",
     "--dns-prefetch-disable",
-    "--host-resolver-rules=MAP * ~NOTFOUND",
+    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
   ]) {
     assert.ok(options.args.includes(flag), flag);
