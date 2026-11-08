@@ -172,11 +172,14 @@ def test_github_app_oauth_pkce_install_verification_and_repository_browsing(cont
     tree = container.github.repository_tree(owner, project["id"])
     assert tree["commit_sha"] == "a" * 40
     assert {item["path"] for item in tree["files"]} == {"src/app.py", "README.md"}
-    file = container.github.read_repository_file(owner, project["id"], "src/app.py")
+    file = container.github.read_repository_file(owner, project["id"], "src/app.py", "a" * 40)
     assert file["repository"] == "acme/demo"
     assert file["commit_sha"] == "a" * 40
     assert file["content"] == "print('repository context')\n"
     assert file["sha256"] == hashlib.sha256(file["content"].encode()).hexdigest()
+    with pytest.raises(CoworkerError) as stale:
+        container.github.read_repository_file(owner, project["id"], "src/app.py", "b" * 40)
+    assert stale.value.code == "github_repository_changed"
 
     assert container.github.get_repository(owner, project["id"])["repository"]["id"] == binding["id"]
     container.github.disconnect_repository(owner, project["id"])
