@@ -84,9 +84,12 @@ try {
 
   // The creation screen follows the approved Figma state and the first
   // project chat receives the saved project instructions on every reply.
-  await page.getByRole("button", { name: "+ New project", exact: true }).click();
+  // Entering Projects must open the screenshot-matched New project form directly;
+  // users should not land on the Coworker view or an intermediate project listing.
   await page.getByRole("heading", { name: "New project", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Create a project", exact: true }).waitFor();
+  await page.locator(".rukh-project-create-form").waitFor();
+  await page.screenshot({ path: join(folder, "screenshots/rukh-projects-new-project-desktop.png"), fullPage: true });
   await page.getByLabel("Project name").fill("Project chatbot QA");
   await page.getByLabel("Project instructions").fill("Always answer concisely and use the project name in context.");
   await page.getByRole("button", { name: "Create project", exact: true }).click();
