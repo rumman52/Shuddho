@@ -257,7 +257,10 @@ def test_github_user_access_token_refreshes_and_rotates_encrypted_refresh_token(
         )
         assert bundle["access_token"] == "rotated-user-token"
         assert bundle["refresh_token"] == "rotated-refresh-token"
-        assert row.access_token_expires_at > utcnow()
+        expiry = row.access_token_expires_at
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=utcnow().tzinfo)
+        assert expiry > utcnow()
 
 
 def test_disconnect_github_installation_revokes_tokens_and_all_project_bindings(container):
