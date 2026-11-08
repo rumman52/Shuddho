@@ -379,7 +379,12 @@ class GitHubAppService:
                 owner + ":github-connect:" + row.id,
             )
             access_token = token_data.get("access_token")
-            if not isinstance(access_token, str) or not access_token:
+            if (
+                not isinstance(access_token, str) or not access_token
+                or not isinstance(token_data.get("refresh_token"), str)
+                or not isinstance(token_data.get("access_token_expires_at"), str)
+                or not isinstance(token_data.get("refresh_token_expires_at"), str)
+            ):
                 raise CoworkerError("github_oauth_expired", "The temporary GitHub authorization expired. Connect GitHub again.", 409)
             row.stage = "install_processing"
             attempt_id, project_id = row.id, row.project_id
@@ -400,9 +405,10 @@ class GitHubAppService:
             permissions = selected.get("permissions") or {}
             if not isinstance(permissions, dict) or permissions.get("contents") not in {"read", "write"}:
                 raise CoworkerError("github_contents_permission_missing", "The GitHub App installation needs repository Contents: read permission.", 403)
-            # Prove the installation can issue a bounded read token and list
-            # repositories before persisting the connection as active.
-            repositories = self._list_repositories_for_installation(installation_id)
+            # Use the user token, not an app-wide installation token, so
+            # repository visibility remains bounded by the signed-in user's
+            # current GitHub permissions as well as the App installation.
+            repositories = self._list_repositories_for_user(access_token, installation_id)
         except Exception:
             self._reset_install_attempt(owner, attempt_id)
             raise
@@ -419,8 +425,9 @@ class GitHubAppService:
                 GitHubInstallation.installation_id == installation_id,
             ).with_for_update())
             if existing is None:
+                installation_record_id = str(uuid4())
                 existing = GitHubInstallation(
-                    id=str(uuid4()),
+                    id=installation_record_id,
                     owner_id=owner,
                     installation_id=installation_id,
                     github_user_id=github_user_id,
@@ -429,6 +436,11 @@ class GitHubAppService:
                     account_login=account_login,
                     account_type=account_type,
                     permissions=permissions,
+                    user_token_bundle_ciphertext=self._vault().seal(
+                        token_data, owner + ":github-installation:" + installation_record_id,
+                    ),
+                    access_token_expires_at=datetime.fromisoformat(token_data["access_token_expires_at"]),
+                    refresh_token_expires_at=datetime.fromisoformat(token_data["refresh_token_expires_at"]),
                     active=True,
                     created_at=utcnow(),
                     updated_at=utcnow(),
@@ -441,6 +453,11 @@ class GitHubAppService:
                 existing.account_login = account_login
                 existing.account_type = account_type
                 existing.permissions = permissions
+                existing.user_token_bundle_ciphertext = self._vault().seal(
+                    token_data, owner + ":github-installation:" + existing.id,
+                )
+                existing.access_token_expires_at = datetime.fromisoformat(token_data["access_token_expires_at"])
+                existing.refresh_token_expires_at = datetime.fromisoformat(token_data["refresh_token_expires_at"])
                 existing.active = True
                 existing.updated_at = utcnow()
             attempt.stage = "consumed"
