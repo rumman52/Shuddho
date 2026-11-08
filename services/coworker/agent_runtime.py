@@ -276,11 +276,10 @@ class AgentRuntime:
             return await self.decide_v3(
                 run_id, activity_key=activity_key, _steering_retry=_steering_retry + 1,
             )
-        raise CoworkerError(
-            "agent_steering_changed",
-            "A newer instruction arrived repeatedly. Retry the Agent task after it settles.",
-            409,
-        )
+        # A burst of repeated steering must not fail the run. Yield one
+        # bounded wait; the next Temporal planning activity reads the newest
+        # persisted revision and starts from that instruction history.
+        return {"decision": "wait", "wait_seconds": 1}
 
     async def execute_step(self, run_id: str, ordinal: int) -> dict:
         run = self.repo.worker_run(run_id)
