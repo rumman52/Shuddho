@@ -130,7 +130,8 @@ export async function verifyConversationAgentContinuity(page) {
     assert.ok(callsA.some(call =>
       call.steering_revision === 1
       && call.steering_instructions.some(item => item.instruction === steering)
-    ));
+      && call.objective?.includes("Bangla")
+    ), "the new instruction must affect the next planning decision");
     assert.equal(callsB.length, 1, "the cancelled task must not re-enter model planning");
     assert.ok(callsC.some(call => call.observation_count === 1), "Task C must complete from its own verified observation");
   } finally {
