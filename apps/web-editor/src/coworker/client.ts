@@ -406,7 +406,7 @@ export type GitHubRepositoryTree = {
 };
 export type GitHubRepositoryFile = {
   repository: string; branch: string; commit_sha: string; path: string;
-  content: string; sha256: string; byte_size: number;
+  content: string; blob_sha: string; sha256: string; byte_size: number;
 };
 export type Workspace = {
   account_id: string; workspace_name: string; preferences: { language?: string; writing_goal?: string; tone_goal?: string; personal_dictionary?: string[] };
