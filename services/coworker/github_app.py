@@ -437,6 +437,16 @@ class GitHubAppService:
             ).with_for_update())
             if attempt is None or attempt.stage != "install_processing" or attempt.expires_at <= utcnow():
                 raise CoworkerError("github_install_expired", "This GitHub installation request expired. Start again.", 409)
+            active_installation = db.scalar(select(GitHubInstallation.id).where(
+                GitHubInstallation.owner_id == owner,
+                GitHubInstallation.active.is_(True),
+            ).limit(1))
+            if active_installation is not None:
+                raise CoworkerError(
+                    "github_installation_exists",
+                    "A GitHub user authorization is already active for this Rukh account. Revoke it before connecting a different GitHub account.",
+                    409,
+                )
             existing = db.scalar(select(GitHubInstallation).where(
                 GitHubInstallation.owner_id == owner,
                 GitHubInstallation.installation_id == installation_id,
