@@ -94,8 +94,12 @@ export async function verifyConversationAgentContinuity(page) {
     await page.reload();
     await composer.waitFor();
     await page.getByText(taskA, { exact: true }).waitFor();
-    await page.getByText(taskB, { exact: true }).waitFor();
+    const taskBMessage = page.getByText(taskB, { exact: true });
+    await taskBMessage.waitFor();
     await page.getByText(taskC, { exact: true }).waitFor();
+    // Completed/cancelled history is intentionally lazy-loaded after refresh.
+    await taskBMessage.locator("xpath=ancestor::li")
+      .getByRole("button", { name: "Show coworker progress", exact: true }).click();
     await page.getByText("Cancelled", { exact: true }).waitFor();
     await waitFor(async () => (await page.getByRole("button", { name: "Cancel Agent work", exact: true }).count()) === 2,
       "the two uncancelled tasks retaining their cancel controls");
