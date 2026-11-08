@@ -460,7 +460,7 @@ class GitHubAppService:
                         owner + ":github-installation:" + existing.id,
                     )
                     previous_access_token = previous_bundle.get("access_token")
-                    if isinstance(previous_access_token, str) and previous_access_token:
+                    if isinstance(previous_access_token, str) and previous_access_token and previous_access_token != access_token:
                         self._revoke_user_token(previous_access_token)
                 existing.github_user_id = github_user_id
                 existing.github_login = github_login
