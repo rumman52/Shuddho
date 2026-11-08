@@ -242,7 +242,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
       if (await sha256(item.content) !== item.sha256) throw new Error(item.path + " failed its SHA-256 integrity check.");
       imported.push({
         id: "github-" + globalThis.crypto.randomUUID(),
-        name: safeFilename(item.path.replace(/\\//g, "__")),
+        name: safeFilename(item.path.replace(/\//g, "__")),
         language: languageForFilename(item.path),
         content: item.content,
         origin: {
@@ -422,7 +422,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     }
     const uploadName = safeFilename(
       "repo-" + file.origin.repository.replace("/", "-") + "-" +
-      file.origin.path.replace(/\\//g, "__") + "-" + digest.slice(0, 8),
+      file.origin.path.replace(/\//g, "__") + "-" + digest.slice(0, 8),
     ) + ".txt";
     const manifest = await client.workspaceManifest();
     let source = manifest.documents.find(item => item.name === uploadName && item.sha256 === digest && item.available);
