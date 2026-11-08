@@ -59,6 +59,9 @@ def test_committed_activity_replays_without_inference_step_memory_or_charge(cont
     assert asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/decision-1")) == first == {"decision": "next_step", "ordinal": 1}
     assert planner.calls == 1
     assert counts(container, run_id) == [1, 1, 1]
+    with container.repository.sessions() as db:
+        decision = db.scalar(select(AgentDecision).where(AgentDecision.run_id == run_id))
+        assert decision.latency_ms == 1
     saved = container.agent.get(actor, run_id)
     assert saved["planner_calls"] == 1
     assert saved["planner_actual_tokens"] == 24

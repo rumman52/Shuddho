@@ -21,7 +21,9 @@ Run only in controlled staging with a backend-only `DEEPSEEK_API_KEY`:
 
 ```bash
 export SHUDDHO_SOURCE_REVISION=<40-character-deployed-git-sha>
-uv run --extra coworker python scripts/agent_eval.py --live --release-id coworker-cohort-001 --rollout /secure/release/cohort-rollout.json --min-pass-rate 1.0 --output /secure/release/agent-eval.json
+export DEEPSEEK_MODEL=<reviewed-model-id>
+export SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS=<reviewed-positive-rate>
+uv run --extra coworker python scripts/agent_eval.py --live --runtime-v3 --release-id coworker-cohort-001 --rollout /secure/release/cohort-rollout.json --min-pass-rate 1.0 --max-total-tokens 100000 --max-total-cost-microusd 500000 --output /secure/release/agent-eval-v3.json
 ```
 
 Do not run paid live evaluation in CI. Do not add user prompts, user files, secrets, hidden reasoning, or production data to the fixture set or generated artifacts.
@@ -33,10 +35,12 @@ The initial release threshold is 100% on this deliberately small contract set. E
 Routing correctness is necessary but not sufficient. Before broader production enablement, run the checked-in Coworker quality suite through the configured DeepSeek draft model:
 
 ```bash
-uv run --extra coworker python scripts/coworker_quality_eval.py --live --release-id coworker-cohort-001 --rollout /secure/release/cohort-rollout.json --min-pass-rate 1.0 --min-fact-recall 1.0 --max-average-tokens 20000 --max-p95-latency-ms 90000 --output /secure/release/coworker-quality-eval.json
+export SHUDDHO_SOURCE_REVISION=<40-character-deployed-git-sha>
+export SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS=<reviewed-positive-rate>
+uv run --extra coworker python scripts/coworker_quality_eval.py --live --release-id coworker-cohort-001 --rollout /secure/release/cohort-rollout.json --min-pass-rate 1.0 --min-fact-recall 1.0 --max-average-tokens 20000 --max-p95-latency-ms 90000 --max-total-tokens 100000 --max-total-cost-microusd 500000 --output /secure/release/coworker-quality-eval.json
 ```
 
-The initial synthetic suite covers English, Bangla, Spanish, and Arabic. It objectively checks schema validity, requested language, required fact preservation, known unsupported-claim absence, provenance references, missing-information behavior, latency, and token use. It does not use an LLM judge or claim universal language quality.
+The initial synthetic suite covers English, Bangla, Spanish, and Arabic. It objectively checks schema validity, requested language, required fact preservation, known unsupported-claim absence, provenance references, missing-information behavior, latency, and token use. The report includes independent per-language pass/fact-recall results. The live runner requires a positive reviewed cost rate, a total-token ceiling and a total micro-USD ceiling; missing token usage stops subsequent provider calls. It does not use an LLM judge or claim universal language quality.
 
 CI runs the same scorer against fixed known-good drafts without paid provider calls.
 
@@ -92,3 +96,18 @@ For the first production cohort:
 - monitor queue age, task success, provider errors, retries, latency, token use, storage growth, and action outcomes.
 
 A green gate authorizes a controlled rollout, not unrestricted autonomy or a global scale claim.
+
+
+### Runtime v3 live planner evaluation contract
+
+The Runtime v3 live path is manual and opt-in. It requires:
+
+- a backend-only `DEEPSEEK_API_KEY` and an explicitly selected `DEEPSEEK_MODEL`;
+- a full 40-character `SHUDDHO_SOURCE_REVISION` matching the deployed candidate;
+- a rollout manifest whose `release_id` matches `--release-id`;
+- a reviewed positive blended effective rate in `SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS`;
+- explicit total token and micro-USD budgets. Defaults are 100,000 tokens and 500,000 micro-USD; operators must lower or raise them only with an approved budget.
+
+The evaluator does not execute provider tools. It asks the live planner for each expected step, supplies only synthetic completed observations between decisions, checks the selected tool against the server tool surface and fixture forbidden-tool list, and requires a final completion decision. It also checks safe no-tool decisions, required context facts, forbidden prompt-injection terms and memory-proposal source IDs. Missing usage accounting fails the run and stops further model calls.
+
+The checked-in fixtures are synthetic and must not contain user prompts, files, credentials or production data. Do not invoke the paid live command in ordinary CI or against production.

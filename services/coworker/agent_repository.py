@@ -2203,6 +2203,7 @@ class AgentRepository:
         planner_call: int, model: str, prompt_sha256: str, tool_schema_sha256: str,
         observation_count: int, total_tokens: int | None, cost_microusd: int | None,
         memory_repository, context_sources: dict, expected_steering_revision: int | None = None,
+        latency_ms: int | None = None,
     ) -> dict:
         """Commit a decision, its local effects and retry result as one run transaction.
 
@@ -2239,7 +2240,7 @@ class AgentRepository:
                 run_id, decision, planner_call=planner_call, model=model,
                 prompt_sha256=prompt_sha256, tool_schema_sha256=tool_schema_sha256,
                 observation_count=observation_count, total_tokens=total_tokens,
-                cost_microusd=cost_microusd, _db=db,
+                cost_microusd=cost_microusd, latency_ms=latency_ms, _db=db,
             )
             run.planner_mode = "v3"
             if decision.memory_proposal is not None:
@@ -2395,6 +2396,7 @@ class AgentRepository:
         observation_count: int,
         total_tokens: int | None,
         cost_microusd: int | None,
+        latency_ms: int | None = None,
         _db=None,
     ) -> None:
         with (nullcontext(_db) if _db is not None else self.sessions.begin()) as db:
@@ -2438,6 +2440,7 @@ class AgentRepository:
                 tool_schema_sha256=tool_schema_sha256,
                 observation_count=observation_count,
                 total_tokens=total_tokens, cost_microusd=cost_microusd,
+                latency_ms=(max(0, int(latency_ms)) if isinstance(latency_ms, int) else None),
             ))
             self._checkpoint(
                 db, run, "analysis_decision",

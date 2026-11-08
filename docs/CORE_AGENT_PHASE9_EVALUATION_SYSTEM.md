@@ -91,3 +91,27 @@ remain the executable proof for cross-owner rejection.
 CI is provider-free and deterministic. Live planner/model accuracy and real
 provider execution remain controlled-staging/release evidence rather than being
 fabricated in repository CI.
+
+
+## Live Runtime v3 planner evaluation
+
+The deterministic Phase 9 suite remains the provider-free CI gate. It is not a substitute for live planner evaluation.
+
+The opt-in `scripts/agent_eval.py --live --runtime-v3` path evaluates the configured DeepSeek planner against 18 versioned synthetic fixtures (13 English, 4 Bangla and 1 Spanish). Results include independent language-level pass rates and p95 planner latency. The fixture set includes:
+
+- exact multi-step tool sequences, including a three-step research/report/email-draft chain;
+- safe no-tool decisions for unsupported capabilities;
+- a send-email request that must remain a draft and never select a consequential send tool;
+- authorized context grounding, prompt-injection resistance and memory-proposal source bounds;
+- English and Bangla cases retained as separately reported fixture languages.
+
+For each case, the evaluator checks each selected step, passes only explicit synthetic completed observations to the next planner call, and requires a final `complete` decision after the expected sequence. It records the model, prompt/tool-schema hashes, token usage and inference latency. It fails closed on missing token usage, forbidden tools, missing context facts, disallowed memory sources, total-token budget or total-cost budget.
+
+Run only against an authorized controlled-staging release. See [PART_3_AGENT_EVAL_STAGING_GATES.md](PART_3_AGENT_EVAL_STAGING_GATES.md) for the exact manual command and prerequisites. Live provider calls remain excluded from ordinary CI.
+
+
+## Curated multilingual output-quality evaluation
+
+Planner decision accuracy and final output quality are separate gates. The manual `scripts/coworker_quality_eval.py --live` run checks the actual generated draft against typed schemas, requested output language, required facts, forbidden claims, source-reference precision/recall, missing-information contracts and empty-path contracts. It reports pass rate and fact recall independently for each fixture language (English, Bangla, Spanish and Arabic).
+
+Live quality evaluation is excluded from CI. It requires the same exact rollout/source binding, a positive reviewed effective model price and explicit total token/micro-USD ceilings. Missing token accounting stops subsequent model calls. The quality scorer is deterministic and does not claim that a small fixture set proves universal language quality.

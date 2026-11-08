@@ -1,6 +1,11 @@
+import asyncio
 from copy import deepcopy
 from pathlib import Path
-from scripts.coworker_quality_eval import evaluate_offline, live_settings, load_cases, score, strings
+from types import SimpleNamespace
+
+import pytest
+import scripts.coworker_quality_eval as quality
+from scripts.coworker_quality_eval import evaluate_live, evaluate_offline, live_settings, load_cases, score, strings
 
 CASES=Path("tests/fixtures/coworker_quality_eval_cases.jsonl")
 
@@ -15,6 +20,9 @@ def test_curated_multilingual_quality_fixture_passes():
     assert r["citation_source_precision"]==1.0
     assert r["citation_source_recall"]==1.0
     assert r["languages"]==["ar","bn","en","es"]
+    assert r["by_language"]["bn"]["pass_rate"]==1.0
+    assert r["by_language"]["en"]["pass_rate"]==1.0
+    assert r["by_language"]["ar"]["required_fact_recall"]==1.0
     assert {"analysis_research","code","image_prompt","structured_data","creative_writing","summarisation","long_form_report","complex_planning"}.issubset(set(r["task_types"]))
 
 def test_rejects_unsupported_claim():
@@ -71,3 +79,90 @@ def test_numeric_structured_values_count_as_required_facts():
     assert not changed_result["checks"]["required_fact_preservation"]
     assert "120" in changed_result["missing_required_terms"]
     assert strings(True) == []
+
+
+
+def test_live_quality_stops_when_total_token_budget_is_exceeded(monkeypatch):
+    cases = loaded()[:2]
+    instances = []
+    calls = []
+
+    class FakeDraftModel:
+        def __init__(self, _settings, skill_id):
+            self.case = cases[len(instances)]
+            self.skill_id = skill_id
+            instances.append(self)
+
+        def messages(self, _request, _sources):
+            return [{"role": "user", "content": "synthetic evaluation"}]
+
+        async def generate(self, _messages, _language, _source_ids):
+            calls.append(self.skill_id)
+            return SimpleNamespace(
+                draft=SimpleNamespace(model_dump=lambda: self.case["draft"]),
+                total_tokens=10,
+                latency_ms=5,
+                generation_metadata=lambda **kwargs: {
+                    "model": "test-model",
+                    "prompt_version": "test-v1",
+                    **kwargs,
+                },
+            )
+
+    monkeypatch.setattr(quality, "DeepSeekDraftModel", FakeDraftModel)
+    result = asyncio.run(evaluate_live(
+        cases,
+        max_total_tokens=5,
+        max_total_cost_microusd=100,
+        cost_rate_microusd_per_1k_tokens=1000,
+    ))
+
+    assert calls == [cases[0]["skill_id"]]
+    assert result["budget_failures"] == ["total_token_budget"]
+    assert result["total_tokens"] == 10
+    assert result["estimated_cost_microusd"] == 10
+    assert result["evaluation_complete"] is False
+
+
+def test_live_quality_stops_when_token_usage_is_missing(monkeypatch):
+    cases = loaded()[:2]
+    calls = []
+
+    class FakeDraftModel:
+        def __init__(self, _settings, skill_id):
+            self.skill_id = skill_id
+
+        def messages(self, _request, _sources):
+            return [{"role": "user", "content": "synthetic evaluation"}]
+
+        async def generate(self, _messages, _language, _source_ids):
+            calls.append(self.skill_id)
+            return SimpleNamespace(
+                draft=SimpleNamespace(model_dump=lambda: cases[0]["draft"]),
+                total_tokens=None,
+                latency_ms=5,
+                generation_metadata=lambda **kwargs: {"model": "test-model", **kwargs},
+            )
+
+    monkeypatch.setattr(quality, "DeepSeekDraftModel", FakeDraftModel)
+    result = asyncio.run(evaluate_live(
+        cases,
+        max_total_tokens=1000,
+        max_total_cost_microusd=100,
+        cost_rate_microusd_per_1k_tokens=1000,
+    ))
+
+    assert len(calls) == 1
+    assert result["token_usage_complete"] is False
+    assert "token_usage_incomplete" in result["budget_failures"]
+    assert result["estimated_cost_microusd"] is None
+
+
+def test_live_quality_requires_reviewed_positive_cost_rate():
+    with pytest.raises(ValueError, match="positive token, cost and reviewed rate"):
+        asyncio.run(evaluate_live(
+            loaded()[:1],
+            max_total_tokens=1000,
+            max_total_cost_microusd=100,
+            cost_rate_microusd_per_1k_tokens=0,
+        ))

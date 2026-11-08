@@ -1786,6 +1786,7 @@ class AgentDecision(Base):
     observation_count: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int | None] = mapped_column(Integer)
     cost_microusd: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
         UniqueConstraint("run_id", "planner_call", name="uq_cw_agent_decisions_planner_call"),

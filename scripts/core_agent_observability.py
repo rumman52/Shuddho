@@ -64,9 +64,14 @@ def ratio(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator, 6) if denominator else None
 
 
-def estimated_cost_microusd(tokens: int, settings: Settings) -> int:
+def estimated_cost_microusd(tokens: int, settings: Settings) -> int | None:
+    accounted_tokens = max(0, int(tokens))
     rate = max(0, int(settings.agent_v3_planner_cost_microusd_per_1k_tokens))
-    return (max(0, int(tokens)) * rate + 999) // 1000 if rate else 0
+    if accounted_tokens == 0:
+        return 0
+    if rate <= 0:
+        return None
+    return (accounted_tokens * rate + 999) // 1000
 
 
 def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
@@ -117,12 +122,31 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
     charged_child_tokens = sum(max(0, int(item.charged_tokens or 0)) for item in model_attempts)
     planner_tokens = max(int(run.planner_tokens or 0), int(run.planner_actual_tokens or 0))
     accounted_tokens = planner_tokens + charged_child_tokens
-    planner_cost = max(
-        int(run.planner_cost_microusd or 0),
-        estimated_cost_microusd(planner_tokens, settings),
+    planner_estimate = estimated_cost_microusd(planner_tokens, settings)
+    persisted_planner_cost = max(0, int(run.planner_cost_microusd or 0))
+    planner_cost = (
+        max(persisted_planner_cost, planner_estimate)
+        if planner_estimate is not None
+        else (persisted_planner_cost if persisted_planner_cost > 0 else None)
     )
-    cost_microusd = planner_cost + estimated_cost_microusd(charged_child_tokens, settings)
+    child_cost = estimated_cost_microusd(charged_child_tokens, settings)
+    cost_microusd = (
+        planner_cost + child_cost
+        if planner_cost is not None and child_cost is not None
+        else None
+    )
 
+    planner_latencies = [
+        int(item.latency_ms)
+        for item in decisions
+        if isinstance(item.latency_ms, int) and not isinstance(item.latency_ms, bool) and item.latency_ms >= 0
+    ]
+    child_model_latencies = [
+        int(item.latency_ms)
+        for item in model_attempts
+        if isinstance(item.latency_ms, int) and not isinstance(item.latency_ms, bool) and item.latency_ms >= 0
+    ]
+    model_latencies = planner_latencies + child_model_latencies
     tool_latencies = [
         value for value in (
             duration_ms(item.started_at, item.finished_at or (now if item.state == "running" else None))
@@ -171,8 +195,21 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         "tokens": accounted_tokens,
         "latency_ms": duration_ms(run.created_at, latency_end) or 0,
         "tool_calls": len(invocations),
+        "tool_latency_ms": tool_latencies,
         "tool_latency_ms_total": sum(tool_latencies),
+        "tool_latency_ms_p50": percentile(tool_latencies, 0.50),
         "tool_latency_ms_p95": percentile(tool_latencies, 0.95),
+        "tool_latency_ms_p99": percentile(tool_latencies, 0.99),
+        "model_latency_ms": model_latencies,
+        "model_latency_ms_total": sum(model_latencies),
+        "model_latency_ms_p50": percentile(model_latencies, 0.50),
+        "model_latency_ms_p95": percentile(model_latencies, 0.95),
+        "model_latency_ms_p99": percentile(model_latencies, 0.99),
+        "model_latency_samples": len(model_latencies),
+        "model_latency_coverage": ratio(len(model_latencies), int(run.planner_calls or 0) + len(model_attempts)),
+        "model_latency_scope": "successful planner decisions and child model attempts with recorded latency; failed planner attempts without timing are excluded",
+        "cost_estimate_available": cost_microusd is not None,
+        "cost_rate_microusd_per_1k_tokens": max(0, int(settings.agent_v3_planner_cost_microusd_per_1k_tokens)),
         "retries": retries,
         "routing_decision": "agent_run",
         "routing_mode": run.planner_mode,
@@ -200,6 +237,21 @@ def aggregate(records: list[dict], transactions: list[Transaction], settings: Se
     model_calls = sum(item["model_calls"] for item in records)
     model_failures = sum(item["model_failures"] for item in records)
     latencies = [item["latency_ms"] for item in measured]
+    model_latencies = [
+        value for item in records for value in item.get("model_latency_ms", [])
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    ]
+    tool_latencies = [
+        value for item in records for value in item.get("tool_latency_ms", [])
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    ]
+    retry_count = sum(max(0, int(item.get("retries", 0))) for item in records)
+    execution_attempts = model_calls + tool_calls
+    cost_complete = bool(records) and all(item.get("cost_microusd") is not None for item in records)
+    total_cost = (
+        sum(int(item["cost_microusd"]) for item in records)
+        if cost_complete else None
+    )
     tx_terminal = [item for item in transactions if item.state in TRANSACTION_TERMINAL_STATES]
     tx_unknown = sum(item.state == "outcome_unknown" for item in tx_terminal)
     return {
@@ -213,24 +265,38 @@ def aggregate(records: list[dict], transactions: list[Transaction], settings: Se
             "p99_latency_ms": percentile(latencies, 0.99),
             "average_steps": round(tool_calls / len(records), 4) if records else None,
             "token_consumption": sum(item["tokens"] for item in records),
+            "total_cost_microusd": total_cost,
             "average_cost_microusd": (
-                round(sum(item["cost_microusd"] for item in records) / len(records), 2)
-                if records else None
+                round(total_cost / len(records), 2)
+                if total_cost is not None else None
             ),
+            "cost_estimate_complete": cost_complete,
             "duplicate_attempts": sum(item["duplicate_attempts"] for item in records),
             "outcome_unknown": sum(item["outcome_unknown"] for item in records),
             "abandoned": sum(bool(item["abandoned"]) for item in records),
             "provider_failures": sum(item["provider_failures"] for item in records),
+            "retry_attempts": retry_count,
+            "retry_rate": ratio(retry_count, execution_attempts),
         },
         "tools": {
             "calls": tool_calls,
             "failures": tool_failures,
             "failure_rate": ratio(tool_failures, tool_calls),
+            "latency_samples": len(tool_latencies),
+            "p50_latency_ms": percentile(tool_latencies, 0.50),
+            "p95_latency_ms": percentile(tool_latencies, 0.95),
+            "p99_latency_ms": percentile(tool_latencies, 0.99),
+            "latency_coverage": ratio(len(tool_latencies), tool_calls),
         },
         "models": {
             "calls": model_calls,
             "failures": model_failures,
             "failure_rate": ratio(model_failures, model_calls),
+            "latency_samples": len(model_latencies),
+            "p50_latency_ms": percentile(model_latencies, 0.50),
+            "p95_latency_ms": percentile(model_latencies, 0.95),
+            "p99_latency_ms": percentile(model_latencies, 0.99),
+            "latency_coverage": ratio(len(model_latencies), model_calls),
         },
         "transactions": {
             "samples": len(tx_terminal),
@@ -245,6 +311,7 @@ def aggregate(records: list[dict], transactions: list[Transaction], settings: Se
             "max_tool_calls_per_run": settings.max_agent_tool_calls_per_run,
             "max_runtime_seconds": settings.agent_run_timeout_seconds,
             "max_cost_microusd_per_run": settings.max_agent_cost_microusd_per_run,
+            "cost_rate_microusd_per_1k_tokens": max(0, int(settings.agent_v3_planner_cost_microusd_per_1k_tokens)),
         },
     }
 
@@ -294,12 +361,26 @@ def render_openmetrics(snapshot: dict) -> str:
         "shuddho_core_agent_run_success_ratio": d["runs"]["success_rate"],
         "shuddho_core_agent_tool_failure_ratio": d["tools"]["failure_rate"],
         "shuddho_core_agent_model_failure_ratio": d["models"]["failure_rate"],
+        "shuddho_core_agent_model_latency_p50_ms": d["models"]["p50_latency_ms"],
+        "shuddho_core_agent_model_latency_p95_ms": d["models"]["p95_latency_ms"],
+        "shuddho_core_agent_model_latency_p99_ms": d["models"]["p99_latency_ms"],
+        "shuddho_core_agent_model_latency_coverage": d["models"]["latency_coverage"],
+        "shuddho_core_agent_model_latency_samples": d["models"]["latency_samples"],
+        "shuddho_core_agent_tool_latency_p50_ms": d["tools"]["p50_latency_ms"],
+        "shuddho_core_agent_tool_latency_p95_ms": d["tools"]["p95_latency_ms"],
+        "shuddho_core_agent_tool_latency_p99_ms": d["tools"]["p99_latency_ms"],
+        "shuddho_core_agent_tool_latency_coverage": d["tools"]["latency_coverage"],
+        "shuddho_core_agent_tool_latency_samples": d["tools"]["latency_samples"],
+        "shuddho_core_agent_retry_attempts": d["runs"]["retry_attempts"],
+        "shuddho_core_agent_retry_rate": d["runs"]["retry_rate"],
+        "shuddho_core_agent_cost_estimate_complete": d["runs"]["cost_estimate_complete"],
         "shuddho_core_agent_run_latency_p50_ms": d["runs"]["p50_latency_ms"],
         "shuddho_core_agent_run_latency_p95_ms": d["runs"]["p95_latency_ms"],
         "shuddho_core_agent_run_latency_p99_ms": d["runs"]["p99_latency_ms"],
         "shuddho_core_agent_average_steps": d["runs"]["average_steps"],
         "shuddho_core_agent_token_consumption": d["runs"]["token_consumption"],
         "shuddho_core_agent_average_cost_microusd": d["runs"]["average_cost_microusd"],
+        "shuddho_core_agent_total_cost_microusd": d["runs"]["total_cost_microusd"],
         "shuddho_core_agent_duplicate_attempts": d["runs"]["duplicate_attempts"],
         "shuddho_core_agent_outcome_unknown": d["runs"]["outcome_unknown"],
         "shuddho_core_agent_abandoned_runs": d["runs"]["abandoned"],

@@ -1,3 +1,23 @@
+## Part 3 source and repository-qualification update — 9 November 2026
+
+**Combined PR:** [#658](https://github.com/rumman52/Shuddho/pull/658)  
+**Base:** `1288ccf88ead3e63cfca45beeaf49777a58f3e14`  
+**Branch:** `codex/part3-reliability-qualification-20261109`
+
+This is a source-only implementation and repository-verification checkpoint. It does not change the overall `NOT RELEASE-QUALIFIED` disposition and does not claim operated staging or production acceptance.
+
+- 3.1: the permanent deterministic Phase 9 suite remains the provider-free CI gate. The live Runtime v3 planner evaluator now supports multi-step sequences, safe no-tool rejection, forbidden consequential-tool checks, context/memory source checks, and explicit total token/cost budgets. Paid live inference has not been run by this PR.
+- 3.2: migration 0066 adds nullable planner inference latency to AgentDecision. The exporter combines planner and child-model latency samples, reports model/tool percentiles and retry rate, and returns unavailable cost when a positive reviewed rate is absent. Cost remains an estimate, not an invoice.
+- 3.3: staging remains BLOCKED_EXTERNAL. Render read-only inspection on 9 November found the staging PostgreSQL database suspended by billing with metadata expiry 31 October 2026; the staging API last deployed on 2 October and auto-deploy is disabled; no persistent Shuddho worker service exists in the inspected workspace.
+- 3.4: the Writing Assistant browser test now expects the Documents-first route and explicitly opens a document before asserting editor visibility.
+- 3.5: Part 3 design, plan, runbook, release matrix and rollback notes are recorded in the linked PR.
+
+**No staging/production change:** no hosted migration, service deployment, worker provisioning, paid infrastructure, secret change, provider mutation, telemetry ingestion, feature activation or production promotion was performed. Production API remains configured to auto-deploy from `main`; this PR branch is not `main`.
+
+**Remaining owner actions:** restore staging database continuity and authorize persistent worker/Temporal/private-storage/identity setup; verify main branch protection with a GitHub administrator; approve a live-evaluation budget and exact staged rollout; authorize monitoring destinations and SLO thresholds; obtain independent security/operations review. The PR must remain unmerged until exact-head checks and review are complete.
+
+---
+
 # Core Agent completion ledger — evidence-based review snapshot
 
 ## Fresh live refresh — 31 October 2026 (Asia/Dhaka)

@@ -234,7 +234,7 @@ class AgentRuntime:
         cost_microusd = None
         retry_for_steering = False
         try:
-            decision, actual_tokens, _latency, evidence = await self.planner.decide(
+            decision, actual_tokens, latency_ms, evidence = await self.planner.decide(
                 run["goal"],
                 tools,
                 observations,
@@ -252,7 +252,8 @@ class AgentRuntime:
                     prompt_sha256=evidence["prompt_sha256"],
                     tool_schema_sha256=evidence["tool_schema_sha256"],
                     observation_count=len(observations), total_tokens=actual_tokens,
-                    cost_microusd=cost_microusd, memory_repository=self.container.memory,
+                    cost_microusd=cost_microusd, latency_ms=latency_ms,
+                    memory_repository=self.container.memory,
                     context_sources=context_sources,
                     expected_steering_revision=run["steering_revision"],
                 )
