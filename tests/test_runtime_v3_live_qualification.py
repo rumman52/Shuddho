@@ -139,7 +139,7 @@ class LostAcknowledgementRunner(RecordingDocumentRunner):
         ):
             self.interrupted = True
             self.checkpoint.set()
-            await asyncio.Event().wait()
+            raise RuntimeError("simulated worker loss after persisted draft checkpoint")
         return result
 
 
