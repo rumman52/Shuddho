@@ -417,15 +417,20 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     if (!file.origin || !file.content.trim()) throw new Error("A repository context file is missing its source metadata or content.");
     if (encodedBytes(file.content) > MAX_FILE_BYTES) throw new Error(file.origin.path + " exceeds Fly's 512 KB source limit.");
     const digest = await sha256(file.content);
-    if (file.saved?.sha256 === digest && file.saved.versionId) {
-      return { versionId: file.saved.versionId, digest };
-    }
+    const manifest = await client.workspaceManifest();
+    const existingSnapshot = file.saved?.sha256 === digest
+      ? manifest.documents.find(item =>
+          item.document_id === file.saved?.documentId &&
+          item.version_id === file.saved?.versionId &&
+          item.sha256 === digest &&
+          item.available,
+        )
+      : undefined;
     const uploadName = safeFilename(
       "repo-" + file.origin.repository.replace("/", "-") + "-" +
       file.origin.path.replace(/\//g, "__") + "-" + digest.slice(0, 8),
     ) + ".txt";
-    const manifest = await client.workspaceManifest();
-    let source = manifest.documents.find(item => item.name === uploadName && item.sha256 === digest && item.available);
+    let source = existingSnapshot ?? manifest.documents.find(item => item.name === uploadName && item.sha256 === digest && item.available);
     if (!source) {
       const uploaded = await client.upload(new File([file.content], uploadName, { type: "text/plain" }));
       const refreshed = await client.workspaceManifest();
