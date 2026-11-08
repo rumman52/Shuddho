@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
-import type { ConversationActivityRecord, ConversationMessageRecord, ConversationRecord, CoworkerClient, SandboxExecution, SandboxSession } from "./client";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import type { ConversationActivityRecord, ConversationMessageRecord, ConversationRecord, CoworkerClient, GitHubRepositoryBinding, GitHubRepositoryFile, SandboxExecution, SandboxSession } from "./client";
 import ConversationRunStatus from "./ConversationRunStatus";
+import FlyRepositoryPanel from "./FlyRepositoryPanel";
 import "./fly-workspace.css";
 
 type FlyLanguage = "python" | "javascript" | "typescript" | "html" | "css" | "json" | "markdown" | "text" | "sql" | "shell";
 type SavedSource = { documentId: string; versionId: string; sha256: string; filename: string };
-type FlyFile = { id: string; name: string; language: FlyLanguage; content: string; saved?: SavedSource };
+type RepositoryOrigin = { repository: string; path: string; branch: string; commitSha: string; repositorySha: string };
+type FlyFile = { id: string; name: string; language: FlyLanguage; content: string; saved?: SavedSource; origin?: RepositoryOrigin };
 type FlyDraft = { files: FlyFile[]; activeId: string };
 type ReviewAttempt = { fingerprint: string; createKey: string; messageKey: string; conversationId?: string; messageId?: string; sequence?: number };
 
@@ -65,7 +67,16 @@ export function normalizeStoredDraft(value: unknown): FlyDraft {
       "filename" in savedValue && typeof savedValue.filename === "string"
       ? savedValue as SavedSource
       : undefined;
-    return { ...file, name: safeFilename(file.name), saved };
+    const originValue: unknown = file.origin;
+    const origin = originValue && typeof originValue === "object" &&
+      "repository" in originValue && typeof originValue.repository === "string" &&
+      "path" in originValue && typeof originValue.path === "string" &&
+      "branch" in originValue && typeof originValue.branch === "string" &&
+      "commitSha" in originValue && typeof originValue.commitSha === "string" && /^[a-f0-9]{40}$/i.test(originValue.commitSha) &&
+      "repositorySha" in originValue && typeof originValue.repositorySha === "string" && /^[a-f0-9]{40}$/i.test(originValue.repositorySha)
+      ? originValue as RepositoryOrigin
+      : undefined;
+    return { ...file, name: safeFilename(file.name), saved, origin };
   });
 
   if (!files.length) return fallback;
@@ -170,6 +181,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [projectsError, setProjectsError] = useState("");
   const [selectedProject, setSelectedProject] = useState("");
+  const [repositoryName, setRepositoryName] = useState("");
   const [session, setSession] = useState<SandboxSession | null>(null);
   const [executions, setExecutions] = useState<SandboxExecution[]>([]);
   const [busy, setBusy] = useState("");
