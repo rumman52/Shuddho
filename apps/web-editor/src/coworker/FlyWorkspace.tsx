@@ -185,6 +185,7 @@ export function buildLineDiff(before: string, after: string): FlyDiffLine[] | nu
 
 export default function FlyWorkspace({ client, accountId }: { client: CoworkerClient; accountId: string }) {
   const [draft, setDraft] = useState<FlyDraft>(() => readDraft(accountId));
+  const [draftOwner, setDraftOwner] = useState(accountId);
   const [runtimeEnabled, setRuntimeEnabled] = useState<boolean | null>(null);
   const [runtimeLoading, setRuntimeLoading] = useState(true);
   const [runtimeError, setRuntimeError] = useState("");
