@@ -265,7 +265,8 @@ export default function FlyRepositoryPanel({
     try {
       const files: GitHubRepositoryFile[] = [];
       for (const path of selectedPaths) {
-        files.push(await client.githubRepositoryFile(projectId, path));
+        if (!tree?.commit_sha) throw new Error("Refresh the repository tree before importing source files.");
+        files.push(await client.githubRepositoryFile(projectId, path, tree.commit_sha));
       }
       await onImportFiles(files);
       setSelectedPaths([]);
