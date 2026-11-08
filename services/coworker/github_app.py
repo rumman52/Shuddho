@@ -529,37 +529,62 @@ class GitHubAppService:
         try:
             with self.sessions.begin() as db:
                 installation = self._installation(db, owner, installation_record_id)
-                binding = owner + ":github-installation:" + installation.id
-                bundle = self._vault().open(installation.user_token_bundle_ciphertext, binding)
+                bundle = self._vault().open(
+                    installation.user_token_bundle_ciphertext,
+                    owner + ":github-installation:" + installation.id,
+                )
                 access_token = bundle.get("access_token")
                 refresh_token = bundle.get("refresh_token")
-                if not isinstance(access_token, str) or not access_token or not isinstance(refresh_token, str) or not refresh_token:
-                    if isinstance(access_token, str) and access_token:
-                        self._revoke_user_token(access_token)
-                    installation.active = False
-                    installation.user_token_bundle_ciphertext = ""
+                now = utcnow()
+                access_expiry = installation.access_token_expires_at
+                refresh_expiry = installation.refresh_token_expires_at
+                if access_expiry.tzinfo is None:
+                    access_expiry = access_expiry.replace(tzinfo=now.tzinfo)
+                if refresh_expiry.tzinfo is None:
+                    refresh_expiry = refresh_expiry.replace(tzinfo=now.tzinfo)
+                has_access = isinstance(access_token, str) and bool(access_token)
+                has_refresh = isinstance(refresh_token, str) and bool(refresh_token)
+                if not has_access or not has_refresh:
+                    if has_access and access_expiry > now:
+                        self._revoke_github_user_authorization_in_transaction(
+                            db, owner, installation.github_user_id, access_token,
+                            "github.authorization_expired",
+                        )
+                    else:
+                        self._deactivate_github_user_installations_in_transaction(
+                            db, owner, installation.github_user_id, "github.authorization_expired",
+                        )
+                    expired = True
+                elif access_expiry > now + timedelta(minutes=1):
+                    token = access_token
+                elif refresh_expiry <= now:
+                    if access_expiry > now:
+                        self._revoke_github_user_authorization_in_transaction(
+                            db, owner, installation.github_user_id, access_token,
+                            "github.authorization_expired",
+                        )
+                    else:
+                        self._deactivate_github_user_installations_in_transaction(
+                            db, owner, installation.github_user_id, "github.authorization_expired",
+                        )
                     expired = True
                 else:
-                    access_expiry = installation.access_token_expires_at
-                    refresh_expiry = installation.refresh_token_expires_at
-                    if access_expiry.tzinfo is None:
-                        access_expiry = access_expiry.replace(tzinfo=utcnow().tzinfo)
-                    if refresh_expiry.tzinfo is None:
-                        refresh_expiry = refresh_expiry.replace(tzinfo=utcnow().tzinfo)
-                    if access_expiry > utcnow() + timedelta(minutes=1):
-                        token = access_token
-                    elif refresh_expiry <= utcnow():
-                        self._revoke_user_token(access_token)
-                        installation.active = False
-                        installation.user_token_bundle_ciphertext = ""
-                        expired = True
-                    else:
-                        refreshed = self._oauth_refresh(refresh_token)
-                        installation.user_token_bundle_ciphertext = self._vault().seal(refreshed, binding)
-                        installation.access_token_expires_at = datetime.fromisoformat(refreshed["access_token_expires_at"])
-                        installation.refresh_token_expires_at = datetime.fromisoformat(refreshed["refresh_token_expires_at"])
-                        installation.updated_at = utcnow()
-                        token = refreshed["access_token"]
+                    refreshed = self._oauth_refresh(refresh_token)
+                    refreshed_access_expiry = datetime.fromisoformat(refreshed["access_token_expires_at"])
+                    refreshed_refresh_expiry = datetime.fromisoformat(refreshed["refresh_token_expires_at"])
+                    related = db.scalars(select(GitHubInstallation).where(
+                        GitHubInstallation.owner_id == owner,
+                        GitHubInstallation.github_user_id == installation.github_user_id,
+                        GitHubInstallation.active.is_(True),
+                    ).order_by(GitHubInstallation.id).with_for_update()).all()
+                    for row in related:
+                        row.user_token_bundle_ciphertext = self._vault().seal(
+                            refreshed, owner + ":github-installation:" + row.id,
+                        )
+                        row.access_token_expires_at = refreshed_access_expiry
+                        row.refresh_token_expires_at = refreshed_refresh_expiry
+                        row.updated_at = now
+                    token = refreshed["access_token"]
         except CoworkerError as error:
             if error.code == "github_oauth_expired":
                 with self.sessions.begin() as db:
@@ -568,17 +593,24 @@ class GitHubAppService:
                         GitHubInstallation.owner_id == owner,
                     ).with_for_update())
                     if row is not None:
-                        if row.user_token_bundle_ciphertext:
-                            bundle = self._vault().open(
-                                row.user_token_bundle_ciphertext,
-                                owner + ":github-installation:" + row.id,
+                        bundle = self._vault().open(
+                            row.user_token_bundle_ciphertext,
+                            owner + ":github-installation:" + row.id,
+                        ) if row.user_token_bundle_ciphertext else {}
+                        stale_access_token = bundle.get("access_token")
+                        access_expiry = row.access_token_expires_at
+                        now = utcnow()
+                        if access_expiry.tzinfo is None:
+                            access_expiry = access_expiry.replace(tzinfo=now.tzinfo)
+                        if isinstance(stale_access_token, str) and stale_access_token and access_expiry > now:
+                            self._revoke_github_user_authorization_in_transaction(
+                                db, owner, row.github_user_id, stale_access_token,
+                                "github.authorization_expired",
                             )
-                            stale_access_token = bundle.get("access_token")
-                            if isinstance(stale_access_token, str) and stale_access_token:
-                                self._revoke_user_token(stale_access_token)
-                        row.active = False
-                        row.user_token_bundle_ciphertext = ""
-                        row.updated_at = utcnow()
+                        else:
+                            self._deactivate_github_user_installations_in_transaction(
+                                db, owner, row.github_user_id, "github.authorization_expired",
+                            )
                 raise CoworkerError("github_reconnect_required", "GitHub authorization expired or was revoked. Reconnect this GitHub account in Fly.", 409) from None
             raise
         if expired:
