@@ -132,9 +132,6 @@ export default function CoworkerGate({ authClientFactory = getRukhAuthClient }: 
   }
 
   function closeAuth() {
-    if (projectsIntent && typeof window !== "undefined" && window.history?.replaceState) {
-      window.history.replaceState({}, "", "/coworker");
-    }
     setAuthOpen(false);
     setPassword("");
     setShowPassword(false);

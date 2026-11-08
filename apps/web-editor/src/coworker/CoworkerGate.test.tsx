@@ -166,6 +166,16 @@ test("Projects deep links without auth configuration show a Projects access scre
   }, "/coworker", "?view=projects");
 });
 
+test("Back from Projects sign-in returns to the Projects entry without losing the deep link", async () => {
+  await withGate(() => ({}), async tree => {
+    assert.ok(tree.root.findByProps({ className: "rukh-login-page" }));
+    await act(async () => tree.root.findByProps({ className: "rukh-login-back" }).props.onClick());
+    assert.ok(tree.root.findByProps({ "aria-label": "Rukh AI Projects" }));
+    assert.ok(tree.root.findByProps({ id: "rukh-project-entry-title" }));
+    assert.equal((globalThis.window as unknown as Window).location.search, "?view=projects");
+  }, "/coworker", "?view=projects");
+});
+
 test("prompt starters populate the first-message composer without sending", async () => {
   await withGate(undefined, async tree => {
     await act(async () => tree.root.findByProps({ "aria-label": "Start with a research brief" }).props.onClick());
