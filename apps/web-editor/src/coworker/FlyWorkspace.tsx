@@ -12,6 +12,7 @@ type FlyDraft = { files: FlyFile[]; activeId: string };
 type ReviewAttempt = { fingerprint: string; createKey: string; messageKey: string; conversationId?: string; messageId?: string; sequence?: number };
 
 const MAX_FILES = 12;
+const MAX_REPOSITORY_FILE_BYTES = 256 * 1024;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_PYTHON_BYTES = 20 * 1024;
 const DEFAULT_FILE: FlyFile = { id: "fly-main", name: "main.py", language: "python", content: "def main():\n    print(\"Hello from Fly\")\n\nif __name__ == \"__main__\":\n    main()\n" };
@@ -265,7 +266,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     const imported: FlyFile[] = [];
     for (const item of fresh) {
       if (item.repository !== repositoryName) throw new Error("The repository changed while these files were being imported. Refresh the repository panel.");
-      if (encodedBytes(item.content) !== item.byte_size || item.byte_size > MAX_FILE_BYTES) {
+      if (encodedBytes(item.content) !== item.byte_size || item.byte_size > MAX_REPOSITORY_FILE_BYTES) {
         throw new Error(item.path + " failed the repository file size check.");
       }
       if (!/^[a-f0-9]{40}$/i.test(item.commit_sha) || !/^[a-f0-9]{40}$/i.test(item.blob_sha) || !/^[a-f0-9]{64}$/i.test(item.sha256)) {
@@ -448,7 +449,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
 
   async function saveRepositoryContextFile(file: FlyFile): Promise<{ versionId: string; digest: string }> {
     if (!file.origin || !file.content.trim()) throw new Error("A repository context file is missing its source metadata or content.");
-    if (encodedBytes(file.content) > MAX_FILE_BYTES) throw new Error(file.origin.path + " exceeds Fly's 512 KB source limit.");
+    if (encodedBytes(file.content) > MAX_REPOSITORY_FILE_BYTES) throw new Error(file.origin.path + " exceeds Fly's 256 KB repository source limit.");
     const digest = await sha256(file.content);
     const manifest = await client.workspaceManifest();
     const existingSnapshot = file.saved?.sha256 === digest
