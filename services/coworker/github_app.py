@@ -761,23 +761,35 @@ class GitHubAppService:
                 return {"repository": None}
             return {"repository": self._binding_dto(row)}
 
-    def _revoke_user_grant(self, access_token: str):
+    def _revoke_user_grant(self, access_token: str, refresh_token: str | None = None):
         if not self.settings.github_app_client_id or not self.settings.github_app_client_secret:
             raise CoworkerError("github_revoke_unavailable", "GitHub App authorization revocation is not configured; local disconnection was not performed.", 503)
-        try:
-            with self._client() as client:
-                response = client.delete(
-                    GITHUB_API + f"/applications/{quote(self.settings.github_app_client_id, safe='')}/grant",
-                    auth=(self.settings.github_app_client_id, self.settings.github_app_client_secret),
-                    headers={
-                        "Accept": "application/vnd.github+json",
-                        "User-Agent": "Rukh-AI-Fly",
-                        "X-GitHub-Api-Version": self.settings.github_api_version,
-                    },
-                    json={"access_token": access_token},
-                )
-        except httpx.HTTPError:
-            raise CoworkerError("github_revoke_unavailable", "GitHub could not confirm authorization revocation. The local connection was kept so you can retry safely.", 503) from None
+
+        def delete_grant(token: str):
+            try:
+                with self._client() as client:
+                    return client.delete(
+                        GITHUB_API + f"/applications/{quote(self.settings.github_app_client_id, safe='')}/grant",
+                        auth=(self.settings.github_app_client_id, self.settings.github_app_client_secret),
+                        headers={
+                            "Accept": "application/vnd.github+json",
+                            "User-Agent": "Rukh-AI-Fly",
+                            "X-GitHub-Api-Version": self.settings.github_api_version,
+                        },
+                        json={"access_token": token},
+                    )
+            except httpx.HTTPError:
+                raise CoworkerError("github_revoke_unavailable", "GitHub could not confirm authorization revocation. The local connection was kept so you can retry safely.", 503) from None
+
+        response = delete_grant(access_token)
+        if response.status_code == 404 and refresh_token:
+            try:
+                refreshed = self._oauth_refresh(refresh_token)
+            except CoworkerError as error:
+                if error.code == "github_oauth_expired":
+                    return
+                raise
+            response = delete_grant(refreshed["access_token"])
         if response.status_code != 204:
             raise CoworkerError("github_revoke_failed", "GitHub did not confirm authorization revocation. The local connection was kept so you can retry safely.", 502)
 
@@ -801,8 +813,8 @@ class GitHubAppService:
             ).values(active=False, updated_at=now))
         return len(rows)
 
-    def _revoke_github_user_authorization_in_transaction(self, db, owner: str, github_user_id: int, access_token: str, audit_event: str):
-        self._revoke_user_grant(access_token)
+    def _revoke_github_user_authorization_in_transaction(self, db, owner: str, github_user_id: int, access_token: str, audit_event: str, refresh_token: str | None = None):
+        self._revoke_user_grant(access_token, refresh_token)
         return self._deactivate_github_user_installations_in_transaction(db, owner, github_user_id, audit_event)
 
     def revoke_installations_in_transaction(self, db, owner: str):
