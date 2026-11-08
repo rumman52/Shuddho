@@ -173,8 +173,8 @@ def test_live_quality_retains_known_tokens_when_latency_evidence_is_invalid(monk
     cases = loaded()[:1]
 
     class FakeDraftModel:
-        def __init__(self, _settings, _skill_id):
-            pass
+        def __init__(self, _settings, skill_id):
+            self.skill_id = skill_id
 
         def messages(self, _request, _sources):
             return [{"role": "user", "content": "synthetic evaluation"}]
