@@ -9,8 +9,6 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy import select
 
 from test_coworker import account, signed_client
@@ -27,12 +25,6 @@ from services.coworker.project_schemas import ProjectCreate
 
 
 def _enabled(container, transport=None):
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_key = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    ).decode("utf-8")
     settings = replace(
         container.settings,
         projects_enabled=True,
@@ -42,7 +34,6 @@ def _enabled(container, transport=None):
         github_app_slug="rukh-ai",
         github_app_client_id="Iv1.test-client",
         github_app_client_secret="test-client-secret",
-        github_app_private_key=private_key,
         github_app_redirect_uri="https://rukhai.example/coworker",
         connector_encryption_key=base64.urlsafe_b64encode(b"c" * 32).decode("ascii"),
         github_timeout_seconds=5,
@@ -82,7 +73,23 @@ def _transport(*, accessible_installation=True):
     def handler(request: httpx.Request):
         path = request.url.path
         if request.url.host == "github.com" and path == "/login/oauth/access_token":
-            return httpx.Response(200, json={"access_token": "short-lived-user-token", "token_type": "bearer"})
+            from urllib.parse import parse_qs
+            form = parse_qs(request.content.decode("utf-8"))
+            if form.get("grant_type") == ["refresh_token"]:
+                return httpx.Response(200, json={
+                    "access_token": "rotated-user-token",
+                    "refresh_token": "rotated-refresh-token",
+                    "expires_in": 28800,
+                    "refresh_token_expires_in": 15897600,
+                    "token_type": "bearer",
+                })
+            return httpx.Response(200, json={
+                "access_token": "short-lived-user-token",
+                "refresh_token": "short-lived-refresh-token",
+                "expires_in": 28800,
+                "refresh_token_expires_in": 15897600,
+                "token_type": "bearer",
+            })
         if request.url.host == "api.github.com":
             if path == "/user":
                 return httpx.Response(200, json={"id": 9001, "login": "rukh-user"})
@@ -95,11 +102,7 @@ def _transport(*, accessible_installation=True):
                     "suspended_at": None,
                 }] if accessible_installation else []
                 return httpx.Response(200, json={"total_count": len(items), "installations": items})
-            if path == "/app/installations/321/access_tokens" and request.method == "POST":
-                body = json.loads(request.content or b"{}")
-                assert body["permissions"]["contents"] == "read"
-                return httpx.Response(201, json={"token": "short-lived-installation-token", "expires_at": "2099-01-01T00:00:00Z"})
-            if path == "/installation/repositories":
+            if path == "/user/installations/321/repositories":
                 return httpx.Response(200, json={"total_count": 1, "repositories": [repo]})
             if path == "/repos/acme/demo/git/ref/heads/main":
                 return httpx.Response(200, json={"object": {"sha": "a" * 40}})
