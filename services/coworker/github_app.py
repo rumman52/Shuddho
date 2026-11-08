@@ -468,6 +468,7 @@ class GitHubAppService:
             installation_dto = self._installation_dto(existing)
             ConversationRepository._audit(db, owner, project_id, "github.installation_connected")
         return {
+            "project_id": project_id,
             "installation": installation_dto,
             "repositories": repositories,
         }
@@ -658,6 +659,7 @@ class GitHubAppService:
         return {
             "id": row.id,
             "project_id": row.project_id,
+            "installation_record_id": row.installation_record_id,
             "repository_id": row.repository_id,
             "full_name": row.full_name,
             "default_branch": row.default_branch,
