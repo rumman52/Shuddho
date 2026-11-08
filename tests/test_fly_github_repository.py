@@ -348,12 +348,12 @@ def test_project_deletion_deactivates_repository_binding_and_erases_pending_oaut
     _enabled(container, _transport())
     owner = account(container)
     project, finished = _connect(container, owner)
-    connected = container.github.complete_install(owner, finished["state"], 321)
-    container.github.bind_repository(owner, project["id"], connected["installation"]["id"], 777, project["revision"])
-
     pending = container.github.start_connection(owner, project["id"])
     pending_state = parse_qs(urlparse(pending["authorization_url"]).query)["state"][0]
     container.github.finish_oauth(owner, pending_state, "second-single-use-code")
+
+    connected = container.github.complete_install(owner, finished["state"], 321)
+    container.github.bind_repository(owner, project["id"], connected["installation"]["id"], 777, project["revision"])
     container.projects.delete(owner, project["id"], project["revision"])
 
     with container.repository.sessions() as db:
