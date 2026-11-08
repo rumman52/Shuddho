@@ -63,6 +63,68 @@ class ProjectResource(Base):
     )
 
 
+class GitHubConnectAttempt(Base):
+    __tablename__ = "cw_github_connect_attempts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(36))
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    stage: Mapped[str] = mapped_column(String(24))
+    code_verifier_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    user_access_token_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    github_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    github_login: Mapped[str] = mapped_column(String(39), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id", "owner_id"], ["cw_projects.id", "cw_projects.owner_id"]),
+        Index("cw_github_connect_attempts_owner_created", "owner_id", "created_at"),
+        Index("cw_github_connect_attempts_expiry", "stage", "expires_at"),
+    )
+
+
+class GitHubInstallation(Base):
+    __tablename__ = "cw_github_installations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    installation_id: Mapped[int] = mapped_column(BigInteger)
+    github_user_id: Mapped[int] = mapped_column(BigInteger)
+    github_login: Mapped[str] = mapped_column(String(39))
+    account_id: Mapped[int] = mapped_column(BigInteger)
+    account_login: Mapped[str] = mapped_column(String(255))
+    account_type: Mapped[str] = mapped_column(String(16))
+    permissions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("owner_id", "installation_id", name="uq_cw_github_install_owner_install"),
+        UniqueConstraint("id", "owner_id", name="uq_cw_github_install_id_owner"),
+        Index("cw_github_install_owner_active", "owner_id", "active"),
+    )
+
+
+class GitHubRepositoryBinding(Base):
+    __tablename__ = "cw_github_repository_bindings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(36))
+    installation_record_id: Mapped[str] = mapped_column(String(36))
+    repository_id: Mapped[int] = mapped_column(BigInteger)
+    full_name: Mapped[str] = mapped_column(String(255))
+    default_branch: Mapped[str] = mapped_column(String(255))
+    permissions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id", "owner_id"], ["cw_projects.id", "cw_projects.owner_id"]),
+        ForeignKeyConstraint(["installation_record_id", "owner_id"], ["cw_github_installations.id", "cw_github_installations.owner_id"]),
+        UniqueConstraint("owner_id", "project_id", name="uq_cw_github_binding_owner_project"),
+        Index("cw_github_binding_owner_project", "owner_id", "project_id", "active"),
+    )
+
+
 class Conversation(Base):
     __tablename__ = "cw_conversations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
