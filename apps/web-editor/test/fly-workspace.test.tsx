@@ -18,7 +18,7 @@ test("Fly renders an agent-first Codex-style workspace with explicit runtime bou
   assert.match(html, /Terminal output/);
   assert.match(html, /Rukh Agent/);
   assert.match(html, /Ask Rukh about this code/);
-  assert.match(html, /GitHub repository browsing and multi-file source context
+  assert.match(html, /GitHub repository browsing and multi-file source context/);
   assert.match(html, />Tests</);
 });
 
