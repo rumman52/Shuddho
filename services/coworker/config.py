@@ -498,9 +498,9 @@ class Settings:
                 or callback.password
                 or callback.query
                 or callback.fragment
-                or callback.path != "/coworker"
+                or callback.path != "/fly"
             ):
-                raise ValueError("SHUDDHO_GITHUB_APP_REDIRECT_URI must be the clean HTTPS frontend /coworker callback")
+                raise ValueError("SHUDDHO_GITHUB_APP_REDIRECT_URI must be the clean HTTPS frontend /fly callback")
             if not 3 <= self.github_timeout_seconds <= 30:
                 raise ValueError("SHUDDHO_GITHUB_TIMEOUT_SECONDS must be between 3 and 30")
             if not 1024 <= self.github_max_file_bytes <= 524288:
