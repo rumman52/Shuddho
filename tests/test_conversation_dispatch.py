@@ -417,3 +417,209 @@ def test_committed_v3_decision_replays_after_source_deletion_without_new_decisio
         rows = db.scalars(select(AgentDecision).where(AgentDecision.run_id == run_id)).all()
         assert len(rows) == 1 and rows[0].planner_call == 1
 
+
+
+def setup_v3(container, *, key="cw-p2-v3"):
+    """Enable the real v3/context path without changing rollout defaults."""
+    settings = replace(
+        container.settings,
+        conversations_enabled=True,
+        agent_runtime_enabled=True,
+        agent_runtime_v3_enabled=True,
+        intelligent_planner_enabled=True,
+        agent_memory_enabled=True,
+        context_retrieval_enabled=True,
+        work_services_enabled=True,
+        projects_enabled=True,
+    )
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.memory.settings = settings
+    container.context.settings = settings
+    container.projects.settings = settings
+    conversations = ConversationRepository(container.repository.sessions, settings)
+    dispatch = ConversationDispatchService(container.repository.sessions, settings, container.agent)
+    owner = account(container, key)
+    conv, _ = conversations.create(owner, ConversationCreate(title="Project work"), f"{key}-conversation")
+    return owner, conv, conversations, dispatch
+
+
+def test_two_conversation_runs_progress_and_cancel_independently(container):
+    owner, conv, conversations, dispatch = setup(container, key="p2-independent-runs")
+    first_message = message(conversations, owner, conv, "Prepare a project research brief")
+    first, _ = dispatch.dispatch(owner, conv["id"], first_message["id"], expected_sequence=1)
+    second_message, _ = conversations.append_message(
+        owner, conv["id"], MessageCreate(text="Prepare a separate project summary", client_request_key="second-run"),
+    )
+    second, _ = dispatch.dispatch(owner, conv["id"], second_message["id"], expected_sequence=2)
+
+    activity = dispatch.activity(owner, conv["id"])["items"]
+    assert {item["run_id"] for item in activity} == {first["run_id"], second["run_id"]}
+    cancelled = dispatch.cancel(
+        owner, conv["id"], first_message["id"], expected_sequence=2,
+        expected_event_sequence=activity[0]["event_sequence"],
+    )
+    assert cancelled["state"] == "cancelled"
+    with dispatch.sessions() as db:
+        first_run = db.get(AgentRun, first["run_id"])
+        second_run = db.get(AgentRun, second["run_id"])
+        assert first_run.cancel_requested is True
+        assert second_run.cancel_requested is False
+        assert second_run.state == "queued"
+        assert db.get(AgentOutbox, second_run.id).delivered is False
+
+
+def test_project_instructions_are_snapshotted_for_conversation_run(container):
+    from uuid import UUID
+    from services.coworker.project_repository import ProjectRepository
+    from services.coworker.project_schemas import ProjectCreate, ProjectLink
+
+    owner, conv, conversations, dispatch = setup_v3(container, key="p2-project-snapshot")
+    projects = ProjectRepository(dispatch.sessions, dispatch.settings)
+    project, _ = projects.create(
+        owner, ProjectCreate(name="Atlas", description="Use concise Bangla reports and preserve source provenance."),
+        "p2-project",
+    )
+    projects.link(
+        owner, project["id"],
+        ProjectLink(resource_type="conversation", resource_id=UUID(conv["id"]), expected_revision=1),
+    )
+    msg = message(conversations, owner, conv)
+    admitted, _ = dispatch.dispatch(
+        owner, conv["id"], msg["id"], expected_sequence=1, project_id=project["id"],
+    )
+    with dispatch.sessions() as db:
+        run = db.get(AgentRun, admitted["run_id"])
+        assert run.project_context == {
+            "project_id": project["id"],
+            "name": "Atlas",
+            "revision": 2,
+            "instructions": "Use concise Bangla reports and preserve source provenance.",
+        }
+
+
+def test_dispatch_rejects_project_not_linked_to_conversation(container):
+    from services.coworker.project_repository import ProjectRepository
+    from services.coworker.project_schemas import ProjectCreate
+
+    owner, conv, conversations, dispatch = setup_v3(container, key="p2-project-scope")
+    projects = ProjectRepository(dispatch.sessions, dispatch.settings)
+    project, _ = projects.create(owner, ProjectCreate(name="Unlinked project"), "p2-unlinked")
+    msg = message(conversations, owner, conv)
+    with pytest.raises(CoworkerError) as denied:
+        dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1, project_id=project["id"])
+    assert denied.value.code == "not_found"
+    with dispatch.sessions() as db:
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all() == []
+
+
+def test_selected_artifact_is_pinned_and_revalidated_for_conversation_run(container):
+    from datetime import timedelta
+    from hashlib import sha256
+    from uuid import UUID, uuid4
+    from services.coworker.models import Artifact, utcnow
+
+    owner, conv, conversations, dispatch = setup_v3(container, key="p2-artifact-pin")
+    body = "The approved project milestone is 15 December.\n".encode("utf-8")
+    artifact = Artifact(
+        id=str(uuid4()), owner_id=owner, filename="milestones.txt", content_type="text/plain",
+        object_key=f"{owner}/artifacts/milestones.txt", sha256=sha256(body).hexdigest(),
+        byte_size=len(body), expires_at=utcnow() + timedelta(days=1),
+    )
+    with dispatch.sessions.begin() as db:
+        db.add(artifact)
+    container.storage.put(artifact.object_key, body, "text/plain")
+    saved, _ = conversations.append_message(
+        owner, conv["id"], MessageCreate(
+            text="Use the generated milestone file for this report.",
+            client_request_key="p2-artifact-message",
+            selected_resource_ids=[UUID(artifact.id)],
+        ),
+    )
+    admitted, _ = dispatch.dispatch(owner, conv["id"], saved["id"], expected_sequence=1)
+    with dispatch.sessions() as db:
+        run = db.get(AgentRun, admitted["run_id"])
+        assert run.input_versions == []
+        assert run.input_artifacts == [artifact.id]
+    worker = container.agent.worker_run(admitted["run_id"])
+    assert worker["artifact_ids"] == [artifact.id]
+    context, sources = container.context.planner_context(owner, admitted["run_id"])
+    assert any("15 December" in item["excerpt"] for item in context["items"])
+    assert any(value.get("resource_type") == "artifact" for value in sources.values())
+
+    with dispatch.sessions.begin() as db:
+        db.delete(db.get(Artifact, artifact.id))
+    with pytest.raises(CoworkerError) as invalidated:
+        container.agent.worker_run(admitted["run_id"])
+    assert invalidated.value.code == "context_sources_changed"
+
+
+def test_dispatch_rejects_unsupported_selected_artifact(container):
+    from datetime import timedelta
+    from hashlib import sha256
+    from uuid import UUID, uuid4
+    from services.coworker.models import Artifact, utcnow
+
+    owner, conv, conversations, dispatch = setup_v3(container, key="p2-artifact-type")
+    body = b"not a supported source"
+    artifact = Artifact(
+        id=str(uuid4()), owner_id=owner, filename="payload.exe", content_type="application/octet-stream",
+        object_key=f"{owner}/artifacts/payload.exe", sha256=sha256(body).hexdigest(),
+        byte_size=len(body), expires_at=utcnow() + timedelta(days=1),
+    )
+    with dispatch.sessions.begin() as db:
+        db.add(artifact)
+    saved, _ = conversations.append_message(
+        owner, conv["id"], MessageCreate(
+            text="Review this file", client_request_key="p2-unsupported-artifact",
+            selected_resource_ids=[UUID(artifact.id)],
+        ),
+    )
+    with pytest.raises(CoworkerError) as denied:
+        dispatch.dispatch(owner, conv["id"], saved["id"], expected_sequence=1)
+    assert denied.value.code == "context_source_unsupported"
+
+
+def test_active_v3_run_accepts_revision_checked_steering(container):
+    owner, conv, conversations, dispatch = setup_v3(container, key="p2-steering")
+    msg = message(conversations, owner, conv)
+    admitted, _ = dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1)
+    result = dispatch.steer(
+        owner, conv["id"], msg["id"], expected_sequence=1,
+        expected_steering_revision=0, instruction="Prioritize the Bangla summary and cite every source.",
+    )
+    assert result["run_id"] == admitted["run_id"]
+    assert result["steering_revision"] == 1
+    saved = container.agent.get(owner, admitted["run_id"])
+    assert saved["steering_revision"] == 1
+    assert saved["steering_instructions"][0]["instruction"] == "Prioritize the Bangla summary and cite every source."
+    with pytest.raises(CoworkerError) as stale:
+        dispatch.steer(
+            owner, conv["id"], msg["id"], expected_sequence=1,
+            expected_steering_revision=0, instruction="This stale instruction must not be stored.",
+        )
+    assert stale.value.code == "agent_steering_revision_conflict"
+    assert len(container.agent.get(owner, admitted["run_id"])["steering_instructions"]) == 1
+
+
+def test_steering_is_owner_scoped_and_rejected_for_terminal_or_legacy_runs(container):
+    owner, conv, conversations, dispatch = setup(container, key="p2-steering-scope")
+    msg = message(conversations, owner, conv)
+    admitted, _ = dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1)
+    foreign = account(container, "p2-steering-foreign")
+    with pytest.raises(CoworkerError) as hidden:
+        dispatch.steer(
+            foreign, conv["id"], msg["id"], expected_sequence=1,
+            expected_steering_revision=0, instruction="Do not reveal this run.",
+        )
+    assert hidden.value.code == "not_found"
+    with dispatch.sessions.begin() as db:
+        db.get(AgentRun, admitted["run_id"]).state = "completed"
+    with pytest.raises(CoworkerError) as terminal:
+        dispatch.steer(
+            owner, conv["id"], msg["id"], expected_sequence=1,
+            expected_steering_revision=0, instruction="A terminal run cannot be steered.",
+        )
+    assert terminal.value.code == "agent_run_closed"
