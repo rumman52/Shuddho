@@ -377,6 +377,10 @@ async def evaluate_live_v3(
             case_error = str(error)
             if case_error in {"total_token_budget", "token_usage_incomplete"}:
                 budget_failures.append(case_error)
+        except ValueError:
+            case_passed = False
+            case_error = "invalid_live_evidence"
+            budget_failures.append(case_error)
 
         if total_tokens > effective_token_limit:
             case_passed = False
@@ -515,6 +519,7 @@ async def evaluate_live(
         except ValueError:
             passed = False
             error_code = "invalid_live_evidence"
+            budget_failures.append(error_code)
         results.append({
             "id": case["id"],
             "language": case["language"],
@@ -564,6 +569,8 @@ async def evaluate_live(
         "p95_latency_ms": _percentile(latencies, 0.95),
         "p99_latency_ms": _percentile(latencies, 0.99),
         "cost_rate_microusd_per_1k_tokens": cost_rate_microusd_per_1k_tokens,
+        "cost_basis": "operator-configured blended effective rate; estimate, not provider invoice",
+        "cost_is_estimate": True,
         "estimated_cost_microusd": estimated_cost,
         "max_total_tokens": max_total_tokens,
         "max_total_cost_microusd": max_total_cost_microusd,
