@@ -258,6 +258,16 @@ class GitHubAppService:
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
             self._project(db, owner, project_id)
+            existing_installation = db.scalar(select(GitHubInstallation.id).where(
+                GitHubInstallation.owner_id == owner,
+                GitHubInstallation.active.is_(True),
+            ).limit(1))
+            if existing_installation is not None:
+                raise CoworkerError(
+                    "github_installation_exists",
+                    "A GitHub account is already connected. Select its existing installation in Fly, or revoke that GitHub authorization before connecting another account.",
+                    409,
+                )
             db.add(GitHubConnectAttempt(
                 id=attempt_id,
                 owner_id=owner,
@@ -454,14 +464,6 @@ class GitHubAppService:
                 )
                 db.add(existing)
             else:
-                if existing.user_token_bundle_ciphertext:
-                    previous_bundle = self._vault().open(
-                        existing.user_token_bundle_ciphertext,
-                        owner + ":github-installation:" + existing.id,
-                    )
-                    previous_access_token = previous_bundle.get("access_token")
-                    if isinstance(previous_access_token, str) and previous_access_token and previous_access_token != access_token:
-                        self._revoke_user_token(previous_access_token)
                 existing.github_user_id = github_user_id
                 existing.github_login = github_login
                 existing.account_id = account_id
@@ -493,6 +495,7 @@ class GitHubAppService:
     def _installation_dto(row):
         return {
             "id": row.id,
+            "github_user_id": row.github_user_id,
             "installation_id": row.installation_id,
             "github_login": row.github_login,
             "account_login": row.account_login,
