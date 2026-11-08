@@ -1,0 +1,53 @@
+name: Runtime v3 live qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-v3-live-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-runtime-v3:
+    name: Live DeepSeek + Temporal Runtime v3
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL || 'deepseek-flash' }}
+      SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS: ${{ vars.SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS || '0' }}
+      SHUDDHO_RUNTIME_V3_EVIDENCE_PATH: artifacts/runtime-v3-live-qualification.json
+      UV_HTTP_TIMEOUT: "120"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install document rendering libraries and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \
+            fonts-noto-core fonts-noto-cjk fonts-dejavu-core \
+            libreoffice-impress libreoffice-calc poppler-utils
+      - name: Install coworker and Temporal dependencies
+        run: uv sync --frozen --group dev --extra coworker
+      - name: Run live Runtime v3 qualification
+        run: |
+          rm -rf artifacts
+          uv run --extra coworker python -m scripts.runtime_v3_qualification \
+            --output artifacts/runtime-v3-live-qualification.json
+      - name: Preserve Runtime v3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-v3-live-qualification-${{ github.run_id }}
+          path: artifacts/runtime-v3-live-qualification*
+          if-no-files-found: warn
