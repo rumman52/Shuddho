@@ -556,6 +556,8 @@ def test_v3_other_terminal_state_does_not_replay_completed_step(container, termi
 
 
 def test_v3_discards_inference_when_steering_changes_before_commit(container, monkeypatch):
+    from services.coworker.models import AgentRun
+
     actor, run_id, _runtime, _original_planner = setup(container, decision="wait")
 
     class SteeringDuringInferencePlanner:
