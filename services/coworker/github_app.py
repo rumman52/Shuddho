@@ -604,10 +604,15 @@ class GitHubAppService:
             installation_id = installation.installation_id
         if revision != expected_revision:
             raise CoworkerError("project_revision_conflict", "This project changed elsewhere. Refresh and review it before connecting a repository.", 409)
-        repositories = self._list_repositories_for_installation(installation_id)
+        access_token = self._user_token(owner, installation_record_id)
+        repositories = self._list_repositories_for_user(access_token, installation_id)
         selected = next((item for item in repositories if item["id"] == repository_id), None)
         if selected is None:
-            raise CoworkerError("github_repository_not_installed", "This repository is not available to the selected GitHub App installation.", 403)
+            raise CoworkerError("github_repository_not_installed", "This repository is not available to the selected GitHub App installation or current GitHub user.", 403)
+        repository_permissions = dict(selected.get("permissions") or {})
+        app_permissions = dict(installation.permissions or {})
+        if app_permissions.get("contents") not in {"read", "write"} or repository_permissions.get("pull") is not True:
+            raise CoworkerError("github_contents_permission_missing", "This GitHub account and App installation do not both have repository read access.", 403)
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
             project = self._project(db, owner, project_id)
@@ -627,7 +632,7 @@ class GitHubAppService:
                     repository_id=repository_id,
                     full_name=selected["full_name"],
                     default_branch=selected["default_branch"],
-                    permissions=dict(installation.permissions or {}),
+                    permissions={"app": app_permissions, "repository": repository_permissions},
                     active=True,
                     created_at=utcnow(),
                     updated_at=utcnow(),
@@ -638,7 +643,7 @@ class GitHubAppService:
                 row.repository_id = repository_id
                 row.full_name = selected["full_name"]
                 row.default_branch = selected["default_branch"]
-                row.permissions = dict(installation.permissions or {})
+                row.permissions = {"app": app_permissions, "repository": repository_permissions}
                 row.active = True
                 row.updated_at = utcnow()
             ConversationRepository._audit(db, owner, project_id, "github.repository_connected")
@@ -647,6 +652,10 @@ class GitHubAppService:
     @staticmethod
     def _binding_dto(row):
         permissions = dict(row.permissions or {})
+        app_permissions = dict(permissions.get("app") or {})
+        repository_permissions = dict(permissions.get("repository") or {})
+        can_read = app_permissions.get("contents") in {"read", "write"} and repository_permissions.get("pull") is True
+        can_write = app_permissions.get("contents") == "write" and repository_permissions.get("push") is True
         return {
             "id": row.id,
             "project_id": row.project_id,
@@ -654,8 +663,8 @@ class GitHubAppService:
             "full_name": row.full_name,
             "default_branch": row.default_branch,
             "permissions": permissions,
-            "can_read_contents": permissions.get("contents") in {"read", "write"},
-            "can_write_contents": permissions.get("contents") == "write",
+            "can_read_contents": can_read,
+            "can_write_contents": can_write,
             "active": bool(row.active),
             "updated_at": iso(row.updated_at),
         }
@@ -670,6 +679,13 @@ class GitHubAppService:
                 GitHubRepositoryBinding.active.is_(True),
             ))
             if row is None:
+                return {"repository": None}
+            installation_active = db.scalar(select(GitHubInstallation.id).where(
+                GitHubInstallation.id == row.installation_record_id,
+                GitHubInstallation.owner_id == owner,
+                GitHubInstallation.active.is_(True),
+            ))
+            if installation_active is None:
                 return {"repository": None}
             return {"repository": self._binding_dto(row)}
 
@@ -701,6 +717,7 @@ class GitHubAppService:
             return {
                 "binding": self._binding_dto(row),
                 "installation_id": installation.installation_id,
+                "installation_record_id": installation.id,
             }
 
     def repository_tree(self, owner: str, project_id: str):
