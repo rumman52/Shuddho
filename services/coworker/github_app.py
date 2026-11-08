@@ -812,9 +812,11 @@ class GitHubAppService:
             "truncated": bool(tree.get("truncated")) or len(files) >= self.settings.github_max_tree_files,
         }
 
-    def read_repository_file(self, owner: str, project_id: str, path: str):
+    def read_repository_file(self, owner: str, project_id: str, path: str, expected_commit_sha: str):
         self._enabled()
         path = safe_repository_path(path)
+        if not isinstance(expected_commit_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", expected_commit_sha):
+            raise CoworkerError("github_commit_invalid", "Choose a valid 40-character repository commit SHA.", 422)
         bound = self._bound(owner, project_id)
         binding = bound["binding"]
         if not binding["can_read_contents"]:
@@ -826,6 +828,8 @@ class GitHubAppService:
         commit_sha = (ref.get("object") or {}).get("sha")
         if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
             raise CoworkerError("github_response_invalid", "GitHub returned an invalid branch revision.", 502)
+        if commit_sha != expected_commit_sha:
+            raise CoworkerError("github_repository_changed", "The repository branch moved after Fly loaded its file tree. Refresh the tree and select the files again.", 409)
         encoded_path = "/".join(quote(part, safe="") for part in path.split("/"))
         data = self._api(
             "GET", f"/repos/{full_name}/contents/{encoded_path}", token,
