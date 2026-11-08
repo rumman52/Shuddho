@@ -457,7 +457,15 @@ def test_runtime_v3_live_temporal_worker_restart_replays_saved_draft_once(contai
                 handle = env.client.get_workflow_handle(
                     "shuddho-agent-" + run["id"]
                 )
-                async with _make_worker(env, runner, runtime):
+                replacement_runner = RecordingDocumentRunner(
+                    container, settings, transport
+                )
+                replacement_runtime = AgentRuntime(
+                    container,
+                    replacement_runner,
+                    planner=RecordingPlanner(settings, transport),
+                )
+                async with _make_worker(env, replacement_runner, replacement_runtime):
                     async with env.time_skipping_unlocked():
                         await asyncio.wait_for(handle.result(), timeout=240)
                 history = (await handle.fetch_history()).to_json()
