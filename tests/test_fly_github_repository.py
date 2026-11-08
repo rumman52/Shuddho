@@ -9,6 +9,8 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+
+pytest.importorskip("sqlalchemy")
 from sqlalchemy import select
 
 from test_coworker import account, signed_client
