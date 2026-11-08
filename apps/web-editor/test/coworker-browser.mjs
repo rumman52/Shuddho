@@ -92,14 +92,29 @@ try {
   await page.waitForURL(url => url.pathname === "/coworker" && url.searchParams.get("view") === "projects");
   await page.locator(".rukh-section-context > summary").waitFor();
 
-  // The creation screen follows the approved Figma state and the first
-  // project chat receives the saved project instructions on every reply.
-  // Entering Projects must open the screenshot-matched New project form directly;
-  // users should not land on the Coworker view or an intermediate project listing.
+  // Projects opens the dashboard first. Creation is an explicit action,
+  // and cancelling it returns to the same project list.
+  await page.getByRole("heading", { name: "Projects", exact: true }).first().waitFor();
+  await page.getByRole("button", { name: "+ New project", exact: true }).waitFor();
+  await page.getByLabel("Search projects").waitFor();
+  await page.locator(".rukh-projects-page").waitFor();
+  await page.screenshot({ path: join(folder, "screenshots/rukh-projects-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await page.screenshot({ path: join(folder, "screenshots/rukh-projects-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1365, height: 960 });
+
+  await page.getByRole("button", { name: "+ New project", exact: true }).click();
   await page.getByRole("heading", { name: "New project", exact: true }).waitFor();
   await page.getByRole("heading", { name: "Create a project", exact: true }).waitFor();
   await page.locator(".rukh-project-create-form").waitFor();
-  await page.screenshot({ path: join(folder, "screenshots/rukh-projects-new-project-desktop.png"), fullPage: true });
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("heading", { name: "Projects", exact: true }).first().waitFor();
+
+  await page.getByRole("button", { name: "+ New project", exact: true }).click();
+  await page.getByRole("heading", { name: "New project", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Create a project", exact: true }).waitFor();
+  await page.locator(".rukh-project-create-form").waitFor();
   await page.getByLabel("Project name").fill("Project chatbot QA");
   await page.getByLabel("Project instructions").fill("Always answer concisely and use the project name in context.");
   await page.getByRole("button", { name: "Create project", exact: true }).click();

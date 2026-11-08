@@ -100,13 +100,12 @@ function fixture() {
 async function mount(
   run: (tree: ReactTestRenderer, data: ReturnType<typeof fixture>) => Promise<void>,
   onCreateModeChange?: (creating: boolean) => void,
-  initialCreate = false,
 ) {
   const data = fixture();
   let tree!: ReactTestRenderer;
   try {
     await act(async () => {
-      tree = create(<ProjectWorkspace client={data.client} initialCreate={initialCreate} onCreateModeChange={onCreateModeChange} />);
+      tree = create(<ProjectWorkspace client={data.client} onCreateModeChange={onCreateModeChange} />);
     });
     await run(tree, data);
   } finally {
@@ -114,16 +113,25 @@ async function mount(
   }
 }
 
-test("Projects entry opens the reference New project screen before the project list", async () => {
+test("Projects entry opens the project dashboard and creation is an explicit action", async () => {
   const createModes: boolean[] = [];
   await mount(async tree => {
+    assert.ok(tree.root.findAllByType("h1").some(item => item.children.includes("Projects")));
+    assert.equal(tree.root.findAllByProps({ className: "rukh-project-card" }).length, 1);
+    assert.ok(tree.root.findByProps({ "aria-label": "Search projects" }));
+    assert.equal(tree.root.findAllByProps({ className: "rukh-project-create-form" }).length, 0);
+
+    const createButton = tree.root.findAllByType("button").find(item => item.children.join("") === "+ New project");
+    assert.ok(createButton);
+    await act(async () => createButton!.props.onClick());
     assert.equal(tree.root.findByProps({ className: "rukh-project-create-page" }).props["aria-label"], "New project form");
-    assert.equal(tree.root.findByProps({ id: "rukh-project-create-title" }).children.join(""), "Create a project");
-    assert.ok(tree.root.findByProps({ id: "rukh-project-create-description" }).children.join("").includes("Keep related chats and files together."));
-    assert.equal(tree.root.findAllByProps({ className: "rukh-project-card" }).length, 0);
-    assert.equal(tree.root.findAllByType("button").some(item => item.children.join("") === "+ New project"), false);
-    assert.equal(tree.root.findAllByType("button").some(item => item.children.join("") === "Create project"), true);
-  }, value => createModes.push(value), true);
+
+    const cancel = tree.root.findAllByType("button").find(item => item.children.join("") === "Cancel");
+    assert.ok(cancel);
+    await act(async () => cancel!.props.onClick());
+    assert.equal(tree.root.findAllByProps({ className: "rukh-project-create-form" }).length, 0);
+    assert.equal(tree.root.findAllByProps({ className: "rukh-project-card" }).length, 1);
+  }, value => createModes.push(value));
   assert.ok(createModes.includes(true));
   assert.equal(createModes[createModes.length - 1], false);
 });
