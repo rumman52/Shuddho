@@ -271,6 +271,9 @@ def _write_run_evidence(
         "runtime_version": saved.get("runtime_version"),
         "final_state": saved.get("state"),
         "workflow_duration_ms": workflow_duration_ms,
+        "workflow_duration_scope": (
+            "wall-clock elapsed time; Temporal test-server timer skipping may compress retry waits"
+        ),
         "planner_calls": saved.get("planner_calls"),
         "planner_actual_tokens": saved.get("planner_actual_tokens"),
         "decisions": [

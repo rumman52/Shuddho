@@ -16,9 +16,9 @@ The live suite is opt-in because it calls the configured DeepSeek model and can 
 | Worker restart | A worker is stopped after the first child draft checkpoint; a replacement worker resumes the same workflow history and must not repeat that draft model call |
 | Cancellation | The provider response is received but held before delivery to the planner; the run is cancelled, then the late response is released and must not create a decision or tool invocation |
 | Bangla and English | Separate live multi-step tasks; language metadata and Bangla Unicode output are asserted |
-| Cost and latency | Provider-reported input/output/total tokens, full-response per-call latency, end-to-end workflow duration, p50/p95, and an estimated cost using the operator-reviewed blended rate |
+| Cost and latency | Provider-reported input/output/total tokens, full-response per-call latency, wall-clock workflow duration, p50/p95, and an estimated cost using the operator-reviewed blended rate |
 
-The evidence file contains run identifiers, state/decision metadata, tool receipt metadata, hashes, model usage and latency. It does not store API keys, prompts, original source text, provider response bodies, or workflow history content. It does include up to 1,600 characters of the generated draft preview so a human reviewer can inspect language quality.
+The evidence file contains run identifiers, state/decision metadata, tool receipt metadata, hashes, model usage, provider-call latency, and wall-clock workflow duration. It does not store API keys, prompts, original source text, raw provider response bodies, or workflow history content. It does include up to 1,600 characters of the generated draft preview so a human reviewer can inspect language quality. The workflow uses Temporal test-server time skipping, so retry timers can be compressed; wall-clock workflow duration is not a production SLA measurement.
 
 ## Run it
 
@@ -32,6 +32,10 @@ Then select Actions → Runtime v3 live qualification → Run workflow. The work
 
 The report is uploaded as runtime-v3-live-qualification-<run-id>. Each test adds one row to the JSON evidence file. The JUnit file is uploaded alongside it.
 
+## Multilingual content-quality relationship
+
+The existing curated content-fidelity gate remains authoritative for deterministic multilingual regression: `scripts/coworker_quality_eval.py` runs synthetic English, Bangla, Spanish, and Arabic cases in CI, with exact fact-recall and unsupported-claim contracts. Its live mode requires a reviewed rollout manifest; this Runtime v3 workflow does not bypass that approval requirement. The Runtime v3 tests add real planner-plus-Temporal execution for English and Bangla, while the generated previews remain subject to human review.
+
 ## Acceptance criteria
 
 A live run is not qualified unless all of the following are true:
@@ -41,7 +45,7 @@ A live run is not qualified unless all of the following are true:
 3. Bangla output includes Bengali Unicode and both cases report the requested output language.
 4. The worker-restart case completes after one worker replacement and records exactly one document-draft model call for the interrupted step.
 5. The cancellation case ends in cancelled, with no committed decision or tool invocation after the late provider response is released.
-6. Every successful provider call reports token usage; the report has non-zero token totals, non-zero estimated cost, per-call p50/p95 latency, and end-to-end workflow duration.
+6. Every successful provider call reports token usage; the report has non-zero token totals, non-zero estimated cost, per-call p50/p95 latency, and wall-clock workflow duration.
 7. A human reviewer marks the English and Bangla output as accepted. Automated language metadata is not a substitute for human quality review.
 
 ## Important boundary: Temporal test server versus operated staging
