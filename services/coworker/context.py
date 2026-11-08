@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from datetime import datetime
+from pathlib import PurePath
 
 from sqlalchemy import or_, select
 
