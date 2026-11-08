@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -143,3 +144,8 @@ def test_write_evidence_appends_versioned_rows_without_credentials(tmp_path):
     assert all(row["schema_version"] == 1 for row in rows)
     assert [row["case_id"] for row in rows] == ["en-multistep", "bn-multistep"]
     assert "api_key" not in json.dumps(rows).lower()
+
+
+def test_live_temporal_module_is_syntactically_valid():
+    path = Path(__file__).with_name("test_runtime_v3_live_qualification.py")
+    compile(path.read_text(encoding="utf-8"), str(path), "exec")

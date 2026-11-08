@@ -28,7 +28,7 @@ Configure these GitHub repository secrets/variables before dispatching the Runti
 - Variable DEEPSEEK_MODEL: the exact provider model identifier to qualify; defaults to deepseek-flash only when unset.
 - Variable SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS: a reviewed positive blended effective rate in micro-USD per 1,000 tokens. Zero is rejected because it would make cost evidence misleading.
 
-Then select Actions → Runtime v3 live qualification → Run workflow. The workflow uses an isolated SQLite database/local object store and the Temporal test server. It does not connect to Render, production PostgreSQL, Temporal Cloud, S3, Gmail, Calendar, or any external action provider.
+Then select Actions → Runtime v3 live qualification → Run workflow. The workflow calls DeepSeek for model inference and uses an isolated SQLite database/local object store plus the Temporal test server. It does not connect to Render, production PostgreSQL, Temporal Cloud, S3, Gmail, Calendar, or other external action providers.
 
 The report is uploaded as runtime-v3-live-qualification-<run-id>. Each test adds one row to the JSON evidence file. The JUnit file is uploaded alongside it.
 

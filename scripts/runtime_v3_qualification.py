@@ -1,7 +1,8 @@
 """Opt-in live model + Temporal qualification helpers for Agent Runtime v3.
 
-This harness never stores prompts, completions, credentials, or provider error bodies.
-It records only provider usage metadata, latency, workflow state, and artifact hashes.
+The recording transport never stores prompts, completions, credentials, or provider
+error bodies. It records provider usage metadata and latency; the evidence writer stores
+only explicitly selected metadata plus a bounded generated-output preview for review.
 """
 from __future__ import annotations
 
