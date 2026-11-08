@@ -86,7 +86,7 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   const [projectEntryRevision, setProjectEntryRevision] = useState(0);
   const [projectCreateMode, setProjectCreateMode] = useState(() => {
     if (typeof window === "undefined") return false;
-    return getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search) === "projects";
+    return new URLSearchParams(window.location.search).get("view") === "projects";
   });
   const [view, setView] = useState<CoworkerView>(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
@@ -318,9 +318,10 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
     if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
     const restoreView = () => {
       const path = String(window.location.pathname ?? "").replace(/\/+$/, "");
+      const isProjects = new URLSearchParams(window.location.search).get("view") === "projects";
       const nextView = path === "/fly" ? "sandbox" : getInitialCoworkerViewFromLocation(path, window.location.search);
-      if (nextView === "projects") setProjectEntryRevision(value => value + 1);
-      setProjectCreateMode(nextView === "projects");
+      if (isProjects) setProjectEntryRevision(value => value + 1);
+      setProjectCreateMode(isProjects);
       setView(nextView);
     };
     window.addEventListener("popstate", restoreView);
