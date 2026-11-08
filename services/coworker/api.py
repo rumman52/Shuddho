@@ -21,7 +21,7 @@ from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
 from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
-from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest
+from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest, ConversationSteerRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1726,11 +1726,27 @@ def dispatch_conversation_message(
     value, created = services.conversation_dispatch.dispatch(
         identity.account_id, str(conversation_id), str(message_id),
         expected_sequence=payload.expected_sequence, output_language=payload.output_language,
+        project_id=str(payload.project_id) if payload.project_id is not None else None,
     )
     response.headers["Location"] = f'/api/v1/agent-runs/{value["run_id"]}'
     response.headers["Idempotent-Replayed"] = str(not created).lower()
     response.headers["Cache-Control"] = "no-store"
     response.status_code = 202 if created else 200
+    return value
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/steer")
+def steer_conversation_agent(
+    conversation_id: UUID, message_id: UUID, payload: ConversationSteerRequest,
+    identity: Identity, services: Services, response: Response,
+):
+    value = services.conversation_dispatch.steer(
+        identity.account_id, str(conversation_id), str(message_id),
+        expected_sequence=payload.expected_sequence,
+        expected_steering_revision=payload.expected_steering_revision,
+        instruction=payload.instruction,
+    )
+    response.headers["Cache-Control"] = "no-store"
     return value
 
 
