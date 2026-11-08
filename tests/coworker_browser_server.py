@@ -294,7 +294,13 @@ def agent_runs():
         "state": run["state"],
         "steering_revision": run["steering_revision"],
         "steering_instructions": run.get("steering_instructions", []),
+        "decision_count": len(run.get("decisions", [])),
         "tool_invocation_count": len(run.get("tool_invocations", [])),
+        "tool_receipts": [
+            invocation["receipt"]
+            for invocation in run.get("tool_invocations", [])
+            if invocation.get("receipt") is not None
+        ],
     } for run in runs]}
 
 
