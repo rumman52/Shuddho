@@ -707,6 +707,24 @@ class GitHubAppService:
                 return {"repository": None}
             return {"repository": self._binding_dto(row)}
 
+    def _revoke_user_token(self, access_token: str):
+        if not self.settings.github_app_client_id or not self.settings.github_app_client_secret:
+            raise CoworkerError("github_revoke_unavailable", "GitHub token revocation is not configured; local disconnection was not performed.", 503)
+        try:
+            with self._client() as client:
+                response = client.delete(
+                    f"/applications/{quote(self.settings.github_app_client_id, safe='')}/token",
+                    auth=(self.settings.github_app_client_id, self.settings.github_app_client_secret),
+                    headers={"Accept": "application/vnd.github+json", "User-Agent": "Rukh-AI-Fly"},
+                    json={"access_token": access_token},
+                )
+        except httpx.HTTPError:
+            raise CoworkerError("github_revoke_unavailable", "GitHub could not confirm token revocation. The local connection was kept so you can retry safely.", 503) from None
+        # 404 means the token was already invalid/revoked. Other responses fail
+        # closed so Rukh never claims to revoke a still-live provider token.
+        if response.status_code not in {204, 404}:
+            raise CoworkerError("github_revoke_failed", "GitHub did not confirm revocation. The local connection was kept so you can retry safely.", 502)
+
     def disconnect_installation(self, owner: str, installation_record_id: str):
         with self.sessions.begin() as db:
             ConversationRepository._lock_account(db, owner)
@@ -716,6 +734,17 @@ class GitHubAppService:
             ).with_for_update())
             if installation is None:
                 raise not_found()
+            if installation.active and installation.user_token_bundle_ciphertext:
+                bundle = self._vault().open(
+                    installation.user_token_bundle_ciphertext,
+                    owner + ":github-installation:" + installation.id,
+                )
+                access_token = bundle.get("access_token")
+                if isinstance(access_token, str) and access_token:
+                    # Provider revocation occurs before local deletion. If it
+                    # cannot be confirmed, this transaction rolls back and the
+                    # encrypted token remains available for a safe retry.
+                    self._revoke_user_token(access_token)
             installation.active = False
             installation.user_token_bundle_ciphertext = ""
             installation.updated_at = utcnow()
@@ -724,7 +753,7 @@ class GitHubAppService:
                 GitHubRepositoryBinding.owner_id == owner,
             ).values(active=False, updated_at=utcnow()))
             ConversationRepository._audit(db, owner, installation_record_id, "github.installation_disconnected")
-        return {"message": "GitHub authorization and all repository bindings for this installation were disconnected."}
+        return {"message": "The GitHub user token was revoked and all Fly project bindings for this installation were disconnected. The GitHub App remains installed until you uninstall it in GitHub settings."}
 
     def disconnect_repository(self, owner: str, project_id: str):
         with self.sessions.begin() as db:
