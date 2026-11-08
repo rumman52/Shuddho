@@ -42,9 +42,11 @@ test("Projects view uses the approved sidebar, recent chats, account footer and 
   try {
     await act(async () => { tree = create(<CoworkerWorkspace client={client} email="anowar@example.test" initialDraft="Keep this unsent Coworker draft" signOut={async () => undefined} />); });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-    assert.ok(tree!.root.findAllByType("h1").some(node => node.children.includes("New project")));
+    assert.ok(tree!.root.findAllByType("h1").some(node => node.children.includes("Projects")));
     assert.ok(tree!.root.findByProps({ "aria-label": "Projects workspace" }));
-    assert.ok(tree!.root.findByProps({ className: "rukh-project-create-form" }));
+    assert.ok(tree!.root.findByProps({ "aria-label": "Search projects" }));
+    assert.equal(tree!.root.findAllByProps({ className: "rukh-project-create-form" }).length, 0);
+    assert.ok(tree!.root.findAllByType("button").some(node => node.children.join("") === "+ New project"));
     assert.ok(tree!.root.findByProps({ "aria-label": "Recent chats" }));
     assert.ok(tree!.root.findAllByProps({ className: "rukh-design-history-list" }).length > 0);
     assert.ok(tree!.root.findAllByType("button").some(node => node.children.includes("Launch plan for Rukh")));
