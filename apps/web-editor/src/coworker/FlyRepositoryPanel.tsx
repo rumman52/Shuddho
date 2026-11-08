@@ -26,6 +26,17 @@ function clearCallbackParameters() {
   window.history.replaceState({}, "", url.pathname + url.search + url.hash);
 }
 
+function safeGitHubRedirect(value: string, kind: "oauth" | "install") {
+  const target = new URL(value);
+  const validPath = kind === "oauth"
+    ? target.pathname === "/login/oauth/authorize"
+    : /^\/apps\/[a-z0-9-]+\/installations\/new$/.test(target.pathname);
+  if (target.protocol !== "https:" || target.hostname !== "github.com" || target.port || !validPath || target.username || target.password) {
+    throw new Error("GitHub returned an unexpected authorization destination. No redirect was followed.");
+  }
+  return target.toString();
+}
+
 const errorMessage = (value: unknown) =>
   value instanceof Error ? value.message : "GitHub repository access could not complete.";
 
@@ -67,7 +78,7 @@ export default function FlyRepositoryPanel({
   }, [client]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || callbackHandled.current) return;
     let alive = true;
     client.githubInstallations().then(value => {
       if (!alive) return;
@@ -104,7 +115,7 @@ export default function FlyRepositoryPanel({
       setBusy("oauth");
       setError("");
       client.githubFinishOAuth(code, state).then(result => {
-        window.location.assign(result.install_url);
+        window.location.assign(safeGitHubRedirect(result.install_url, "install"));
       }).catch(failure => {
         setError(errorMessage(failure));
         setBusy("");
@@ -143,7 +154,10 @@ export default function FlyRepositoryPanel({
     let alive = true;
     setError("");
     setNotice("");
+    setBinding(null);
     setTree(null);
+    setSelectedPaths([]);
+    onBindingChange(null);
     client.githubRepository(projectId).then(async value => {
       if (!alive) return;
       setBinding(value.repository);
@@ -171,7 +185,7 @@ export default function FlyRepositoryPanel({
     setNotice("");
     try {
       const result = await client.githubStart(projectId);
-      window.location.assign(result.authorization_url);
+      window.location.assign(safeGitHubRedirect(result.authorization_url, "oauth"));
     } catch (failure) {
       setError(errorMessage(failure));
       setBusy("");
@@ -348,7 +362,7 @@ export default function FlyRepositoryPanel({
       </div>
     </>}
     {enabled === true && projectId && binding && !pickerOpen && <>
-      <div className="rukh-fly-github-repo-name"><strong>{binding.full_name}</strong><small>{binding.default_branch} · {binding.can_write_contents ? "Write access available" : "Read-only access"}</small></div>
+      <div className="rukh-fly-github-repo-name"><strong>{binding.full_name}</strong><small>{binding.default_branch} · {binding.can_write_contents ? "GitHub write permission granted; Fly patch application is not enabled" : "Read-only access"}</small></div>
       <div className="rukh-fly-github-actions">
         <button type="button" onClick={() => void openRepositoryPicker()} disabled={Boolean(busy)}>Change repository</button>
         <button type="button" onClick={() => void refreshTree()} disabled={Boolean(busy)}>{busy === "refresh" ? "Refreshing…" : "Refresh files"}</button>
@@ -370,7 +384,7 @@ export default function FlyRepositoryPanel({
         <button type="button" className="rukh-fly-github-primary" onClick={() => void importSelectedFiles()} disabled={Boolean(busy) || !selectedPaths.length}>
           {busy === "import" ? "Importing…" : "Add " + selectedPaths.length + " file(s) to Fly"}
         </button>
-        <p className="rukh-fly-github-muted">Up to {MAX_IMPORT_FILES} selected text files are imported as immutable, owner-private snapshots. They will be attached to the next Agent request.</p>
+        <p className="rukh-fly-github-muted">Up to {MAX_IMPORT_FILES} selected text files are added to the Fly workspace. Rukh Files creates owner-private snapshots before the Agent receives them.</p>
       </>}
       {confirmRevoke ? <div className="rukh-fly-github-revoke">
         <p>Revoking this installation disconnects every Fly project using the same GitHub installation.</p>
