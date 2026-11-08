@@ -86,6 +86,38 @@ export function browserChromiumLaunchOptions(proxyUrl) {
   };
 }
 
+// Agent read-only pages must not open realtime transports that can carry
+// mutations outside the GET/HEAD request router. The WebSocket route is
+// installed before the first page is created; browser APIs that could create
+// direct peer or WebTransport connections are disabled in every document.
+export const BROWSER_READ_ONLY_NETWORK_INIT_SCRIPT = `(() => {
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "WebTransport"]) {
+    try {
+      Object.defineProperty(globalThis, name, {
+        value: undefined,
+        configurable: false,
+        writable: false,
+      });
+    } catch {}
+  }
+})();`;
+
+export async function installAgentReadOnlyBrowserGuards(context, state) {
+  if (
+    !context
+    || typeof context.addInitScript !== "function"
+    || typeof context.routeWebSocket !== "function"
+    || !state
+  ) {
+    throw new Error("browser_read_only_guard_unavailable");
+  }
+  await context.addInitScript(BROWSER_READ_ONLY_NETWORK_INIT_SCRIPT);
+  await context.routeWebSocket("**/*", async (webSocket) => {
+    state.surfaceViolation = state.surfaceViolation || browserSurfaceViolation("websocket");
+    await webSocket.close({ code: 1008, reason: "Read-only browser policy" });
+  });
+}
+
 // A browser request must remain on the server-admitted HTTPS origin. This is
 // a second guard in front of the CONNECT proxy, including for URLs Chromium
 // might otherwise try to send directly (localhost, IP literals, or HTTP).
@@ -157,6 +189,7 @@ export function formFieldPolicy(metadata) {
 export function browserSurfaceViolation(eventType) {
   if (eventType === "popup") return "browser_popup_blocked";
   if (eventType === "download") return "browser_download_blocked";
+  if (eventType === "websocket") return "browser_websocket_blocked";
   return null;
 }
 

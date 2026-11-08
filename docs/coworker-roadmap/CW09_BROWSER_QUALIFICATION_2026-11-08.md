@@ -18,6 +18,7 @@
 1. **Chromium proxy enforcement**
    - Remove Chromium's implicit loopback proxy bypass with `bypass: "<-loopback>"`.
    - Disable QUIC and DNS prefetch, block Chromium-side destination DNS resolution, and disable non-proxied WebRTC UDP.
+   - For Agent read-only contexts, block all WebSocket upgrades and disable WebRTC/WebTransport page APIs before scripts execute.
    - Keep the proxy endpoint restricted to the worker-owned `127.0.0.1` listener.
 
 2. **Request target policy**
@@ -30,6 +31,7 @@
    - Route a real browser navigation through the production CONNECT handler.
    - Verify a redirect to `localhost` reaches the proxy and is denied before a second TCP dial.
    - Verify a fresh Chromium process cannot reuse a prior public DNS authorization after the same hostname is rebound to a private address.
+   - Verify an Agent read-only page cannot open a WebSocket or access WebRTC/WebTransport APIs.
    - The fixture uses a local TLS server and a test-only dial mapping. It is not live Internet or staging evidence.
 
 4. **Source cleanup regression**
@@ -46,6 +48,6 @@
 
 ## Explicit qualification boundary
 
-This increment adds Chromium-level proxy, resolver, request-target and transport restrictions plus real Chromium/proxy integration tests. It does **not** prove kernel-enforced network namespace isolation, host/container firewall policy, live DNS resolver behavior, real CNAME rebinding, deployed worker identity, S3 deletion behavior, or protected-staging rollback. Those require an operated protected staging worker and independently captured evidence.
+This increment adds Chromium-level proxy, resolver, request-target and read-only realtime-transport restrictions plus real Chromium/proxy integration tests. It does **not** prove kernel-enforced network namespace isolation, host/container firewall policy, live DNS resolver behavior, real CNAME rebinding, deployed worker identity, S3 deletion behavior, or protected-staging rollback. Those require an operated protected staging worker and independently captured evidence.
 
 Do not mark CW-09 production-qualified or enable `agent_browser_read` from these repository tests alone. Do not merge, deploy or activate automatically. Rollback is limited to reverting this review-branch commit.

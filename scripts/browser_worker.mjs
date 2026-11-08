@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import dns from "node:dns/promises";
 import os from "node:os";
 import { chromium } from "playwright";
-import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, installAgentReadOnlyBrowserGuards, normalizedBaseUrl, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 import { createPinnedProxy } from "./browser_pinned_proxy.mjs";
 
 const API_BASE = normalizedBaseUrl(process.env.SHUDDHO_BROWSER_API_BASE_URL || "http://127.0.0.1:8000");
@@ -227,6 +227,9 @@ async function createRuntime(command, evidence) {
     const context = await browser.newContext(browserContextOptions(
       browserWorkerMayReuseStorageState(command) ? command.storage_state : null,
     ));
+    if (state.agentReadOnly) {
+      await installAgentReadOnlyBrowserGuards(context, state);
+    }
     const page = await context.newPage();
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
   page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
@@ -358,6 +361,7 @@ function workerFailureCode(error) {
     "takeover_interaction_uncertain",
     "browser_popup_blocked",
     "browser_download_blocked",
+    "browser_websocket_blocked",
     "unsupported_site",
   ]);
   if (["browser_origin_not_allowed", "browser_network_blocked", "browser_dns_unresolved", "browser_dns_invalid"].includes(error?.code)) {

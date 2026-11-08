@@ -12,6 +12,7 @@ import { createPinnedProxy } from "./browser_pinned_proxy.mjs";
 import {
   browserChromiumLaunchOptions,
   browserContextOptions,
+  installAgentReadOnlyBrowserGuards,
 } from "./browser_worker_policy.mjs";
 
 async function createTlsFixture(handler) {
@@ -176,6 +177,67 @@ test("real Chromium revalidates a hostname after a public-to-private DNS answer 
     assert.deepEqual(created.state.evidence, {
       "rebind.test": ["93.184.216.34"],
     });
+    await context.close();
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+    await closeProxy(proxy);
+    await closeTlsFixture(fixture);
+  }
+});
+
+
+test("real Chromium Agent read-only context blocks WebSockets and realtime transports", {
+  timeout: 30000,
+}, async () => {
+  const fixture = await createTlsFixture((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html", Connection: "close" });
+    response.end("<!doctype html><title>read-only fixture</title>");
+  });
+  const stats = { dials: 0, targets: [] };
+  const state = { surfaceViolation: null };
+  let browser;
+  let proxy;
+  try {
+    const created = await makeProxy(fixture, async (_commandId, host) => {
+      assert.equal(host, "example.test");
+      return { hostname: host, resolved_ips: ["93.184.216.34"] };
+    }, stats);
+    proxy = created.proxy;
+    browser = await chromium.launch(browserChromiumLaunchOptions(proxy.url));
+    const context = await browser.newContext({
+      ...browserContextOptions(null),
+      ignoreHTTPSErrors: true,
+    });
+    await installAgentReadOnlyBrowserGuards(context, state);
+    const page = await context.newPage();
+    await page.goto("https://example.test/", {
+      waitUntil: "domcontentloaded",
+      timeout: 8000,
+    });
+    const transportApis = await page.evaluate(() => ({
+      rtc: typeof globalThis.RTCPeerConnection,
+      webkitRtc: typeof globalThis.webkitRTCPeerConnection,
+      webTransport: typeof globalThis.WebTransport,
+    }));
+    const webSocketOutcome = await page.evaluate(() => new Promise((resolve) => {
+      const socket = new WebSocket("wss://example.test/socket");
+      const timeout = setTimeout(() => resolve("timeout"), 2000);
+      for (const eventName of ["open", "error", "close"]) {
+        socket.addEventListener(eventName, () => {
+          clearTimeout(timeout);
+          resolve(eventName);
+        }, { once: true });
+      }
+    }));
+    assert.deepEqual(transportApis, {
+      rtc: "undefined",
+      webkitRtc: "undefined",
+      webTransport: "undefined",
+    });
+    assert.notEqual(webSocketOutcome, "open");
+    assert.equal(state.surfaceViolation, "browser_websocket_blocked");
+    assert.equal(stats.dials, 1, "the WebSocket must not create a second proxied TCP connection");
+    assert.deepEqual(stats.targets, [{ host: "93.184.216.34", port: 443 }]);
     await context.close();
   } finally {
     if (browser) await browser.close().catch(() => {});

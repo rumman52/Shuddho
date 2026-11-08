@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, installAgentReadOnlyBrowserGuards, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -118,6 +118,7 @@ test("retained takeover context is network-silent while idle", () => {
 test("hostile popup and download surfaces fail closed with stable error codes", () => {
   assert.equal(browserSurfaceViolation("popup"), "browser_popup_blocked");
   assert.equal(browserSurfaceViolation("download"), "browser_download_blocked");
+  assert.equal(browserSurfaceViolation("websocket"), "browser_websocket_blocked");
   assert.equal(browserSurfaceViolation("dialog"), null);
 });
 
@@ -246,4 +247,37 @@ test("Chromium cannot silently bypass the pinned proxy for loopback or direct tr
   }
   assert.throws(() => browserChromiumLaunchOptions("http://localhost:43127"), /invalid_browser_proxy_url/);
   assert.throws(() => browserChromiumLaunchOptions("https://proxy.example.com"), /invalid_browser_proxy_url/);
+});
+
+
+test("Agent read-only browser guards disable realtime APIs and close every WebSocket", async () => {
+  let initScript = "";
+  let pattern = "";
+  let handler;
+  const context = {
+    async addInitScript(script) {
+      initScript = script;
+    },
+    async routeWebSocket(urlPattern, routeHandler) {
+      pattern = urlPattern;
+      handler = routeHandler;
+    },
+  };
+  const state = { surfaceViolation: null };
+  await installAgentReadOnlyBrowserGuards(context, state);
+  assert.match(initScript, /RTCPeerConnection/);
+  assert.match(initScript, /WebTransport/);
+  assert.equal(pattern, "**/*");
+  let closeOptions;
+  await handler({
+    async close(options) {
+      closeOptions = options;
+    },
+  });
+  assert.equal(state.surfaceViolation, "browser_websocket_blocked");
+  assert.deepEqual(closeOptions, { code: 1008, reason: "Read-only browser policy" });
+  await assert.rejects(
+    installAgentReadOnlyBrowserGuards({}, state),
+    /browser_read_only_guard_unavailable/,
+  );
 });
