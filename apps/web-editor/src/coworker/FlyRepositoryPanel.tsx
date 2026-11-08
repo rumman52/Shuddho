@@ -39,6 +39,7 @@ export default function FlyRepositoryPanel({
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [binding, setBinding] = useState<GitHubRepositoryBinding | null>(null);
   const [installation, setInstallation] = useState<GitHubInstallation | null>(null);
+  const [installations, setInstallations] = useState<GitHubInstallation[]>([]);
   const [installationRecordId, setInstallationRecordId] = useState("");
   const [repositories, setRepositories] = useState<GitHubRepository[]>([]);
   const [repositoryId, setRepositoryId] = useState("");
@@ -64,6 +65,22 @@ export default function FlyRepositoryPanel({
     });
     return () => { alive = false; };
   }, [client]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    client.githubInstallations().then(value => {
+      if (!alive) return;
+      setInstallations(value.items);
+      if (value.items.length === 1) {
+        setInstallation(value.items[0]);
+        setInstallationRecordId(current => current || value.items[0].id);
+      }
+    }).catch(failure => {
+      if (alive) setError(errorMessage(failure));
+    });
+    return () => { alive = false; };
+  }, [client, enabled]);
 
   useEffect(() => {
     if (callbackHandled.current || typeof window === "undefined") return;
@@ -104,11 +121,12 @@ export default function FlyRepositoryPanel({
     client.githubCompleteInstall(state, parsedInstallationId).then(result => {
       onProjectChange(result.project_id);
       setInstallation(result.installation);
+      setInstallations(current => [...current.filter(item => item.id !== result.installation.id), result.installation]);
       setInstallationRecordId(result.installation.id);
       setRepositories(result.repositories);
       setRepositoryId("");
       setPickerOpen(true);
-      setNotice("GitHub installation verified for @" + result.github_login + ". Choose the repository to connect to this project.");
+      setNotice("GitHub installation verified for @" + result.installation.github_login + ". Choose the repository to connect to this project.");
     }).catch(failure => {
       setError(errorMessage(failure));
     }).finally(() => setBusy(""));
@@ -272,6 +290,7 @@ export default function FlyRepositoryPanel({
       setBinding(null);
       setTree(null);
       setInstallation(null);
+      setInstallations(current => current.filter(item => item.id !== installationRecordId));
       setInstallationRecordId("");
       setRepositories([]);
       setPickerOpen(false);
@@ -293,14 +312,27 @@ export default function FlyRepositoryPanel({
     {enabled === null && <p className="rukh-fly-github-muted" role="status">Checking GitHub integration…</p>}
     {enabled === false && <p className="rukh-fly-github-muted">GitHub App integration is not configured in this deployment. Fly's local editor remains available.</p>}
     {enabled === true && !projectId && <p className="rukh-fly-github-muted">Select or create a Fly project before connecting a repository.</p>}
-    {enabled === true && projectId && !binding && !pickerOpen && !installation && <>
+    {enabled === true && projectId && !binding && !pickerOpen && installations.length === 0 && <>
       <p className="rukh-fly-github-muted">Connect a GitHub App installation to browse files from a repository you can access.</p>
       <button type="button" className="rukh-fly-github-primary" onClick={() => void connectGitHub()} disabled={Boolean(busy)}>
         {busy === "connect" || busy === "oauth" ? "Connecting…" : "Connect GitHub"}
       </button>
     </>}
-    {enabled === true && projectId && !binding && (pickerOpen || installation) && <>
-      <p className="rukh-fly-github-muted">Installation: <strong>{installation?.account_login ?? "Verified GitHub installation"}</strong></p>
+    {enabled === true && projectId && !binding && !pickerOpen && installations.length > 0 && <>
+      <p className="rukh-fly-github-muted">Choose a verified GitHub App installation to browse its repositories.</p>
+      <label className="rukh-fly-github-label">GitHub installation
+        <select value={installationRecordId} onChange={event => setInstallationRecordId(event.target.value)} disabled={Boolean(busy)}>
+          <option value="">Choose an installation…</option>
+          {installations.map(item => <option key={item.id} value={item.id}>{item.account_login} · @{item.github_login}</option>)}
+        </select>
+      </label>
+      <button type="button" className="rukh-fly-github-primary" onClick={() => void openRepositoryPicker()} disabled={Boolean(busy) || !installationRecordId}>
+        {busy === "repositories" ? "Loading…" : "Choose repository"}
+      </button>
+      <button type="button" className="rukh-fly-github-text" onClick={() => void connectGitHub()} disabled={Boolean(busy)}>Add another GitHub installation</button>
+    </>}
+    {enabled === true && projectId && pickerOpen && <>
+      <p className="rukh-fly-github-muted">Installation: <strong>{installation?.account_login ?? installations.find(item => item.id === installationRecordId)?.account_login ?? "Verified GitHub installation"}</strong></p>
       <label className="rukh-fly-github-label">Repository
         <select value={repositoryId} onChange={event => setRepositoryId(event.target.value)} disabled={Boolean(busy)}>
           <option value="">Choose a repository…</option>
@@ -311,10 +343,11 @@ export default function FlyRepositoryPanel({
         <button type="button" className="rukh-fly-github-primary" onClick={() => void bindRepository()} disabled={Boolean(busy) || !repositoryId}>
           {busy === "bind" ? "Connecting…" : "Connect repository"}
         </button>
+        <button type="button" onClick={() => setPickerOpen(false)} disabled={Boolean(busy)}>Cancel</button>
         <button type="button" onClick={() => void openRepositoryPicker()} disabled={Boolean(busy) || !installationRecordId}>Refresh list</button>
       </div>
     </>}
-    {enabled === true && binding && <>
+    {enabled === true && projectId && binding && !pickerOpen && <>
       <div className="rukh-fly-github-repo-name"><strong>{binding.full_name}</strong><small>{binding.default_branch} · {binding.can_write_contents ? "Write access available" : "Read-only access"}</small></div>
       <div className="rukh-fly-github-actions">
         <button type="button" onClick={() => void openRepositoryPicker()} disabled={Boolean(busy)}>Change repository</button>
@@ -337,7 +370,7 @@ export default function FlyRepositoryPanel({
         <button type="button" className="rukh-fly-github-primary" onClick={() => void importSelectedFiles()} disabled={Boolean(busy) || !selectedPaths.length}>
           {busy === "import" ? "Importing…" : "Add " + selectedPaths.length + " file(s) to Fly"}
         </button>
-        <p className="rukh-fly-github-muted">Up to {MAX_IMPORT_FILES} selected text files are imported as immutable, owner-private snapshots. Credentials, environment files, binary files and generated folders are excluded.</p>
+        <p className="rukh-fly-github-muted">Up to {MAX_IMPORT_FILES} selected text files are imported as immutable, owner-private snapshots. They will be attached to the next Agent request.</p>
       </>}
       {confirmRevoke ? <div className="rukh-fly-github-revoke">
         <p>Revoking this installation disconnects every Fly project using the same GitHub installation.</p>
