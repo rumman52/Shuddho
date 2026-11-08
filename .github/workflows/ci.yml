@@ -412,6 +412,8 @@ jobs:
 
   browser-qualification:
     name: browser-qualification
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
