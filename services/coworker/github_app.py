@@ -532,7 +532,7 @@ class GitHubAppService:
                 bundle = self._vault().open(
                     installation.user_token_bundle_ciphertext,
                     owner + ":github-installation:" + installation.id,
-                )
+                ) if installation.user_token_bundle_ciphertext else {}
                 access_token = bundle.get("access_token")
                 refresh_token = bundle.get("refresh_token")
                 now = utcnow()
