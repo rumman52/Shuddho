@@ -58,7 +58,7 @@ settings = replace(
     agent_action_proposals_enabled=True,
     action_attachments_enabled=True,
     action_reminders_enabled=True,
-    max_active_agent_runs=3,
+    max_active_agent_runs=3,  # Match the three-run acceptance scenario; production default stays bounded at two.
 )
 settings.validate()
 container.settings = settings
