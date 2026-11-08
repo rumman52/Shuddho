@@ -27,10 +27,9 @@ function updatedLabel(value: string) {
 
 type ProjectTab = "overview" | "chats" | "files";
 
-export default function ProjectWorkspace({ client, onCreateModeChange, initialCreate = false }: {
+export default function ProjectWorkspace({ client, onCreateModeChange }: {
   client: CoworkerClient;
   onCreateModeChange?: (creating: boolean) => void;
-  initialCreate?: boolean;
 }) {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [project, setProject] = useState<ProjectDetail | null>(null);
@@ -41,7 +40,7 @@ export default function ProjectWorkspace({ client, onCreateModeChange, initialCr
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState(initialCreate);
+  const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
