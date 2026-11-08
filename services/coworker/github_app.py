@@ -713,7 +713,7 @@ class GitHubAppService:
         try:
             with self._client() as client:
                 response = client.delete(
-                    f"/applications/{quote(self.settings.github_app_client_id, safe='')}/token",
+                    GITHUB_API + f"/applications/{quote(self.settings.github_app_client_id, safe='')}/token",
                     auth=(self.settings.github_app_client_id, self.settings.github_app_client_secret),
                     headers={"Accept": "application/vnd.github+json", "User-Agent": "Rukh-AI-Fly"},
                     json={"access_token": access_token},
