@@ -316,7 +316,7 @@ export default function FlyRepositoryPanel({
       setPickerOpen(false);
       setConfirmRevoke(false);
       onBindingChange(null);
-      setNotice("GitHub user token revoked and all project bindings disconnected. The GitHub App remains installed in GitHub.");
+      setNotice("GitHub App authorization revoked. All installations and project bindings for this GitHub user were disconnected.");
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -394,7 +394,7 @@ export default function FlyRepositoryPanel({
         <p className="rukh-fly-github-muted">Up to {MAX_IMPORT_FILES} selected text files are added to the Fly workspace. Rukh Files creates owner-private snapshots before the Agent receives them.</p>
       </>}
       {confirmRevoke ? <div className="rukh-fly-github-revoke">
-        <p>This revokes the stored GitHub user token and disconnects every Fly project using this local connection. The GitHub App remains installed; uninstall it in GitHub settings to remove the installation.</p>
+        <p>This revokes the GitHub App authorization for this GitHub user, including every active installation and Fly project connected through that account. The App may remain installed in GitHub settings, but Rukh will no longer have an authorization token.</p>
         <button type="button" onClick={() => void revokeInstallation()} disabled={Boolean(busy)}>{busy === "revoke" ? "Revoking…" : "Confirm revoke access"}</button>
         <button type="button" onClick={() => setConfirmRevoke(false)} disabled={Boolean(busy)}>Cancel</button>
       </div> : <button type="button" className="rukh-fly-github-text" onClick={() => setConfirmRevoke(true)} disabled={Boolean(busy)}>Revoke this GitHub connection</button>}
