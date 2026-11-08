@@ -547,7 +547,8 @@ def test_selected_artifact_is_pinned_and_revalidated_for_conversation_run(contai
     assert worker["artifact_ids"] == [artifact.id]
     context, sources = container.context.planner_context(owner, admitted["run_id"])
     assert any("15 December" in item["excerpt"] for item in context["items"])
-    assert any(value.get("resource_type") == "artifact" for value in sources.values())
+    assert any(item["source_type"] == "workspace_artifact" for item in context["items"])
+    assert any(value.get("type") == "workspace_artifact" for value in sources.values())
 
     with dispatch.sessions.begin() as db:
         db.delete(db.get(Artifact, artifact.id))
@@ -604,8 +605,8 @@ def test_active_v3_run_accepts_revision_checked_steering(container):
     assert len(container.agent.get(owner, admitted["run_id"])["steering_instructions"]) == 1
 
 
-def test_steering_is_owner_scoped_and_rejected_for_terminal_or_legacy_runs(container):
-    owner, conv, conversations, dispatch = setup(container, key="p2-steering-scope")
+def test_steering_is_owner_scoped_and_rejected_for_terminal_runs(container):
+    owner, conv, conversations, dispatch = setup_v3(container, key="p2-steering-scope")
     msg = message(conversations, owner, conv)
     admitted, _ = dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1)
     foreign = account(container, "p2-steering-foreign")
@@ -623,3 +624,15 @@ def test_steering_is_owner_scoped_and_rejected_for_terminal_or_legacy_runs(conta
             expected_steering_revision=0, instruction="A terminal run cannot be steered.",
         )
     assert terminal.value.code == "agent_run_closed"
+
+
+def test_legacy_conversation_run_rejects_unsupported_live_steering(container):
+    owner, conv, conversations, dispatch = setup(container, key="p2-legacy-steering")
+    msg = message(conversations, owner, conv)
+    dispatch.dispatch(owner, conv["id"], msg["id"], expected_sequence=1)
+    with pytest.raises(CoworkerError) as unavailable:
+        dispatch.steer(
+            owner, conv["id"], msg["id"], expected_sequence=1,
+            expected_steering_revision=0, instruction="A legacy plan cannot be changed live.",
+        )
+    assert unavailable.value.code == "agent_steering_unavailable"
