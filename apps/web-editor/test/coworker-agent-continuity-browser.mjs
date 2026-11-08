@@ -28,6 +28,7 @@ async function waitFor(check, description, timeoutMs = 15000) {
 export async function verifyConversationAgentContinuity(page) {
   const taskA = "E2E Task A: Create a concise project document about the first milestone.";
   const taskB = "E2E Task B: Create a concise project document about the second milestone.";
+  const taskC = "E2E Task C: Create a concise project document about the third milestone.";
   const steering = "Prioritize the Bangla summary and keep the document concise.";
 
   await postJson(page, "/enable-v3");
@@ -56,62 +57,78 @@ export async function verifyConversationAgentContinuity(page) {
     await page.locator(".rukh-design-send").click();
     await page.getByText(taskB, { exact: true }).waitFor();
     await page.getByRole("button", { name: "Start task", exact: true }).click();
+
+    // A third task demonstrates bounded, configurable concurrency rather than
+    // accidentally coupling every run to one conversation-wide execution slot.
+    await composer.fill(taskC);
+    await page.locator(".rukh-design-send").click();
+    await page.getByText(taskC, { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Start task", exact: true }).click();
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
-      return calls.calls.filter(call => call.goal === taskA || call.goal === taskB).length === 2;
-    }, "two independent in-flight Agent runs");
+      return calls.calls.filter(call => call.goal === taskA || call.goal === taskB || call.goal === taskC).length === 3;
+    }, "three independent in-flight Agent runs");
 
     const steerButtons = page.getByRole("button", { name: "Steer Agent task", exact: true });
-    await waitFor(async () => (await steerButtons.count()) === 2, "two per-message steering controls");
+    await waitFor(async () => (await steerButtons.count()) === 3, "three per-message steering controls");
     await steerButtons.nth(0).click();
     await page.getByLabel("Instruction for Agent", { exact: true }).fill(steering);
     await page.getByRole("button", { name: "Send instruction", exact: true }).click();
 
     // Cancel only Task B while both model decisions are deliberately held.
     const cancelButtons = page.getByRole("button", { name: "Cancel Agent work", exact: true });
-    await waitFor(async () => (await cancelButtons.count()) === 2, "two independent cancellation controls");
+    await waitFor(async () => (await cancelButtons.count()) === 3, "three independent cancellation controls");
     await cancelButtons.nth(1).click();
 
     runs = await waitFor(async () => {
       const snapshot = await getJson(page, "/runs");
       const a = snapshot.runs.find(run => run.goal === taskA);
       const b = snapshot.runs.find(run => run.goal === taskB);
-      return a?.steering_revision === 1 && b?.state === "cancelled" ? snapshot : null;
+      const c = snapshot.runs.find(run => run.goal === taskC);
+      return a?.steering_revision === 1 && b?.state === "cancelled" && c && c.state !== "cancelled" ? snapshot : null;
     }, "revision-checked steering and individual cancellation");
     assert.equal(runs.runs.find(run => run.goal === taskA).state === "cancelled", false);
+    assert.equal(runs.runs.find(run => run.goal === taskC).state === "cancelled", false);
 
     // Refresh must restore the same conversation, active run and terminal run.
     await page.reload();
     await composer.waitFor();
     await page.getByText(taskA, { exact: true }).waitFor();
     await page.getByText(taskB, { exact: true }).waitFor();
+    await page.getByText(taskC, { exact: true }).waitFor();
     await page.getByText("Cancelled", { exact: true }).waitFor();
-    await waitFor(async () => (await page.getByRole("button", { name: "Cancel Agent work", exact: true }).count()) === 1,
-      "only the uncancelled task retaining its cancel control");
+    await waitFor(async () => (await page.getByRole("button", { name: "Cancel Agent work", exact: true }).count()) === 2,
+      "the two uncancelled tasks retaining their cancel controls");
 
     await postJson(page, "/release-planner");
     runs = await waitFor(async () => {
       const snapshot = await getJson(page, "/runs");
       const a = snapshot.runs.find(run => run.goal === taskA);
       const b = snapshot.runs.find(run => run.goal === taskB);
-      return a?.state === "completed" && b?.state === "cancelled" ? snapshot : null;
-    }, "Task A completing without reviving cancelled Task B", 30000);
+      const c = snapshot.runs.find(run => run.goal === taskC);
+      return a?.state === "completed" && b?.state === "cancelled" && c?.state === "completed" ? snapshot : null;
+    }, "Tasks A and C completing without reviving cancelled Task B", 30000);
 
     const completedA = runs.runs.find(run => run.goal === taskA);
     const cancelledB = runs.runs.find(run => run.goal === taskB);
+    const completedC = runs.runs.find(run => run.goal === taskC);
     assert.equal(completedA.tool_invocation_count, 1);
     assert.equal(cancelledB.tool_invocation_count, 0);
+    assert.equal(completedC.tool_invocation_count, 1);
     assert.equal(completedA.steering_instructions.at(-1).instruction, steering);
+    assert.equal(completedC.steering_revision, 0);
 
     const calls = (await getJson(page, "/planner-calls")).calls;
     const callsA = calls.filter(call => call.goal === taskA);
     const callsB = calls.filter(call => call.goal === taskB);
+    const callsC = calls.filter(call => call.goal === taskC);
     assert.ok(callsA.some(call => call.steering_revision === 0));
     assert.ok(callsA.some(call =>
       call.steering_revision === 1
       && call.steering_instructions.some(item => item.instruction === steering)
     ));
     assert.equal(callsB.length, 1, "the cancelled task must not re-enter model planning");
+    assert.ok(callsC.some(call => call.observation_count === 1), "Task C must complete from its own verified observation");
   } finally {
     // Always release held fixture inference so a failed assertion cannot strand a worker.
     await postJson(page, "/release-planner").catch(() => undefined);
