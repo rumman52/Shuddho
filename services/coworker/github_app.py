@@ -538,6 +538,7 @@ class GitHubAppService:
         token = None
         try:
             with self.sessions.begin() as db:
+                ConversationRepository._lock_account(db, owner)
                 installation = self._installation(db, owner, installation_record_id)
                 bundle = self._vault().open(
                     installation.user_token_bundle_ciphertext,
