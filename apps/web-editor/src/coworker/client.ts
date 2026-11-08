@@ -676,6 +676,9 @@ export class CoworkerClient {
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, installation_id: installationId }) },
     );
   }
+  githubInstallations(signal?: AbortSignal) {
+    return this.json<{ items: GitHubInstallation[] }>("/api/v1/github/installations", { signal });
+  }
   githubRepositories(installationRecordId: string, signal?: AbortSignal) {
     return this.json<{ installation: string; repositories: GitHubRepository[] }>(
       `/api/v1/github/installations/${identifier(installationRecordId)}/repositories`, { signal },
