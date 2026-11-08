@@ -182,6 +182,7 @@ def test_github_app_oauth_pkce_install_verification_and_repository_browsing(cont
         owner, project["id"], installation["id"], 777, project["revision"],
     )
     assert binding["full_name"] == "acme/demo"
+    assert binding["github_user_id"] == 123
     assert binding["can_read_contents"] is True
     assert binding["can_write_contents"] is False
 
