@@ -33,10 +33,10 @@ function authFixture() {
 
 const TestableGate = CoworkerGate as unknown as React.ComponentType<{ authClientFactory?: () => unknown }>;
 
-async function withGate(factory: (() => unknown) | undefined, run: (tree: ReactTestRenderer, auth: ReturnType<typeof authFixture> | null) => Promise<void>, pathname?: string) {
+async function withGate(factory: (() => unknown) | undefined, run: (tree: ReactTestRenderer, auth: ReturnType<typeof authFixture> | null) => Promise<void>, pathname?: string, search = "") {
   const previousWindow = globalThis.window;
   const sessionValues = new Map<string, string>();
-  const location = { origin: "https://rukh.test", pathname: pathname ?? "/", search: "" };
+  const location = { origin: "https://rukh.test", pathname: pathname ?? "/", search };
   globalThis.window = {
     location,
     history: {
@@ -144,6 +144,24 @@ test("signed-out Projects entry opens sign-in and preserves the Projects destina
     await act(async () => tree.root.findByProps({ className: "rukh-login-google" }).props.onClick());
     assert.deepEqual(auth!.calls.redirectUrls, ["https://rukh.test/coworker?view=projects"]);
   });
+});
+
+test("direct Projects deep links open Projects sign-in and preserve the destination through OAuth", async () => {
+  await withGate(() => ({}), async (tree, auth) => {
+    assert.ok(tree.root.findByProps({ className: "rukh-login-page" }));
+    assert.match(tree.root.findByProps({ id: "rukh-login-description" }).children.join(""), /Projects/);
+    assert.equal(tree.root.findAllByProps({ id: "rukh-first-message" }).length, 0);
+    await act(async () => tree.root.findByProps({ className: "rukh-login-google" }).props.onClick());
+    assert.deepEqual(auth!.calls.redirectUrls, ["https://rukh.test/coworker?view=projects"]);
+  }, "/coworker", "?view=projects");
+});
+
+test("Projects deep links without auth configuration show a Projects access screen, not Coworker", async () => {
+  await withGate(undefined, async tree => {
+    assert.ok(tree.root.findByProps({ "aria-label": "Rukh AI Projects" }));
+    assert.ok(tree.root.findByProps({ id: "rukh-project-entry-title" }));
+    assert.equal(tree.root.findAllByProps({ id: "rukh-first-message" }).length, 0);
+  }, "/coworker", "?view=projects");
 });
 
 test("prompt starters populate the first-message composer without sending", async () => {
