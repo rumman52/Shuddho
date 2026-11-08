@@ -361,6 +361,137 @@ def test_normal_selection_preserves_old_publication_but_rollback_revokes_it(cont
     assert denied.value.code == "skill_manifest_unreviewed"
 
 
+def test_selected_publication_revocation_fails_closed_until_explicit_reselection(container):
+    worker(container, REV_A)
+    publish(container, "research_revoke_baseline", source_revision=REV_A)
+    publish(
+        container,
+        "research_revoke_candidate",
+        source_revision=REV_A,
+        rollback_target="research_revoke_baseline",
+    )
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_revoke_candidate",
+        actor_reference="cw11-test-operator",
+        reason="select candidate before revocation",
+        worker_source_revision=REV_A,
+    )
+
+    owner = account(container, "selected-revocation")
+    pinned_task = reviewed_task(container, owner, "selected-revocation-task")
+    with container.repository.sessions() as db:
+        pinned = db.get(
+            Step, (pinned_task["id"], "reviewed_skill_identity"),
+        ).output
+    assert pinned["publication_version"] == "research_revoke_candidate"
+
+    revoked = container.repository.revoke_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_revoke_candidate",
+        actor_reference="cw11-emergency-operator",
+        reason="review evidence withdrawn",
+    )
+    assert revoked["state"] == "revoked"
+    assert revoked["was_selected"] is True
+    assert revoked["selection_generation"] == 2
+    assert container.repository.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL) is None
+
+    # Revocation blocks a previously pinned task before paid-search credits
+    # can be reserved, not merely when the next artifact is written.
+    with pytest.raises(CoworkerError) as denied:
+        container.repository.reserve_search(pinned_task["id"])
+    assert denied.value.code == "skill_manifest_unreviewed"
+    assert container.repository.step(pinned_task["id"], "search_attempt") is None
+
+    # There is no automatic fallback. The operator must explicitly select
+    # the previously declared baseline before new reviewed work can be admitted.
+    with pytest.raises(CoworkerError) as admission_blocked:
+        reviewed_task(container, owner, "must-not-auto-fallback")
+    assert admission_blocked.value.code == "skill_publication_unavailable"
+
+    selected = container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_revoke_baseline",
+        actor_reference="cw11-test-operator",
+        reason="explicit recovery after revocation",
+        worker_source_revision=REV_A,
+    )
+    assert selected["publication_version"] == "research_revoke_baseline"
+    resumed_task = reviewed_task(container, owner, "explicit-reselection-task")
+    with container.repository.sessions() as db:
+        resumed_pin = db.get(
+            Step, (resumed_task["id"], "reviewed_skill_identity"),
+        ).output
+    assert resumed_pin["publication_version"] == "research_revoke_baseline"
+
+    with pytest.raises(CoworkerError) as old_task_denied:
+        container.repository.worker_task(pinned_task["id"], False)
+    assert old_task_denied.value.code == "skill_manifest_unreviewed"
+
+    events = container.repository.reviewed_control_history(limit=20)
+    revoked_events = [
+        event for event in events
+        if event["event_type"] == "publication_revoked"
+    ]
+    assert len(revoked_events) == 1
+    assert revoked_events[0]["metadata"]["was_selected"] is True
+    assert revoked_events[0]["reason"] == "review evidence withdrawn"
+
+
+def test_task_version_pin_survives_selection_change_but_revocation_invalidates_only_that_version(container):
+    worker(container, REV_A)
+    publish(container, "research_pin_v0", source_revision=REV_A)
+    publish(container, "research_pin_v1", source_revision=REV_A)
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_pin_v0",
+        actor_reference="cw11-test-operator",
+        reason="select first reviewed version",
+        worker_source_revision=REV_A,
+    )
+
+    owner = account(container, "version-pinning")
+    old_task = reviewed_task(container, owner, "version-pin-old-task")
+    with container.repository.sessions() as db:
+        old_pin = db.get(
+            Step, (old_task["id"], "reviewed_skill_identity"),
+        ).output
+    assert old_pin["publication_version"] == "research_pin_v0"
+
+    container.repository.select_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_pin_v1",
+        actor_reference="cw11-test-operator",
+        reason="select newer reviewed version",
+        worker_source_revision=REV_A,
+    )
+    # A normal selection change must not rewrite the old task's immutable pin.
+    with container.repository.sessions() as db:
+        assert db.get(
+            Step, (old_task["id"], "reviewed_skill_identity"),
+        ).output == old_pin
+    assert container.repository.worker_task(old_task["id"], False)["id"] == old_task["id"]
+    assert container.repository.selected_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+    )["publication_version"] == "research_pin_v1"
+
+    revoked = container.repository.revoke_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+        "research_pin_v0",
+        actor_reference="cw11-emergency-operator",
+        reason="old release review withdrawn",
+    )
+    assert revoked["was_selected"] is False
+    assert container.repository.selected_reviewed_skill(
+        REVIEWED_RESEARCH_SKILL,
+    )["publication_version"] == "research_pin_v1"
+
+    with pytest.raises(CoworkerError) as old_task_denied:
+        container.repository.worker_task(old_task["id"], False)
+    assert old_task_denied.value.code == "skill_manifest_unreviewed"
+
+
 def test_worker_drain_stops_new_claims_and_requires_explicit_drained_state(container):
     old = worker(container, REV_B)
     new = worker(container, REV_A)
