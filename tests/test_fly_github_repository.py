@@ -165,6 +165,10 @@ def test_github_app_oauth_pkce_install_verification_and_repository_browsing(cont
     installation = connected["installation"]
     assert installation["account_login"] == "acme"
     assert [item["full_name"] for item in connected["repositories"]] == ["acme/demo"]
+    listed = container.github.list_installations(owner)["items"]
+    assert len(listed) == 1
+    assert "user_token_bundle_ciphertext" not in listed[0]
+    assert "access_token" not in listed[0] and "refresh_token" not in listed[0]
 
     binding = container.github.bind_repository(
         owner, project["id"], installation["id"], 777, project["revision"],
