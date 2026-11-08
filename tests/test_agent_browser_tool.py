@@ -10,6 +10,7 @@ import hashlib
 import json
 from dataclasses import replace
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -435,8 +436,32 @@ def test_browser_source_storage_delete_outage_is_reported_and_access_revoked(con
     assert key not in container.retention.referenced_object_keys()
     assert container.agent.verified_observations(owner, run["id"])[0]["summary"]["source_deleted"] is True
     monkeypatch.setattr(container.storage, "delete", original_delete)
-    # Existing orphan cleanup owns retrying private-byte deletion.
-    container.storage.delete(key)
+
+    # Exercise the actual age-bounded orphan reconciler, not a direct delete.
+    # The synthetic inventory timestamp models an object that has passed the
+    # minimum retention age after its metadata reference was revoked.
+    original_inventory = container.storage.inventory
+
+    def aged_inventory(prefix):
+        return [
+            SimpleNamespace(
+                key=item.key,
+                byte_size=item.byte_size,
+                modified_at=utcnow() - timedelta(hours=2),
+            )
+            for item in original_inventory(prefix)
+            if item.key == key
+        ]
+
+    monkeypatch.setattr(container.storage, "inventory", aged_inventory)
+    cleanup = container.retention.cleanup_orphans(
+        prefix=f"agent-browser-sources/{owner}/",
+        min_age_seconds=3600,
+        dry_run=False,
+    )
+    assert cleanup["deleted"] == 1
+    assert cleanup["failed"] == []
+    assert [item["key"] for item in cleanup["candidates"]] == [key]
     with pytest.raises(FileNotFoundError):
         container.storage.get(key, 8192)
 

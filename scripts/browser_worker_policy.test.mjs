@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundVisiblePageText, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserSurfaceViolation, formFieldPolicy, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
+import { boundVisiblePageText, browserChromiumLaunchOptions, browserContextOptions, browserWorkerMayReuseStorageState, browserProxyClaimValid, browserRequestAllowed, browserRequestTargetAllowed, browserSurfaceViolation, formFieldPolicy, installAgentReadOnlyBrowserGuards, installBrowserRequestFence, normalizedBaseUrl, parseConnectAuthority, safeWorkerId, takeoverFieldPolicy } from "./browser_worker_policy.mjs";
 
 test("browser worker policy accepts only HTTPS CONNECT on named hosts", () => {
   assert.deepEqual(parseConnectAuthority("example.com:443"), { host: "example.com", port: 443 });
@@ -118,6 +118,7 @@ test("retained takeover context is network-silent while idle", () => {
 test("hostile popup and download surfaces fail closed with stable error codes", () => {
   assert.equal(browserSurfaceViolation("popup"), "browser_popup_blocked");
   assert.equal(browserSurfaceViolation("download"), "browser_download_blocked");
+  assert.equal(browserSurfaceViolation("websocket"), "browser_websocket_blocked");
   assert.equal(browserSurfaceViolation("dialog"), null);
 });
 
@@ -208,3 +209,132 @@ test("Proxy rejects ABA reuse and evidence replacement across commands", () => {
   assert.equal(browserProxyClaimValid(null, snapshot), false);
 });
 
+
+
+test("browser worker request targets stay on the admitted HTTPS origin", () => {
+  const origin = "https://example.com";
+  assert.equal(browserRequestTargetAllowed("https://example.com/article", origin), true);
+  assert.equal(browserRequestTargetAllowed("https://example.com:443/article", origin), true);
+  for (const value of [
+    "http://example.com/article",
+    "https://example.com:8443/article",
+    "https://other.example/article",
+    "https://localhost/private",
+    "https://localhost./private",
+    "https://metadata.google.internal/computeMetadata",
+    "https://intranet/private",
+    "https://127.0.0.1/private",
+    "https://[::1]/private",
+    "https://user:secret@example.com/private",
+    "not a URL",
+  ]) {
+    assert.equal(browserRequestTargetAllowed(value, origin), false, value);
+  }
+});
+
+test("Chromium cannot silently bypass the pinned proxy for loopback or direct transports", () => {
+  const options = browserChromiumLaunchOptions("http://127.0.0.1:43127");
+  assert.equal(options.headless, true);
+  assert.equal(options.proxy.server, "http://127.0.0.1:43127");
+  assert.equal(options.proxy.bypass, "<-loopback>");
+  for (const flag of [
+    "--disable-quic",
+    "--dns-prefetch-disable",
+    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+  ]) {
+    assert.ok(options.args.includes(flag), flag);
+  }
+  assert.throws(() => browserChromiumLaunchOptions("http://localhost:43127"), /invalid_browser_proxy_url/);
+  assert.throws(() => browserChromiumLaunchOptions("https://proxy.example.com"), /invalid_browser_proxy_url/);
+});
+
+
+test("Agent read-only browser guards disable realtime APIs and close every WebSocket", async () => {
+  let initScript = "";
+  let pattern = "";
+  let handler;
+  const context = {
+    async addInitScript(script) {
+      initScript = script;
+    },
+    async routeWebSocket(urlPattern, routeHandler) {
+      pattern = urlPattern;
+      handler = routeHandler;
+    },
+  };
+  const state = { surfaceViolation: null };
+  await installAgentReadOnlyBrowserGuards(context, state);
+  assert.match(initScript, /RTCPeerConnection/);
+  assert.match(initScript, /WebTransport/);
+  assert.equal(pattern, "**/*");
+  let closeOptions;
+  await handler({
+    async close(options) {
+      closeOptions = options;
+    },
+  });
+  assert.equal(state.surfaceViolation, "browser_websocket_blocked");
+  assert.deepEqual(closeOptions, { code: 1008, reason: "Read-only browser policy" });
+  await assert.rejects(
+    installAgentReadOnlyBrowserGuards({}, state),
+    /browser_read_only_guard_unavailable/,
+  );
+});
+
+
+test("context-wide browser request fence blocks worker mutations and off-origin requests", async () => {
+  const mainFrame = {};
+  const routes = [];
+  const context = {
+    async route(pattern, handler) {
+      routes.push({ pattern, handler });
+    },
+  };
+  const page = { mainFrame: () => mainFrame };
+  const state = {
+    kind: "agent_read_only",
+    agentReadOnly: true,
+    allowedOrigin: "https://example.com",
+    preparingForm: false,
+    humanInteractionArmed: false,
+    formMutationBlocked: false,
+  };
+  await installBrowserRequestFence(context, page, state);
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].pattern, "**/*");
+
+  async function dispatch({ url, method, navigationRequest = false, frame = mainFrame }) {
+    const result = { aborted: false, continued: false };
+    const route = {
+      request: () => ({
+        url: () => url,
+        method: () => method,
+        isNavigationRequest: () => navigationRequest,
+        frame: () => frame,
+      }),
+      async abort() { result.aborted = true; },
+      async continue() { result.continued = true; },
+    };
+    await routes[0].handler(route);
+    return result;
+  }
+
+  assert.deepEqual(
+    await dispatch({ url: "https://example.com/read", method: "GET" }),
+    { aborted: false, continued: true },
+  );
+  assert.deepEqual(
+    await dispatch({ url: "https://example.com/mutate", method: "POST" }),
+    { aborted: true, continued: false },
+  );
+  assert.deepEqual(
+    await dispatch({ url: "https://other.example/read", method: "GET" }),
+    { aborted: true, continued: false },
+  );
+  assert.equal(state.formMutationBlocked, false);
+  await assert.rejects(
+    installBrowserRequestFence({}, page, state),
+    /browser_request_fence_unavailable/,
+  );
+});

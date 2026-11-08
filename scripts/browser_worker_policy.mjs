@@ -37,6 +37,123 @@ export function normalizedBaseUrl(value) {
   return url.toString().replace(/\/$/, "");
 }
 
+// Chromium must not apply its implicit localhost/loopback proxy bypass. Its
+// HTTP(S) request path is forced through the worker-owned loopback CONNECT
+// proxy, which performs broker DNS authorization and pins the approved IP.
+// This application-level policy does not replace host/container egress rules.
+export function browserChromiumLaunchOptions(proxyUrl) {
+  let proxy;
+  try {
+    proxy = new URL(proxyUrl);
+  } catch {
+    throw new Error("invalid_browser_proxy_url");
+  }
+  if (
+    proxy.protocol !== "http:"
+    || proxy.hostname !== "127.0.0.1"
+    || !proxy.port
+    || proxy.username
+    || proxy.password
+    || proxy.pathname !== "/"
+    || proxy.search
+    || proxy.hash
+  ) {
+    throw new Error("invalid_browser_proxy_url");
+  }
+  return {
+    headless: true,
+    proxy: {
+      server: proxy.origin,
+      // Chromium otherwise bypasses its proxy for localhost and loopback.
+      bypass: "<-loopback>",
+    },
+    args: [
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-default-apps",
+      "--disable-extensions",
+      "--disable-quic",
+      "--disable-sync",
+      "--dns-prefetch-disable",
+      // Chromium never resolves page destinations directly. The worker proxy
+      // resolves each CONNECT target and asks the broker to authorize the
+      // complete answer set before dialing a pinned public address.
+      // Permit only the numeric loopback address used by the local proxy;
+      // all page destinations remain unresolved in Chromium itself.
+      "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+      // Do not permit WebRTC to send UDP outside the configured proxy.
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ],
+    env: { HOME: process.env.HOME || "/tmp" },
+  };
+}
+
+// Agent read-only pages must not open realtime transports that can carry
+// mutations outside the GET/HEAD request router. The WebSocket route is
+// installed before the first page is created; browser APIs that could create
+// direct peer or WebTransport connections are disabled in every document.
+export const BROWSER_READ_ONLY_NETWORK_INIT_SCRIPT = `(() => {
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "WebTransport"]) {
+    try {
+      Object.defineProperty(globalThis, name, {
+        value: undefined,
+        configurable: false,
+        writable: false,
+      });
+    } catch {}
+  }
+})();`;
+
+export async function installAgentReadOnlyBrowserGuards(context, state) {
+  if (
+    !context
+    || typeof context.addInitScript !== "function"
+    || typeof context.routeWebSocket !== "function"
+    || !state
+  ) {
+    throw new Error("browser_read_only_guard_unavailable");
+  }
+  await context.addInitScript(BROWSER_READ_ONLY_NETWORK_INIT_SCRIPT);
+  await context.routeWebSocket("**/*", async (webSocket) => {
+    state.surfaceViolation = state.surfaceViolation || browserSurfaceViolation("websocket");
+    await webSocket.close({ code: 1008, reason: "Read-only browser policy" });
+  });
+}
+
+// A browser request must remain on the server-admitted HTTPS origin. This is
+// a second guard in front of the CONNECT proxy, including for URLs Chromium
+// might otherwise try to send directly (localhost, IP literals, or HTTP).
+export function browserRequestTargetAllowed(rawUrl, allowedOrigin) {
+  let url;
+  let admitted;
+  try {
+    url = new URL(rawUrl);
+    admitted = new URL(allowedOrigin);
+  } catch {
+    return false;
+  }
+  if (
+    url.protocol !== "https:"
+    || !url.hostname
+    || url.username
+    || url.password
+    || (url.port && url.port !== "443")
+    || admitted.protocol !== "https:"
+    || url.origin !== admitted.origin
+  ) {
+    return false;
+  }
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  const ipHost = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+  if (isIP(ipHost) !== 0 || !hostname.includes(".")) return false;
+  if (["localhost", "metadata", "metadata.google.internal"].includes(hostname)) return false;
+  return ![".localhost", ".local", ".internal", ".home", ".lan"].some(
+    (suffix) => hostname.endsWith(suffix),
+  );
+}
+
 
 export function takeoverFieldPolicy(metadata) {
   const blockedTypes = new Set(["file", "hidden", "submit", "button", "image", "checkbox", "radio"]);
@@ -74,6 +191,7 @@ export function formFieldPolicy(metadata) {
 export function browserSurfaceViolation(eventType) {
   if (eventType === "popup") return "browser_popup_blocked";
   if (eventType === "download") return "browser_download_blocked";
+  if (eventType === "websocket") return "browser_websocket_blocked";
   return null;
 }
 
@@ -120,6 +238,49 @@ export function browserProxyClaimValid(state, claim) {
     && state?.proxyClaimEpoch === claim.epoch
     && state?.evidence === claim.evidence
   );
+}
+
+export async function installBrowserRequestFence(context, page, state) {
+  if (
+    !context
+    || typeof context.route !== "function"
+    || !page
+    || typeof page.mainFrame !== "function"
+    || !state
+  ) {
+    throw new Error("browser_request_fence_unavailable");
+  }
+  await context.route("**/*", async (route) => {
+    const request = route.request();
+    const navigationRequest = request.isNavigationRequest();
+    let mainFrame = false;
+    if (navigationRequest) {
+      try {
+        mainFrame = request.frame() === page.mainFrame();
+      } catch {
+        // Requests without an owning frame are never top-level navigation.
+        mainFrame = false;
+      }
+    }
+    const methodAllowed = browserRequestAllowed({
+      kind: state.kind,
+      agentReadOnly: state.agentReadOnly,
+      method: request.method(),
+      preparingForm: state.preparingForm,
+      humanInteractionArmed: state.humanInteractionArmed,
+      navigationRequest,
+      mainFrame,
+    });
+    const targetAllowed = browserRequestTargetAllowed(request.url(), state.allowedOrigin);
+    if (!methodAllowed || !targetAllowed) {
+      state.formMutationBlocked = state.formMutationBlocked || (
+        state.kind === "prepare_form" && !methodAllowed
+      );
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.continue();
+  });
 }
 
 export function browserWorkerMayReuseStorageState(command) {
