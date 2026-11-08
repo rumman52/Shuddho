@@ -73,7 +73,7 @@ def _b64url(value: bytes) -> str:
 def safe_repository_path(value: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 512:
         raise CoworkerError("github_path_invalid", "Choose a valid repository file path.", 422)
-    if value.startswith(("/", "\\\\")) or "\x00" in value or "\\\\" in value:
+    if value.startswith(("/", "\\")) or "\x00" in value or "\\" in value:
         raise CoworkerError("github_path_invalid", "Repository paths must be relative POSIX paths.", 422)
     parts = value.split("/")
     if any(part in {"", ".", ".."} for part in parts):
@@ -143,7 +143,7 @@ class GitHubAppService:
             raise CoworkerError("github_request_failed", "GitHub rejected this request. Review the App permissions and try again.", 502)
         try:
             value = response.json()
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             raise CoworkerError("github_response_invalid", "GitHub returned an invalid response.", 502) from None
         if not isinstance(value, dict):
             raise CoworkerError("github_response_invalid", "GitHub returned an invalid response.", 502)
