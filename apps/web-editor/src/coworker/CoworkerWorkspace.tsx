@@ -83,7 +83,11 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   onInitialDraftChange?: (draft: string) => void;
 }) {
   const [newChatRevision, setNewChatRevision] = useState(0);
-  const [projectCreateMode, setProjectCreateMode] = useState(false);
+  const [projectEntryRevision, setProjectEntryRevision] = useState(0);
+  const [projectCreateMode, setProjectCreateMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return getInitialCoworkerViewFromLocation(window.location.pathname, window.location.search) === "projects";
+  });
   const [view, setView] = useState<CoworkerView>(() => {
     if (hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback()) return "actions";
     // An explicit Fly deep link wins over a saved, unsent Coworker draft.
@@ -169,6 +173,12 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   }, [email]);
 
   function navigateView(nextView: CoworkerView) {
+    if (nextView === "projects") {
+      setProjectEntryRevision(value => value + 1);
+      setProjectCreateMode(true);
+    } else {
+      setProjectCreateMode(false);
+    }
     if (typeof window !== "undefined" && window.history?.pushState) {
       const destination = new URL(nextView === "sandbox" ? "/fly" : "/coworker", window.location.origin);
       if (nextView !== "conversations" && nextView !== "sandbox") destination.searchParams.set("view", nextView);
@@ -307,8 +317,11 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
     const restoreView = () => {
-      const path = String(window.location.pathname ?? "").replace(/\/+$/, "");
-      setView(path === "/fly" ? "sandbox" : getInitialCoworkerViewFromLocation(path, window.location.search));
+      const path = String(window.location.pathname ?? "").replace(/\\/+$/, "");
+      const nextView = path === "/fly" ? "sandbox" : getInitialCoworkerViewFromLocation(path, window.location.search);
+      if (nextView === "projects") setProjectEntryRevision(value => value + 1);
+      setProjectCreateMode(nextView === "projects");
+      setView(nextView);
     };
     window.addEventListener("popstate", restoreView);
     return () => window.removeEventListener("popstate", restoreView);
@@ -355,10 +368,10 @@ export default function CoworkerWorkspace({ client, email, signOut, initialDraft
           </div>
         </aside>
       </>}
-      <section className="rukh-cw-content" aria-label={view === "sandbox" ? "Fly workspace" : "Coworker workspace"}>
+      <section className="rukh-cw-content" aria-label={view === "projects" ? "Projects workspace" : view === "sandbox" ? "Fly workspace" : "Coworker workspace"}>
     {view === "library" && <FilesWorkspace client={client} />}
     {view === "settings" && <SettingsWorkspace client={client} email={email} />}
-    {view === "projects" && <ProjectWorkspace client={client} onCreateModeChange={setProjectCreateMode} />}
+    {view === "projects" && <ProjectWorkspace key={projectEntryRevision} client={client} initialCreate onCreateModeChange={setProjectCreateMode} />}
     {view === "goals" && workspace && <GoalWorkspace client={client} openAgent={() => { setFocusAgentRunId(null); navigateView("agent"); }} openAutomations={() => navigateView("automations")} />}
     {view === "automations" && workspace && <AutomationWorkspace client={client} />}
     {view === "browser" && workspace && <BrowserWorkspace client={client} />}
