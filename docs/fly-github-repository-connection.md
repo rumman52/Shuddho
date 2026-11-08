@@ -51,7 +51,7 @@ Apply database migration `0066` before enabling the feature. The feature flag de
 7. Fly binds one repository to one owner-scoped project.
 8. Repository tree and file reads use the user's token, preserving the intersection of user access and App permissions.
 
-Access and refresh tokens are encrypted with TokenVault and never returned to the browser. Access-token refresh is serialized under the installation row lock; rotated tokens replace the prior encrypted bundle. Disconnecting an installation erases its token bundle and deactivates all project bindings.
+Access and refresh tokens are encrypted with TokenVault and never returned to the browser. Access-token refresh is serialized under the installation row lock; rotated tokens replace the prior encrypted bundle. Disconnecting an installation first calls GitHub's `DELETE /applications/{client_id}/token` endpoint with Basic authentication to revoke the user access token, then erases the encrypted token bundle and deactivates all project bindings. If GitHub cannot confirm revocation, local deletion is rolled back so the user can retry. This disconnect does not uninstall the GitHub App; the user can remove the installation from GitHub settings.
 
 ## Repository context limits
 
