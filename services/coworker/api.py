@@ -22,6 +22,7 @@ from .config import enabled as coworker_enabled
 from .container import Container
 from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
 from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete, GitHubRepositoryBind
+from .fly_code_schemas import FlyWorkspaceSync
 from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest, ConversationSteerRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
@@ -1045,6 +1046,47 @@ def link_project_resource(project_id: UUID, payload: ProjectLink, identity: Iden
 def unlink_project_resource(project_id: UUID, resource_type: Annotated[str, Path(pattern="^(conversation|document)$")], resource_id: UUID,
                             payload: ProjectRevision, identity: Identity, services: Services):
     return services.projects.unlink(identity.account_id, str(project_id), resource_type, str(resource_id), payload.expected_revision)
+
+
+@router.get("/fly/code/status")
+def fly_code_status(identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "generation_enabled": services.settings.fly_code_generation_enabled,
+        "repository_execution_enabled": services.settings.fly_repository_execution_enabled,
+        "automated_repair_enabled": services.settings.fly_automated_repair_enabled,
+        "github_write_enabled": False,
+        "max_workspace_files": services.settings.fly_max_workspace_files,
+        "max_workspace_bytes": services.settings.fly_max_workspace_bytes,
+        "max_patch_files": services.settings.fly_max_patch_files,
+    }
+
+
+@router.get("/projects/{project_id}/fly/workspace")
+async def get_fly_workspace(project_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_workspace.get,
+        identity.account_id,
+        str(project_id),
+    )
+
+
+@router.put("/projects/{project_id}/fly/workspace")
+async def sync_fly_workspace(
+    project_id: UUID,
+    payload: FlyWorkspaceSync,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_workspace.sync,
+        identity.account_id,
+        str(project_id),
+        payload,
+    )
 
 
 @router.get("/github/status")

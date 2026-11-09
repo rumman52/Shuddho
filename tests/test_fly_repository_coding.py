@@ -20,7 +20,7 @@ def _enable_projects(container):
     return settings
 
 
-def test_fly_code_status_reports_new_capabilities_default_off(container, signed_client):
+def test_fly_code_status_reports_new_capabilities_default_off(container):
     owner = account(container)
     client = signed_client(container, owner)
 
@@ -34,9 +34,10 @@ def test_fly_code_status_reports_new_capabilities_default_off(container, signed_
     assert body["github_write_enabled"] is False
 
 
-def test_fly_workspace_starts_empty_and_is_project_scoped(container, signed_client):
+def test_fly_workspace_starts_empty_and_is_project_scoped(container):
     _enable_projects(container)
     owner = account(container)
+    client = signed_client(container, owner)
     project, created = container.projects.create(
         owner,
         ProjectCreate(name="Fly coding project", description="Repository coding workflow"),
@@ -44,7 +45,6 @@ def test_fly_workspace_starts_empty_and_is_project_scoped(container, signed_clie
     )
     assert created
 
-    client = signed_client(container, owner)
     response = client.get(f"/api/v1/projects/{project['id']}/fly/workspace")
 
     assert response.status_code == 200
