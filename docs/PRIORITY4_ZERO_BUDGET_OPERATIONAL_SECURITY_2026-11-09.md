@@ -28,7 +28,9 @@ Render's Free Postgres policy states that Free databases expire 30 days after cr
 
 **No export, snapshot, or successful database connection has been observed.** Therefore, the existing data is at risk and must not be described as backed up.
 
-Zero-cost action: open a Render support request asking whether a one-time courtesy restore or export is possible without upgrading. This is an exception request, not a guaranteed recovery path. Do not delete the database. Any paid upgrade requires separate explicit authorization.
+Render's official recovery documentation explicitly says it provides no recovery capabilities for Free Postgres and creates no logical backups for Free databases. The Free database documentation says an expired database is inaccessible unless upgraded. Therefore there is no documented supported zero-cost recovery/export path for this suspended instance.
+
+Zero-cost action: open a Render support request asking whether a one-time courtesy access/export exception is possible. This is an exception request only; do not plan around it unless Render confirms it in writing. Under the current zero-spend limit, data preservation cannot be guaranteed. Do not delete the database. Any paid upgrade requires separate explicit authorization.
 
 References:
 - https://render.com/docs/free
@@ -79,7 +81,7 @@ Use the following boundaries:
 | Provider actions | Synthetic provider and fault-injection tests | Ledger transitions, idempotency boundaries and unknown-outcome handling in code | Gmail/Graph provider-side acceptance and reconciliation |
 | Monitoring / rollback | Exporter, health-gate and rollback tests | Schema/contract and rollback-state invariants | Live metric receiver, delivered alert, or operated rollback drill |
 
-The current CI already runs many of these suites. Do not add a second always-on workflow that merely repeats them. Use exact-head CI evidence from PR #663 and existing CI artifacts.
+The current CI already runs many of these suites. PR #663 adds a PostgreSQL 18 job to the required merge gate using a standard GitHub-hosted runner on this public repository. That job disables dependency caching and does not upload artifacts, avoiding additional cache/artifact storage usage. Use exact-head CI logs and results; do not interpret the job as live staging evidence.
 
 ## 3. Provider reconciliation safety
 
