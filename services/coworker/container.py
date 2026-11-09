@@ -41,6 +41,7 @@ from .conversation_repository import ConversationRepository
 from .conversation_replies import ConversationReplyService
 from .conversation_dispatch import ConversationDispatchService
 from .workspace_manifest import WorkspaceManifestService
+from .fly_workspace import FlyWorkspaceService
 
 
 @dataclass
@@ -77,6 +78,7 @@ class Container:
     conversation_replies: ConversationReplyService | None = None
     conversation_dispatch: ConversationDispatchService | None = None
     workspace_manifest: WorkspaceManifestService | None = None
+    fly_workspace: FlyWorkspaceService | None = None
 
     def __post_init__(self):
         if self.projects is None:
@@ -230,6 +232,13 @@ class Container:
             self.github = GitHubAppService(
                 self.repository.sessions,
                 self.settings,
+            )
+        if self.fly_workspace is None:
+            self.fly_workspace = FlyWorkspaceService(
+                self.repository.sessions,
+                self.settings,
+                self.storage,
+                self.github,
             )
         if self.retention is None:
             self.retention = RetentionService(self.repository.sessions, self.storage, self.github)

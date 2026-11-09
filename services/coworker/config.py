@@ -76,6 +76,22 @@ class Settings:
     projects_enabled: bool = False
     conversations_enabled: bool = False
     fly_github_enabled: bool = False
+    fly_code_generation_enabled: bool = False
+    fly_repository_execution_enabled: bool = False
+    fly_automated_repair_enabled: bool = False
+    fly_workspace_file_ttl_seconds: int = 2592000
+    fly_max_workspace_files: int = 12
+    fly_max_workspace_file_bytes: int = 262144
+    fly_max_workspace_bytes: int = 524288
+    fly_max_model_context_bytes: int = 98304
+    fly_max_patch_files: int = 8
+    fly_max_patch_bytes: int = 262144
+    fly_max_repository_execution_source_bytes: int = 1048576
+    fly_model_max_output_tokens: int = 6000
+    fly_model_reservation_tokens: int = 8000
+    fly_proposal_ttl_seconds: int = 900
+    fly_review_ttl_seconds: int = 600
+    fly_max_repair_attempts: int = 2
     conversation_replies_enabled: bool = False
     max_conversations: int = 100
     max_conversation_messages: int = 500
@@ -277,6 +293,22 @@ class Settings:
             projects_enabled=os.getenv("SHUDDHO_PROJECTS_ENABLED", "false").lower() == "true",
             conversations_enabled=os.getenv("SHUDDHO_CONVERSATIONS_ENABLED", "false").lower() == "true",
             fly_github_enabled=os.getenv("SHUDDHO_FLY_GITHUB_ENABLED", "false").lower() == "true",
+            fly_code_generation_enabled=os.getenv("SHUDDHO_FLY_CODE_GENERATION_ENABLED", "false").lower() == "true",
+            fly_repository_execution_enabled=os.getenv("SHUDDHO_FLY_REPOSITORY_EXECUTION_ENABLED", "false").lower() == "true",
+            fly_automated_repair_enabled=os.getenv("SHUDDHO_FLY_AUTOMATED_REPAIR_ENABLED", "false").lower() == "true",
+            fly_workspace_file_ttl_seconds=int(os.getenv("SHUDDHO_FLY_WORKSPACE_FILE_TTL_SECONDS", "2592000")),
+            fly_max_workspace_files=int(os.getenv("SHUDDHO_FLY_MAX_WORKSPACE_FILES", "12")),
+            fly_max_workspace_file_bytes=int(os.getenv("SHUDDHO_FLY_MAX_WORKSPACE_FILE_BYTES", "262144")),
+            fly_max_workspace_bytes=int(os.getenv("SHUDDHO_FLY_MAX_WORKSPACE_BYTES", "524288")),
+            fly_max_model_context_bytes=int(os.getenv("SHUDDHO_FLY_MAX_MODEL_CONTEXT_BYTES", "98304")),
+            fly_max_patch_files=int(os.getenv("SHUDDHO_FLY_MAX_PATCH_FILES", "8")),
+            fly_max_patch_bytes=int(os.getenv("SHUDDHO_FLY_MAX_PATCH_BYTES", "262144")),
+            fly_max_repository_execution_source_bytes=int(os.getenv("SHUDDHO_FLY_MAX_REPOSITORY_EXECUTION_SOURCE_BYTES", "1048576")),
+            fly_model_max_output_tokens=int(os.getenv("SHUDDHO_FLY_MODEL_MAX_OUTPUT_TOKENS", "6000")),
+            fly_model_reservation_tokens=int(os.getenv("SHUDDHO_FLY_MODEL_RESERVATION_TOKENS", "8000")),
+            fly_proposal_ttl_seconds=int(os.getenv("SHUDDHO_FLY_PROPOSAL_TTL_SECONDS", "900")),
+            fly_review_ttl_seconds=int(os.getenv("SHUDDHO_FLY_REVIEW_TTL_SECONDS", "600")),
+            fly_max_repair_attempts=int(os.getenv("SHUDDHO_FLY_MAX_REPAIR_ATTEMPTS", "2")),
             agent_runtime_v3_enabled=os.getenv("SHUDDHO_AGENT_RUNTIME_V3_ENABLED", "false").lower() == "true",
             personal_goals_enabled=os.getenv("SHUDDHO_PERSONAL_GOALS_ENABLED", "false").lower() == "true",
             automations_enabled=os.getenv("SHUDDHO_AUTOMATIONS_ENABLED", "false").lower() == "true",
@@ -613,6 +645,47 @@ class Settings:
             and self.agent_runtime_v3_enabled
         ):
             raise ValueError("Reviewed code dispatch requires the sandbox and runtime-v3 feature gates")
+        if not 3600 <= self.fly_workspace_file_ttl_seconds <= 31536000:
+            raise ValueError("SHUDDHO_FLY_WORKSPACE_FILE_TTL_SECONDS must be between one hour and one year")
+        if not 1 <= self.fly_max_workspace_files <= 12:
+            raise ValueError("SHUDDHO_FLY_MAX_WORKSPACE_FILES must be between 1 and 12")
+        if not 4096 <= self.fly_max_workspace_file_bytes <= 262144:
+            raise ValueError("SHUDDHO_FLY_MAX_WORKSPACE_FILE_BYTES must be between 4096 and 262144")
+        if not 16384 <= self.fly_max_workspace_bytes <= 1048576:
+            raise ValueError("SHUDDHO_FLY_MAX_WORKSPACE_BYTES must be between 16384 and 1048576")
+        if not 4096 <= self.fly_max_model_context_bytes <= 131072:
+            raise ValueError("SHUDDHO_FLY_MAX_MODEL_CONTEXT_BYTES must be between 4096 and 131072")
+        if not 1 <= self.fly_max_patch_files <= 8:
+            raise ValueError("SHUDDHO_FLY_MAX_PATCH_FILES must be between 1 and 8")
+        if not 4096 <= self.fly_max_patch_bytes <= 524288:
+            raise ValueError("SHUDDHO_FLY_MAX_PATCH_BYTES must be between 4096 and 524288")
+        if not 65536 <= self.fly_max_repository_execution_source_bytes <= 2097152:
+            raise ValueError("SHUDDHO_FLY_MAX_REPOSITORY_EXECUTION_SOURCE_BYTES must be between 65536 and 2097152")
+        if not 1024 <= self.fly_model_max_output_tokens <= 8192:
+            raise ValueError("SHUDDHO_FLY_MODEL_MAX_OUTPUT_TOKENS must be between 1024 and 8192")
+        if not 2048 <= self.fly_model_reservation_tokens <= 16000:
+            raise ValueError("SHUDDHO_FLY_MODEL_RESERVATION_TOKENS must be between 2048 and 16000")
+        if self.fly_model_reservation_tokens > self.provider_max_reserved_tokens_per_workspace:
+            raise ValueError("Fly model reservation cannot exceed the provider workspace reservation limit")
+        if not 300 <= self.fly_proposal_ttl_seconds <= 3600:
+            raise ValueError("SHUDDHO_FLY_PROPOSAL_TTL_SECONDS must be between 300 and 3600")
+        if not 60 <= self.fly_review_ttl_seconds <= 1800:
+            raise ValueError("SHUDDHO_FLY_REVIEW_TTL_SECONDS must be between 60 and 1800")
+        if not 1 <= self.fly_max_repair_attempts <= 2:
+            raise ValueError("SHUDDHO_FLY_MAX_REPAIR_ATTEMPTS must be between 1 and 2")
+        if self.fly_code_generation_enabled and not (
+            self.fly_github_enabled and self.projects_enabled
+            and self.intelligent_planner_enabled and bool(self.deepseek_api_key)
+        ):
+            raise ValueError("Fly code generation requires Fly GitHub, projects, the intelligent planner and a DeepSeek key")
+        if self.fly_repository_execution_enabled and not (
+            self.fly_code_generation_enabled and self.code_execution_enabled
+        ):
+            raise ValueError("Fly repository execution requires Fly code generation and the isolated sandbox")
+        if self.fly_automated_repair_enabled and not (
+            self.fly_code_generation_enabled and self.fly_repository_execution_enabled
+        ):
+            raise ValueError("Fly automated repair requires generation and repository execution")
         if self.agent_runtime_v3_enabled:
             if not self.agent_runtime_enabled or not self.intelligent_planner_enabled:
                 raise ValueError("Agent Runtime v3 requires SHUDDHO_AGENT_RUNTIME_ENABLED=true and SHUDDHO_AGENT_INTELLIGENT_PLANNER_ENABLED=true")
