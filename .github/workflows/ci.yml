@@ -473,6 +473,63 @@ jobs:
           name: browser-source-qualification-evidence
           path: /tmp/browser-source-qualification.xml
 
+  postgres-18-qualification:
+    name: PostgreSQL 18 staging compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_DB: shuddho_coworker_test
+          POSTGRES_USER: shuddho_test
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U shuddho_test -d shuddho_coworker_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SHUDDHO_TEST_POSTGRES_URL: postgresql+psycopg://shuddho_test:ci-only-password@localhost:5432/shuddho_coworker_test
+      SHUDDHO_TEMPORAL_TESTS: "true"
+      UV_HTTP_TIMEOUT: "120"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with: { version: "0.7.22", enable-cache: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install coworker dependencies
+        run: uv sync --frozen --group dev --extra coworker
+      - name: Qualify PostgreSQL 18 migrations, worker safety, transactions and rollback without skips
+        run: |
+          uv run --extra coworker pytest \
+            tests/test_coworker_postgres.py \
+            tests/test_cw11_registry.py \
+            tests/test_cw11_registry_postgres.py \
+            tests/test_cw11_staging_evidence.py \
+            tests/test_coworker_temporal.py \
+            tests/test_transaction_chaos_matrix.py \
+            tests/test_transaction_chaos_qualification.py \
+            tests/test_cohort_observability_export.py \
+            tests/test_cohort_rollback_completion.py \
+            tests/test_cohort_recovery_verification.py \
+            tests/test_staging_flag_rollback.py \
+            -q -rs --junitxml=/tmp/priority4-postgres18.xml
+          for module in \
+            tests.test_coworker_postgres \
+            tests.test_cw11_registry \
+            tests.test_cw11_registry_postgres \
+            tests.test_cw11_staging_evidence \
+            tests.test_coworker_temporal \
+            tests.test_transaction_chaos_matrix \
+            tests.test_transaction_chaos_qualification \
+            tests.test_cohort_observability_export \
+            tests.test_cohort_rollback_completion \
+            tests.test_cohort_recovery_verification \
+            tests.test_staging_flag_rollback; do
+            uv run --extra coworker python -m scripts.mandatory_test_gate \
+              /tmp/priority4-postgres18.xml --required-module "$module"
+          done
   ci-merge-gate:
     name: ci-merge-gate
     if: always()
@@ -481,6 +538,7 @@ jobs:
       - frontend
       - coworker
       - browser-qualification
+      - postgres-18-qualification
       - governance-audit
     runs-on: ubuntu-latest
     steps:
@@ -491,6 +549,7 @@ jobs:
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           COWORKER_RESULT: ${{ needs.coworker.result }}
           BROWSER_QUALIFICATION_RESULT: ${{ needs['browser-qualification'].result }}
+          POSTGRES18_RESULT: ${{ needs['postgres-18-qualification'].result }}
           GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}
           CI_EVENT_NAME: ${{ github.event_name }}
         run: |
@@ -498,8 +557,9 @@ jobs:
           echo "frontend=$FRONTEND_RESULT"
           echo "coworker=$COWORKER_RESULT"
           echo "browser-qualification=$BROWSER_QUALIFICATION_RESULT"
+          echo "postgres-18-qualification=$POSTGRES18_RESULT"
           echo "governance-audit=$GOVERNANCE_AUDIT_RESULT"
-          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$FRONTEND_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ] || [ "$BROWSER_QUALIFICATION_RESULT" != "success" ]; then
+          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$FRONTEND_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ] || [ "$BROWSER_QUALIFICATION_RESULT" != "success" ] || [ "$POSTGRES18_RESULT" != "success" ]; then
             echo "CI merge gate failed: every required upstream job must succeed."
             exit 1
           fi

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from uuid import uuid4
 
-from test_coworker import account, signed_client
+from test_coworker import account, container, signed_client
 from services.coworker.project_schemas import ProjectCreate
 
 
@@ -20,11 +20,11 @@ def _enable_projects(container):
     return settings
 
 
-def test_fly_code_status_reports_new_capabilities_default_off(container):
+def test_fly_code_status_reports_new_capabilities_default_off(container, signed_client):
     owner = account(container)
-    client = signed_client(container, owner)
+    client, headers = signed_client
 
-    response = client.get("/api/v1/fly/code/status")
+    response = client.get("/api/v1/fly/code/status", headers=headers(subject=owner))
 
     assert response.status_code == 200
     body = response.json()
@@ -34,10 +34,10 @@ def test_fly_code_status_reports_new_capabilities_default_off(container):
     assert body["github_write_enabled"] is False
 
 
-def test_fly_workspace_starts_empty_and_is_project_scoped(container):
+def test_fly_workspace_starts_empty_and_is_project_scoped(container, signed_client):
     _enable_projects(container)
     owner = account(container)
-    client = signed_client(container, owner)
+    client, headers = signed_client
     project, created = container.projects.create(
         owner,
         ProjectCreate(name="Fly coding project", description="Repository coding workflow"),
@@ -45,7 +45,10 @@ def test_fly_workspace_starts_empty_and_is_project_scoped(container):
     )
     assert created
 
-    response = client.get(f"/api/v1/projects/{project['id']}/fly/workspace")
+    response = client.get(
+        f"/api/v1/projects/{project['id']}/fly/workspace",
+        headers=headers(subject=owner),
+    )
 
     assert response.status_code == 200
     body = response.json()
