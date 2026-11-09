@@ -130,7 +130,12 @@ class FlyWorkspaceService:
             raise CoworkerError("fly_workspace_source_expired", "A saved workspace file has expired. Save it again before coding.", 409)
         if version.sha256 != item.sha256 or version.byte_size != item.byte_size:
             raise CoworkerError("fly_workspace_source_changed", "A saved workspace file no longer matches its recorded digest.", 409)
-        linked = db.scalar(select(ProjectResource).where(\n            ProjectResource.project_id == project_id,\n            ProjectResource.owner_id == owner,\n            ProjectResource.resource_type == "document",\n            ProjectResource.resource_id == document.id,\n        ))
+        linked = db.scalar(select(ProjectResource).where(
+            ProjectResource.project_id == project_id,
+            ProjectResource.owner_id == owner,
+            ProjectResource.resource_type == "document",
+            ProjectResource.resource_id == document.id,
+        ))
         if linked is None:
             raise CoworkerError("fly_workspace_source_not_linked", "Every Fly workspace file must be linked to this project.", 403)
         return document, version

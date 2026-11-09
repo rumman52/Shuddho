@@ -524,19 +524,26 @@ class FlyCodeService:
     def apply(self, owner: str, project_id: str, proposal_id: str, review_sha256: str) -> dict:
         if not isinstance(review_sha256, str) or not _SHA256.fullmatch(review_sha256):
             raise CoworkerError("fly_review_digest_invalid", "The exact review digest is required to apply this patch.", 422)
+        preflight_applied = False
         with self.sessions() as db:
             self._project(db, owner, project_id)
             proposal = self._proposal(db, owner, project_id, proposal_id)
             if proposal.state == "applied":
-                return self.workspace.get(owner, project_id)
-            review = db.get(FlyPatchReview, proposal_id)
-            if review is None or review.decision != "approve" or review.revoked_at is not None:
-                raise CoworkerError("fly_patch_approval_required", "Approve the exact diff before applying it.", 403)
-            if review.review_sha256 != review_sha256 or proposal.review_sha256 != review_sha256:
-                raise CoworkerError("fly_review_digest_mismatch", "The approval does not match this exact patch.", 409)
-            if aware(review.expires_at) <= utcnow() or aware(proposal.expires_at) <= utcnow():
-                raise CoworkerError("fly_patch_approval_expired", "The patch approval expired. Review the exact diff again.", 409)
-            snapshot = self._load_patch(proposal)
+                preflight_applied = True
+            review = db.get(FlyPatchReview, proposal_id) if not preflight_applied else None
+            if not preflight_applied:
+                if review is None or review.decision != "approve" or review.revoked_at is not None:
+                    raise CoworkerError("fly_patch_approval_required", "Approve the exact diff before applying it.", 403)
+                if review.review_sha256 != review_sha256 or proposal.review_sha256 != review_sha256:
+                    raise CoworkerError("fly_review_digest_mismatch", "The approval does not match this exact patch.", 409)
+                if aware(review.expires_at) <= utcnow() or aware(proposal.expires_at) <= utcnow():
+                    raise CoworkerError("fly_patch_approval_expired", "The patch approval expired. Review the exact diff again.", 409)
+                snapshot = self._load_patch(proposal)
+            else:
+                snapshot = None
+
+        if preflight_applied:
+            return self.workspace.get(owner, project_id)
 
         planned_objects: list[dict] = []
         uploaded_keys: list[str] = []
@@ -549,6 +556,13 @@ class FlyCodeService:
                 content = item["after_content"]
                 data = content.encode("utf-8")
                 digest = hashlib.sha256(data).hexdigest()
+                if (
+                    len(data) > self.settings.fly_max_workspace_file_bytes
+                    or len(data) != item.get("after_byte_size")
+                    or digest != item.get("after_sha256")
+                    or b"\x00" in data
+                ):
+                    raise CoworkerError("fly_patch_integrity_failed", f"{item['path']} no longer matches its generated after-digest.", 409)
                 version_id = str(uuid4())
                 object_key = f"{owner}/inputs/{version_id}/{digest}"
                 self.storage.put(object_key, data, "text/plain; charset=utf-8")
