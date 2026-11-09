@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-pytest_plugins = ("test_coworker",)
-
 from dataclasses import replace
 from uuid import uuid4
 
-from test_coworker import account, signed_client
+from test_coworker import account, container, signed_client
 from services.coworker.project_schemas import ProjectCreate
 
 
