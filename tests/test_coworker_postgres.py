@@ -1519,3 +1519,15 @@ def test_postgres_exact_human_review_fk_erases_with_account(repository):
         assert db.get(AgentCodeProposal, proposal_id) is None
         assert db.get(AgentRun, run["id"]) is None
         assert db.get(Account, identity) is None
+
+
+def test_agent_decision_latency_migration_is_applied(repository):
+    with repository.sessions() as db:
+        columns = {
+            column["name"]
+            for column in inspect(db.bind).get_columns(
+                "cw_agent_decisions",
+                schema="shuddho_coworker",
+            )
+        }
+    assert "latency_ms" in columns
