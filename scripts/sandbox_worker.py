@@ -21,7 +21,10 @@ from urllib.parse import urlsplit
 
 
 POLICY_VERSION = "sandbox-control-v1"
-EXECUTOR_CONTRACT = "bwrap-python311-v1"
+PYTHON_EXECUTOR_CONTRACT = "bwrap-python311-v1"
+REPOSITORY_EXECUTOR_CONTRACT = "bwrap-python311-node22-v1"
+MAX_PYTHON_SOURCE_BYTES = 262144
+MAX_REPOSITORY_SOURCE_BYTES = 2097152
 POLL_SECONDS = 1.0
 CONTROL_SECONDS = 1.0
 WORKER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -61,6 +64,12 @@ def validate_claim_policy(claim: dict) -> dict:
         raise WorkerError("sandbox_policy_invalid")
     executor = policy.get("executor")
     limits = policy.get("resource_limits")
+    kind = claim.get("kind", "python")
+    expected_contract = (
+        REPOSITORY_EXECUTOR_CONTRACT if kind == "repository_test"
+        else PYTHON_EXECUTOR_CONTRACT if kind == "python"
+        else None
+    )
     if (
         policy.get("version") != POLICY_VERSION
         or policy.get("network") != "none"
@@ -72,7 +81,8 @@ def validate_claim_policy(claim: dict) -> dict:
         or policy.get("connector_credentials") is not False
         or policy.get("privileged_api_bridge") is not False
         or not isinstance(executor, dict)
-        or executor.get("contract") != EXECUTOR_CONTRACT
+        or expected_contract is None
+        or executor.get("contract") != expected_contract
         or executor.get("network_namespace") != "private_empty"
         or executor.get("filesystem") != "minimal_readonly_runtime"
         or executor.get("environment") != "cleared"
@@ -123,8 +133,12 @@ def build_bwrap_command(
     *,
     bwrap_path: str = "/usr/bin/bwrap",
     python_executable: str = sys.executable,
+    include_node: bool = False,
 ) -> list[str]:
-    validate_claim_policy({"policy": policy})
+    validate_claim_policy({
+        "policy": policy,
+        "kind": "repository_test" if include_node else "python",
+    })
     source = source_path.resolve()
     scratch = scratch_path.resolve()
     if not source.is_file():
@@ -133,7 +147,7 @@ def build_bwrap_command(
         raise WorkerError("sandbox_scratch_missing")
     if not os.path.isabs(bwrap_path) or not os.path.isabs(python_executable):
         raise WorkerError("sandbox_runner_path_invalid")
-    return [
+    command = [
         bwrap_path,
         "--die-with-parent",
         "--new-session",
@@ -150,9 +164,11 @@ def build_bwrap_command(
         "/dev",
         "--dir",
         "/usr",
+        "--dir",
+        "/usr/bin",
         "--ro-bind",
-        "/usr/local",
-        "/usr/local",
+        python_executable,
+        "/usr/bin/python3.11",
         "--ro-bind-try",
         "/usr/lib",
         "/usr/lib",
@@ -178,7 +194,10 @@ def build_bwrap_command(
         "/tmp",
         "--setenv",
         "PATH",
-        "/usr/local/bin",
+        "/usr/local/bin:/usr/bin" if include_node else "/usr/bin",
+        "--setenv",
+        "TMPDIR",
+        "/tmp",
         "--setenv",
         "PYTHONNOUSERSITE",
         "1",
@@ -188,22 +207,32 @@ def build_bwrap_command(
         "--setenv",
         "LANG",
         "C.UTF-8",
+    ]
+    if include_node:
+        command.extend([
+            "--dir",
+            "/usr/local",
+            "--ro-bind",
+            "/usr/local",
+            "/usr/local",
+        ])
+    command.extend([
         "--",
-        python_executable,
+        "/usr/bin/python3.11",
         "-I",
         "-S",
+        "-B",
         "/work/main.py",
-    ]
+    ])
+    return command
 
 
-def resource_limiter(policy: dict):
+def resource_limiter(policy: dict, *, allow_child_processes: bool = False):
     limits = policy["resource_limits"]
     cpu_seconds = int(limits["cpu_seconds"])
     memory_bytes = int(limits["memory_mb"]) * 1024 * 1024
-    file_bytes = min(
-        int(limits["disk_mb"]) * 1024 * 1024,
-        int(limits["output_bytes"]),
-    )
+    disk_bytes = int(limits["disk_mb"]) * 1024 * 1024
+    file_bytes = disk_bytes if allow_child_processes else min(disk_bytes, int(limits["output_bytes"]))
 
     def apply() -> None:
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
@@ -211,7 +240,8 @@ def resource_limiter(policy: dict):
         resource.setrlimit(resource.RLIMIT_FSIZE, (file_bytes, file_bytes))
         resource.setrlimit(resource.RLIMIT_NOFILE, (32, 32))
         if hasattr(resource, "RLIMIT_NPROC"):
-            resource.setrlimit(resource.RLIMIT_NPROC, (1, 1))
+            process_limit = 8 if allow_child_processes else 1
+            resource.setrlimit(resource.RLIMIT_NPROC, (process_limit, process_limit))
         if hasattr(resource, "RLIMIT_CORE"):
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
@@ -238,7 +268,7 @@ class ApiClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
-                body = response.read(1024 * 1024)
+                body = response.read(3 * 1024 * 1024)
         except urllib.error.HTTPError as error:
             body = error.read(65536)
             try:
@@ -334,18 +364,22 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
     expected_bytes = claim.get("source_bytes")
     runtime = claim.get("runtime")
     purpose = claim.get("purpose")
+    kind = claim.get("kind", "python")
     if (
         not isinstance(execution_id, str)
         or not isinstance(source, str)
         or not isinstance(expected_hash, str)
         or not isinstance(expected_bytes, int)
         or runtime != "python311"
+        or kind not in {"python", "repository_test"}
         or purpose not in {"data_analysis", "code_task", "interactive_artifact"}
     ):
         raise WorkerError("sandbox_claim_invalid")
     source_bytes = source.encode("utf-8")
+    source_limit = MAX_REPOSITORY_SOURCE_BYTES if kind == "repository_test" else MAX_PYTHON_SOURCE_BYTES
     if (
-        len(source_bytes) != expected_bytes
+        len(source_bytes) > source_limit
+        or len(source_bytes) != expected_bytes
         or hashlib.sha256(source_bytes).hexdigest() != expected_hash
     ):
         raise WorkerError("sandbox_source_integrity_failed")
@@ -361,12 +395,15 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
         scratch_path = Path(scratch_folder)
         source_path.write_bytes(source_bytes)
         source_path.chmod(0o400)
+        include_node = kind == "repository_test"
+        executor_contract = REPOSITORY_EXECUTOR_CONTRACT if include_node else PYTHON_EXECUTOR_CONTRACT
         command = build_bwrap_command(
             source_path,
             scratch_path,
             policy,
             bwrap_path=bwrap_path,
             python_executable=sys.executable,
+            include_node=include_node,
         )
         with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
             started = time.monotonic()
@@ -377,7 +414,7 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
                     stdout=stdout_file,
                     stderr=stderr_file,
                     env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
-                    preexec_fn=resource_limiter(policy),
+                    preexec_fn=resource_limiter(policy, allow_child_processes=include_node),
                     start_new_session=True,
                     close_fds=True,
                 )
@@ -494,7 +531,7 @@ def execute_claim(client: ApiClient, worker_id: str, claim: dict, bwrap_path: st
                 completion = {
                     "worker_id": worker_id,
                     "policy_version": POLICY_VERSION,
-                    "executor_contract": EXECUTOR_CONTRACT,
+                    "executor_contract": executor_contract,
                     "exit_code": return_code,
                     "stdout": stdout,
                     "stderr": stderr,
@@ -545,7 +582,7 @@ def main() -> int:
         try:
             value = client.post(
                 "/api/v1/internal/sandbox-worker/claim",
-                {"worker_id": worker_id, "limit": 1},
+                {"worker_id": worker_id, "limit": 1, "supported_kinds": ["python", "repository_test"]},
             )
             execution = (value.get("executions") or [None])[0]
             if execution:

@@ -1,17 +1,18 @@
-FROM python:3.11-slim-bookworm
+FROM node:22-bookworm-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3.11 python3.11-minimal bubblewrap ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system shuddho-sandbox \
+    && useradd --system --gid shuddho-sandbox --home-dir /nonexistent --shell /usr/sbin/nologin shuddho-sandbox
+
 WORKDIR /worker
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    bubblewrap ca-certificates && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm -rf /usr/local/lib/python3.11/site-packages/* /usr/local/bin/pip* && \
-    groupadd --gid 10002 shuddho-sandbox && \
-    useradd --uid 10002 --gid shuddho-sandbox --create-home shuddho-sandbox
-
 COPY scripts/sandbox_worker.py /worker/sandbox_worker.py
+RUN chown -R shuddho-sandbox:shuddho-sandbox /worker
 
 USER shuddho-sandbox
-
-CMD ["python", "/worker/sandbox_worker.py"]
+CMD ["python3.11", "/worker/sandbox_worker.py"]

@@ -18,7 +18,10 @@ from .interactive_artifacts import (
     validate_static_preview_html,
     verify_preview_token,
 )
-from .models import Account, AgentCodeProposal, AgentCodeReview, AgentRun, Artifact, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
+from .models import (
+    Account, AgentCodeProposal, AgentCodeReview, AgentRun, Artifact, AuditEvent,
+    FlyWorkspaceManifest, Project, SandboxExecution, SandboxSession, Workspace, utcnow,
+)
 from .repository import aware, iso, not_found
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -32,6 +35,160 @@ def _digest(value: dict) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ).hexdigest()
+
+
+def _build_repository_test_source(files: list[dict], runners: list[dict], wall_seconds: int) -> str:
+    from .fly_workspace import validate_fly_path
+
+    normalized_files = []
+    total_bytes = 0
+    for item in files:
+        path = validate_fly_path(item.get("path", ""))
+        content = item.get("content")
+        if not isinstance(content, str):
+            raise CoworkerError("fly_workspace_file_invalid", "A Fly test file is not text.", 422)
+        raw = content.encode("utf-8")
+        if not raw or b"\x00" in raw or len(raw) > 262144:
+            raise CoworkerError("fly_workspace_file_invalid", "A Fly test file is empty, binary or oversized.", 422)
+        total_bytes += len(raw)
+        if total_bytes > 524288:
+            raise CoworkerError("fly_workspace_too_large", "The Fly test snapshot exceeds its byte limit.", 413)
+        normalized_files.append({
+            "path": path,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "byte_size": len(raw),
+            "content_b64": base64.b64encode(raw).decode("ascii"),
+        })
+    available = {item["path"] for item in normalized_files}
+    normalized_runners = []
+    for runner in runners:
+        kind = runner.get("kind")
+        paths = runner.get("files")
+        if kind not in {"python_unittest", "node_test", "node_ts_test"} or not isinstance(paths, list) or not paths:
+            raise CoworkerError("fly_test_runner_invalid", "The Fly test runner selection is invalid.", 422)
+        if any(path not in available for path in paths):
+            raise CoworkerError("fly_test_runner_invalid", "A Fly test runner references a file outside the workspace.", 422)
+        normalized_runners.append({"kind": kind, "files": paths})
+    if not normalized_runners:
+        raise CoworkerError("fly_tests_not_found", "No supported Python unittest or Node built-in tests were found.", 422)
+    payload = {
+        "files": normalized_files,
+        "runners": normalized_runners,
+        "wall_seconds": max(1, min(int(wall_seconds), 120)),
+    }
+    payload_b64 = base64.b64encode(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    harness = r'''from __future__ import annotations
+import base64
+import hashlib
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+import unittest
+
+PAYLOAD_B64 = __FLY_PAYLOAD_B64__
+payload = json.loads(base64.b64decode(PAYLOAD_B64, validate=True).decode("utf-8"))
+root = pathlib.Path("/tmp/fly-workspace")
+root.mkdir(mode=0o700, parents=True, exist_ok=False)
+seen = set()
+for item in payload["files"]:
+    path = item["path"]
+    parts = path.split("/")
+    if not path or path.startswith("/") or "\\" in path or any(part in {"", ".", ".."} for part in parts):
+        raise SystemExit("Rejected unsafe workspace path")
+    if path in seen:
+        raise SystemExit("Rejected duplicate workspace path")
+    seen.add(path)
+    raw = base64.b64decode(item["content_b64"], validate=True)
+    if len(raw) != item["byte_size"] or hashlib.sha256(raw).hexdigest() != item["sha256"]:
+        raise SystemExit("Workspace file integrity check failed")
+    target = root.joinpath(*parts)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with target.open("xb") as handle:
+        handle.write(raw)
+    os.chmod(target, 0o400)
+for directory in sorted((item for item in root.rglob("*") if item.is_dir()), key=lambda item: len(item.parts), reverse=True):
+    os.chmod(directory, 0o500)
+os.chmod(root, 0o500)
+sys.path.insert(0, str(root))
+deadline = time.monotonic() + payload["wall_seconds"]
+failed = False
+environment = {
+    "PATH": "/usr/local/bin:/usr/bin",
+    "HOME": "/tmp",
+    "TMPDIR": "/tmp",
+    "LANG": "C.UTF-8",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONNOUSERSITE": "1",
+}
+for runner in payload["runners"]:
+    kind = runner["kind"]
+    print("=== Fly test runner: " + kind + " ===", flush=True)
+    if kind == "python_unittest":
+        loader = unittest.TestLoader()
+        suite = unittest.TestSuite()
+        try:
+            for relative in runner["files"]:
+                test_path = root.joinpath(*relative.split("/"))
+                module_name = "_fly_test_" + hashlib.sha256(relative.encode("utf-8")).hexdigest()[:16]
+                spec = importlib.util.spec_from_file_location(module_name, test_path)
+                if spec is None or spec.loader is None:
+                    raise RuntimeError("Unable to load " + relative)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                suite.addTests(loader.loadTestsFromModule(module))
+            stream = io.StringIO()
+            result = unittest.TextTestRunner(stream=stream, verbosity=2).run(suite)
+            print(stream.getvalue()[:32768], end="", flush=True)
+            if result.testsRun == 0:
+                print("ERROR: no unittest cases were discovered", flush=True)
+                failed = True
+            elif not result.wasSuccessful():
+                failed = True
+        except Exception as error:
+            print("Python unittest import/execution failed: " + type(error).__name__ + ": " + str(error), flush=True)
+            failed = True
+    else:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print("ERROR: repository test wall-time limit reached", flush=True)
+            failed = True
+            break
+        command = ["/usr/local/bin/node"]
+        if kind == "node_ts_test":
+            command.append("--experimental-strip-types")
+        command.extend(["--test", "--test-concurrency=1"])
+        command.extend(runner["files"])
+        try:
+            result = subprocess.run(
+                command,
+                cwd=root,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=environment,
+                timeout=remaining,
+                check=False,
+            )
+            print(result.stdout.decode("utf-8", errors="replace")[:32768], end="", flush=True)
+            print(result.stderr.decode("utf-8", errors="replace")[:32768], end="", file=sys.stderr, flush=True)
+            if result.returncode != 0:
+                failed = True
+        except subprocess.TimeoutExpired:
+            print("ERROR: Node test runner timed out", flush=True)
+            failed = True
+            break
+print("FLY_TESTS_RESULT=" + ("failed" if failed else "passed"), flush=True)
+raise SystemExit(1 if failed else 0)
+'''
+    return harness.replace("__FLY_PAYLOAD_B64__", repr(payload_b64))
 
 
 class SandboxRepository:
@@ -89,6 +246,12 @@ class SandboxRepository:
                 "packages": "stdlib_only",
             },
         }
+
+    def _repository_policy(self) -> dict:
+        policy = self._policy()
+        policy["executor"]["contract"] = "bwrap-python311-node22-v1"
+        policy["resource_limits"]["memory_mb"] = max(512, policy["resource_limits"]["memory_mb"])
+        return policy
 
     def _expire_stale_sessions(self, db, owner: str | None = None) -> None:
         now = utcnow()
@@ -344,10 +507,15 @@ class SandboxRepository:
             resource_id=session.id, action="sandbox_execution.review_claim_rejected",
         ))
 
-    def claim_executions(self, worker_id: str, limit: int = 1) -> list[dict]:
+    def claim_executions(
+        self, worker_id: str, limit: int = 1, supported_kinds: list[str] | tuple[str, ...] | None = None,
+    ) -> list[dict]:
         self._require_enabled()
         if not worker_id or len(worker_id) > 64:
             raise CoworkerError("sandbox_worker_invalid", "The sandbox worker identity is invalid.", 403)
+        supported = tuple(supported_kinds or ("python",))
+        if not supported or len(set(supported)) != len(supported) or not set(supported).issubset({"python", "repository_test"}):
+            raise CoworkerError("sandbox_worker_capability_invalid", "The sandbox worker advertised unsupported execution kinds.", 422)
         now = utcnow()
         with self.sessions.begin() as db:
             self._expire_stale_sessions(db)
@@ -390,6 +558,7 @@ class SandboxRepository:
                     SandboxSession.state.not_in(tuple(TERMINAL_SANDBOX_STATES)),
                     SandboxExecution.attempts < self.settings.sandbox_execution_max_attempts,
                     SandboxExecution.state.in_(("prepared", "running")),
+                    SandboxExecution.kind.in_(supported),
                     or_(SandboxExecution.lease_until.is_(None), SandboxExecution.lease_until < now),
                 )
                 .order_by(SandboxExecution.created_at)
@@ -440,13 +609,16 @@ class SandboxRepository:
                 # not when a request was first prepared. Never hand the
                 # sandbox altered stored source even when its length matches.
                 spec = execution.request_spec if isinstance(execution.request_spec, dict) else {}
+                expected_policy = self._repository_policy() if execution.kind == "repository_test" else self._policy()
+                source_limit = (
+                    self.settings.fly_max_repository_execution_source_bytes
+                    if execution.kind == "repository_test"
+                    else self.settings.sandbox_max_source_bytes
+                )
                 if (
                     execution.agent_code_proposal_id is not None
                     and spec.get("reviewed_source_ref") is True
                 ):
-                    # The database-owned FK alone cannot authorize a worker.
-                    # Validate exact live human consent under locks first,
-                    # then retrieve the ONLY persisted code source bytes.
                     rejection = self._reviewed_code_claim_denial(db, execution, session, now)
                     if rejection is not None:
                         self._reject_reviewed_claim(db, execution, session, now, rejection)
@@ -457,21 +629,52 @@ class SandboxRepository:
                     ) else None
                 else:
                     source = spec.get("source")
+                fly_metadata_valid = True
+                if execution.kind == "repository_test":
+                    current_project = db.scalar(select(Project).where(
+                        Project.id == execution.fly_project_id,
+                        Project.owner_id == execution.owner_id,
+                        Project.deleted.is_(False),
+                    ))
+                    current_manifest = db.scalar(select(FlyWorkspaceManifest).where(
+                        FlyWorkspaceManifest.owner_id == execution.owner_id,
+                        FlyWorkspaceManifest.project_id == execution.fly_project_id,
+                    ))
+                    fly_metadata_valid = (
+                        current_project is not None
+                        and current_manifest is not None
+                        and current_manifest.revision == execution.fly_workspace_revision
+                        and current_manifest.sha256 == execution.fly_manifest_sha256
+                        and self.settings.fly_repository_execution_enabled
+                        and execution.agent_code_proposal_id is None
+                        and isinstance(execution.fly_project_id, str)
+                        and isinstance(execution.fly_workspace_revision, int)
+                        and execution.fly_workspace_revision > 0
+                        and isinstance(execution.fly_manifest_sha256, str)
+                        and len(execution.fly_manifest_sha256) == 64
+                        and execution.fly_request_fingerprint == spec.get("fly_request_fingerprint")
+                        and spec.get("fly_project_id") == execution.fly_project_id
+                        and spec.get("fly_workspace_revision") == execution.fly_workspace_revision
+                        and spec.get("fly_manifest_sha256") == execution.fly_manifest_sha256
+                        and spec.get("fly_patch_proposal_id") == execution.fly_patch_proposal_id
+                        and isinstance(spec.get("fly_test_runners"), list)
+                    )
                 try:
                     encoded = source.encode("utf-8") if isinstance(source, str) else None
                 except UnicodeError:
                     encoded = None
                 if (
-                    not isinstance(source, str)
+                    not fly_metadata_valid
+                    or not isinstance(source, str)
                     or not source
                     or encoded is None
-                    or len(encoded) > self.settings.sandbox_max_source_bytes
+                    or len(encoded) > source_limit
                     or execution.source_bytes != len(encoded)
                     or execution.source_sha256 != hashlib.sha256(encoded).hexdigest()
                     or spec.get("source_trust") != "untrusted"
                     or spec.get("policy_version") != SANDBOX_POLICY_VERSION
                     or not isinstance(session.execution_policy, dict)
-                    or session.execution_policy != self._policy()
+                    or session.execution_policy != expected_policy
                     or session.fingerprint != _digest({
                         "purpose": session.purpose,
                         "runtime": session.runtime,
@@ -504,6 +707,7 @@ class SandboxRepository:
                 claimed.append({
                     "id": execution.id,
                     "sequence": execution.sequence,
+                    "kind": execution.kind,
                     "runtime": session.runtime,
                     "purpose": session.purpose,
                     "source": source,
@@ -719,9 +923,16 @@ class SandboxRepository:
                 self._reject_reviewed_claim(db, execution, session, now, rejection)
                 session.cleanup_state = "required"
                 return {"_rejected_session_closed": True}
+            expected_contract = (
+                "bwrap-python311-node22-v1"
+                if execution.kind == "repository_test"
+                else "bwrap-python311-v1"
+            )
+            expected_policy = self._repository_policy() if execution.kind == "repository_test" else self._policy()
             if (
-                observation.get("policy_version") != SANDBOX_POLICY_VERSION
-                or observation.get("executor_contract") != "bwrap-python311-v1"
+                session.execution_policy != expected_policy
+                or observation.get("policy_version") != SANDBOX_POLICY_VERSION
+                or observation.get("executor_contract") != expected_contract
                 or observation.get("sandbox_destroyed") is not True
                 or observation.get("network_isolated") is not True
                 or observation.get("filesystem_isolated") is not True
@@ -821,7 +1032,8 @@ class SandboxRepository:
                 "stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
                 "elapsed_ms": elapsed_ms,
                 "policy_version": SANDBOX_POLICY_VERSION,
-                "executor_contract": "bwrap-python311-v1",
+                "executor_contract": expected_contract,
+                "execution_kind": execution.kind,
                 "sandbox_destroyed": True,
                 "network_isolated": True,
                 "filesystem_isolated": True,
@@ -835,7 +1047,11 @@ class SandboxRepository:
             execution.finished_at = now
             execution.lease_until = None
             execution.claimed_by = None
-            session.state = "prepared"
+            session.state = (
+                ("completed" if exit_code == 0 else "failed")
+                if execution.kind == "repository_test"
+                else "prepared"
+            )
             session.cleanup_state = "verified_destroyed"
             session.updated_at = now
             db.add(AuditEvent(
@@ -896,12 +1112,18 @@ class SandboxRepository:
             execution.finished_at = now
             execution.lease_until = None
             execution.claimed_by = None
+            expected_contract = (
+                "bwrap-python311-node22-v1"
+                if execution.kind == "repository_test"
+                else "bwrap-python311-v1"
+            )
             execution.result = {
-                "executor_contract": "bwrap-python311-v1",
+                "executor_contract": expected_contract,
+                "execution_kind": execution.kind,
                 "sandbox_destroyed": True,
                 "output_trust": "untrusted",
             }
-            session.state = "prepared"
+            session.state = "failed" if execution.kind == "repository_test" else "prepared"
             session.cleanup_state = "verified_destroyed"
             session.updated_at = now
             db.add(AuditEvent(
@@ -1102,6 +1324,140 @@ class SandboxRepository:
                 "execution_authorized": True,
                 "code_executed": False,
             }, True
+
+    def prepare_repository_execution(
+        self,
+        owner: str,
+        project_id: str,
+        manifest_revision: int,
+        manifest_sha256: str,
+        patch_proposal_id: str | None,
+        files: list[dict],
+        runners: list[dict],
+        idempotency_key: str,
+    ) -> dict:
+        self._require_enabled()
+        if not self.settings.fly_repository_execution_enabled:
+            raise CoworkerError("fly_repository_execution_disabled", "Fly repository test execution is not enabled.", 503)
+        if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 128:
+            raise CoworkerError("idempotency_key_invalid", "Provide a valid Fly test idempotency key.", 422)
+        source = _build_repository_test_source(files, runners, self.settings.sandbox_wall_seconds)
+        encoded = source.encode("utf-8")
+        if len(encoded) > self.settings.fly_max_repository_execution_source_bytes:
+            raise CoworkerError("fly_repository_snapshot_too_large", "The isolated Fly test snapshot exceeds its source limit.", 413)
+        request_fingerprint = _digest({
+            "project_id": project_id,
+            "manifest_revision": manifest_revision,
+            "manifest_sha256": manifest_sha256,
+            "patch_proposal_id": patch_proposal_id,
+            "runners": runners,
+            "files": [{"path": item["path"], "sha256": hashlib.sha256(item["content"].encode("utf-8")).hexdigest()} for item in files],
+        })
+        session_key = "flytest:" + hashlib.sha256(f"{project_id}:{idempotency_key}".encode("utf-8")).hexdigest()[:48]
+        now = utcnow()
+        with self.sessions.begin() as db:
+            self._expire_stale_sessions(db, owner)
+            account = db.get(Account, owner)
+            project = db.scalar(select(Project).where(
+                Project.id == project_id,
+                Project.owner_id == owner,
+                Project.deleted.is_(False),
+            ).with_for_update())
+            manifest = db.scalar(select(FlyWorkspaceManifest).where(
+                FlyWorkspaceManifest.owner_id == owner,
+                FlyWorkspaceManifest.project_id == project_id,
+            ).with_for_update())
+            workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
+            if account is None or project is None or workspace_id is None:
+                raise not_found()
+            if (
+                manifest is None
+                or manifest.revision != manifest_revision
+                or manifest.sha256 != manifest_sha256
+            ):
+                raise CoworkerError("fly_workspace_revision_conflict", "The Fly workspace changed before test execution was prepared.", 409)
+            previous = db.scalar(select(SandboxSession).where(
+                SandboxSession.owner_id == owner,
+                SandboxSession.idempotency_key == session_key,
+            ).with_for_update())
+            if previous is not None:
+                existing = db.scalar(select(SandboxExecution).where(
+                    SandboxExecution.session_id == previous.id,
+                    SandboxExecution.owner_id == owner,
+                ))
+                if existing is None or existing.fly_request_fingerprint != request_fingerprint:
+                    raise CoworkerError("idempotency_conflict", "This Fly test key was already used for a different workspace snapshot.", 409)
+                return {
+                    "session_id": previous.id,
+                    "session": self._session_dto(previous),
+                    "execution": self._execution_dto(existing),
+                    "idempotent": True,
+                }
+            active = db.scalar(select(func.count()).select_from(SandboxSession).where(
+                SandboxSession.owner_id == owner,
+                SandboxSession.state.in_(tuple(ACTIVE_SANDBOX_STATES)),
+                SandboxSession.expires_at > now,
+            )) or 0
+            if active >= self.settings.max_active_sandbox_sessions:
+                raise CoworkerError("sandbox_session_limit", "Close an active sandbox session before starting Fly tests.", 429)
+            session = SandboxSession(
+                id=str(uuid4()),
+                owner_id=owner,
+                workspace_id=workspace_id,
+                idempotency_key=session_key,
+                fingerprint=_digest({"purpose": "code_task", "runtime": "python311"}),
+                purpose="code_task",
+                runtime="python311",
+                state="prepared",
+                execution_policy=self._repository_policy(),
+                cancel_requested=False,
+                cleanup_state="pending",
+                created_at=now,
+                updated_at=now,
+                expires_at=now + timedelta(seconds=self.settings.sandbox_session_ttl_seconds),
+            )
+            db.add(session)
+            db.flush()
+            execution = SandboxExecution(
+                id=str(uuid4()),
+                session_id=session.id,
+                owner_id=owner,
+                sequence=1,
+                kind="repository_test",
+                source_sha256=hashlib.sha256(encoded).hexdigest(),
+                source_bytes=len(encoded),
+                request_spec={
+                    "source": source,
+                    "source_trust": "untrusted",
+                    "policy_version": SANDBOX_POLICY_VERSION,
+                    "fly_request_fingerprint": request_fingerprint,
+                    "fly_project_id": project_id,
+                    "fly_workspace_revision": manifest_revision,
+                    "fly_manifest_sha256": manifest_sha256,
+                    "fly_patch_proposal_id": patch_proposal_id,
+                    "fly_test_runners": runners,
+                },
+                state="prepared",
+                fly_project_id=project_id,
+                fly_workspace_revision=manifest_revision,
+                fly_manifest_sha256=manifest_sha256,
+                fly_patch_proposal_id=patch_proposal_id,
+                fly_request_fingerprint=request_fingerprint,
+            )
+            db.add(execution)
+            db.add(AuditEvent(
+                id=str(uuid4()),
+                owner_id=owner,
+                resource_id=session.id,
+                action="fly_repository_tests.prepared",
+            ))
+            db.flush()
+            return {
+                "session_id": session.id,
+                "session": self._session_dto(session),
+                "execution": self._execution_dto(execution),
+                "idempotent": False,
+            }
 
     def prepare_execution(self, owner: str, session_id: str, request: SandboxExecutionCreate) -> dict:
         self._require_enabled()

@@ -28,6 +28,10 @@ class SandboxWorkerIdentity(SandboxModel):
 
 class SandboxWorkerClaim(SandboxWorkerIdentity):
     limit: int = Field(default=1, ge=1, le=10)
+    # Legacy workers omit this and remain Python-only by default.
+    supported_kinds: list[Literal["python", "repository_test"]] = Field(
+        default_factory=lambda: ["python"], min_length=1, max_length=2,
+    )
 
 
 class SandboxWorkerArtifact(SandboxModel):
@@ -39,7 +43,7 @@ class SandboxWorkerArtifact(SandboxModel):
 
 class SandboxWorkerCompletion(SandboxWorkerIdentity):
     policy_version: Literal["sandbox-control-v1"]
-    executor_contract: Literal["bwrap-python311-v1"]
+    executor_contract: Literal["bwrap-python311-v1", "bwrap-python311-node22-v1"]
     exit_code: int = Field(ge=-255, le=255)
     stdout: str = Field(max_length=65536)
     stderr: str = Field(max_length=65536)

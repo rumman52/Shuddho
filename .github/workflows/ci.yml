@@ -262,6 +262,16 @@ jobs:
         with:
           name: cw10-code-proposal-tests
           path: /tmp/cw10-code-proposals.xml
+      - name: Verify Fly repository coding contracts without skips
+        run: |
+          uv run --extra coworker pytest tests/test_fly_repository_coding.py -q -rs --junitxml=/tmp/fly-repository-coding.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/fly-repository-coding.xml --required-module tests.test_fly_repository_coding
+      - name: Keep Fly repository coding test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fly-repository-coding-tests
+          path: /tmp/fly-repository-coding.xml
       - name: Verify durable conversation ownership and PostgreSQL races
         run: |
           uv run --extra coworker pytest tests/test_coworker_projects.py tests/test_conversations.py tests/test_conversation_replies.py tests/test_conversation_context.py tests/test_conversation_dispatch.py tests/test_coworker_postgres.py tests/test_coworker.py::test_simple_question_does_not_create_agent_run -q -rs --junitxml=/tmp/conversations.xml

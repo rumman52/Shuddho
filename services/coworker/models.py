@@ -1739,6 +1739,12 @@ class SandboxExecution(Base):
     agent_code_proposal_id: Mapped[str | None] = mapped_column(
         ForeignKey("cw_agent_code_proposals.id"), nullable=True, unique=True,
     )
+    # Durable, non-secret correlation metadata for Fly repository test/repair runs.
+    fly_project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    fly_workspace_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fly_manifest_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fly_patch_proposal_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    fly_request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_sha256: Mapped[str] = mapped_column(String(64))
     source_bytes: Mapped[int] = mapped_column(Integer)
     request_spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
@@ -1943,3 +1949,77 @@ class ToolReceipt(Base):
     resource_id: Mapped[str | None] = mapped_column(String(64))
     summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FlyWorkspaceManifest(Base):
+    """Metadata-only project manifest; file bytes remain in DocumentVersion storage."""
+    __tablename__ = "cw_fly_workspace_manifests"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(36))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    repository: Mapped[str] = mapped_column(String(255))
+    branch: Mapped[str] = mapped_column(String(255))
+    commit_sha: Mapped[str] = mapped_column(String(40))
+    files: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id", "owner_id"], ["cw_projects.id", "cw_projects.owner_id"]),
+        UniqueConstraint("owner_id", "project_id", name="uq_cw_fly_workspace_owner_project"),
+        Index("cw_fly_workspace_owner_project_revision", "owner_id", "project_id", "revision"),
+    )
+
+
+class FlyPatchProposal(Base):
+    """Immutable, inert multi-file patch snapshot awaiting exact human review."""
+    __tablename__ = "cw_fly_patch_proposals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(36))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    base_revision: Mapped[int] = mapped_column(Integer)
+    base_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    base_commit_sha: Mapped[str] = mapped_column(String(40))
+    instruction: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(String(500), default="")
+    file_summaries: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    patch_object_key: Mapped[str] = mapped_column(String(512), default="")
+    patch_sha256: Mapped[str] = mapped_column(String(64), default="")
+    patch_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    review_sha256: Mapped[str] = mapped_column(String(64), default="")
+    state: Mapped[str] = mapped_column(String(24), default="generating")
+    repair_of_execution_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    repair_root_proposal_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    repair_attempt: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    applied_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    applied_manifest_sha256: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id", "owner_id"], ["cw_projects.id", "cw_projects.owner_id"]),
+        UniqueConstraint("owner_id", "project_id", "idempotency_key", name="uq_cw_fly_patch_owner_project_key"),
+        Index("cw_fly_patch_owner_project_state", "owner_id", "project_id", "state", "created_at"),
+        Index("cw_fly_patch_repair_root", "owner_id", "project_id", "repair_root_proposal_id"),
+    )
+
+
+class FlyPatchReview(Base):
+    """Human decision bound to one immutable Fly patch digest."""
+    __tablename__ = "cw_fly_patch_reviews"
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("cw_fly_patch_proposals.id"), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(36))
+    review_sha256: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id", "owner_id"], ["cw_projects.id", "cw_projects.owner_id"]),
+        Index("cw_fly_patch_reviews_owner_project", "owner_id", "project_id", "decision"),
+    )

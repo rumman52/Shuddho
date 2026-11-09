@@ -22,6 +22,8 @@ from .config import enabled as coworker_enabled
 from .container import Container
 from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
 from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete, GitHubRepositoryBind
+from .fly_code_schemas import FlyWorkspaceSync
+from .fly_code_schemas import FlyPatchApplyRequest, FlyPatchGenerateRequest, FlyPatchReviewRequest
 from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest, ConversationSteerRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
@@ -1047,6 +1049,130 @@ def unlink_project_resource(project_id: UUID, resource_type: Annotated[str, Path
     return services.projects.unlink(identity.account_id, str(project_id), resource_type, str(resource_id), payload.expected_revision)
 
 
+@router.get("/fly/code/status")
+def fly_code_status(identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "generation_enabled": services.settings.fly_code_generation_enabled,
+        "repository_execution_enabled": services.settings.fly_repository_execution_enabled,
+        "automated_repair_enabled": services.settings.fly_automated_repair_enabled,
+        "github_write_enabled": False,
+        "max_workspace_files": services.settings.fly_max_workspace_files,
+        "max_workspace_bytes": services.settings.fly_max_workspace_bytes,
+        "max_patch_files": services.settings.fly_max_patch_files,
+    }
+
+
+@router.get("/projects/{project_id}/fly/workspace")
+async def get_fly_workspace(project_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_workspace.get,
+        identity.account_id,
+        str(project_id),
+    )
+
+
+@router.put("/projects/{project_id}/fly/workspace")
+async def sync_fly_workspace(
+    project_id: UUID,
+    payload: FlyWorkspaceSync,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_workspace.sync,
+        identity.account_id,
+        str(project_id),
+        payload,
+    )
+
+
+@router.get("/projects/{project_id}/fly/patch-proposals")
+async def list_fly_patch_proposals(project_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_code.list_proposals,
+        identity.account_id,
+        str(project_id),
+    )
+
+
+@router.post("/projects/{project_id}/fly/patch-proposals/generate")
+async def generate_fly_patch_proposal(
+    project_id: UUID,
+    payload: FlyPatchGenerateRequest,
+    identity: Identity,
+    services: Services,
+    request: Request,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await services.fly_code.generate(
+        identity.account_id,
+        str(project_id),
+        payload,
+        request.headers.get("Idempotency-Key", ""),
+    )
+
+
+@router.get("/projects/{project_id}/fly/patch-proposals/{proposal_id}")
+async def get_fly_patch_proposal(
+    project_id: UUID,
+    proposal_id: UUID,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_code.get_proposal,
+        identity.account_id,
+        str(project_id),
+        str(proposal_id),
+    )
+
+
+@router.post("/projects/{project_id}/fly/patch-proposals/{proposal_id}/review")
+async def review_fly_patch_proposal(
+    project_id: UUID,
+    proposal_id: UUID,
+    payload: FlyPatchReviewRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_code.review,
+        identity.account_id,
+        str(project_id),
+        str(proposal_id),
+        payload,
+    )
+
+
+@router.post("/projects/{project_id}/fly/patch-proposals/{proposal_id}/apply")
+async def apply_fly_patch_proposal(
+    project_id: UUID,
+    proposal_id: UUID,
+    payload: FlyPatchApplyRequest,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.fly_code.apply,
+        identity.account_id,
+        str(project_id),
+        str(proposal_id),
+        payload.review_sha256,
+    )
+
+
 @router.get("/github/status")
 def github_status(identity: Identity, services: Services):
     return {"enabled": services.settings.fly_github_enabled}
@@ -1585,6 +1711,7 @@ def claim_sandbox_executions(
         "executions": services.sandbox.claim_executions(
             payload.worker_id,
             payload.limit,
+            payload.supported_kinds,
         )
     }
 
