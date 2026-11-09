@@ -43,7 +43,7 @@ Render workspace inspection found:
 | `shuddho-api-staging` | Service exists; auto-deploy disabled; last live deployment is `fce72760456bd8bb03524ce98127120c7ac3dfb9` from 2 October 2026 |
 | `shuddho-staging-db` | PostgreSQL 18, `suspended` by billing; metadata expiry `2026-10-31T17:11:33Z` |
 | Persistent staging worker | No `shuddho-worker-staging` service is present in the inspected Render workspace |
-| `shuddho-api` production | Live on main revision `85118f7522c005eb3e3600c559f041793f3632b7`; auto-deploy from main remains enabled |
+| `shuddho-api` production | Live on main revision `1288ccf88ead3e63cfca45beeaf49777a58f3e14`; auto-deploy from main remains enabled |
 
 No Render service, database, billing, secret, deployment, Temporal, provider or feature-flag changes were made. The combined PR branch is not the production service branch and no staging promotion is configured.
 
