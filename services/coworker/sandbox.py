@@ -18,7 +18,10 @@ from .interactive_artifacts import (
     validate_static_preview_html,
     verify_preview_token,
 )
-from .models import Account, AgentCodeProposal, AgentCodeReview, AgentRun, Artifact, AuditEvent, SandboxExecution, SandboxSession, Workspace, utcnow
+from .models import (
+    Account, AgentCodeProposal, AgentCodeReview, AgentRun, Artifact, AuditEvent,
+    FlyWorkspaceManifest, Project, SandboxExecution, SandboxSession, Workspace, utcnow,
+)
 from .repository import aware, iso, not_found
 from .sandbox_schemas import SandboxExecutionCreate, SandboxSessionCreate
 
@@ -628,8 +631,21 @@ class SandboxRepository:
                     source = spec.get("source")
                 fly_metadata_valid = True
                 if execution.kind == "repository_test":
+                    current_project = db.scalar(select(Project).where(
+                        Project.id == execution.fly_project_id,
+                        Project.owner_id == execution.owner_id,
+                        Project.deleted.is_(False),
+                    ))
+                    current_manifest = db.scalar(select(FlyWorkspaceManifest).where(
+                        FlyWorkspaceManifest.owner_id == execution.owner_id,
+                        FlyWorkspaceManifest.project_id == execution.fly_project_id,
+                    ))
                     fly_metadata_valid = (
-                        self.settings.fly_repository_execution_enabled
+                        current_project is not None
+                        and current_manifest is not None
+                        and current_manifest.revision == execution.fly_workspace_revision
+                        and current_manifest.sha256 == execution.fly_manifest_sha256
+                        and self.settings.fly_repository_execution_enabled
                         and execution.agent_code_proposal_id is None
                         and isinstance(execution.fly_project_id, str)
                         and isinstance(execution.fly_workspace_revision, int)
