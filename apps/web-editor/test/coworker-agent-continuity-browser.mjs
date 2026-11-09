@@ -33,7 +33,11 @@ export async function verifyConversationAgentContinuity(page) {
 
   await postJson(page, "/enable-v3");
   try {
-    await page.getByRole("button", { name: "+ New chat", exact: true }).click();
+    // The visible "+" is decorative; aria-label defines the accessible name.
+    const newChatButton = page.getByRole("button", { name: "New chat", exact: true });
+    await newChatButton.waitFor();
+    assert.equal((await newChatButton.innerText()).trim(), "+ New chat");
+    await newChatButton.click();
     const composer = page.locator("#cw-conversation-message");
     await composer.waitFor();
     await composer.fill(taskA);
