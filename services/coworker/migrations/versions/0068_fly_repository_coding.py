@@ -1,14 +1,14 @@
 """Persist Fly workspace manifests and immutable repository patch decisions.
 
 Revision ID: 0068_fly_repository_coding
-Revises: 0067_agent_decision_latency
+Revises: 0067
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "0068_fly_repository_coding"
-down_revision = "0067_agent_decision_latency"
+down_revision = "0067"
 branch_labels = None
 depends_on = None
 
