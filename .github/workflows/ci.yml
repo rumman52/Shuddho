@@ -495,7 +495,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-        with: { version: "0.7.22", enable-cache: true }
+        with: { version: "0.7.22", enable-cache: false }
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - name: Install coworker dependencies
@@ -530,14 +530,6 @@ jobs:
             uv run --extra coworker python -m scripts.mandatory_test_gate \
               /tmp/priority4-postgres18.xml --required-module "$module"
           done
-      - name: Preserve PostgreSQL 18 qualification evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: priority4-postgres18-qualification
-          path: /tmp/priority4-postgres18.xml
-          retention-days: 3
-
   ci-merge-gate:
     name: ci-merge-gate
     if: always()
