@@ -10,6 +10,8 @@ This phase records one sanitized operational record per durable Agent run with:
 - model/model set;
 - conservatively accounted tokens;
 - end-to-end run latency;
+- successful planner inference latency persisted on each Runtime v3 decision;
+- child-model inference latency from model attempts;
 - tool-call count and tool latency;
 - bounded retry count;
 - routing decision and planner mode;
@@ -25,7 +27,7 @@ The export is implemented in `scripts/core_agent_observability.py`. JSON preserv
 
 ## Dashboard metrics
 
-The Phase 10 export provides run success ratio, tool failure ratio, model failure ratio, p50/p95/p99 end-to-end run latency, average tool steps per run, total token consumption, average cost per run, duplicate attempts, `outcome_unknown`, abandoned/deadline runs, and provider failures.
+The Phase 10 export provides run success ratio, tool failure ratio, model failure ratio, p50/p95/p99 end-to-end run latency, model inference latency and tool execution latency percentiles, latency coverage, retry-attempt rate, average tool steps per run, total token consumption, cost-estimate completeness, duplicate attempts, `outcome_unknown`, abandoned/deadline runs, and provider failures. Planner latency is sourced from persisted `AgentDecision.latency_ms`; child-model latency is sourced from `ModelAttempt.latency_ms`. Failed planner attempts without a persisted latency are excluded from latency percentiles and lower the reported coverage.
 
 Transactions are measured as a separate safety domain: terminal transaction samples, confirmed transactions, failed transactions, and transaction `outcome_unknown` count/ratio. An uncertain transaction remains a reconciliation event and is never transformed into an automatic retry.
 
@@ -41,7 +43,7 @@ Transactions are measured as a separate safety domain: terminal transaction samp
 
 The model-call and token ceilings span both planner calls and model attempts made by child tasks. Reservations lock the durable Agent run before accounting, so concurrent planner/task calls cannot race past a per-run limit.
 
-The cost ceiling uses the deployment-reviewed `SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS` rate. Unknown or failed calls retain conservative token reservations for economics accounting. Production should set this rate to the reviewed effective model price; a zero rate intentionally reports zero model cost and therefore cannot provide a meaningful monetary stop gate.
+The cost ceiling uses the deployment-reviewed `SHUDDHO_AGENT_V3_PLANNER_COST_MICROUSD_PER_1K_TOKENS` rate. Unknown or failed calls retain conservative token reservations for economics accounting. The exporter reports a cost estimate from this configured blended effective rate, not a provider invoice. If nonzero token usage has no positive reviewed rate, the per-run and aggregate cost are unavailable (`NaN` in OpenMetrics), never fabricated as zero. Production must set and review the effective rate before enabling monetary stop gates.
 
 Budget failures are explicit: `agent_model_call_limit` (429), `agent_token_limit` (429), `agent_step_limit` (429), `agent_deadline` (bounded runtime failure), and `agent_cost_limit` (402). This turns prior router 429 / budget-402 behavior into server-owned policy instead of an incidental provider error.
 
@@ -77,3 +79,14 @@ The JSON file is restricted operator evidence because it contains run IDs. The P
 Phase 10 is code-complete only when repository tests for budget enforcement and observability pass, the permanent Phase 9 evaluation suite passes, staging exports contain real Agent and Transaction samples, every `outcome_unknown` has explicit reconciliation evidence, production pricing metadata is reviewed/non-zero before monetary gating, and no CI failure is hidden by an external deployment quota/rate-limit issue.
 
 The previous Phase 9 PR had a CI invocation defect: the evaluation file imported `scripts.*` while CI executed it as a file. Phase 10 changes the CI command to `python -m scripts.core_agent_eval_suite`, preserving the repository root on the module import path.
+
+
+## Added inference and execution telemetry
+
+Migration `0067` adds nullable `cw_agent_decisions.latency_ms`. It is nullable so pre-migration decisions remain readable. Runtime v3 persists the measured provider round-trip latency returned by the planner. The operator exporter combines those successful planner samples with child `ModelAttempt.latency_ms` samples and reports p50/p95/p99 plus coverage. Tool latency is independently reported at p50/p95/p99.
+
+Retry rate is defined as retry attempts divided by model calls plus tool calls in the selected window. The denominator and numerator are emitted as aggregate counts/rates; no per-user or per-run labels are added.
+
+## Monitoring and concurrent-load evidence
+
+The exporter and label-free OpenMetrics contract are repository-verified by tests. Metrics receiver ingestion, dashboard panels, alert delivery, threshold calibration and concurrent workload measurements require an operated staging environment and owner-approved SLO/alert thresholds. They are not claimed as verified by this source change.

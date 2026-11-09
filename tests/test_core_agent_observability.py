@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -12,9 +13,10 @@ from services.coworker.auth import Principal
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
+from services.coworker.models import AgentDecision, AgentRun
 from services.coworker.migrate import upgrade
 from services.coworker.schemas import TaskCreate
-from scripts.core_agent_observability import aggregate, collect_snapshot, render_openmetrics
+from scripts.core_agent_observability import aggregate, collect_snapshot, estimated_cost_microusd, render_openmetrics
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -189,3 +191,158 @@ def test_invalid_phase10_budget_configuration_is_rejected():
         replace(base, max_agent_model_calls_per_run=3, max_agent_v3_planner_calls=4).validate()
     with pytest.raises(ValueError, match="MAX_TOKENS_PER_RUN"):
         replace(base, max_agent_tokens_per_run=20000, agent_v3_planner_token_budget=24000).validate()
+
+
+
+def test_dashboard_reports_model_tool_latency_and_retry_rate():
+    settings = Settings(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+    )
+    records = [{
+        "completion_state": "completed",
+        "tool_calls": 2,
+        "tool_failures": 0,
+        "model_calls": 3,
+        "model_failures": 0,
+        "latency_ms": 500,
+        "tokens": 900,
+        "cost_microusd": 30,
+        "duplicate_attempts": 0,
+        "outcome_unknown": 0,
+        "abandoned": False,
+        "provider_failures": 0,
+        "retries": 1,
+        "model_latency_ms": [100, 200, 300],
+        "tool_latency_ms": [20, 40],
+    }]
+    dashboard = aggregate(records, [], settings)
+
+    assert dashboard["models"]["p50_latency_ms"] == 200
+    assert dashboard["models"]["p95_latency_ms"] == 300
+    assert dashboard["models"]["p99_latency_ms"] == 300
+    assert dashboard["tools"]["p50_latency_ms"] == 20
+    assert dashboard["tools"]["p95_latency_ms"] == 40
+    assert dashboard["runs"]["retry_rate"] == pytest.approx(1 / 5, abs=1e-6)
+
+
+def test_unpriced_model_usage_is_not_reported_as_zero_cost():
+    settings = Settings(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+        agent_v3_planner_cost_microusd_per_1k_tokens=0,
+    )
+    assert estimated_cost_microusd(1000, settings) is None
+
+
+def test_openmetrics_exports_latency_and_retry_metrics_without_labels():
+    settings = Settings(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+    )
+    dashboard = aggregate([{
+        "completion_state": "completed",
+        "tool_calls": 1,
+        "tool_failures": 0,
+        "model_calls": 1,
+        "model_failures": 0,
+        "latency_ms": 100,
+        "tokens": 100,
+        "cost_microusd": 10,
+        "duplicate_attempts": 0,
+        "outcome_unknown": 0,
+        "abandoned": False,
+        "provider_failures": 0,
+        "retries": 0,
+        "model_latency_ms": [25],
+        "tool_latency_ms": [10],
+    }], [], settings)
+    text = render_openmetrics({"dashboard": dashboard})
+
+    assert "shuddho_core_agent_model_latency_p50_ms 25" in text
+    assert "shuddho_core_agent_tool_latency_p95_ms 10" in text
+    assert "shuddho_core_agent_retry_rate 0" in text
+    assert "{" not in text
+    assert "run_id" not in text
+
+
+
+def test_unknown_cost_rate_propagates_as_unavailable_not_zero():
+    settings = Settings(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+        agent_v3_planner_cost_microusd_per_1k_tokens=0,
+    )
+    dashboard = aggregate([{
+        "completion_state": "completed",
+        "tool_calls": 0,
+        "tool_failures": 0,
+        "model_calls": 1,
+        "model_failures": 0,
+        "latency_ms": 100,
+        "tokens": 500,
+        "cost_microusd": None,
+        "duplicate_attempts": 0,
+        "outcome_unknown": 0,
+        "abandoned": False,
+        "provider_failures": 0,
+        "retries": 0,
+        "model_latency_ms": [50],
+        "tool_latency_ms": [],
+    }], [], settings)
+
+    assert dashboard["runs"]["cost_estimate_complete"] is False
+    assert dashboard["runs"]["total_cost_microusd"] is None
+    assert dashboard["runs"]["average_cost_microusd"] is None
+    text = render_openmetrics({"dashboard": dashboard})
+    assert "shuddho_core_agent_average_cost_microusd NaN" in text
+
+
+
+def test_snapshot_includes_persisted_planner_inference_latency(tmp_path):
+    container = make_container(
+        tmp_path,
+        agent_v3_planner_cost_microusd_per_1k_tokens=1000,
+    )
+    account_id = owner(container, "planner-latency")
+    run = create_run(container, account_id, "planner-latency-run")
+    now = datetime.now(timezone.utc)
+    with container.repository.sessions.begin() as db:
+        saved_run = db.get(AgentRun, run["id"])
+        saved_run.state = "completed"
+        saved_run.planner_calls = 1
+        saved_run.planner_tokens = 10
+        saved_run.planner_actual_tokens = 10
+        saved_run.planner_cost_microusd = 10
+        saved_run.updated_at = now
+        db.add(AgentDecision(
+            run_id=run["id"],
+            sequence=1,
+            owner_id=account_id,
+            planner_call=1,
+            decision_type="next_step",
+            payload={"decision": "next_step", "tool": "document.create", "objective": "Create a report."},
+            model="test-model",
+            prompt_sha256="a" * 64,
+            tool_schema_sha256="b" * 64,
+            observation_count=0,
+            total_tokens=10,
+            cost_microusd=10,
+            latency_ms=37,
+        ))
+
+    snapshot = collect_snapshot(container.settings, now=now)
+    record = snapshot["records"][0]
+
+    assert record["model_latency_ms"] == [37]
+    assert record["model_latency_ms_p50"] == 37
+    assert record["model_latency_coverage"] == 1.0
+    assert snapshot["dashboard"]["models"]["p95_latency_ms"] == 37

@@ -201,16 +201,14 @@ try {
   await page.waitForURL(url => url.pathname === "/writing");
   await page.locator(".rukh-editor-topbar-heading strong").getByText("Writing Assistant", { exact: true }).waitFor();
 
-  // The Writing Assistant opens on its Documents landing page. Its editor
-  // canvas is intentionally hidden until the owner chooses New document.
+  // Coworker-enabled Writing Assistant opens on Documents. The editor canvas
+  // remains hidden until the user explicitly creates or opens a document.
   await page.getByRole("heading", { name: "Documents", exact: true }).waitFor();
-  await page.getByRole("button", { name: "New document", exact: true }).click();
-  await page.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "New document", exact: true }).waitFor();
+  await page.locator(".rukh-editor-canvas").waitFor({ state: "hidden" });
 
   // The Documents landing page and the writing canvas must occupy the same
   // full-width desktop canvas slot; neither may create an implicit grid track.
-  await page.getByRole("button", { name: "← Documents", exact: true }).click();
-  await page.getByRole("heading", { name: "Documents", exact: true }).waitFor();
   await page.setViewportSize({ width: 1366, height: 604 });
   const documentsLayout = await page.evaluate(() => {
     const rect = (selector) => {

@@ -1,3 +1,17 @@
+## Part 3 acceptance refresh — 9 November 2026
+
+The combined source/repository implementation is tracked in [PR #658](https://github.com/rumman52/Shuddho/pull/658), based on main `85118f7522c005eb3e3600c559f041793f3632b7`. The Part 3 evidence matrix is [CORE_AGENT_PART3_RELIABILITY_QUALIFICATION_2026-11-09.md](../CORE_AGENT_PART3_RELIABILITY_QUALIFICATION_2026-11-09.md).
+
+- **3.1 Evaluation:** deterministic Phase 9 CI contracts remain separate from manual paid live Runtime v3 evaluation. Live evaluator source now covers multi-step decisions, no-tool rejection, forbidden tools, context/memory source bounds, and token/cost/latency evidence. No paid live run is claimed.
+- **3.2 Observability:** planner latency is persisted through additive migration 0067; exporter adds model/tool latency percentiles, coverage, retry rate and honest cost availability. Receiver ingestion, alerts, concurrent-load results and actual provider invoices remain unverified.
+- **3.3 Staging:** BLOCKED_EXTERNAL. On 9 November Render reports staging PostgreSQL suspended by billing (metadata expiry 31 October), staging API still on 2 October revision `fce72760456bd8bb03524ce98127120c7ac3dfb9`, and no persistent Shuddho worker service in the inspected workspace.
+- **3.4 CI:** Writing Assistant Documents-first browser expectation corrected. Exact final-head CI and independent review still required.
+- **3.5 Release:** documentation and rollback procedure added. Main branch protection remains an administrator action; no bypass is introduced.
+
+No hosted migrations, staging/production deployments, worker provisioning, billing, secret changes, provider mutations, telemetry ingestion or feature activation were performed. The overall disposition remains **NOT RELEASE-QUALIFIED** until exact-head CI, independent review, operated staging, monitoring and explicit release acceptance are evidenced.
+
+---
+
 ## Current acceptance refresh — 31 October 2026 (Asia/Dhaka)
 
 The canonical live source/CI, environment and blocker evidence is [RELEASE_READINESS_REFRESH_2026-10-31.md](RELEASE_READINESS_REFRESH_2026-10-31.md). Current main is 38c5b8d0d3eafa5692f848a5e664897a500fcfe2. Exact-main CI #41098651428 has test-and-build and coworker successful, but governance-audit and ci-merge-gate failed because native main protection is not confirmed.

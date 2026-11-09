@@ -7,6 +7,9 @@ def test_agent_eval_fixture_passes_offline_contract():
     result = evaluate_offline(cases)
     assert result["pass_rate"] == 1.0
     assert result["failed"] == 0
+    assert result["by_language"]["en"]["pass_rate"] == 1.0
+    assert result["by_language"]["bn"]["pass_rate"] == 1.0
+    assert result["by_language"]["bn"]["cases"] >= 4
 
 
 def test_staging_gate_is_no_go_without_live_evidence():
