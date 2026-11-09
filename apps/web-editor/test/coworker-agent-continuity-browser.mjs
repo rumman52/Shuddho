@@ -33,7 +33,7 @@ export async function verifyConversationAgentContinuity(page) {
 
   await postJson(page, "/enable-v3");
   try {
-    await page.getByRole("button", { name: "+ New chat", exact: true }).click();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
     const composer = page.locator("#cw-conversation-message");
     await composer.waitFor();
     await composer.fill(taskA);
