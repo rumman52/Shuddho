@@ -196,6 +196,11 @@ try {
   await page.getByRole("link", { name: "Writing Assistant", exact: true }).click();
   await page.waitForURL(url => url.pathname === "/writing");
   await page.locator(".rukh-editor-topbar-heading strong").getByText("Writing Assistant", { exact: true }).waitFor();
+
+  // The Writing Assistant opens on its Documents landing page. Its editor
+  // canvas is intentionally hidden until the owner chooses New document.
+  await page.getByRole("heading", { name: "Documents", exact: true }).waitFor();
+  await page.getByRole("button", { name: "New document", exact: true }).click();
   await page.getByText("Multilingual Writing Studio", { exact: true }).waitFor();
 
   // The Documents landing page and the writing canvas must occupy the same
