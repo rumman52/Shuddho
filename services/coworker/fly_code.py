@@ -272,6 +272,7 @@ class FlyCodeService:
         usage_tokens = None
         object_key = ""
         stored = False
+        ready = False
         try:
             output, usage_tokens = await self.planner.propose_repository_patch(
                 payload.instruction,
@@ -307,9 +308,9 @@ class FlyCodeService:
                 proposal.patch_bytes = len(patch_bytes)
                 proposal.review_sha256 = review_sha256
                 proposal.state = "unreviewed"
-            return self.get_proposal(owner, project_id, proposal_id)
+            ready = True
         except BaseException:
-            if stored and object_key:
+            if stored and object_key and not ready:
                 try:
                     self.storage.delete(object_key)
                 except Exception:
@@ -333,6 +334,7 @@ class FlyCodeService:
                     sequence=1,
                     actual_tokens=usage_tokens,
                 )
+        return self.get_proposal(owner, project_id, proposal_id)
 
     def _expire_due(self, owner: str, project_id: str) -> None:
         now = utcnow()
@@ -525,6 +527,8 @@ class FlyCodeService:
         with self.sessions() as db:
             self._project(db, owner, project_id)
             proposal = self._proposal(db, owner, project_id, proposal_id)
+            if proposal.state == "applied":
+                return self.workspace.get(owner, project_id)
             review = db.get(FlyPatchReview, proposal_id)
             if review is None or review.decision != "approve" or review.revoked_at is not None:
                 raise CoworkerError("fly_patch_approval_required", "Approve the exact diff before applying it.", 403)
@@ -536,30 +540,32 @@ class FlyCodeService:
 
         planned_objects: list[dict] = []
         uploaded_keys: list[str] = []
-        for item in snapshot["changes"]:
-            if item["operation"] == "delete":
-                continue
-            content = item["after_content"]
-            data = content.encode("utf-8")
-            digest = hashlib.sha256(data).hexdigest()
-            version_id = str(uuid4())
-            object_key = f"{owner}/inputs/{version_id}/{digest}"
-            self.storage.put(object_key, data, "text/plain; charset=utf-8")
-            uploaded_keys.append(object_key)
-            planned_objects.append({
-                "path": item["path"],
-                "operation": item["operation"],
-                "document_id": item["before"]["document_id"] if item.get("before") else str(uuid4()),
-                "version_id": version_id,
-                "object_key": object_key,
-                "sha256": digest,
-                "byte_size": len(data),
-                "kind": PurePosixPath(item["path"]).suffix.lstrip(".").lower()[:10] or "txt",
-                "filename": self._document_filename(proposal_id, item["path"]),
-                "origin": item["before"].get("origin") if item.get("before") else None,
-            })
-
+        already_applied = False
+        applied = False
         try:
+            for item in snapshot["changes"]:
+                if item["operation"] == "delete":
+                    continue
+                content = item["after_content"]
+                data = content.encode("utf-8")
+                digest = hashlib.sha256(data).hexdigest()
+                version_id = str(uuid4())
+                object_key = f"{owner}/inputs/{version_id}/{digest}"
+                self.storage.put(object_key, data, "text/plain; charset=utf-8")
+                uploaded_keys.append(object_key)
+                planned_objects.append({
+                    "path": item["path"],
+                    "operation": item["operation"],
+                    "document_id": item["before"]["document_id"] if item.get("before") else str(uuid4()),
+                    "version_id": version_id,
+                    "object_key": object_key,
+                    "sha256": digest,
+                    "byte_size": len(data),
+                    "kind": PurePosixPath(item["path"]).suffix.lstrip(".").lower()[:10] or "txt",
+                    "filename": self._document_filename(proposal_id, item["path"]),
+                    "origin": item["before"].get("origin") if item.get("before") else None,
+                })
+
             now = utcnow()
             retain_until = now + timedelta(seconds=self.settings.fly_workspace_file_ttl_seconds)
             with self.sessions() as db, db.begin():
@@ -571,149 +577,148 @@ class FlyCodeService:
                 proposal = self._proposal(db, owner, project_id, proposal_id, lock=True)
                 review = db.get(FlyPatchReview, proposal_id)
                 if proposal.state == "applied":
-                    if proposal.applied_manifest_sha256:
-                        return self.workspace.get(owner, project_id)
-                    raise CoworkerError("fly_patch_already_applied", "This patch has already been applied.", 409)
-                if proposal.state != "unreviewed" or aware(proposal.expires_at) <= now:
-                    raise CoworkerError("fly_patch_not_applicable", "This Fly patch is no longer applicable.", 409)
-                if (
-                    review is None or review.decision != "approve" or review.revoked_at is not None
-                    or review.review_sha256 != review_sha256 or aware(review.expires_at) <= now
-                ):
-                    raise CoworkerError("fly_patch_approval_required", "A current approval for the exact diff is required.", 403)
-                if manifest.revision != proposal.base_revision or manifest.sha256 != proposal.base_manifest_sha256:
-                    raise CoworkerError("fly_workspace_revision_conflict", "The workspace changed after review. Generate a fresh patch.", 409)
-                current = {item["path"]: item for item in (manifest.files or [])}
-                planned_by_path = {item["path"]: item for item in planned_objects}
-                updated_files = dict(current)
-                total_new_bytes = sum(item["byte_size"] for item in planned_objects)
-                if account.storage_bytes + total_new_bytes > self.settings.max_account_bytes:
-                    raise CoworkerError("storage_limit", "Applying this patch would exceed the workspace storage limit.", 429)
-                new_document_count = sum(1 for item in planned_objects if item["operation"] == "create")
-                document_count = int(db.scalar(select(func.count()).select_from(Document).where(
-                    Document.owner_id == owner,
-                    Document.deleted.is_(False),
-                )) or 0)
-                if document_count + new_document_count > 100:
-                    raise CoworkerError("document_limit", "Applying this patch would exceed the workspace file limit.", 429)
-                resource_count = int(db.scalar(select(func.count()).select_from(ProjectResource).where(
-                    ProjectResource.project_id == project_id,
-                    ProjectResource.owner_id == owner,
-                )) or 0)
-                if resource_count + new_document_count > 1000:
-                    raise CoworkerError("project_resource_limit", "Applying this patch would exceed the project resource limit.", 429)
+                    already_applied = True
+                else:
+                    if proposal.state != "unreviewed" or aware(proposal.expires_at) <= now:
+                        raise CoworkerError("fly_patch_not_applicable", "This Fly patch is no longer applicable.", 409)
+                    if (
+                        review is None or review.decision != "approve" or review.revoked_at is not None
+                        or review.review_sha256 != review_sha256 or aware(review.expires_at) <= now
+                    ):
+                        raise CoworkerError("fly_patch_approval_required", "A current approval for the exact diff is required.", 403)
+                    if manifest.revision != proposal.base_revision or manifest.sha256 != proposal.base_manifest_sha256:
+                        raise CoworkerError("fly_workspace_revision_conflict", "The workspace changed after review. Generate a fresh patch.", 409)
+                    current = {item["path"]: item for item in (manifest.files or [])}
+                    planned_by_path = {item["path"]: item for item in planned_objects}
+                    updated_files = dict(current)
+                    total_new_bytes = sum(item["byte_size"] for item in planned_objects)
+                    if account.storage_bytes + total_new_bytes > self.settings.max_account_bytes:
+                        raise CoworkerError("storage_limit", "Applying this patch would exceed the workspace storage limit.", 429)
+                    new_document_count = sum(1 for item in planned_objects if item["operation"] == "create")
+                    document_count = int(db.scalar(select(func.count()).select_from(Document).where(
+                        Document.owner_id == owner,
+                        Document.deleted.is_(False),
+                    )) or 0)
+                    if document_count + new_document_count > 100:
+                        raise CoworkerError("document_limit", "Applying this patch would exceed the workspace file limit.", 429)
+                    resource_count = int(db.scalar(select(func.count()).select_from(ProjectResource).where(
+                        ProjectResource.project_id == project_id,
+                        ProjectResource.owner_id == owner,
+                    )) or 0)
+                    if resource_count + new_document_count > 1000:
+                        raise CoworkerError("project_resource_limit", "Applying this patch would exceed the project resource limit.", 429)
 
-                for change in snapshot["changes"]:
-                    path = change["path"]
-                    before = change.get("before")
-                    current_item = current.get(path)
-                    if change["operation"] == "create":
-                        if current_item is not None:
-                            raise CoworkerError("fly_workspace_revision_conflict", f"{path} already exists.", 409)
-                    else:
-                        if (
-                            current_item is None
-                            or before is None
-                            or current_item["document_id"] != before["document_id"]
-                            or current_item["version_id"] != before["version_id"]
-                            or current_item["sha256"] != before["sha256"]
-                        ):
-                            raise CoworkerError("fly_workspace_source_changed", f"{path} changed after the patch was generated.", 409)
-                    if change["operation"] == "delete":
-                        updated_files.pop(path, None)
-                        remaining_doc_refs = any(
-                            value["document_id"] == current_item["document_id"]
-                            for key, value in updated_files.items()
-                            if key != path
-                        )
-                        if not remaining_doc_refs:
-                            link = db.scalar(select(ProjectResource).where(
-                                ProjectResource.project_id == project_id,
-                                ProjectResource.owner_id == owner,
-                                ProjectResource.resource_type == "document",
-                                ProjectResource.resource_id == current_item["document_id"],
+                    for change in snapshot["changes"]:
+                        path = change["path"]
+                        before = change.get("before")
+                        current_item = current.get(path)
+                        if change["operation"] == "create":
+                            if current_item is not None:
+                                raise CoworkerError("fly_workspace_revision_conflict", f"{path} already exists.", 409)
+                        else:
+                            if (
+                                current_item is None
+                                or before is None
+                                or current_item["document_id"] != before["document_id"]
+                                or current_item["version_id"] != before["version_id"]
+                                or current_item["sha256"] != before["sha256"]
+                            ):
+                                raise CoworkerError("fly_workspace_source_changed", f"{path} changed after the patch was generated.", 409)
+                        if change["operation"] == "delete":
+                            updated_files.pop(path, None)
+                            remaining_doc_refs = any(
+                                value["document_id"] == current_item["document_id"]
+                                for value in updated_files.values()
+                            )
+                            if not remaining_doc_refs:
+                                link = db.scalar(select(ProjectResource).where(
+                                    ProjectResource.project_id == project_id,
+                                    ProjectResource.owner_id == owner,
+                                    ProjectResource.resource_type == "document",
+                                    ProjectResource.resource_id == current_item["document_id"],
+                                ))
+                                if link is not None:
+                                    db.delete(link)
+                            continue
+
+                        plan = planned_by_path[path]
+                        if change["operation"] == "create":
+                            workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner))
+                            if workspace is None:
+                                raise CoworkerError("workspace_not_found", "The owner workspace was not found.", 404)
+                            document = Document(
+                                id=plan["document_id"],
+                                owner_id=owner,
+                                workspace_id=workspace.id,
+                                filename=plan["filename"],
+                            )
+                            db.add(document)
+                            db.flush()
+                            db.add(ProjectResource(
+                                project_id=project_id,
+                                owner_id=owner,
+                                resource_type="document",
+                                resource_id=document.id,
                             ))
-                            if link is not None:
-                                db.delete(link)
-                        continue
-
-                    plan = planned_by_path[path]
-                    if change["operation"] == "create":
-                        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner))
-                        if workspace is None:
-                            raise CoworkerError("workspace_not_found", "The owner workspace was not found.", 404)
-                        document = Document(
-                            id=plan["document_id"],
+                            version_number = 1
+                        else:
+                            document = db.scalar(select(Document).where(
+                                Document.id == plan["document_id"],
+                                Document.owner_id == owner,
+                                Document.deleted.is_(False),
+                            ).with_for_update())
+                            if document is None:
+                                raise CoworkerError("fly_workspace_source_missing", "A source document disappeared during patch application.", 409)
+                            latest_version = int(db.scalar(select(func.max(DocumentVersion.version)).where(
+                                DocumentVersion.document_id == document.id,
+                                DocumentVersion.owner_id == owner,
+                            )) or 0)
+                            version_number = latest_version + 1
+                        db.add(DocumentVersion(
+                            id=plan["version_id"],
+                            document_id=plan["document_id"],
                             owner_id=owner,
-                            workspace_id=workspace.id,
-                            filename=plan["filename"],
-                        )
-                        db.add(document)
-                        db.flush()
-                        db.add(ProjectResource(
-                            project_id=project_id,
-                            owner_id=owner,
-                            resource_type="document",
-                            resource_id=document.id,
+                            version=version_number,
+                            kind=plan["kind"],
+                            byte_size=plan["byte_size"],
+                            sha256=plan["sha256"],
+                            object_key=plan["object_key"],
+                            state="uploaded",
+                            expires_at=retain_until,
                         ))
-                        version_number = 1
-                    else:
-                        document = db.scalar(select(Document).where(
-                            Document.id == plan["document_id"],
-                            Document.owner_id == owner,
-                            Document.deleted.is_(False),
-                        ).with_for_update())
-                        if document is None:
-                            raise CoworkerError("fly_workspace_source_missing", "A source document disappeared during patch application.", 409)
-                        latest_version = int(db.scalar(select(func.max(DocumentVersion.version)).where(
-                            DocumentVersion.document_id == document.id,
-                            DocumentVersion.owner_id == owner,
-                        )) or 0)
-                        version_number = latest_version + 1
-                    db.add(DocumentVersion(
-                        id=plan["version_id"],
-                        document_id=plan["document_id"],
-                        owner_id=owner,
-                        version=version_number,
-                        kind=plan["kind"],
-                        byte_size=plan["byte_size"],
-                        sha256=plan["sha256"],
-                        object_key=plan["object_key"],
-                        state="uploaded",
-                        expires_at=retain_until,
-                    ))
-                    updated_files[path] = {
-                        "path": path,
-                        "document_id": plan["document_id"],
-                        "version_id": plan["version_id"],
-                        "sha256": plan["sha256"],
-                        "byte_size": plan["byte_size"],
-                        "origin": plan["origin"],
-                    }
+                        updated_files[path] = {
+                            "path": path,
+                            "document_id": plan["document_id"],
+                            "version_id": plan["version_id"],
+                            "sha256": plan["sha256"],
+                            "byte_size": plan["byte_size"],
+                            "origin": plan["origin"],
+                        }
 
-                manifest.files = sorted(updated_files.values(), key=lambda value: value["path"])
-                manifest.revision += 1
-                manifest.sha256 = canonical_sha256({
-                    "repository": manifest.repository,
-                    "branch": manifest.branch,
-                    "commit_sha": manifest.commit_sha,
-                    "files": manifest.files,
-                })
-                manifest.updated_at = now
-                project.revision += 1
-                project.updated_at = now
-                account.storage_bytes += total_new_bytes
-                proposal.state = "applied"
-                proposal.applied_revision = manifest.revision
-                proposal.applied_manifest_sha256 = manifest.sha256
-                proposal.applied_at = now
-                db.add(AuditEvent(
-                    id=str(uuid4()),
-                    owner_id=owner,
-                    resource_id=proposal_id,
-                    action="fly_patch_applied",
-                ))
-                db.flush()
+                    manifest.files = sorted(updated_files.values(), key=lambda value: value["path"])
+                    manifest.revision += 1
+                    manifest.sha256 = canonical_sha256({
+                        "repository": manifest.repository,
+                        "branch": manifest.branch,
+                        "commit_sha": manifest.commit_sha,
+                        "files": manifest.files,
+                    })
+                    manifest.updated_at = now
+                    project.revision += 1
+                    project.updated_at = now
+                    account.storage_bytes += total_new_bytes
+                    proposal.state = "applied"
+                    proposal.applied_revision = manifest.revision
+                    proposal.applied_manifest_sha256 = manifest.sha256
+                    proposal.applied_at = now
+                    db.add(AuditEvent(
+                        id=str(uuid4()),
+                        owner_id=owner,
+                        resource_id=proposal_id,
+                        action="fly_patch_applied",
+                    ))
+                    db.flush()
+                    applied = True
         except BaseException:
             for key in uploaded_keys:
                 try:
@@ -721,6 +726,13 @@ class FlyCodeService:
                 except Exception:
                     pass
             raise
+
+        if already_applied or not applied:
+            for key in uploaded_keys:
+                try:
+                    self.storage.delete(key)
+                except Exception:
+                    pass
         return self.workspace.get(owner, project_id)
 
     @staticmethod

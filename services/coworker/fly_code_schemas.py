@@ -106,3 +106,10 @@ class FlyRepositoryTestRequest(BaseModel):
 
     expected_revision: int = Field(ge=1)
     patch_proposal_id: str | None = Field(default=None, max_length=36)
+
+
+
+class FlyPatchApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_sha256: str = Field(pattern=_SHA256.pattern)

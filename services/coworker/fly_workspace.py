@@ -305,8 +305,6 @@ class FlyWorkspaceService:
             current_revision = manifest.revision if manifest else 0
             if current_revision != payload.expected_revision:
                 raise CoworkerError("fly_workspace_revision_conflict", "The Fly workspace changed. Reload it before syncing.", 409)
-            if manifest and manifest.sha256 == manifest_sha:
-                return self._manifest_summary(manifest)
             for item in payload.files:
                 version = db.scalar(select(DocumentVersion).where(
                     DocumentVersion.id == item.version_id,
@@ -316,6 +314,8 @@ class FlyWorkspaceService:
                 if version is None or version.state != "uploaded" or aware(version.expires_at) <= now:
                     raise CoworkerError("fly_workspace_source_changed", "A saved workspace version changed during sync.", 409)
                 version.expires_at = max(aware(version.expires_at), retain_until)
+            if manifest and manifest.sha256 == manifest_sha:
+                return self._manifest_summary(manifest)
             if manifest is None:
                 manifest = FlyWorkspaceManifest(
                     id=str(uuid4()),
