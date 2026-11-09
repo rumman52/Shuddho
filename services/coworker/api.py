@@ -21,6 +21,7 @@ from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
 from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
+from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete, GitHubRepositoryBind
 from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest, ConversationSteerRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
@@ -1046,6 +1047,125 @@ def unlink_project_resource(project_id: UUID, resource_type: Annotated[str, Path
     return services.projects.unlink(identity.account_id, str(project_id), resource_type, str(resource_id), payload.expected_revision)
 
 
+@router.get("/github/status")
+def github_status(identity: Identity, services: Services):
+    return {"enabled": services.settings.fly_github_enabled}
+
+
+@router.post("/projects/{project_id}/github/connect/start")
+async def start_github_connection(project_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.github.start_connection,
+        identity.account_id,
+        str(project_id),
+    )
+
+
+@router.post("/github/connect/finish")
+async def finish_github_oauth(payload: GitHubOAuthFinish, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.github.finish_oauth,
+        identity.account_id,
+        payload.state,
+        payload.code,
+    )
+
+
+@router.post("/github/connect/complete")
+async def complete_github_install(payload: GitHubInstallComplete, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.github.complete_install,
+        identity.account_id,
+        payload.state,
+        payload.installation_id,
+    )
+
+
+@router.delete("/github/installations/{installation_record_id}")
+def disconnect_github_installation(installation_record_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return services.github.disconnect_installation(identity.account_id, str(installation_record_id))
+
+
+@router.get("/github/installations")
+def list_github_installations(identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return services.github.list_installations(identity.account_id)
+
+
+@router.get("/github/installations/{installation_record_id}/repositories")
+async def list_github_repositories(installation_record_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.github.list_repositories,
+        identity.account_id,
+        str(installation_record_id),
+    )
+
+
+@router.get("/projects/{project_id}/github/repository")
+def get_github_repository(project_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return services.github.get_repository(identity.account_id, str(project_id))
+
+
+@router.put("/projects/{project_id}/github/repository")
+async def bind_github_repository(
+    project_id: UUID,
+    payload: GitHubRepositoryBind,
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.github.bind_repository,
+        identity.account_id,
+        str(project_id),
+        payload.installation_record_id,
+        payload.repository_id,
+        payload.expected_revision,
+    )
+
+
+@router.delete("/projects/{project_id}/github/repository")
+def disconnect_github_repository(project_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return services.github.disconnect_repository(identity.account_id, str(project_id))
+
+
+@router.get("/projects/{project_id}/github/repository/tree")
+async def get_github_repository_tree(project_id: UUID, identity: Identity, services: Services, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.github.repository_tree,
+        identity.account_id,
+        str(project_id),
+    )
+
+
+@router.get("/projects/{project_id}/github/repository/file")
+async def get_github_repository_file(
+    project_id: UUID,
+    path: Annotated[str, Query(min_length=1, max_length=512)],
+    commit_sha: Annotated[str, Query(min_length=40, max_length=40, pattern="^[0-9a-f]{40}$")],
+    identity: Identity,
+    services: Services,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await run_in_threadpool(
+        services.github.read_repository_file,
+        identity.account_id,
+        str(project_id),
+        path,
+        commit_sha,
+    )
+
+
 @router.get("/runtime-manifest")
 def runtime_manifest(
     response: Response,
@@ -1070,6 +1190,7 @@ def runtime_manifest(
         "agent_runtime": settings.agent_runtime_enabled,
         "conversations": settings.conversations_enabled,
         "projects": settings.projects_enabled and settings.conversations_enabled,
+        "fly_github": settings.fly_github_enabled,
         "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,

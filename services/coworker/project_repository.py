@@ -4,10 +4,10 @@ Account-before-project locking matches conversation creation and erasure. Links
 never authorize reading sources in chat or starting Agent work.
 """
 from uuid import uuid4
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from .conversation_repository import ConversationRepository, fingerprint
 from .errors import CoworkerError
-from .models import Conversation, Document, Project, ProjectResource, utcnow
+from .models import Conversation, Document, Project, ProjectResource, GitHubConnectAttempt, GitHubRepositoryBinding, utcnow
 from .repository import iso, not_found
 
 class ProjectRepository:
@@ -146,6 +146,19 @@ class ProjectRepository:
             row = self._project(db, owner, project_id, True)
             self._check_revision(row, expected_revision)
             db.execute(delete(ProjectResource).where(ProjectResource.project_id == project_id, ProjectResource.owner_id == owner))
+            db.execute(update(GitHubRepositoryBinding).where(
+                GitHubRepositoryBinding.project_id == project_id,
+                GitHubRepositoryBinding.owner_id == owner,
+            ).values(active=False, updated_at=utcnow()))
+            db.execute(update(GitHubConnectAttempt).where(
+                GitHubConnectAttempt.project_id == project_id,
+                GitHubConnectAttempt.owner_id == owner,
+            ).values(
+                stage="consumed",
+                code_verifier_ciphertext="",
+                user_access_token_ciphertext="",
+                expires_at=utcnow(),
+            ))
             row.deleted = True; self._touch(row)
             ConversationRepository._audit(db, owner, row.id, "project.deleted")
             return {"message": "Project deleted. Its conversations and files are preserved."}

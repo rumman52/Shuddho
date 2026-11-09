@@ -2,7 +2,7 @@
 
 **Status date:** 9 November 2026  
 **Combined implementation:** [PR #658](https://github.com/rumman52/Shuddho/pull/658)  
-**Base revision:** `1288ccf88ead3e63cfca45beeaf49777a58f3e14`  
+**Base revision:** `85118f7522c005eb3e3600c559f041793f3632b7`  
 **Disposition:** `CODE_COMPLETE_UNQUALIFIED` for source work only until exact-head CI and review pass; overall release remains `NOT RELEASE-QUALIFIED`.
 
 ## Acceptance matrix
@@ -25,7 +25,7 @@ The live evaluator does not execute provider tools. Existing Runtime v3 Temporal
 
 ## Observability semantics
 
-- Planner latency: measured provider round-trip from the live planner, persisted on successful `AgentDecision` rows by additive migration `0066`.
+- Planner latency: measured provider round-trip from the live planner, persisted on successful `AgentDecision` rows by additive migration `0067`.
 - Child model latency: existing `ModelAttempt.latency_ms`.
 - Model percentiles: combined successful planner and child-model latency samples; failed planner calls without persisted timing are excluded and reduce coverage.
 - Tool percentiles: measured from persisted tool invocation start/finish timestamps.
@@ -43,7 +43,7 @@ Render workspace inspection found:
 | `shuddho-api-staging` | Service exists; auto-deploy disabled; last live deployment is `fce72760456bd8bb03524ce98127120c7ac3dfb9` from 2 October 2026 |
 | `shuddho-staging-db` | PostgreSQL 18, `suspended` by billing; metadata expiry `2026-10-31T17:11:33Z` |
 | Persistent staging worker | No `shuddho-worker-staging` service is present in the inspected Render workspace |
-| `shuddho-api` production | Live on main revision `1288ccf88ead3e63cfca45beeaf49777a58f3e14`; auto-deploy from main remains enabled |
+| `shuddho-api` production | Live on main revision `85118f7522c005eb3e3600c559f041793f3632b7`; auto-deploy from main remains enabled |
 
 No Render service, database, billing, secret, deployment, Temporal, provider or feature-flag changes were made. The combined PR branch is not the production service branch and no staging promotion is configured.
 
@@ -57,7 +57,7 @@ The governance audit on main previously failed because branch protection was not
 
 ## Rollback
 
-- Migration `0066` is additive and nullable. The downgrade drops only `cw_agent_decisions.latency_ms`; existing rows remain compatible with the old source because latency is optional.
+- Migration `0067` is additive and nullable. The downgrade drops only `cw_agent_decisions.latency_ms`; existing rows remain compatible with the old source because latency is optional.
 - Source rollback is a revert of the Part 3 PR/merge commit after stopping any new exporter consumer that expects the added metrics.
 - No hosted migration has been run by this PR. Do not downgrade or alter a hosted database as part of this repository-only work.
 

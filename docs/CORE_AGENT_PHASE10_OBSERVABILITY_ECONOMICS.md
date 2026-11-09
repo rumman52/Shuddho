@@ -83,7 +83,7 @@ The previous Phase 9 PR had a CI invocation defect: the evaluation file imported
 
 ## Added inference and execution telemetry
 
-Migration `0066` adds nullable `cw_agent_decisions.latency_ms`. It is nullable so pre-migration decisions remain readable. Runtime v3 persists the measured provider round-trip latency returned by the planner. The operator exporter combines those successful planner samples with child `ModelAttempt.latency_ms` samples and reports p50/p95/p99 plus coverage. Tool latency is independently reported at p50/p95/p99.
+Migration `0067` adds nullable `cw_agent_decisions.latency_ms`. It is nullable so pre-migration decisions remain readable. Runtime v3 persists the measured provider round-trip latency returned by the planner. The operator exporter combines those successful planner samples with child `ModelAttempt.latency_ms` samples and reports p50/p95/p99 plus coverage. Tool latency is independently reported at p50/p95/p99.
 
 Retry rate is defined as retry attempts divided by model calls plus tool calls in the selected window. The denominator and numerator are emitted as aggregate counts/rates; no per-user or per-run labels are added.
 

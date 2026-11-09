@@ -8,7 +8,7 @@
 
 ## Global constraints
 
-- Base: `1288ccf88ead3e63cfca45beeaf49777a58f3e14`.
+- Base: `85118f7522c005eb3e3600c559f041793f3632b7`.
 - Preserve existing API contracts and v1/v2/v3 runtime compatibility.
 - No live database migration, staging/production deploy, worker provisioning, provider mutation, PostHog ingestion, feature-flag change, or production activation.
 - Live model evaluation remains opt-in/manual and must require an exact rollout, full source revision, synthetic fixtures, positive cost rate, and bounded total token/cost budgets.
@@ -40,10 +40,10 @@
 
 ## Task 3 — Persist planner latency and complete observability economics
 
-**Files:** `services/coworker/models.py`, `services/coworker/migrations/versions/0066_agent_decision_latency.py`, `services/coworker/agent_runtime.py`, `services/coworker/agent_repository.py`, `scripts/core_agent_observability.py`, `tests/test_core_agent_observability.py`
+**Files:** `services/coworker/models.py`, `services/coworker/migrations/versions/0067_agent_decision_latency.py`, `services/coworker/agent_runtime.py`, `services/coworker/agent_repository.py`, `scripts/core_agent_observability.py`, `tests/test_core_agent_observability.py`
 
 - [ ] Add tests that demonstrate planner latency is persisted and exported; add tests for missing cost-rate behavior and retry-rate calculation.
-- [ ] Add nullable `AgentDecision.latency_ms`; migration 0066 adds/drops only that column and follows revision 0065.
+- [ ] Add nullable `AgentDecision.latency_ms`; migration 0067 adds/drops only that column and follows revision 0066.
 - [ ] Capture the measured planner latency returned by `DeepSeekAgentPlanner.decide` and persist it with the committed decision.
 - [ ] Combine successful planner decision latency with existing child `ModelAttempt.latency_ms`; expose samples and p50/p95/p99, plus explicit coverage/scope.
 - [ ] Add tool latency p50/p95/p99 and retry attempt rate to aggregate dashboard metrics.
@@ -69,7 +69,7 @@
 - [ ] Document the manual live planner/quality/runtime qualification commands and their budget prerequisites.
 - [ ] Record the current staging blockers: expired/suspended database continuity, stale staging API, missing persistent worker, and missing verified Temporal/private-storage/identity credentials.
 - [ ] Document monitoring/alert verification as pending until a real metrics receiver and alert destination are authorized and observed.
-- [ ] Document rollback for migration 0066 and the source release.
+- [ ] Document rollback for migration 0067 and the source release.
 - [ ] Record the governance failure and administrator-only no-bypass branch-protection action.
 - [ ] Do not mark the PR as staging-qualified or production-ready.
 

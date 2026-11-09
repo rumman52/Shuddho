@@ -1,12 +1,12 @@
 """Persist measured Runtime v3 planner inference latency.
-Revision ID: 0066
-Revises: 0065
+Revision ID: 0067
+Revises: 0066
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0066"
-down_revision = "0065"
+revision = "0067"
+down_revision = "0066"
 branch_labels = None
 depends_on = None
 

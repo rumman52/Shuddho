@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import { verifyActions } from "./coworker-actions-browser.mjs";
 import { verifyAgentProposals } from "./coworker-agent-browser.mjs";
+import { verifyConversationAgentContinuity } from "./coworker-agent-continuity-browser.mjs";
 import { verifyNotificationDigests } from "./coworker-notification-digests-browser.mjs";
 
 const folder = process.env.SHUDDHO_TEST_WORKDIR;
@@ -141,6 +142,9 @@ try {
   await page.waitForURL(url => url.pathname === "/coworker" && !url.searchParams.has("view"));
   await page.locator("#cw-conversation-message").waitFor();
 
+  // Qualify the real conversation → Agent → Temporal path before other workspaces.
+  await verifyConversationAgentContinuity(page);
+
   // The workspace directory is optional and remains available at /workspaces.
   await page.goto("http://127.0.0.1:5173/workspaces");
   await page.getByRole("heading", { name: "Think clearly. Move work forward." }).waitFor();
@@ -196,6 +200,7 @@ try {
   await page.getByRole("link", { name: "Writing Assistant", exact: true }).click();
   await page.waitForURL(url => url.pathname === "/writing");
   await page.locator(".rukh-editor-topbar-heading strong").getByText("Writing Assistant", { exact: true }).waitFor();
+
   // Coworker-enabled Writing Assistant opens on Documents. The editor canvas
   // remains hidden until the user explicitly creates or opens a document.
   await page.getByRole("heading", { name: "Documents", exact: true }).waitFor();
