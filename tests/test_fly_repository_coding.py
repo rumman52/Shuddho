@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+pytest_plugins = ("test_coworker",)
+
 from dataclasses import replace
 from uuid import uuid4
 
