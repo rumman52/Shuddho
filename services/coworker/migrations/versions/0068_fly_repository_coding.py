@@ -99,6 +99,7 @@ def upgrade() -> None:
     op.add_column("cw_sandbox_executions", sa.Column("fly_workspace_revision", sa.Integer(), nullable=True))
     op.add_column("cw_sandbox_executions", sa.Column("fly_manifest_sha256", sa.String(length=64), nullable=True))
     op.add_column("cw_sandbox_executions", sa.Column("fly_patch_proposal_id", sa.String(length=36), nullable=True))
+    op.add_column("cw_sandbox_executions", sa.Column("fly_request_fingerprint", sa.String(length=64), nullable=True))
     op.create_index("ix_cw_sandbox_executions_fly_project_id", "cw_sandbox_executions", ["fly_project_id"])
     op.create_index("ix_cw_sandbox_executions_fly_patch_proposal_id", "cw_sandbox_executions", ["fly_patch_proposal_id"])
 
@@ -107,6 +108,7 @@ def downgrade() -> None:
     op.drop_index("ix_cw_sandbox_executions_fly_patch_proposal_id", table_name="cw_sandbox_executions")
     op.drop_index("ix_cw_sandbox_executions_fly_project_id", table_name="cw_sandbox_executions")
     op.drop_column("cw_sandbox_executions", "fly_patch_proposal_id")
+    op.drop_column("cw_sandbox_executions", "fly_request_fingerprint")
     op.drop_column("cw_sandbox_executions", "fly_manifest_sha256")
     op.drop_column("cw_sandbox_executions", "fly_workspace_revision")
     op.drop_column("cw_sandbox_executions", "fly_project_id")

@@ -1711,6 +1711,7 @@ def claim_sandbox_executions(
         "executions": services.sandbox.claim_executions(
             payload.worker_id,
             payload.limit,
+            payload.supported_kinds,
         )
     }
 

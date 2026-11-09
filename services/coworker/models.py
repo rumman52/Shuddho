@@ -1744,6 +1744,7 @@ class SandboxExecution(Base):
     fly_workspace_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fly_manifest_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fly_patch_proposal_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    fly_request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_sha256: Mapped[str] = mapped_column(String(64))
     source_bytes: Mapped[int] = mapped_column(Integer)
     request_spec: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
