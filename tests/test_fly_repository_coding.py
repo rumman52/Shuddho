@@ -24,7 +24,7 @@ def test_fly_code_status_reports_new_capabilities_default_off(container, signed_
     owner = account(container)
     client, headers = signed_client
 
-    response = client.get("/api/v1/fly/code/status", headers=headers(subject=owner))
+    response = client.get("/api/v1/fly/code/status", headers=headers())
 
     assert response.status_code == 200
     body = response.json()
@@ -47,7 +47,7 @@ def test_fly_workspace_starts_empty_and_is_project_scoped(container, signed_clie
 
     response = client.get(
         f"/api/v1/projects/{project['id']}/fly/workspace",
-        headers=headers(subject=owner),
+        headers=headers(),
     )
 
     assert response.status_code == 200
@@ -55,3 +55,10 @@ def test_fly_workspace_starts_empty_and_is_project_scoped(container, signed_clie
     assert body["project_id"] == project["id"]
     assert body["revision"] == 0
     assert body["files"] == []
+
+    denied = client.get(
+        f"/api/v1/projects/{project['id']}/fly/workspace",
+        headers=headers("bob"),
+    )
+    assert denied.status_code == 404
+    assert denied.json()["error"]["code"] == "project_not_found"
