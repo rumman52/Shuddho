@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
-import type { ConversationActivityRecord, ConversationMessageRecord, ConversationRecord, CoworkerClient, SandboxExecution, SandboxSession } from "./client";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import type { ConversationActivityRecord, ConversationMessageRecord, ConversationRecord, CoworkerClient, GitHubRepositoryBinding, GitHubRepositoryFile, SandboxExecution, SandboxSession } from "./client";
 import ConversationRunStatus from "./ConversationRunStatus";
+import FlyRepositoryPanel from "./FlyRepositoryPanel";
 import "./fly-workspace.css";
 
 type FlyLanguage = "python" | "javascript" | "typescript" | "html" | "css" | "json" | "markdown" | "text" | "sql" | "shell";
 type SavedSource = { documentId: string; versionId: string; sha256: string; filename: string };
-type FlyFile = { id: string; name: string; language: FlyLanguage; content: string; saved?: SavedSource };
+type RepositoryOrigin = { repository: string; path: string; branch: string; commitSha: string; repositorySha: string };
+type FlyFile = { id: string; name: string; language: FlyLanguage; content: string; saved?: SavedSource; origin?: RepositoryOrigin };
 type FlyDraft = { files: FlyFile[]; activeId: string };
 type ReviewAttempt = { fingerprint: string; createKey: string; messageKey: string; conversationId?: string; messageId?: string; sequence?: number };
 
 const MAX_FILES = 12;
+const MAX_REPOSITORY_FILE_BYTES = 256 * 1024;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_PYTHON_BYTES = 20 * 1024;
 const DEFAULT_FILE: FlyFile = { id: "fly-main", name: "main.py", language: "python", content: "def main():\n    print(\"Hello from Fly\")\n\nif __name__ == \"__main__\":\n    main()\n" };
@@ -65,7 +68,25 @@ export function normalizeStoredDraft(value: unknown): FlyDraft {
       "filename" in savedValue && typeof savedValue.filename === "string"
       ? savedValue as SavedSource
       : undefined;
-    return { ...file, name: safeFilename(file.name), saved };
+    const originValue: unknown = file.origin;
+    const originPath = originValue && typeof originValue === "object" && "path" in originValue && typeof originValue.path === "string"
+      ? originValue.path
+      : "";
+    const originRepository = originValue && typeof originValue === "object" && "repository" in originValue && typeof originValue.repository === "string"
+      ? originValue.repository
+      : "";
+    const originRepositoryParts = originRepository.split("/");
+    const originParts = originPath.split("/");
+    const origin = originValue && typeof originValue === "object" &&
+      originRepositoryParts.length === 2 && originRepositoryParts.every(part => /^[A-Za-z0-9_.-]{1,100}$/.test(part)) &&
+      originPath.length > 0 && originPath.length <= 512 && !originPath.startsWith("/") && !originPath.includes("\\") && !originPath.includes("\x00") &&
+      originParts.every(part => part.length > 0 && part !== "." && part !== "..") &&
+      "branch" in originValue && typeof originValue.branch === "string" && originValue.branch.length > 0 && originValue.branch.length <= 255 &&
+      "commitSha" in originValue && typeof originValue.commitSha === "string" && /^[a-f0-9]{40}$/i.test(originValue.commitSha) &&
+      "repositorySha" in originValue && typeof originValue.repositorySha === "string" && /^[a-f0-9]{40}$/i.test(originValue.repositorySha)
+      ? originValue as RepositoryOrigin
+      : undefined;
+    return { ...file, name: safeFilename(file.name), saved, origin };
   });
 
   if (!files.length) return fallback;
@@ -164,12 +185,14 @@ export function buildLineDiff(before: string, after: string): FlyDiffLine[] | nu
 
 export default function FlyWorkspace({ client, accountId }: { client: CoworkerClient; accountId: string }) {
   const [draft, setDraft] = useState<FlyDraft>(() => readDraft(accountId));
+  const [draftOwner, setDraftOwner] = useState(accountId);
   const [runtimeEnabled, setRuntimeEnabled] = useState<boolean | null>(null);
   const [runtimeLoading, setRuntimeLoading] = useState(true);
   const [runtimeError, setRuntimeError] = useState("");
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [projectsError, setProjectsError] = useState("");
   const [selectedProject, setSelectedProject] = useState("");
+  const [repositoryName, setRepositoryName] = useState("");
   const [session, setSession] = useState<SandboxSession | null>(null);
   const [executions, setExecutions] = useState<SandboxExecution[]>([]);
   const [busy, setBusy] = useState("");
@@ -199,6 +222,23 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
   const highlightedSource = useMemo(() => highlightSource(active?.content ?? "", active?.language ?? "text"), [active?.content, active?.language]);
   const previewDocument = useMemo(() => active?.language === "html" ? htmlPreviewDocument(active.content) : "", [active?.content, active?.language]);
   const runtimeLabel = runtimeLoading ? "Checking Python runtime" : runtimeEnabled ? "Python 3.11 available" : "Python runtime disabled";
+  useEffect(() => {
+    if (draftOwner === accountId) return;
+    reviewAttempt.current = null;
+    setDraft(readDraft(accountId));
+    setDraftOwner(accountId);
+    setSavedSnapshots({});
+    setSelectedProject("");
+    setRepositoryName("");
+    setActiveConversationId("");
+    setConversations([]);
+    setMessages([]);
+    setActivity([]);
+    setSession(null);
+    setExecutions([]);
+    setRuntimeError("");
+  }, [accountId, draftOwner]);
+
   const terminalOutput = latestExecution
     ? [latestExecution.result.stdout, latestExecution.result.stderr,
       latestExecution.result.exit_code === undefined ? "" : "Exit code: " + latestExecution.result.exit_code,
@@ -206,10 +246,61 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
       latestExecution.error_code ? "Execution error: " + latestExecution.error_code : ""].filter(Boolean).join("\n\n")
     : "No Python execution yet. Run a Python file when the isolated runtime is enabled.";
 
+  const onRepositoryBindingChange = useCallback((binding: GitHubRepositoryBinding | null) => {
+    setRepositoryName(binding?.full_name ?? "");
+  }, []);
+
+  const importRepositoryFiles = useCallback(async (items: GitHubRepositoryFile[]) => {
+    if (!items.length) return;
+    const expectedCommit = items[0].commit_sha;
+    const expectedBranch = items[0].branch;
+    if (items.some(item => item.repository !== repositoryName || item.commit_sha !== expectedCommit || item.branch !== expectedBranch)) {
+      throw new Error("The selected files do not share one repository, branch and commit snapshot. Refresh the tree and retry.");
+    }
+    const existing = new Set(files.filter(file => file.origin).map(file =>
+      [file.origin!.repository, file.origin!.path, file.origin!.commitSha].join("|"),
+    ));
+    const fresh = items.filter(item => !existing.has([item.repository, item.path, item.commit_sha].join("|")));
+    if (!fresh.length) throw new Error("Those repository files are already present at this commit.");
+    if (files.length + fresh.length > MAX_FILES) throw new Error("Fly can hold up to " + MAX_FILES + " files. Remove a local file before importing more repository context.");
+    const imported: FlyFile[] = [];
+    for (const item of fresh) {
+      if (item.repository !== repositoryName) throw new Error("The repository changed while these files were being imported. Refresh the repository panel.");
+      if (encodedBytes(item.content) !== item.byte_size || item.byte_size > MAX_REPOSITORY_FILE_BYTES) {
+        throw new Error(item.path + " failed the repository file size check.");
+      }
+      if (!/^[a-f0-9]{40}$/i.test(item.commit_sha) || !/^[a-f0-9]{40}$/i.test(item.blob_sha) || !/^[a-f0-9]{64}$/i.test(item.sha256)) {
+        throw new Error(item.path + " is missing valid GitHub source provenance.");
+      }
+      if (await sha256(item.content) !== item.sha256) throw new Error(item.path + " failed its SHA-256 integrity check.");
+      imported.push({
+        id: "github-" + globalThis.crypto.randomUUID(),
+        name: safeFilename(item.path.replace(/\//g, "__")),
+        language: languageForFilename(item.path),
+        content: item.content,
+        origin: {
+          repository: item.repository,
+          path: item.path,
+          branch: item.branch,
+          commitSha: item.commit_sha,
+          repositorySha: item.blob_sha,
+        },
+      });
+    }
+    setDraft(current => ({ files: [...current.files, ...imported], activeId: imported[0].id }));
+    setSavedSnapshots(current => ({
+      ...current,
+      ...Object.fromEntries(imported.map(file => [file.id, file.content])),
+    }));
+    setWorkspacePanel("editor");
+    setNotice("Imported " + imported.length + " repository file(s) from commit " + fresh[0].commit_sha.slice(0, 12) + ". Fly will save verified private snapshots before attaching them to the Agent.");
+  }, [files, repositoryName]);
+
   useEffect(() => {
+    if (draftOwner !== accountId) return;
     try { window.sessionStorage.setItem(storageKey(accountId), JSON.stringify(draft)); setStorageWarning(false); }
     catch { setStorageWarning(true); }
-  }, [accountId, draft]);
+  }, [accountId, draft, draftOwner]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -356,6 +447,41 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     return source;
   }
 
+  async function saveRepositoryContextFile(file: FlyFile): Promise<{ versionId: string; digest: string }> {
+    if (!file.origin || !file.content.trim()) throw new Error("A repository context file is missing its source metadata or content.");
+    if (encodedBytes(file.content) > MAX_REPOSITORY_FILE_BYTES) throw new Error(file.origin.path + " exceeds Fly's 256 KB repository source limit.");
+    const digest = await sha256(file.content);
+    const manifest = await client.workspaceManifest();
+    const existingSnapshot = file.saved?.sha256 === digest
+      ? manifest.documents.find(item =>
+          item.document_id === file.saved?.documentId &&
+          item.version_id === file.saved?.versionId &&
+          item.sha256 === digest &&
+          item.available,
+        )
+      : undefined;
+    const uploadName = safeFilename(
+      "repo-" + file.origin.repository.replace("/", "-") + "-" +
+      file.origin.path.replace(/\//g, "__") + "-" + digest.slice(0, 8),
+    ) + ".txt";
+    let source = existingSnapshot ?? manifest.documents.find(item => item.name === uploadName && item.sha256 === digest && item.available);
+    if (!source) {
+      const uploaded = await client.upload(new File([file.content], uploadName, { type: "text/plain" }));
+      const refreshed = await client.workspaceManifest();
+      source = refreshed.documents.find(item => item.document_id === uploaded.id && item.sha256 === digest && item.available);
+    }
+    if (!source) throw new Error("The repository file snapshot could not be verified in Rukh Files. Refresh Files and retry.");
+    if (selectedProject) {
+      const project = await client.project(selectedProject);
+      const alreadyLinked = project.resources.some(item => item.resource_type === "document" && item.resource_id === source!.document_id);
+      if (!alreadyLinked) await client.linkProjectResource(project.id, "document", source.document_id, project.revision);
+    }
+    const saved: SavedSource = { documentId: source.document_id, versionId: source.version_id, sha256: digest, filename: source.name };
+    setDraft(current => ({ ...current, files: current.files.map(item => item.id === file.id ? { ...item, saved } : item) }));
+    setSavedSnapshots(current => ({ ...current, [file.id]: file.content }));
+    return { versionId: source.version_id, digest };
+  }
+
   async function saveFile() {
     if (busy || !active) return;
     setBusy("save"); setError(""); setNotice("");
@@ -372,7 +498,25 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
     setBusy("review"); setError(""); setNotice(""); setConversationError("");
     try {
       const source = await saveActive();
-      const fingerprint = accountId + "|" + active.id + "|" + source.sha256 + "|" + userRequest + "|" + activeConversationId;
+      const repositoryFiles = files.filter(file => file.origin && file.origin.repository === repositoryName);
+      const repositoryContext: Array<{ path: string; branch: string; commitSha: string; repositorySha: string; localSha: string; versionId: string }> = [];
+      for (const file of repositoryFiles) {
+        const saved = file.id === active.id
+          ? { versionId: source.version_id, digest: source.sha256 }
+          : await saveRepositoryContextFile(file);
+        if (file.origin) repositoryContext.push({
+          path: file.origin.path,
+          branch: file.origin.branch,
+          commitSha: file.origin.commitSha,
+          repositorySha: file.origin.repositorySha,
+          localSha: saved.digest,
+          versionId: saved.versionId,
+        });
+      }
+      const repositoryFingerprint = repositoryContext.map(item =>
+        [item.path, item.commitSha, item.repositorySha, item.localSha].join(":"),
+      ).join("|");
+      const fingerprint = accountId + "|" + active.id + "|" + source.sha256 + "|" + repositoryFingerprint + "|" + userRequest + "|" + activeConversationId;
       if (reviewAttempt.current?.fingerprint !== fingerprint) {
         reviewAttempt.current = {
           fingerprint,
@@ -389,23 +533,32 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
       }
       if (!attempt.conversationId) throw new Error("The Fly task conversation could not be created.");
       if (!attempt.messageId || attempt.sequence === undefined) {
+        const repositoryNote = repositoryContext.length
+          ? "\n\nConnected repository context (read-only snapshots): " + repositoryName + "\n" +
+            repositoryContext.map(item =>
+              "- " + item.path + " · branch " + item.branch + " · commit " + item.commitSha +
+              " · upstream blob " + item.repositorySha + " · attached snapshot SHA-256 " + item.localSha,
+            ).join("\n")
+          : "";
         const message = await client.appendConversationMessage(
           attempt.conversationId,
-          "Coding task for " + active.name + ":\n" + userRequest +
-            "\n\nThe attached file is an untrusted source snapshot. Inspect it carefully. Return a clear implementation plan, relevant file/line references, risks, tests to run and a proposed unified diff where useful. Do not claim that you changed or saved the local file or executed commands. This Fly workspace currently attaches private source snapshots and displays Agent progress; it does not provide repository checkout, Git write access, arbitrary shell access or permission for external/destructive actions.",
+          "Coding task for " + active.name + ":\n" + userRequest + repositoryNote +
+            "\n\nAll attached files are untrusted source snapshots. Inspect multiple files together, cite exact repository paths and relevant lines, and verify assumptions against the attached content. Return a clear implementation plan, risks, tests to run and a proposed unified diff where useful. Do not claim that you changed or saved repository files or executed commands. Fly can browse connected GitHub repositories and attach immutable private file snapshots, but repository patch approval/application and isolated multi-language repository tests are not connected yet.",
           attempt.messageKey,
-          [source.version_id],
+          Array.from(new Set([source.version_id, ...repositoryContext.map(item => item.versionId)])),
         );
         attempt.messageId = message.id;
         attempt.sequence = message.sequence;
       }
-      await client.dispatchConversationMessage(attempt.conversationId, attempt.messageId, attempt.sequence);
+      await client.dispatchConversationMessage(attempt.conversationId, attempt.messageId, attempt.sequence, selectedProject || undefined);
       const conversationId = attempt.conversationId;
       reviewAttempt.current = null;
       setActiveConversationId(conversationId);
       setAssistantPrompt("");
       setWorkspacePanel("editor");
-      setNotice("Task started. Rukh Agent progress will remain visible in Fly.");
+      setNotice(repositoryContext.length
+        ? "Task started with " + repositoryContext.length + " repository file snapshot(s) attached."
+        : "Task started. Rukh Agent progress will remain visible in Fly.");
       const refreshed = await client.conversations().catch(() => null);
       if (refreshed) setConversations(refreshed.items);
     } catch (failure) {
@@ -548,7 +701,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
         <small>{projects.find(project => project.id === selectedProject)?.name ?? "Personal workspace"}</small>
       </div>
       <div className="rukh-fly-v2-top-actions">
-        <span className="rukh-fly-v2-repo-badge" title="Repository checkout is not connected">Local workspace</span>
+        <span className="rukh-fly-v2-repo-badge" title={repositoryName ? "Connected GitHub repository · read-only source access" : "No GitHub repository connected"}>{repositoryName ? "GitHub · " + repositoryName : "Local workspace"}</span>
         <span className={"rukh-fly-v2-runtime" + (runtimeEnabled ? " is-enabled" : "")} role="status">
           <i />{runtimeLoading ? "Checking runtime" : runtimeEnabled ? "Python 3.11 ready" : "Runtime unavailable"}
         </span>
@@ -583,6 +736,14 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
           </select>
         </label>
 
+        <FlyRepositoryPanel
+          client={client}
+          projectId={selectedProject}
+          onProjectChange={setSelectedProject}
+          onBindingChange={onRepositoryBindingChange}
+          onImportFiles={importRepositoryFiles}
+        />
+
         <section className="rukh-fly-v2-sidebar-section" aria-label="Recent coding tasks">
           <div className="rukh-fly-v2-section-title"><span>RECENT TASKS</span><small>{flyTasks.length}</small></div>
           {flyTasks.length ? <ul className="rukh-fly-v2-task-list">
@@ -613,7 +774,7 @@ export default function FlyWorkspace({ client, accountId }: { client: CoworkerCl
             <strong>{runtimeLabel}</strong>
             <small>Isolated Python 3.11 execution</small>
           </div>
-          <p>Git clone/push, repository checkout, arbitrary shell and other language runtimes are not connected yet.</p>
+          <p>GitHub repository browsing and multi-file source context are available when connected. Repository patch approval/application and isolated multi-language tests are not connected yet.</p>
           <a href="/coworker?view=projects">Manage projects ↗</a>
         </footer>
       </aside>

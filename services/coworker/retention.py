@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy import delete, select
 
 from .errors import CoworkerError
-from .models import Conversation, ConversationMessage, Project, ProjectResource
+from .models import Conversation, ConversationMessage, Project, ProjectResource, GitHubConnectAttempt, GitHubInstallation, GitHubRepositoryBinding
 from .models import (
     Account, ActionProposal, ActionRecipient, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserPushDelivery, BrowserPushSubscription, BrowserSession, SandboxExecution, SandboxSession,
     Automation, AutomationOccurrence, AutomationRevision, AutomationScheduleOutbox,
@@ -29,9 +29,10 @@ class RetentionService:
     Operators/scripts must explicitly choose the owned task/account being erased.
     """
 
-    def __init__(self, sessions, storage):
+    def __init__(self, sessions, storage, github=None):
         self.sessions = sessions
         self.storage = storage
+        self.github = github
 
     @staticmethod
     def _step_object_keys(rows: list[Step]) -> set[str]:
@@ -202,6 +203,12 @@ class RetentionService:
                     409,
                 )
 
+            # Revoke provider tokens before deleting their encrypted local
+            # copies. If GitHub cannot confirm revocation, abort account
+            # erasure rather than leave a live credential without a retry path.
+            if self.github is not None:
+                self.github.revoke_installations_in_transaction(db, owner)
+
             documents = list(db.scalars(select(DocumentVersion).where(DocumentVersion.owner_id == owner)).all())
             artifacts = list(db.scalars(select(Artifact).where(Artifact.owner_id == owner)).all())
             owned_task_ids = list(db.scalars(select(Task.id).where(Task.owner_id == owner)).all())
@@ -216,6 +223,9 @@ class RetentionService:
             notification_ids = list(db.scalars(select(Notification.id).where(Notification.owner_id == owner)).all())
 
             db.execute(delete(BrowserPushDelivery).where(BrowserPushDelivery.owner_id == owner))
+            db.execute(delete(GitHubRepositoryBinding).where(GitHubRepositoryBinding.owner_id == owner))
+            db.execute(delete(GitHubConnectAttempt).where(GitHubConnectAttempt.owner_id == owner))
+            db.execute(delete(GitHubInstallation).where(GitHubInstallation.owner_id == owner))
             db.execute(delete(ProjectResource).where(ProjectResource.owner_id == owner))
             db.execute(delete(Project).where(Project.owner_id == owner))
             db.execute(delete(ConversationMessage).where(ConversationMessage.owner_id == owner))

@@ -35,6 +35,7 @@ from .recipient_repository import RecipientRepository
 from .retention import RetentionService
 from .browser import BrowserRepository
 from .sandbox import SandboxRepository
+from .github_app import GitHubAppService
 from .project_repository import ProjectRepository
 from .conversation_repository import ConversationRepository
 from .conversation_replies import ConversationReplyService
@@ -70,6 +71,7 @@ class Container:
     retention: RetentionService | None = None
     browser: BrowserRepository | None = None
     sandbox: SandboxRepository | None = None
+    github: GitHubAppService | None = None
     projects: ProjectRepository | None = None
     conversations: ConversationRepository | None = None
     conversation_replies: ConversationReplyService | None = None
@@ -224,8 +226,13 @@ class Container:
                 self.settings,
                 self.storage,
             )
+        if self.github is None:
+            self.github = GitHubAppService(
+                self.repository.sessions,
+                self.settings,
+            )
         if self.retention is None:
-            self.retention = RetentionService(self.repository.sessions, self.storage)
+            self.retention = RetentionService(self.repository.sessions, self.storage, self.github)
 
     @classmethod
     def create(cls, settings: Settings):
