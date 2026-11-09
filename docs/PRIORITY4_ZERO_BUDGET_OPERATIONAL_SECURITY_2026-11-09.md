@@ -62,7 +62,9 @@ The latest main CI run inspected on 9 November 2026 was `42583600850` on `0e07cb
 - browser source-provenance test collection: failed because of the same missing module
 - governance audit: failed because native main protection is absent
 
-PR #663 restores the missing time module and adds regression tests. Its exact-head CI must finish before the repository-level result can be updated.
+PR #663 restores the missing time module and adds regression tests. Its first rerun then exposed a separate Alembic graph defect: migration `0068_fly_repository_coding` referenced `0067_agent_decision_latency`, while migration 0067 declares its actual revision ID as `0067`. The PR corrects the parent reference and adds a PostgreSQL migration assertion.
+
+The PR also adds a PostgreSQL 18 CI qualification job to the existing required merge gate. It uses an ephemeral GitHub-hosted PostgreSQL 18 service and runs database migration, trusted-skill registry, Temporal test-server, transaction fault, observability, and rollback tests without live provider mutations. This is repository-level qualification only; it does not restore a persistent staging worker or live cloud egress isolation. Its exact-head run must pass before repository-level qualification can be updated.
 
 ## 2. Zero-cost qualification topology
 
