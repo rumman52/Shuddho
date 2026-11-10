@@ -833,7 +833,23 @@ def test_sandbox_worker_command_is_networkless_minimal_and_fail_closed(tmp_path)
     assert "--cap-drop" in command
     assert "/work/main.py" in command
     assert str(scratch.resolve()) in command
-    assert "/usr/bin" not in command
+    # /usr/bin is an empty namespace directory and PATH destination, not a
+    # host mount. Inspect bind operands, not arbitrary command membership:
+    # exposing the host's /usr/bin (or any extra directory) must fail this test.
+    options = command[:command.index("--")]
+    mounts = [
+        tuple(options[index:index + 3])
+        for index, option in enumerate(options)
+        if option in {"--bind", "--ro-bind", "--ro-bind-try"}
+    ]
+    assert mounts == [
+        ("--ro-bind", "/usr/local/bin/python", "/usr/bin/python3.11"),
+        ("--ro-bind-try", "/usr/lib", "/usr/lib"),
+        ("--ro-bind-try", "/lib", "/lib"),
+        ("--ro-bind-try", "/lib64", "/lib64"),
+        ("--bind", str(scratch.resolve()), "/tmp"),
+        ("--ro-bind", str(source.resolve()), "/work/main.py"),
+    ]
     assert "-I" in command
     assert "-S" in command
     assert str(source.resolve()) in command

@@ -1,3 +1,11 @@
+## Day 1 baseline continuation — 10 November 2026 (Asia/Dhaka)
+
+Continue draft PR #664 from `5816cdbbce340b8bd286ec8ea7ab9a57e3e9e735`, main `1f6dae72e1de6f38ec4d9cf60180d856dbecb403`. Two CI failures reproduced independently; corrected the invalid provider test input and replaced sandbox string-membership with exact mount assertions. No production validator or sandbox boundary relaxed. Focused requested check: **4 passed, zero skips**, mandatory JUnit module gates pass. API and worker staging definitions now pin the existing bounded DeepSeek/model/provider/run policy; both environments load and validate with execution gates disabled. [Task, evidence, ceilings and blockers](DAY1_BASELINE_2026-11-10.md).
+
+**Immediate blockers/owners:** C/Render owner: expired billing-suspended PG18, no verified backup/restore or authorized retention choice, no persistent worker. C/GitHub administrator: unprotected main/no rulesets, production API auto-deploys main. D: no independent holdout custody. Broader source checks and review pending; no merge, deployment, activation, inference spend or production qualification. Complete independent work while these remain blocked.
+
+---
+
 ## Approved Figma frontend implementation — 5 November 2026 (Asia/Dhaka)
 
 PR [#635](https://github.com/rumman52/Shuddho/pull/635), implementation commit `816700f8e9fb88eb2382915d88e9759255e09cd7`. Branch `fix/rukh-figma-visual-parity-20261105`, base `065dedfe73a95ddd36d331336e11297d75aa25db`. [Implementation, root causes, requirement mapping, verification and release blockers](../frontend/FIGMA_IMPLEMENTATION_2026-11-05.md).

@@ -2478,8 +2478,10 @@ def test_provider_capacity_settings_fail_closed():
     with pytest.raises(ValueError, match="token reserve"):
         Settings(
             **base,
-            provider_max_reserved_tokens=1000,
-            provider_max_reserved_tokens_per_workspace=2000,
+            # Keep Fly's 8000-token reservation valid so this exercises the
+            # workspace/global relationship independently of Fly validation.
+            provider_max_reserved_tokens=8000,
+            provider_max_reserved_tokens_per_workspace=16000,
         ).validate()
     with pytest.raises(ValueError, match="must exceed the model timeout"):
         Settings(
