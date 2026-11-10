@@ -820,9 +820,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
           <div className="rukh-context-upload">
             <label htmlFor="cw-source-upload">Upload a source file</label>
             <input id="cw-source-upload" type="file" aria-label="Upload a source file"
-              accept=".txt,.docx,.pdf,.csv,.xlsx,.pptx" disabled={working || uploadingSource}
+              accept=".txt,.docx,.pdf" disabled={working || uploadingSource}
               onChange={event => { void uploadSource(event); }} />
-            <small>TXT, DOCX, PDF, CSV, XLSX or PPTX · maximum 8 MB</small>
+            <small>TXT, DOCX or PDF · maximum 8 MB</small>
           </div>
           {uploadError && <p className="cw-error" role="alert">{uploadError}</p>}
           {manifest.truncated.documents && <p className="rukh-muted">Only the first document page is shown.</p>}

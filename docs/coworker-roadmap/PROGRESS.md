@@ -1,3 +1,11 @@
+## Day 1 final source-alignment follow-up — 10 November 2026 (Asia/Dhaka)
+
+After the source/UI ownership map identified an unsupported upload-picker claim, a React regression was committed first (`a8e7a37c6c86892976c7a67ffc4091297e8d308b`). GitHub frontend CI reproduced the precise RED: **240 passed, 1 failed**, actual picker `.txt,.docx,.pdf,.csv,.xlsx,.pptx` versus accepted `.txt,.docx,.pdf`. The subsequent code correction narrows the picker and hint without extending the upload client's formats, security boundaries, or the backend. **Exact corrected-head CI pending** at this source checkpoint.
+
+Render's original Free staging PostgreSQL 18 remains expired and billing-suspended; the calculated 14-day retention risk is **14 Nov 2026 17:11:33 UTC** under Render's current policy, with recoverability and private backup unverified. Owner recovery decision, independently enforced protected-main review, and D custody remain external blockers. GitHub issues #291 and #484 contain fresh owner runbook updates. Production API auto-deploy remains disabled; no paid resource, model inference, migration, external send, merge or production activation was performed.
+
+---
+
 ## Day 1 baseline continuation — 10 November 2026 (Asia/Dhaka)
 
 Continue draft PR #664 from `5816cdbbce340b8bd286ec8ea7ab9a57e3e9e735`, main `1f6dae72e1de6f38ec4d9cf60180d856dbecb403`. Two CI failures reproduced independently; corrected the invalid provider test input and replaced sandbox string-membership with exact mount assertions. No production validator or sandbox boundary relaxed. Focused requested check: **4 passed, zero skips**, mandatory JUnit module gates pass. API and worker staging definitions now pin the existing bounded DeepSeek/model/provider/run policy; both environments load and validate with execution gates disabled. [Task, evidence, ceilings and blockers](DAY1_BASELINE_2026-11-10.md).

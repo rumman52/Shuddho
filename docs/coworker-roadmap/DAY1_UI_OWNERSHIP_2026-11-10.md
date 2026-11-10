@@ -44,11 +44,15 @@ No automatic conversation-to-task delegation is implemented by this mapping.
 
 ## Concrete gaps and limits
 
-- **Upload format drift:** `ConversationWorkspace.tsx:823` accepts
-  `.txt,.docx,.pdf,.csv,.xlsx,.pptx` and the next label advertises all six formats.
-  Actual `CoworkerClient.upload` at `client.ts:1193` rejects every filename except
-  TXT, DOCX and PDF, enforcing 1 byte through 8 MB before any request. Existing UI
-  upload tests stub `upload` and exercise PDF, so they do not cover this mismatch.
+- **Upload format drift corrected in PR #664:** the source picker previously
+  advertised CSV/XLSX/PPTX even though canonical `CoworkerClient.upload` rejects
+  them. Its `accept` attribute and visible hint now match the existing supported
+  TXT/DOCX/PDF formats and 8 MB client bound. A React regression pins both UI
+  contracts. Its test-only parent commit `a8e7a37c6c86892976c7a67ffc4091297e8d308b`
+  reproduced the mismatch in GitHub frontend CI: 240 passed, 1 expected failure,
+  with actual `.txt,.docx,.pdf,.csv,.xlsx,.pptx` versus required
+  `.txt,.docx,.pdf`. Final-head green CI remains to be verified. No upload
+  authorization or backend supported-file list was expanded.
 - **Steering draft isolation:** the component has one `steeringMessageId` and one
   `steeringDraft` (`ConversationWorkspace.tsx:74`); selecting another run clears
   the draft. Current tests prove one run's revision-bound steering and independent
