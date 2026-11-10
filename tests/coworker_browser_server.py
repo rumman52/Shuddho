@@ -58,7 +58,10 @@ settings = replace(
     agent_action_proposals_enabled=True,
     action_attachments_enabled=True,
     action_reminders_enabled=True,
-    max_active_agent_runs=3,  # Match the three-run acceptance scenario; production default stays bounded at two.
+    # The continuity scenario holds all three planner calls until explicitly
+    # released. Each admitted run needs its own live provider reservation.
+    max_active_agent_runs=3,
+    provider_max_concurrent_per_workspace=3,
 )
 settings.validate()
 container.settings = settings
@@ -98,11 +101,18 @@ container.conversation_replies.model = chat_model
 
 class BrowserModel(FakeModel):
     def messages(self, task, sources):
-        return [{"role": "user", "content": json.dumps({"skill_id": task["skill_id"], "sources": sources})}]
+        return [{"role": "user", "content": json.dumps({
+            "skill_id": task["skill_id"], "instruction": task["instruction"], "sources": sources,
+        })}]
 
     async def generate(self, _messages, language, source_ids):
         await asyncio.sleep(2)  # Exercise progress, navigation and refresh.
-        skill_id = json.loads(_messages[-1]["content"])["skill_id"]
+        task = json.loads(_messages[-1]["content"])
+        skill_id = task["skill_id"]
+        if language == "auto":
+            # Conversation dispatch defaults to auto. Resolve the deterministic
+            # fixture language from the English/Bangla objectives used here.
+            language = "bn" if "bangla" in task["instruction"].lower() else "en"
         if skill_id == "report_email":
             value = draft(language)
             value.report.sections[0].source_ids = sorted(source_ids)

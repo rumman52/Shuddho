@@ -32,6 +32,7 @@ from .models import (
 )
 from .conversation_repository import ConversationRepository
 from .repository import iso, not_found
+from .time import aware
 
 
 GITHUB_API = "https://api.github.com"
@@ -304,7 +305,7 @@ class GitHubAppService:
                 GitHubConnectAttempt.state_hash == _sha(state),
                 GitHubConnectAttempt.owner_id == owner,
             ).with_for_update())
-            if row is None or row.stage != "oauth" or row.expires_at <= utcnow():
+            if row is None or row.stage != "oauth" or aware(row.expires_at) <= utcnow():
                 raise CoworkerError("github_oauth_expired", "This GitHub connection request expired or was already used. Start again.", 409)
             self._project(db, owner, row.project_id)
             verifier = self._vault().open(
@@ -328,7 +329,7 @@ class GitHubAppService:
                 GitHubConnectAttempt.id == attempt_id,
                 GitHubConnectAttempt.owner_id == owner,
             ).with_for_update())
-            if row is None or row.stage != "oauth_processing" or row.expires_at <= utcnow():
+            if row is None or row.stage != "oauth_processing" or aware(row.expires_at) <= utcnow():
                 raise CoworkerError("github_oauth_expired", "This GitHub connection request expired. Start again.", 409)
             row.state_hash = _sha(install_state)
             row.stage = "awaiting_install"
@@ -375,7 +376,7 @@ class GitHubAppService:
                 GitHubConnectAttempt.id == attempt_id,
                 GitHubConnectAttempt.owner_id == owner,
             ).with_for_update())
-            if row is not None and row.stage == "install_processing" and row.expires_at > utcnow():
+            if row is not None and row.stage == "install_processing" and aware(row.expires_at) > utcnow():
                 row.stage = "awaiting_install"
 
     def complete_install(self, owner: str, state: str, installation_id: int):
@@ -388,7 +389,7 @@ class GitHubAppService:
                 GitHubConnectAttempt.state_hash == _sha(state),
                 GitHubConnectAttempt.owner_id == owner,
             ).with_for_update())
-            if row is None or row.stage != "awaiting_install" or row.expires_at <= utcnow():
+            if row is None or row.stage != "awaiting_install" or aware(row.expires_at) <= utcnow():
                 raise CoworkerError("github_install_expired", "This GitHub installation request expired or was already used. Start again.", 409)
             self._project(db, owner, row.project_id)
             token_data = self._vault().open(
@@ -435,7 +436,7 @@ class GitHubAppService:
                 GitHubConnectAttempt.id == attempt_id,
                 GitHubConnectAttempt.owner_id == owner,
             ).with_for_update())
-            if attempt is None or attempt.stage != "install_processing" or attempt.expires_at <= utcnow():
+            if attempt is None or attempt.stage != "install_processing" or aware(attempt.expires_at) <= utcnow():
                 raise CoworkerError("github_install_expired", "This GitHub installation request expired. Start again.", 409)
             active_installation = db.scalar(select(GitHubInstallation.id).where(
                 GitHubInstallation.owner_id == owner,
@@ -783,7 +784,8 @@ class GitHubAppService:
         def delete_grant(token: str):
             try:
                 with self._client() as client:
-                    return client.delete(
+                    return client.request(
+                        "DELETE",
                         GITHUB_API + f"/applications/{quote(self.settings.github_app_client_id, safe='')}/grant",
                         auth=(self.settings.github_app_client_id, self.settings.github_app_client_secret),
                         headers={

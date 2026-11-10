@@ -74,10 +74,19 @@ export async function verifyConversationAgentContinuity(page) {
     }, "three independent in-flight Agent runs");
     // Let the conversation activity poll refresh event_sequence before optimistic steering.
     await page.waitForTimeout(5500);
-    await waitFor(async () =>
-      (await page.getByRole("status").filter({ hasText: /Planning|Working/ }).count()) === 3,
-      "three visible active Agent progress states"
-    );
+    // Runtime v3 keeps its durable state queued until its held first decision
+    // commits. Each run still exposes active progress and independent controls.
+    // Scope to each progress region: message metadata also has a status role.
+    const progressRegions = page.getByRole("region", { name: "Coworker progress", exact: true });
+    await waitFor(async () => {
+      if (await progressRegions.count() !== 3) return false;
+      for (let index = 0; index < 3; index++) {
+        const progress = progressRegions.nth(index);
+        const activeStatus = progress.getByRole("status").filter({ hasText: /^(Queued|Planning|Working)$/ });
+        if (!await progress.isVisible() || await activeStatus.count() !== 1 || !await activeStatus.isVisible()) return false;
+      }
+      return true;
+    }, "three visible active Agent progress states");
 
     const steerButtons = page.getByRole("button", { name: "Steer Agent task", exact: true });
     await waitFor(async () => (await steerButtons.count()) === 3, "three per-message steering controls");
@@ -85,7 +94,7 @@ export async function verifyConversationAgentContinuity(page) {
     await page.getByLabel("Instruction for Agent", { exact: true }).fill(steering);
     await page.getByRole("button", { name: "Send instruction", exact: true }).click();
 
-    // Cancel only Task B while both model decisions are deliberately held.
+    // Cancel only Task B while all three model decisions are deliberately held.
     const cancelButtons = page.getByRole("button", { name: "Cancel Agent work", exact: true });
     await waitFor(async () => (await cancelButtons.count()) === 3, "three independent cancellation controls");
     await cancelButtons.nth(1).click();
