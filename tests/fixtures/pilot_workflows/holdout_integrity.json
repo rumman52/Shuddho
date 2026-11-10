@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-11-10",
+  "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+  "split": "holdout",
+  "cases": 40,
+  "matrix": {
+    "research_brief/bn": 10,
+    "research_brief/en": 10,
+    "project_report_email/bn": 10,
+    "project_report_email/en": 10
+  },
+  "case_file": {
+    "path": "holdout.jsonl",
+    "sha256": "34c7b10dd809a1d06054d4ab0b1c23474c312938080ad2a5189cca0661d00fba",
+    "cases": 40
+  },
+  "sources": [
+    {
+      "id": "holdout-backup-preflight",
+      "path": "sources/holdout-backup-preflight.md",
+      "sha256": "01c24e0ecb2ac9fbabc3aae80d03b75caae4ec0cba34d50953237fef5cef610c",
+      "original_path": "docs/coworker-roadmap/P0-02_BACKUP_RESTORE_PREFLIGHT_2026-10-31.md",
+      "original_sha256": "01c24e0ecb2ac9fbabc3aae80d03b75caae4ec0cba34d50953237fef5cef610c",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-endpoint-validation",
+      "path": "sources/holdout-endpoint-validation.md",
+      "sha256": "90b95d32837e321e07665a3825156f1f824ce08d536bd9a0647389ca4a57c7f0",
+      "original_path": "docs/coworker-roadmap/PA10_PREFLIGHT_ENDPOINT_SECURITY_2026-10-29.md",
+      "original_sha256": "90b95d32837e321e07665a3825156f1f824ce08d536bd9a0647389ca4a57c7f0",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-governance-gate",
+      "path": "sources/holdout-governance-gate.md",
+      "sha256": "e051988d8ad569d90cdaed421fcae374259237593fb2e79b8b502a154b19356a",
+      "original_path": "docs/coworker-roadmap/V01_REQUIRED_GOVERNANCE_GATE_2026-10-24.md",
+      "original_sha256": "e051988d8ad569d90cdaed421fcae374259237593fb2e79b8b502a154b19356a",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-s3-pagination",
+      "path": "sources/holdout-s3-pagination.md",
+      "sha256": "003a835dc139cba785618aa0ada3fbbbdb7759c7e99fac3db622ce8823646315",
+      "original_path": "docs/coworker-roadmap/CW02_S3_INVENTORY_PAGINATION_2026-10-19.md",
+      "original_sha256": "003a835dc139cba785618aa0ada3fbbbdb7759c7e99fac3db622ce8823646315",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-cancel-finalization",
+      "path": "sources/holdout-cancel-finalization.md",
+      "sha256": "a846ce0b1153a05cf0648053ab571a81de2330eee4ea39a05e6d4c5a7fe6d289",
+      "original_path": "docs/coworker-roadmap/C01_CANCELLED_FINALIZATION_FENCE_2026-10-20.md",
+      "original_sha256": "a846ce0b1153a05cf0648053ab571a81de2330eee4ea39a05e6d4c5a7fe6d289",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-projects-entry",
+      "path": "sources/holdout-projects-entry.md",
+      "sha256": "cc8cb84f6f34a7dd97f9b453fe90efb9aad515e2035b728a1421ee83858bdecf",
+      "original_path": "docs/coworker-roadmap/PROJECTS_ENTRY_SCREEN_2026-11-08.md",
+      "original_sha256": "cc8cb84f6f34a7dd97f9b453fe90efb9aad515e2035b728a1421ee83858bdecf",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-source-erasure",
+      "path": "sources/holdout-source-erasure.md",
+      "sha256": "c7be43b7eb7e9ef8a602360b293d05bd12860a18a393fc3a1dcf0db5e1c2f58d",
+      "original_path": "docs/coworker-roadmap/CW09_BROWSER_SOURCE_ERASURE_2026-10-15.md",
+      "original_sha256": "c7be43b7eb7e9ef8a602360b293d05bd12860a18a393fc3a1dcf0db5e1c2f58d",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-code-review-ui",
+      "path": "sources/holdout-code-review-ui.md",
+      "sha256": "152c471bb18d49d0423451e415ad1c06104760684c2e442bbaaf829c3c53fa8c",
+      "original_path": "docs/coworker-roadmap/CW10_OWNER_CODE_REVIEW_UI_2026-10-16.md",
+      "original_sha256": "152c471bb18d49d0423451e415ad1c06104760684c2e442bbaaf829c3c53fa8c",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-artifact-preview",
+      "path": "sources/holdout-artifact-preview.md",
+      "sha256": "37e56c20bc4c350a30683e469357bc767706b9f4ca633cad6ea903039a219566",
+      "original_path": "docs/coworker-roadmap/FRONTEND_APP_SHELL_QUALIFICATION_2026-11-02.md",
+      "original_sha256": "37e56c20bc4c350a30683e469357bc767706b9f4ca633cad6ea903039a219566",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-pending-memory",
+      "path": "sources/holdout-pending-memory.md",
+      "sha256": "089236093748b8541835a88f34fab2e1830b8120f0e85d38c47f76762011778f",
+      "original_path": "docs/coworker-roadmap/CORE_CONTEXT_SOURCE_CLOSURE_2026-10-19.md",
+      "original_sha256": "089236093748b8541835a88f34fab2e1830b8120f0e85d38c47f76762011778f",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    }
+  ],
+  "access_isolation_established": false,
+  "custodian": "independent human D required; not assigned by this fixture",
+  "execution_blocker": "All repository readers can inspect cases, sources and expected facts. A real independently controlled transfer and exclusion of development authors is required before held-out qualification. No local receipt can establish that boundary."
+}

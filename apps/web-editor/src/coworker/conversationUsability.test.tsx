@@ -210,6 +210,16 @@ test("conversation context uploads a source and attaches it only for explicit Ag
   }, data);
 });
 
+test("conversation source picker advertises only accepted upload types", async () => {
+  await mount(async tree => {
+    const input = tree.root.findByProps({ "aria-label": "Upload a source file" });
+    assert.equal(input.props.accept, ".txt,.docx,.pdf");
+    const upload = tree.root.findByProps({ className: "rukh-context-upload" });
+    assert.ok(upload.findAllByType("small").some(node =>
+      node.children.join("") === "TXT, DOCX or PDF · maximum 8 MB"));
+  });
+});
+
 test("conversation context reports upload failures without selecting an invalid source", async () => {
   const data = fixture();
   data.client.upload = async () => { throw new Error("Storage rejected the upload"); };

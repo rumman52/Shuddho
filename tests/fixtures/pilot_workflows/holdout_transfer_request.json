@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "blocked_external_human_action_required",
+  "requested_custodian": "independent human D",
+  "current_access_isolation": false,
+  "current_known_readers": "All readers of this repository, including fixture authors and development agents, can inspect candidate holdout prompts, expected facts and source snapshots.",
+  "required_destination": "A D-controlled repository or private evaluation store whose access policy excludes development authors and their agents; do not grant new access from this checkout.",
+  "required_evidence_before_qualification": [
+    "Name the actual independent D custodian and authorized reviewers.",
+    "Record destination identity, effective access policy and a negative read-access check from a development identity.",
+    "D must independently assess prior exposure and replace any exposed tasks/answer keys before treating a corpus as an unseen holdout.",
+    "Transfer exact source bytes, task/answer-key manifests and frozen checksums through an owner-authorized channel; record the transfer receipt and D verification.",
+    "Freeze model/prompt revision, output IDs, resource ceilings and human acceptance rubric before generating heldout outputs.",
+    "Keep answer keys and human review decisions outside developer-visible model inputs and repositories.",
+    "Only independently reviewed follow-up implementation may enable evaluation against the genuinely segregated corpus. A local JSON receipt or chmod is insufficient."
+  ],
+  "actions_performed": [],
+  "permission_changes_performed": false,
+  "messages_sent": false,
+  "heldout_execution_performed": false
+}

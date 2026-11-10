@@ -1,3 +1,21 @@
+## Day 1 final source-alignment follow-up — 10 November 2026 (Asia/Dhaka)
+
+After the source/UI ownership map identified an unsupported upload-picker claim, a React regression was committed first (`a8e7a37c6c86892976c7a67ffc4091297e8d308b`). GitHub frontend CI reproduced the precise RED: **240 passed, 1 failed**, actual picker `.txt,.docx,.pdf,.csv,.xlsx,.pptx` versus accepted `.txt,.docx,.pdf`. The subsequent code correction narrows the picker and hint without extending the upload client's formats, security boundaries, or the backend. **Exact corrected-head CI pending** at this source checkpoint.
+
+Render's original Free staging PostgreSQL 18 remains expired and billing-suspended; the calculated 14-day retention risk is **14 Nov 2026 17:11:33 UTC** under Render's current policy, with recoverability and private backup unverified. Owner recovery decision, independently enforced protected-main review, and D custody remain external blockers. GitHub issues #291 and #484 contain fresh owner runbook updates. Production API auto-deploy remains disabled; no paid resource, model inference, migration, external send, merge or production activation was performed.
+
+---
+
+## Day 1 baseline continuation — 10 November 2026 (Asia/Dhaka)
+
+Continue draft PR #664 from `5816cdbbce340b8bd286ec8ea7ab9a57e3e9e735`, main `1f6dae72e1de6f38ec4d9cf60180d856dbecb403`. Two CI failures reproduced independently; corrected the invalid provider test input and replaced sandbox string-membership with exact mount assertions. No production validator or sandbox boundary relaxed. Focused requested check: **4 passed, zero skips**, mandatory JUnit module gates pass. API and worker staging definitions now pin the existing bounded DeepSeek/model/provider/run policy; both environments load and validate with execution gates disabled. [Task, evidence, ceilings and blockers](DAY1_BASELINE_2026-11-10.md).
+
+**Source verification:** 162 Coworker/sandbox/Fly tests, 39 evaluator/quality tests, 240 shared frontend tests plus 7 shell tests pass; web-editor build passes. Independent source-review findings fixed with eight RED→GREEN regression instances. 80 frozen scenarios prepared; 40/40 handcrafted development calibration is not model-quality evidence. CI now fetches source history for provenance; final-head CI pending. Production API Auto-Deploy changed to Off, independently confirmed by Render API at 2026-11-10T10:55:49.522248Z. Native main ruleset is populated; save awaits the owner’s GitHub account verification. [Operations](DAY1_OPERATIONS_2026-11-10.md), [evaluation](DAY1_EVALUATION_2026-11-10.md), [UI ownership](DAY1_UI_OWNERSHIP_2026-11-10.md).
+
+**Immediate blockers/owners:** C/Render owner: expired billing-suspended PG18, no verified backup/restore or authorized retention choice, no persistent worker. C/GitHub administrator: main ruleset save requires account verification; native denied/permitted controls unperformed. Production API auto-deploy is now off. D: no independent holdout custody. Broader source checks and review pending; no merge, deployment, activation, inference spend or production qualification. Complete independent work while these remain blocked.
+
+---
+
 ## Approved Figma frontend implementation — 5 November 2026 (Asia/Dhaka)
 
 PR [#635](https://github.com/rumman52/Shuddho/pull/635), implementation commit `816700f8e9fb88eb2382915d88e9759255e09cd7`. Branch `fix/rukh-figma-visual-parity-20261105`, base `065dedfe73a95ddd36d331336e11297d75aa25db`. [Implementation, root causes, requirement mapping, verification and release blockers](../frontend/FIGMA_IMPLEMENTATION_2026-11-05.md).

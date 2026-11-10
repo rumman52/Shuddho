@@ -22,6 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Frozen pilot sources are compared with their historical Git blobs.
+          # A depth-one checkout omits that revision on subsequent PR heads.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.7.22"

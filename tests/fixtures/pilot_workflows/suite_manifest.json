@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "suite_id": "day1-pilot-workflows-2026-11-10",
+  "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+  "fixture_kind": "repository-grounded simulated workflow inputs; no real customer outcomes",
+  "files": {
+    "development": {
+      "path": "development.jsonl",
+      "sha256": "f6b9d7bbb46e2320db0c964d504306a4c40e432213c4404f812aa2410feedc74",
+      "cases": 40
+    },
+    "holdout": {
+      "path": "holdout.jsonl",
+      "sha256": "34c7b10dd809a1d06054d4ab0b1c23474c312938080ad2a5189cca0661d00fba",
+      "cases": 40
+    },
+    "development_reference_outputs": {
+      "path": "development_reference_outputs.jsonl",
+      "sha256": "116803ae2c8e882ee2b7d66d4b0fe32c658215bdd3cf962df7d80f437fd5b287"
+    }
+  },
+  "sources": [
+    {
+      "id": "development-goal-retry",
+      "path": "sources/development-goal-retry.md",
+      "sha256": "19153cc50d714ffaae54c80bc38ca7affa3b66de44fcd8cd51b184f95a9ffb8b",
+      "original_path": "docs/coworker-roadmap/A02_P01_GOAL_RUN_ADMISSION_REPLAY_2026-10-24.md",
+      "original_sha256": "19153cc50d714ffaae54c80bc38ca7affa3b66de44fcd8cd51b184f95a9ffb8b",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-history-replay",
+      "path": "sources/development-history-replay.md",
+      "sha256": "2464a090e4807863f4f8ede62fdd6d041148512f3b961850b0e3b14797a43998",
+      "original_path": "docs/coworker-roadmap/A03_TEMPORAL_HISTORY_REPLAY_CONTRACT_2026-10-25.md",
+      "original_sha256": "2464a090e4807863f4f8ede62fdd6d041148512f3b961850b0e3b14797a43998",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-report-route",
+      "path": "sources/development-report-route.md",
+      "sha256": "8ad5ece35583101f6d92e4a450f0dffbc429b174a60d47d823cf1a050d73caa4",
+      "original_path": "docs/coworker-roadmap/CW06_REPORT_ROUTE_CONTRACT_2026-10-13.md",
+      "original_sha256": "8ad5ece35583101f6d92e4a450f0dffbc429b174a60d47d823cf1a050d73caa4",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-conversation-pins",
+      "path": "sources/development-conversation-pins.md",
+      "sha256": "09c11ab8b150cd9d9ca99dab3bcce358af05b91b1d860c5f878dc74c04905a36",
+      "original_path": "docs/coworker-roadmap/CW08_CONVERSATION_SOURCE_BINDING_2026-10-13.md",
+      "original_sha256": "09c11ab8b150cd9d9ca99dab3bcce358af05b91b1d860c5f878dc74c04905a36",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-browser-isolation",
+      "path": "sources/development-browser-isolation.md",
+      "sha256": "e61e8b2020fbd93d3c28b2f1f970486a2fe24f989461879850912505f1349240",
+      "original_path": "docs/coworker-roadmap/CW09_AGENT_BROWSER_CREDENTIAL_AND_MUTATION_ISOLATION_2026-10-15.md",
+      "original_sha256": "e61e8b2020fbd93d3c28b2f1f970486a2fe24f989461879850912505f1349240",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-worker-revocation",
+      "path": "sources/development-worker-revocation.md",
+      "sha256": "03a09ca0a32c0f5ee8f1d328a75c9f3513f41ec0c98fd6d6a026b8e7604a46ed",
+      "original_path": "docs/coworker-roadmap/CW10_GENERATED_WORKER_REVOCATION_E2E_2026-10-16.md",
+      "original_sha256": "03a09ca0a32c0f5ee8f1d328a75c9f3513f41ec0c98fd6d6a026b8e7604a46ed",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-fleet-registration",
+      "path": "sources/development-fleet-registration.md",
+      "sha256": "a14bf3ae8e4d2d2d81a62f3f65a9d2a444e42f2687171cd20ffcbbd34e937e89",
+      "original_path": "docs/coworker-roadmap/CW11_WORKER_REGISTRATION_FENCE_2026-10-17.md",
+      "original_sha256": "a14bf3ae8e4d2d2d81a62f3f65a9d2a444e42f2687171cd20ffcbbd34e937e89",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-cleanup-lifetime",
+      "path": "sources/development-cleanup-lifetime.md",
+      "sha256": "6a22bb8d11f4da6ef9f1eda1f231eaae889552ae5bb1998018f1a476bfba0ad8",
+      "original_path": "docs/coworker-roadmap/CW10_WORKER_LIFETIME_CLEANUP_2026-10-20.md",
+      "original_sha256": "6a22bb8d11f4da6ef9f1eda1f231eaae889552ae5bb1998018f1a476bfba0ad8",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-grant-admission",
+      "path": "sources/development-grant-admission.md",
+      "sha256": "c962cd901bc15ecd6cdae12bcb21c8e0c7083dc37fe913f8470dde1ee7e4ba66",
+      "original_path": "docs/coworker-roadmap/PART01_CONNECTED_READ_GRANT_ADMISSION_2026-10-20.md",
+      "original_sha256": "c962cd901bc15ecd6cdae12bcb21c8e0c7083dc37fe913f8470dde1ee7e4ba66",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "development-gmail-receipts",
+      "path": "sources/development-gmail-receipts.md",
+      "sha256": "0a437ca8af532e7fa43761bff6dbd09e14472078424a1773371b2da74d379603",
+      "original_path": "docs/coworker-roadmap/TX05_GMAIL_RECEIPT_ID_INTEGRITY_2026-10-21.md",
+      "original_sha256": "0a437ca8af532e7fa43761bff6dbd09e14472078424a1773371b2da74d379603",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-backup-preflight",
+      "path": "sources/holdout-backup-preflight.md",
+      "sha256": "01c24e0ecb2ac9fbabc3aae80d03b75caae4ec0cba34d50953237fef5cef610c",
+      "original_path": "docs/coworker-roadmap/P0-02_BACKUP_RESTORE_PREFLIGHT_2026-10-31.md",
+      "original_sha256": "01c24e0ecb2ac9fbabc3aae80d03b75caae4ec0cba34d50953237fef5cef610c",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-endpoint-validation",
+      "path": "sources/holdout-endpoint-validation.md",
+      "sha256": "90b95d32837e321e07665a3825156f1f824ce08d536bd9a0647389ca4a57c7f0",
+      "original_path": "docs/coworker-roadmap/PA10_PREFLIGHT_ENDPOINT_SECURITY_2026-10-29.md",
+      "original_sha256": "90b95d32837e321e07665a3825156f1f824ce08d536bd9a0647389ca4a57c7f0",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-governance-gate",
+      "path": "sources/holdout-governance-gate.md",
+      "sha256": "e051988d8ad569d90cdaed421fcae374259237593fb2e79b8b502a154b19356a",
+      "original_path": "docs/coworker-roadmap/V01_REQUIRED_GOVERNANCE_GATE_2026-10-24.md",
+      "original_sha256": "e051988d8ad569d90cdaed421fcae374259237593fb2e79b8b502a154b19356a",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-s3-pagination",
+      "path": "sources/holdout-s3-pagination.md",
+      "sha256": "003a835dc139cba785618aa0ada3fbbbdb7759c7e99fac3db622ce8823646315",
+      "original_path": "docs/coworker-roadmap/CW02_S3_INVENTORY_PAGINATION_2026-10-19.md",
+      "original_sha256": "003a835dc139cba785618aa0ada3fbbbdb7759c7e99fac3db622ce8823646315",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-cancel-finalization",
+      "path": "sources/holdout-cancel-finalization.md",
+      "sha256": "a846ce0b1153a05cf0648053ab571a81de2330eee4ea39a05e6d4c5a7fe6d289",
+      "original_path": "docs/coworker-roadmap/C01_CANCELLED_FINALIZATION_FENCE_2026-10-20.md",
+      "original_sha256": "a846ce0b1153a05cf0648053ab571a81de2330eee4ea39a05e6d4c5a7fe6d289",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-projects-entry",
+      "path": "sources/holdout-projects-entry.md",
+      "sha256": "cc8cb84f6f34a7dd97f9b453fe90efb9aad515e2035b728a1421ee83858bdecf",
+      "original_path": "docs/coworker-roadmap/PROJECTS_ENTRY_SCREEN_2026-11-08.md",
+      "original_sha256": "cc8cb84f6f34a7dd97f9b453fe90efb9aad515e2035b728a1421ee83858bdecf",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-source-erasure",
+      "path": "sources/holdout-source-erasure.md",
+      "sha256": "c7be43b7eb7e9ef8a602360b293d05bd12860a18a393fc3a1dcf0db5e1c2f58d",
+      "original_path": "docs/coworker-roadmap/CW09_BROWSER_SOURCE_ERASURE_2026-10-15.md",
+      "original_sha256": "c7be43b7eb7e9ef8a602360b293d05bd12860a18a393fc3a1dcf0db5e1c2f58d",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-code-review-ui",
+      "path": "sources/holdout-code-review-ui.md",
+      "sha256": "152c471bb18d49d0423451e415ad1c06104760684c2e442bbaaf829c3c53fa8c",
+      "original_path": "docs/coworker-roadmap/CW10_OWNER_CODE_REVIEW_UI_2026-10-16.md",
+      "original_sha256": "152c471bb18d49d0423451e415ad1c06104760684c2e442bbaaf829c3c53fa8c",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-artifact-preview",
+      "path": "sources/holdout-artifact-preview.md",
+      "sha256": "37e56c20bc4c350a30683e469357bc767706b9f4ca633cad6ea903039a219566",
+      "original_path": "docs/coworker-roadmap/FRONTEND_APP_SHELL_QUALIFICATION_2026-11-02.md",
+      "original_sha256": "37e56c20bc4c350a30683e469357bc767706b9f4ca633cad6ea903039a219566",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    },
+    {
+      "id": "holdout-pending-memory",
+      "path": "sources/holdout-pending-memory.md",
+      "sha256": "089236093748b8541835a88f34fab2e1830b8120f0e85d38c47f76762011778f",
+      "original_path": "docs/coworker-roadmap/CORE_CONTEXT_SOURCE_CLOSURE_2026-10-19.md",
+      "original_sha256": "089236093748b8541835a88f34fab2e1830b8120f0e85d38c47f76762011778f",
+      "source_revision": "602f76f73ad845fe3ac4b4cb133fd8a07dbd20a8",
+      "kind": "repository_document_snapshot",
+      "current_deployment_verified": false
+    }
+  ],
+  "holdout_integrity_sha256": "18b856397a33f2cc0c9cafac8b60ef04b39abee313c769c68b9d21b6273a3ac4",
+  "balance": {
+    "splits": 2,
+    "per_split": 40,
+    "per_cell_per_split": 10
+  },
+  "evaluation_limits": {
+    "max_cases": 40,
+    "max_submission_bytes": 2000000,
+    "max_output_bytes": 24000,
+    "provider_calls": 0,
+    "external_spend_microusd": 0
+  }
+}
