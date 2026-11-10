@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 from sqlalchemy import select
 
-from test_coworker import account, signed_client
+from test_coworker import account, container, signed_client
 from services.coworker.config import Settings
 from services.coworker.errors import CoworkerError
 from services.coworker.github_app import GitHubAppService, safe_repository_path
@@ -62,14 +62,14 @@ def _project(container, owner):
     return value
 
 
-def _transport(*, accessible_installation=True):
+def _transport(*, accessible_installation=True, repo_pull=True, revoke_status=204):
     source = b"print('repository context')\n"
     repo = {
         "id": 777,
         "full_name": "acme/demo",
         "default_branch": "main",
         "private": True,
-        "permissions": {"pull": True, "push": False, "admin": False},
+        "permissions": {"pull": repo_pull, "push": False, "admin": False},
     }
 
     def handler(request: httpx.Request):
@@ -182,7 +182,7 @@ def test_github_app_oauth_pkce_install_verification_and_repository_browsing(cont
         owner, project["id"], installation["id"], 777, project["revision"],
     )
     assert binding["full_name"] == "acme/demo"
-    assert binding["github_user_id"] == 123
+    assert binding["github_user_id"] == 9001
     assert binding["can_read_contents"] is True
     assert binding["can_write_contents"] is False
 
