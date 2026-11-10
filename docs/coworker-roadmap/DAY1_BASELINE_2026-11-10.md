@@ -55,13 +55,13 @@ Day 1 remains **BLOCKED for operational acceptance** until DB/resource retention
 
 ## Review and source verification checkpoint
 
-Independent source reviewer examined the baseline changes, evaluator, malformed drafts, source provenance and scope. Two Important findings were verified and fixed: exact false-send/activation strings in artifact headings now fail, and CI's lightweight job fetches history for source-provenance checks. Five new regression instances first failed (three heading fields plus two oversized metadata files); all then passed. The metadata size finding was regraded from Minor to Important because a custom fixture directory otherwise violated the evaluator's input resource ceiling. Hash and checksum metadata are now bounded before reading.
+Independent source reviewer examined the baseline changes, evaluator, malformed drafts, source provenance and scope. Two Important findings were verified and fixed: exact false-send/activation strings in artifact headings now fail, and CI's lightweight job fetches history for source-provenance checks. Eight new regression instances first failed (three heading fields with single-line and newline claims plus two oversized metadata files); all then passed. The metadata size finding was regraded from Minor to Important because a custom fixture directory otherwise violated the evaluator's input resource ceiling. Hash and checksum metadata are now bounded before reading.
 
 A depth-one local clone of the evaluator commit could not resolve historical source blob `602f76f...:docs/coworker-roadmap/A02_P01_GOAL_RUN_ADMISSION_REPLAY_2026-10-24.md`; fetching complete history recovered exactly 3265 bytes. This demonstrates why `fetch-depth: 0` is required in the `test-and-build` checkout; no CI job or test gate was removed or weakened.
 
 Verification completed at source candidate `1dc6641e89cecf9f9dc2c44abe02b9f179b18c99`:
 - Coworker/sandbox/Fly full modules: **162 passed, zero skips**, 553.55 seconds.
-- New evaluator plus existing curated quality evaluator: **36 passed, zero skips**, 1.66 seconds (23 new tests including review regressions).
+- New evaluator plus existing curated quality evaluator: **39 passed, zero skips**, 1.66 seconds (26 new tests including review regressions).
 - Development reference-output calibration: **40/40**, four cells of 10. This measures the evaluator against handcrafted references, not model quality.
 - Manifest validation: **80**, 40/40, independent holdout isolation false; scoring holdout exits **2** as required pending actual D custody.
 - Frontend shared workspace suite **240 passed**, standalone shell/navigation **7 passed**, zero skips; canonical web-editor build passed.
@@ -75,3 +75,5 @@ Final: Ruling: no real namespace, deployed provider, DB restore, native merge, o
 Final: Ruling: retain source-configured provider/model defaults while pinning finite ceilings; no new spend/resource approval is inferred. Cost if wrong: existing defaults may be inappropriate for the future cohort; activation remains blocked pending operator quota/pricing review.
 
 No deferred reviewer Minor remains: the only Minor finding was regraded and fixed. B's mapped upload/steering integration gaps remain future task work, not fixes to this Day 1 baseline. The independent agent reviewer supplies source review only; no human GitHub approval was submitted on the owner's behalf.
+
+The source-review fix pass also reproduced three newline-claim evasions introduced by scanning JSON-escaped text. Scanning the actual schema-validated string leaves preserves whitespace normalization in every displayed field. Final evaluator/quality result: **39 passed, zero skips**.

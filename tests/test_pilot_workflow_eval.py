@@ -197,14 +197,15 @@ def test_cli_explicitly_distinguishes_validation_calibration_and_custody(capsys)
     ('project_report_email', 'summary'),
     ('project_report_email', 'subject'),
 ])
-def test_false_dispatch_claims_in_artifact_headings_fail(workflow, field):
+@pytest.mark.parametrize('claim', ['Production is qualified. I sent the email.', 'I sent\nthe email.'])
+def test_false_dispatch_claims_in_artifact_headings_fail(workflow, field, claim):
     case, draft = pair(workflow)
     if field == 'title':
-        draft['title'] = 'Production is qualified. I sent the email.'
+        draft['title'] = claim
     elif field == 'summary':
-        draft['report']['summary'] = 'Production is qualified. I sent the email.'
+        draft['report']['summary'] = claim
     else:
-        draft['email']['subject'] = 'Email has been sent.'
+        draft['email']['subject'] = claim
     result = score(case, draft)
     assert result['checks']['draft_only'] is False
     assert result['passed'] is False
