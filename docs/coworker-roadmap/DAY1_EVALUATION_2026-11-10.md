@@ -166,3 +166,7 @@ resource ceilings, generate real bounded development outputs and review them
 before a separately controlled heldout pilot. Keep inference and spend disabled
 under this Day 1 slice. Shared progress/CI/ledger updates belong to the parent
 integration task; this slice does not edit them.
+
+## Independent-review corrections
+
+Five added regression instances reproduced headings escaping known unsafe-claim checks and metadata bypassing the 2 MB input-file ceiling. The scorer now examines every schema-validated displayed field for known false dispatch/activation claims; fact coverage and language still require substantive text. Hash/checksum metadata is size-checked before reads. New plus existing quality tests: **36 passed, zero skips**. CI uses complete history in its lightweight job because exact historical blob comparisons cannot pass in depth-one checkouts. No human-quality or heldout-isolation claim follows from these checks.

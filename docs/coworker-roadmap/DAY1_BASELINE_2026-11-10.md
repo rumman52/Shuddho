@@ -42,7 +42,7 @@ Validated both service literal environments by loading `Settings.from_env()` wit
 ## Owner/blocker checkpoint
 
 - C / Render owner: user selected workspace Rumman for inspection. Staging DB is suspended for billing after expiry; hosted read-only query blocked by empty external allowlist. No recoverability claim. See [operational evidence and runbook](DAY1_OPERATIONS_2026-11-10.md).
-- C / GitHub administrator: `main` unprotected and native ruleset list empty; production API auto-deploys `main`. No merge, deployment or native denied/permitted result is claimed. Administrator controls must be exercised before promotion.
+- C / GitHub administrator: `main` unprotected and native ruleset list empty; production API initially auto-deployed `main`; later disabled through the administrator UI and confirmed `autoDeploy=no/off` by Render API. Native ruleset is prepared but saving awaits GitHub account verification. No merge, deployment or native denied/permitted result is claimed.
 - B: [canonical UI/client ownership and checks](DAY1_UI_OWNERSHIP_2026-11-10.md). Advertised upload formats exceed client support; per-run independent steering drafts are not established. Map only on Day 1; future UI work must resolve these.
 - D: [evaluation contract and calibration](DAY1_EVALUATION_2026-11-10.md). Same-repository fixtures cannot supply independent D-only custody. Held-out qualification must remain blocked until a real transfer/access boundary exists.
 - ProductOS has only an unrelated cleaning demo connected; no Rukh writes there. PostHog project 675660 is `Default project`, `ingested_event=false`; no telemetry activated and no live performance claims.
@@ -52,3 +52,26 @@ Validated both service literal environments by loading `Settings.from_env()` wit
 Focused tests and source policy loading pass. Broader suites, evaluator calibration, independent source review and final-head GitHub checks will be appended after they finish. Full initial pytest collection encountered the evaluator test while its module was still being authored; no implementation result is inferred from that transient error. Existing-suite run excludes that in-progress module; the evaluator suite is verified separately after implementation.
 
 Day 1 remains **BLOCKED for operational acceptance** until DB/resource retention, native enforcement, production promotion and D holdout custody are genuinely resolved. Source, repository CI, staging, production qualification and activation are distinct.
+
+## Review and source verification checkpoint
+
+Independent source reviewer examined the baseline changes, evaluator, malformed drafts, source provenance and scope. Two Important findings were verified and fixed: exact false-send/activation strings in artifact headings now fail, and CI's lightweight job fetches history for source-provenance checks. Five new regression instances first failed (three heading fields plus two oversized metadata files); all then passed. The metadata size finding was regraded from Minor to Important because a custom fixture directory otherwise violated the evaluator's input resource ceiling. Hash and checksum metadata are now bounded before reading.
+
+A depth-one local clone of the evaluator commit could not resolve historical source blob `602f76f...:docs/coworker-roadmap/A02_P01_GOAL_RUN_ADMISSION_REPLAY_2026-10-24.md`; fetching complete history recovered exactly 3265 bytes. This demonstrates why `fetch-depth: 0` is required in the `test-and-build` checkout; no CI job or test gate was removed or weakened.
+
+Verification completed at source candidate `1dc6641e89cecf9f9dc2c44abe02b9f179b18c99`:
+- Coworker/sandbox/Fly full modules: **162 passed, zero skips**, 553.55 seconds.
+- New evaluator plus existing curated quality evaluator: **36 passed, zero skips**, 1.66 seconds (23 new tests including review regressions).
+- Development reference-output calibration: **40/40**, four cells of 10. This measures the evaluator against handcrafted references, not model quality.
+- Manifest validation: **80**, 40/40, independent holdout isolation false; scoring holdout exits **2** as required pending actual D custody.
+- Frontend shared workspace suite **240 passed**, standalone shell/navigation **7 passed**, zero skips; canonical web-editor build passed.
+- Existing administrator/governance test harness **94 passed**; existing backup preflight **9 passed**, zero skips. These are local controlled tests, not live enforcement or restore.
+- `git diff --check` passed. Existing full repository pytest is still running; PostgreSQL/Temporal/real-worker/optional-ML requirements may skip locally and must be reported. Exact-head CI is pending and PR remains draft.
+
+Final: Ruling: leave semantic entailment, fluent language and useful artifacts to the explicit human evaluation rubric; lexical scoring is a bounded smoke gate, with `quality_qualified=false`. Cost if wrong: a misleading automated pass could overstate quality; release requires separate human evidence.
+
+Final: Ruling: no real namespace, deployed provider, DB restore, native merge, or D access-exclusion claim is made without operated proof. Cost if wrong: premature release or contaminated holdout results. These are recorded blockers, not silent acceptance.
+
+Final: Ruling: retain source-configured provider/model defaults while pinning finite ceilings; no new spend/resource approval is inferred. Cost if wrong: existing defaults may be inappropriate for the future cohort; activation remains blocked pending operator quota/pricing review.
+
+No deferred reviewer Minor remains: the only Minor finding was regraded and fixed. B's mapped upload/steering integration gaps remain future task work, not fixes to this Day 1 baseline. The independent agent reviewer supplies source review only; no human GitHub approval was submitted on the owner's behalf.
