@@ -190,6 +190,13 @@ try {
   await page.waitForURL(url => url.pathname === "/fly");
   await page.getByRole("heading", { name: "Fly", exact: true }).first().waitFor();
   await navigateWorkspace(page, "Files & drafts");
+  // Continuity already produced two owned document tasks. Reload so this
+  // workspace's history includes them before measuring new manual drafts.
+  await page.reload();
+  const taskHistory = page.locator(".cw-history li");
+  await taskHistory.first().waitFor();
+  const initialTaskCount = await taskHistory.count();
+  assert.equal(initialTaskCount, 2);
   await page.getByLabel("Your notes").fill("The team completed 12 reviews on 10 September 2026.");
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });
   await page.getByRole("button", { name: "Remove meeting.txt from this task" }).waitFor();
@@ -277,7 +284,7 @@ try {
   const result = page.getByRole("region", { name: "Task result" });
   await result.getByText("Ready", { exact: true }).waitFor({ timeout: 60000 });
   await result.getByRole("heading", { name: "প্রকল্পের অগ্রগতি", exact: true }).first().waitFor();
-  assert.equal(await page.locator(".cw-history li").count(), 1);
+  assert.equal(await taskHistory.count(), initialTaskCount + 1);
   await page.screenshot({ path: join(folder, "screenshots/coworker-desktop.png"), fullPage: true });
   const pendingDownload = page.waitForEvent("download");
   await result.getByRole("button", { name: /report.docx/ }).click();
@@ -384,7 +391,7 @@ try {
       await page.setViewportSize({ width: 1365, height: 960 });
     }
   }
-  assert.equal(await page.locator(".cw-history li").count(), 11);
+  assert.equal(await taskHistory.count(), initialTaskCount + 11);
   await verifyActions(page, folder);
   await verifyAgentProposals(page, folder);
   await verifyNotificationDigests(page, folder);

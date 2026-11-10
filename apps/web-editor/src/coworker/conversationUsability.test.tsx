@@ -447,21 +447,35 @@ test("active Runtime v3 conversation task can be steered at its current revision
 });
 
 
-test("multiple active conversation tasks load progress independently", async () => {
-  const data = fixture([{ ...record, message_sequence: 2 }]);
-  const messages = [1, 2].map(sequence => ({
+test("three queued conversation tasks show independent progress and controls", async () => {
+  const data = fixture([{ ...record, message_sequence: 3 }]);
+  const messages = [1, 2, 3].map(sequence => ({
     id: "message-" + sequence, conversation_id: record.id, sequence,
     text: "Task " + sequence, selected_sources: [],
     resource_links: [{ resource_type: "agent_run", resource_id: "run-" + sequence }],
     created_at: timestamp,
   }));
   data.client.conversationHistory = async () => ({ items: messages });
-  data.client.conversationActivityHistory = async () => ({ items: [1, 2].map(sequence => ({
+  data.client.conversationActivityHistory = async () => ({ items: [1, 2, 3].map(sequence => ({
     message_id: "message-" + sequence, sequence, run_id: "run-" + sequence,
-    state: "running", phase: "planning", cancel_requested: false, event_sequence: 1,
-    steering_revision: 0, runtime_version: 3, updated_at: timestamp, detail: "Working",
+    state: "queued", phase: "planning", cancel_requested: false, event_sequence: 1,
+    steering_revision: 0, runtime_version: 3, updated_at: timestamp, detail: "Conversation work accepted.",
   })) });
-  await mount(async (_tree, { calls }) => {
-    assert.deepEqual(calls.reads.sort(), ["run-1", "run-2"]);
+  data.client.agentRun = async (id: string) => {
+    data.calls.reads.push(id);
+    return { id, state: "queued", final_state: null, message: "Conversation work accepted.",
+      plan: [], tool_results: [] } as unknown as AgentRun;
+  };
+  await mount(async (tree, { calls }) => {
+    assert.deepEqual(calls.reads.sort(), ["run-1", "run-2", "run-3"]);
+    const progress = tree.root.findAllByType("section").filter(node => node.props["aria-label"] === "Coworker progress");
+    assert.equal(progress.length, 3);
+    for (const region of progress) {
+      const statuses = region.findAllByProps({ role: "status" });
+      assert.equal(statuses.length, 1);
+      assert.deepEqual(statuses[0].children, ["Queued"]);
+    }
+    assert.equal(tree.root.findAllByProps({ "aria-label": "Steer Agent task" }).length, 3);
+    assert.equal(tree.root.findAllByType("button").filter(node => node.children.join("") === "Cancel Agent work").length, 3);
   }, data, {}, "?conversation=conversation-1");
 });
