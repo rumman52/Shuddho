@@ -31,6 +31,9 @@ export async function verifyConversationAgentContinuity(page) {
   const taskC = "E2E Task C: Create a concise project document about the third milestone.";
   const steering = "Prioritize the Bangla summary and keep the document concise.";
 
+  // History titles and the thread heading duplicate task text; verify message content only.
+  const conversationMessage = text => page.getByLabel("Conversation messages", { exact: true }).getByText(text, { exact: true });
+
   await postJson(page, "/enable-v3");
   try {
     // The visible "+" is decorative; aria-label defines the accessible name.
@@ -42,7 +45,7 @@ export async function verifyConversationAgentContinuity(page) {
     await composer.waitFor();
     await composer.fill(taskA);
     await page.locator(".rukh-design-send").click();
-    await page.getByText(taskA, { exact: true }).waitFor();
+    await conversationMessage(taskA).waitFor();
     await page.getByRole("button", { name: "Start task", exact: true }).waitFor();
 
     // Saving an ordinary message is not authorization to launch Agent work.
@@ -59,14 +62,14 @@ export async function verifyConversationAgentContinuity(page) {
     // A second task can be admitted while the first task remains in flight.
     await composer.fill(taskB);
     await page.locator(".rukh-design-send").click();
-    await page.getByText(taskB, { exact: true }).waitFor();
+    await conversationMessage(taskB).waitFor();
     await page.getByRole("button", { name: "Start task", exact: true }).click();
 
     // A third task demonstrates bounded, configurable concurrency rather than
     // accidentally coupling every run to one conversation-wide execution slot.
     await composer.fill(taskC);
     await page.locator(".rukh-design-send").click();
-    await page.getByText(taskC, { exact: true }).waitFor();
+    await conversationMessage(taskC).waitFor();
     await page.getByRole("button", { name: "Start task", exact: true }).click();
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
@@ -112,10 +115,10 @@ export async function verifyConversationAgentContinuity(page) {
     // Refresh must restore the same conversation, active run and terminal run.
     await page.reload();
     await composer.waitFor();
-    await page.getByText(taskA, { exact: true }).waitFor();
-    const taskBMessage = page.getByText(taskB, { exact: true });
+    await conversationMessage(taskA).waitFor();
+    const taskBMessage = conversationMessage(taskB);
     await taskBMessage.waitFor();
-    await page.getByText(taskC, { exact: true }).waitFor();
+    await conversationMessage(taskC).waitFor();
     // Completed/cancelled history is intentionally lazy-loaded after refresh.
     await taskBMessage.locator("xpath=ancestor::li")
       .getByRole("button", { name: "Show coworker progress", exact: true }).click();
