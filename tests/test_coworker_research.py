@@ -123,7 +123,9 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
     settings = replace(container.settings, agent_runtime_enabled=True,
                        agent_runtime_v3_enabled=True, intelligent_planner_enabled=True,
                        agent_memory_enabled=True, context_retrieval_enabled=True,
-                       work_services_enabled=True)
+                       work_services_enabled=True, search_api_key="fixture-only-search-key")
+    # The research provider is simulated above; a placeholder key only
+    # satisfies Settings.validate and is never used for a network request.
     settings.validate()
     container.settings = settings
     for service in (container.repository, container.agent, container.memory, container.context):
