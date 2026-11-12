@@ -3808,7 +3808,12 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
         task = new_task(container, owner)
 
         def render(_draft, _sources, **_options):
-            return [("report.txt", "text/plain", b"durable report bytes")]
+            return [
+                ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"durable report bytes"),
+                ("report.pdf", "application/pdf", b"durable pdf bytes"),
+                ("email-draft.txt", "text/plain", b"durable email bytes"),
+                ("source-manifest.json", "application/json", b"durable manifest bytes"),
+            ]
 
         runner = DocumentRunner(container, FakeModel(), renderer=render)
         await runner.phase(task["id"], "extract")
@@ -3830,10 +3835,10 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
             await runner.phase(task["id"], "export")
 
         saved = container.repository.step(task["id"], "export")
-        assert saved is not None and len(saved["artifacts"]) == 1
+        assert saved is not None and len(saved["artifacts"]) == 4
         prefix = f"{owner}/outputs/{task['id']}/"
         objects_after_ambiguous_commit = container.storage.inventory(prefix=prefix)
-        assert len(objects_after_ambiguous_commit) == 1
+        assert len(objects_after_ambiguous_commit) == 4
 
         # Phase replay sees the durable checkpoint and does not re-export or delete its object.
         await runner.phase(task["id"], "export")
@@ -3841,7 +3846,7 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
         await runner.phase(task["id"], "complete")
         completed = container.repository.get_task(owner, task["id"])
         assert completed["state"] == "completed"
-        assert len(completed["artifacts"]) == 1
+        assert len(completed["artifacts"]) == 4
 
     asyncio.run(scenario())
 
@@ -3858,8 +3863,10 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
 
         def render(_draft, _sources, **_options):
             return [
-                ("report.txt", "text/plain", b"verified report bytes"),
-                ("summary.txt", "text/plain", b"verified summary bytes"),
+                ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"verified report bytes"),
+                ("report.pdf", "application/pdf", b"verified pdf bytes"),
+                ("email-draft.txt", "text/plain", b"verified email bytes"),
+                ("source-manifest.json", "application/json", b"verified manifest bytes"),
             ]
 
         class FaultingReadStore:
@@ -3890,9 +3897,9 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
         await runner.phase(task["id"], "export")
 
         exported = container.repository.step(task["id"], "export")
-        assert exported is not None and len(exported["artifacts"]) == 2
+        assert exported is not None and len(exported["artifacts"]) == 4
         expected_puts = list(storage.put_keys)
-        assert len(expected_puts) == 2
+        assert len(expected_puts) == 4
 
         # First attempt fails on artifact one.
         with pytest.raises(OSError, match="GET disconnect #1"):
@@ -3908,11 +3915,11 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
         assert container.repository.step(task["id"], "export") == exported
         assert storage.put_keys == expected_puts
 
-        # A clean retry verifies both objects before publishing either one.
+        # A clean retry verifies all four objects before publishing any one.
         await runner.phase(task["id"], "complete")
         completed = container.repository.get_task(owner, task["id"])
         assert completed["state"] == "completed"
-        assert len(completed["artifacts"]) == 2
+        assert len(completed["artifacts"]) == 4
         assert storage.put_keys == expected_puts
         for item in completed["artifacts"]:
             artifact = container.repository.artifact(owner, item["id"])
