@@ -654,7 +654,9 @@ def _attached_chat_source(container, data, body: bytes, *, kind="txt", filename=
     container.storage.put(key, body, "application/pdf" if kind == "pdf" else "text/plain")
     with service.sessions.begin() as db:
         db.add(Workspace(id=workspace_id, owner_id=source_owner, name="Grounded"))
+        db.flush()  # Explicitly satisfy SQLite foreign keys without ORM relationships.
         db.add(Document(id=document_id, owner_id=source_owner, workspace_id=workspace_id, filename=filename, deleted=False))
+        db.flush()
         db.add(DocumentVersion(id=version_id, document_id=document_id, owner_id=source_owner, version=1,
             kind=kind, byte_size=len(body), sha256=sha, object_key=key, state="uploaded",
             expires_at=utcnow() + timedelta(days=1)))
