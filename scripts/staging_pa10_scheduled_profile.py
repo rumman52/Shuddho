@@ -340,6 +340,54 @@ def verify(args: argparse.Namespace) -> dict:
                     raise ScheduledProfileProbeFailure(
                         "Expected exactly one start notice and one completion notice."
                     )
+                pin_evidence = {}
+                if scenario == "daily_coworker":
+                    run = json_object(
+                        client.get(f"/api/v1/agent-runs/{run_id}", headers=auth(token)),
+                        "daily briefing Agent run",
+                    )
+                    versions = run.get("input_version_ids")
+                    documents = run.get("document_ids")
+                    if (str(run.get("id")) != run_id or run.get("state") != "completed"
+                            or not isinstance(versions, list) or not versions
+                            or not isinstance(documents, list) or len(documents) != len(versions)
+                            or any(not isinstance(v, str) or not v for v in versions + documents)
+                            or len(set(versions)) != len(versions)
+                            or len(set(documents)) != len(documents)):
+                        raise ScheduledProfileProbeFailure(
+                            "Daily briefing Agent run has no complete immutable document-version pins."
+                        )
+                    pin_evidence = {
+                        "input_version_ids": versions,
+                        "document_ids": documents,
+                    }
+                    if args.prior_evidence is not None:
+                        prior = load_json(args.prior_evidence, "prior daily briefing evidence")
+                        if (prior.get("status") != "passed"
+                                or prior.get("scenario") != "daily_coworker"
+                                or prior.get("release") != release
+                                or prior.get("owner_id") != state.get("owner_id")
+                                or prior.get("automation_id") != state.get("automation_id")
+                                or not isinstance(prior.get("input_version_ids"), list)
+                                or not prior["input_version_ids"]):
+                            raise ScheduledProfileProbeFailure(
+                                "Prior daily briefing evidence does not belong to this release/owner/automation."
+                            )
+                        prior_run = json_object(
+                            client.get(
+                                f'/api/v1/agent-runs/{prior["run_id"]}', headers=auth(token),
+                            ),
+                            "prior daily briefing Agent run",
+                        )
+                        old_versions = prior_run.get("input_version_ids")
+                        if (str(prior_run.get("id")) != str(prior["run_id"])
+                                or prior_run.get("state") != "completed"
+                                or old_versions != prior["input_version_ids"]):
+                            raise ScheduledProfileProbeFailure(
+                                "Original Day 7 document pins were not preserved at Day 8 verification."
+                            )
+                        pin_evidence["prior_run_input_version_ids"] = old_versions
+
                 evidence = {
                     "schema_version": SCHEMA_VERSION,
                     "evidence_kind": "pa10_scheduled_profile",
@@ -360,6 +408,7 @@ def verify(args: argparse.Namespace) -> dict:
                     "occurrence_id": occurrence_id,
                     "due_at": occurrence.get("due_at"),
                     "run_id": run_id,
+                    **pin_evidence,
                     "run_state": "completed",
                     "run_updated_at": occurrence.get("run_updated_at"),
                     "started_notification_id": str(started[0]["id"]),
@@ -382,6 +431,71 @@ def verify(args: argparse.Namespace) -> dict:
     raise last_error or ScheduledProfileProbeFailure(
         "Scheduled-profile evidence did not become available before timeout."
     )
+
+
+
+def pause_two_day(args: argparse.Namespace) -> dict:
+    """Pause only an owner-scoped synthetic daily schedule with two-day evidence."""
+    from scripts.staging_day7_two_day_gate import GateFailure, verify_two_day
+
+    require_guard()
+    state = load_json(args.state, "Day 8 scheduled-profile state")
+    if state.get("scenario") != "daily_coworker":
+        raise ScheduledProfileProbeFailure("Two-day pause requires the daily_coworker profile.")
+    case_ref = args.operator_case_reference.strip()
+    if not case_ref:
+        raise ScheduledProfileProbeFailure("A durable operator case reference is required.")
+    first = load_json(args.first_evidence, "Day 7 passed evidence")
+    second = load_json(args.second_evidence, "Day 8 passed evidence")
+    revision = int(state["automation_revision"])
+    base_url = clean_origin(env("SHUDDHO_STAGING_API_BASE_URL"))
+    token = env("SHUDDHO_STAGING_TOKEN_A")
+    with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
+        release = release_identity(client, token, args.rollout, args.provider_policy_plan)
+        if release != state.get("release"):
+            raise ScheduledProfileProbeFailure("Release changed before two-day pause.")
+        current = load_owned(client, token, str(state["automation_id"]), "daily_coworker")
+        if (current["owner_id"] != state.get("owner_id")
+                or int(current["automation"]["revision"]) != revision):
+            raise ScheduledProfileProbeFailure("Owner or revision changed before two-day pause.")
+        evidence = {
+            "status": "paused", "release": release,
+            "synthetic_account_label": state["synthetic_account_label"],
+            "owner_id": state["owner_id"], "automation_id": state["automation_id"],
+            "previous_revision": revision, "paused_revision": revision + 1,
+            "paused_at": utcnow_iso(), "operator_case_reference": case_ref,
+        }
+        try:
+            verify_two_day(first, second, evidence)
+        except GateFailure as error:
+            raise ScheduledProfileProbeFailure(
+                f"Two-day evidence rejected before pause: {error}"
+            ) from None
+        paused = json_object(
+            client.post(
+                f'/api/v1/automations/{state["automation_id"]}/pause',
+                headers=auth(token), json={"expected_revision": revision},
+            ), "pause synthetic automation",
+        )
+        observed = json_object(
+            client.get(f'/api/v1/automations/{state["automation_id"]}', headers=auth(token)),
+            "read back paused automation",
+        )
+        if (paused.get("state") != "paused" or observed.get("state") != "paused"
+                or int(paused.get("revision", -1)) != int(observed.get("revision", -2))
+                or int(observed.get("revision", -1)) <= revision
+                or observed.get("id") != state["automation_id"]):
+            raise ScheduledProfileProbeFailure(
+                "Pause did not persist the expected synthetic automation transition."
+            )
+        evidence["paused_revision"] = int(observed["revision"])
+        evidence["paused_at"] = utcnow_iso()
+        try:
+            verify_two_day(first, second, evidence)
+        except GateFailure as error:
+            raise ScheduledProfileProbeFailure(f"Post-pause evidence rejected: {error}") from None
+    args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    return evidence
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -408,13 +522,28 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--output", type=Path, required=True)
     verify_parser.add_argument("--timeout", type=int, default=300)
     verify_parser.add_argument("--poll-interval", type=int, default=3)
+    verify_parser.add_argument("--prior-evidence", type=Path, default=None,
+                               help="Day 7 evidence; recheck original version pins during Day 8 verify")
+    pause_parser = sub.add_parser("pause-two-day")
+    pause_parser.add_argument("--rollout", type=Path, required=True)
+    pause_parser.add_argument("--provider-policy-plan", type=Path, required=True)
+    pause_parser.add_argument("--state", type=Path, required=True)
+    pause_parser.add_argument("--first-evidence", type=Path, required=True)
+    pause_parser.add_argument("--second-evidence", type=Path, required=True)
+    pause_parser.add_argument("--operator-case-reference", required=True)
+    pause_parser.add_argument("--output", type=Path, required=True)
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
     try:
-        result = prepare(args) if args.command == "prepare" else verify(args)
+        if args.command == "prepare":
+            result = prepare(args)
+        elif args.command == "verify":
+            result = verify(args)
+        else:
+            result = pause_two_day(args)
     except (httpx.HTTPError, ScheduledProfileProbeFailure) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
         raise SystemExit(1) from None
@@ -430,7 +559,7 @@ def main() -> None:
                 "retain the operator case reference, then run verify."
             ),
         }, indent=2))
-    else:
+    elif args.command == "verify":
         print(json.dumps({
             "status": result["status"],
             "scenario": result["scenario"],
@@ -439,6 +568,11 @@ def main() -> None:
             "run_id": result["run_id"],
             "completion_notification_id": result["completion_notification_id"],
         }, indent=2))
+    else:
+        print(json.dumps({"status": result["status"],
+                          "automation_id": result["automation_id"],
+                          "paused_revision": result["paused_revision"],
+                          "output": str(args.output)}, indent=2))
 
 
 if __name__ == "__main__":
