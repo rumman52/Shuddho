@@ -321,7 +321,8 @@ def position_map(case_id: str, corpus_sha256: str) -> dict:
             "BA": ("competitor", "candidate") if bit == 0 else ("candidate", "competitor")}
 
 
-def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: list[dict] | None) -> dict:
+def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: list[dict] | None,
+            adjudications: list[dict] | None = None) -> dict:
     if competitor is None or rows is None:
         return {"complete": False, "comparison_gap": "competitor access or blinded judgment evidence missing", "wins": None, "ties": None, "losses": None}
     for field in ("product", "product_version", "model", "run_started_at"):
@@ -359,9 +360,26 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
             inconsistent.append(cid)
         else:
             votes[choices[0]] += 1
-    return {"complete": len(inconsistent) == 0, "reviewer_count": len(reviewers),
-            "position_swap_inconsistent_cases": sorted(inconsistent), "wins": votes["candidate"],
-            "ties": votes["tie"], "losses": votes["competitor"],
+    # Reviewers are genuinely independent: conflicting or position-sensitive
+    # judgments require a THIRD blind adjudicator, never a majority shortcut.
+    contested = set(inconsistent)
+    adjudications = [] if adjudications is None else adjudications
+    resolutions = _unique_rows(adjudications, "case_id", contested, len(adjudications))
+    for cid, row in resolutions.items():
+        if (row.get("adjudicator_id") in reviewers or not isinstance(row.get("adjudicator_id"), str)
+                or not row["adjudicator_id"].strip() or row.get("position") not in ("AB", "BA")
+                or row.get("preference") not in ("A", "B", "tie")
+                or not isinstance(row.get("evidence_note"), str) or not row["evidence_note"].strip()):
+            raise EvidenceError("blind comparative adjudication needs an independent third reviewer and source rationale")
+        mapped = position_map(cid, manifest["corpus_sha256"])[row["position"]]
+        label = "tie" if row["preference"] == "tie" else mapped[0 if row["preference"] == "A" else 1]
+        votes[label] += 1
+    remaining = sorted(contested - set(resolutions))
+    return {"complete": len(remaining) == 0, "reviewer_count": len(reviewers),
+            "position_swap_inconsistent_cases": sorted(inconsistent),
+            "disagreements_adjudicated": len(resolutions),
+            "remaining_disagreements": remaining,
+            "wins": votes["candidate"], "ties": votes["tie"], "losses": votes["competitor"],
             "candidate_product_version": manifest["candidate_product_version"],
             "competitor_product_version": competitor["product_version"],
             "time_limit_seconds": manifest["time_limit_seconds"],
@@ -452,7 +470,8 @@ def main(argv=None) -> int:
                 scores = score_reviews(cases, evidence["reviews"], evidence.get("adjudications", []),
                                        evidence["deterministic"], output_hashes=output_hashes)
                 faults = verify_operations(evidence["operations"], manifest["candidate_revision"])
-                comparative = compare(cases, manifest, evidence.get("competitor"), evidence.get("comparisons"))
+                comparative = compare(cases, manifest, evidence.get("competitor"), evidence.get("comparisons"),
+                                      evidence.get("comparison_adjudications", []))
                 custody = evidence.get("custody", {})
                 # A checked-in self-assertion is not a proof. Preserve the external
                 # custodian's status; independent attestation is reviewed out-of-band.
