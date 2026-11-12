@@ -37,6 +37,95 @@ def create_work(container, skill_id, language="en", key="work-request-key"):
         instruction=SKILLS[skill_id].instruction, notes="The team completed 12 reviews.", output_language=language), key)[0]
 
 
+def test_day6_report_email_template_keeps_reviewed_context_and_never_claims_sent(container):
+    memory = [{"id": "selected-1", "fact": "Exclude unverified dates"}]
+    sources = [{"id": "notes", "label": "Reviewed project brief", "text": "The team completed 12 reviews."}]
+    task = {"instruction": "Prepare the project report and a draft email, retaining the prior limitations.",
+            "output_language": "en", "memory": memory}
+    model = DeepSeekDraftModel(container.settings, skill_id="report_email")
+    messages = model.messages(task, sources)
+    payload = json.loads(messages[-1]["content"])
+    assert payload["task"]["workflow_template"] == "project_report_email"
+    assert payload["context"]["sources"] == sources
+    assert payload["context"]["memory"] == memory
+    assert "reviewed" in messages[0]["content"].lower()
+    assert "not sent" in messages[0]["content"].lower()
+
+
+def test_day6_rejects_incomplete_renderer_outputs_before_publication(container):
+    enable_services(container)
+    task = create_work(container, "email")
+    outputs = [("email-draft.txt", "text/plain; charset=utf-8", b"Subject\\n\\nReady")]
+    runner = DocumentRunner(container, WorkModel(), renderer=lambda *_args, **_kwargs: outputs)
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+    assert error.value.code == "export_invalid"
+    saved = container.repository.get_task(account(container), task["id"])
+    assert saved["state"] == "failed" and not saved["artifacts"]
+
+
+@pytest.mark.parametrize("defect", ["owner", "language", "reference"])
+def test_day6_completion_rechecks_checkpoint_before_reporting_success(container, monkeypatch, defect):
+    enable_services(container)
+    task = create_work(container, "email")
+    runner = DocumentRunner(container, WorkModel())
+
+    async def prepare():
+        for phase in ("extract", "draft", "export"):
+            await runner.phase(task["id"], phase)
+
+    asyncio.run(prepare())
+    original_step = container.repository.step
+
+    def changed_step(task_id, phase):
+        value = original_step(task_id, phase)
+        if phase not in {"draft", "export"}:
+            return value
+        # Copy checkpoint bytes rather than mutating the committed DB row.
+        value = json.loads(json.dumps(value))
+        if defect == "owner" and phase == "export":
+            value["artifacts"][0]["object_key"] = "another-owner/outputs/foreign/artifact"
+        if defect == "language" and phase == "draft":
+            value["draft"]["output_language"] = "bn"
+        if defect == "reference" and phase == "draft":
+            value["draft"]["source_ids"] = ["foreign-document"]
+        return value
+
+    monkeypatch.setattr(container.repository, "step", changed_step)
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.phase(task["id"], "complete"))
+    assert error.value.code == "artifact_invalid"
+    assert container.repository.get_task(account(container), task["id"])["state"] != "completed"
+
+
+def test_day6_report_and_email_artifacts_are_owned_editable_and_unsent(container):
+    from test_coworker import FakeModel
+
+    task = create_work(container, "report_email")
+    asyncio.run(DocumentRunner(container, FakeModel()).run_for_test(task["id"]))
+    saved = container.repository.get_task(account(container), task["id"])
+    assert saved["state"] == "completed"
+    artifacts = {item["filename"]: item for item in saved["artifacts"]}
+    assert set(artifacts) == {"report.docx", "report.pdf", "email-draft.txt", "source-manifest.json"}
+    bodies = {}
+    for filename, artifact in artifacts.items():
+        owned = container.repository.artifact(account(container), artifact["id"])
+        body = container.storage.get(owned["object_key"], owned["byte_size"])
+        assert hashlib.sha256(body).hexdigest() == artifact["sha256"]
+        bodies[filename] = body
+        with pytest.raises(CoworkerError):
+            container.repository.artifact(account(container, "bob"), artifact["id"])
+    doc = Document(io.BytesIO(bodies["report.docx"]))
+    text = "\\n".join(p.text for p in doc.paragraphs)
+    assert "12 reviews" in text and "[notes]" in text
+    assert len(PdfReader(io.BytesIO(bodies["report.pdf"])).pages) > 0
+    manifest = json.loads(bodies["source-manifest.json"])
+    assert manifest["output_language"] == "en"
+    assert manifest["delivery_status"] == "draft_ready"
+    assert any(source["id"] == "notes" for source in manifest["sources"])
+    assert "12 reviews" in bodies["email-draft.txt"].decode("utf-8")
+
+
 def test_catalog_auth_feature_gate_and_legacy_idempotency(container, signed_client):
     client, headers = signed_client
     assert client.get("/api/v1/skills").status_code == 401
@@ -109,6 +198,10 @@ def test_missing_information_and_rollout_rollback_preserve_saved_work(container)
     container.repository.settings = container.settings
     saved = container.repository.get_task(account(container), task["id"])
     assert saved["state"] == "needs_input" and len(saved["artifacts"]) == 4
+    manifest_item = next(item for item in saved["artifacts"] if item["filename"] == "source-manifest.json")
+    owned = container.repository.artifact(account(container), manifest_item["id"])
+    manifest = json.loads(container.storage.get(owned["object_key"], owned["byte_size"]))
+    assert manifest["delivery_status"] == "needs_input"
     assert create_work(container, "email")["id"] == task["id"]  # Replay is still safe with the flag off.
     with pytest.raises(CoworkerError) as error:
         create_work(container, "email", key="new-after-disable")
