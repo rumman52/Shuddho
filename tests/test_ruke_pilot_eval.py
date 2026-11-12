@@ -4,6 +4,8 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
+import tempfile
 
 import pytest
 
@@ -88,6 +90,14 @@ def blind_votes(cases=None):
     return rows
 
 
+@pytest.fixture
+def external_dir():
+    # This repository intentionally redirects pytest tmp_path into the checkout.
+    # External custody validation must exercise a path genuinely outside it.
+    with tempfile.TemporaryDirectory(prefix="ruke-day9-test-", dir="/tmp") as folder:
+        yield Path(folder)
+
+
 def test_development_registry_balanced_bound_to_real_existing_suite():
     cases = registry_cases()
     assert len(cases) == 40
@@ -96,8 +106,8 @@ def test_development_registry_balanced_bound_to_real_existing_suite():
     assert {c["workflow"] for c in cases} == {"research_brief", "project_report_email"}
 
 
-def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(tmp_path):
-    held = tmp_path / "independent-test-only.jsonl"
+def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir):
+    held = external_dir / "independent-test-only.jsonl"
     held.write_text("\n".join(json.dumps(x) for x in tasks()) + "\n")
     digest = hashlib.sha256(held.read_bytes()).hexdigest()
     assert len(external_heldout(held, corpus_sha256=digest)) == 40
@@ -110,8 +120,8 @@ def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(tmp_path):
     assert validate_manifest(m, held) == tasks()
 
 
-def test_holdout_matrix_and_answer_key_prohibited(tmp_path):
-    held = tmp_path / "test.jsonl"
+def test_holdout_matrix_and_answer_key_prohibited(external_dir):
+    held = external_dir / "test.jsonl"
     rows = tasks()
     rows[0]["expected_facts"] = [{"secret": "no"}]
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
