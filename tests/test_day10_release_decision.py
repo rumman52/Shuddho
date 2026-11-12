@@ -30,7 +30,8 @@ def evidence():
     worker = {**proof(), "deployment_reference": "worker-image-sha256:abc"}
     schema = {**proof(), "migration_revision": "0069", "api_revision": "0069", "worker_revision": "0069"}
     ci = {**proof(), "required_checks": {name: "success" for name in
-          ("test-and-build", "frontend", "coworker", "governance-audit", "ci-merge-gate")},
+          ("test-and-build", "frontend", "coworker", "browser-qualification",
+           "postgres-18-qualification", "governance-audit", "ci-merge-gate")},
           "workflow_run_url": "https://github.com/rumman52/Shuddho/actions/runs/123"}
     golden = {**proof(), "scenario": "integrated_multi_turn", "run_id": "golden-final",
               "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True, "provider_model": "model-r"}
@@ -97,6 +98,8 @@ def test_missing_evidence_fails_closed(monkeypatch):
     (lambda a: a["schema"].update(worker_revision="0068"), "database_schema_api_worker_exact"),
     (lambda a: a["worker"].update(source_revision="c" * 40), "worker_exact_sha_and_deployment_receipt"),
     (lambda a: a["ci"]["required_checks"].update(coworker="skipped"), "final_head_ci"),
+    (lambda a: a["ci"]["required_checks"].update(**{"browser-qualification": "skipped"}), "final_head_ci"),
+    (lambda a: a["ci"]["required_checks"].update(**{"postgres-18-qualification": "failure"}), "final_head_ci"),
     (lambda a: a["rollback"].update(status="pending"), "operated_rollback"),
     (lambda a: a["rollback"].update(worker_stop_observed=False), "operated_rollback"),
     (lambda a: a["cancellation"].update(late_side_effects=1), "operated_cancellation"),
