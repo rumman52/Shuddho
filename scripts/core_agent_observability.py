@@ -645,10 +645,47 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "qualification_note": "Operator evidence must be independently checked; this freeze does not activate a deployment.",
         }
         frozen["freeze_sha256"] = _sha256_json(frozen)
+    # Keep matched, numeric per-task economics in the access-controlled local
+    # JSON report. This data is intentionally never rendered to OpenMetrics.
+    per_task = []
+    task_fields = (*DAY8_CASE_FIELDS, "passed", "human_accepted",
+                   "safety_passed", "verified_artifact_refs", "accepted_outcome_ref")
+    for case_id in sorted(expected):
+        record = {"id": case_id, "workflow": expected[case_id][0],
+                  "language": expected[case_id][1]}
+        for label, cases in (("baseline", base_cases),
+                             ("bounded_context_compact_observations", candidate_cases)):
+            item = cases[case_id]
+            economics = {field: item.get(field) for field in task_fields}
+            economics["measured_model_tool_time_ms"] = (
+                item["model_time_ms"] + item["tool_time_ms"]
+                if _day8_uint(item.get("model_time_ms"))
+                and _day8_uint(item.get("tool_time_ms"))
+                else None
+            )
+            record[label] = economics
+        record["quality_retained"] = (
+            not record["baseline"]["human_accepted"]
+            or record["bounded_context_compact_observations"]["human_accepted"]
+        )
+        record["measured_cost_savings_microusd"] = (
+            record["baseline"]["cost_microusd"]
+            - record["bounded_context_compact_observations"]["cost_microusd"]
+            if retained_quality
+            and baseline.get("generation_identity_verified") is True
+            and candidate.get("generation_identity_verified") is True
+            and baseline.get("receipts_independently_verified") is True
+            and candidate.get("receipts_independently_verified") is True
+            and _day8_uint(record["baseline"]["cost_microusd"])
+            and _day8_uint(record["bounded_context_compact_observations"]["cost_microusd"])
+            else None
+        )
+        per_task.append(record)
     return {
         "schema_version": 1,
         "evidence_scope": "development_40_only",
         "profile_summaries": summaries,
+        "per_task_comparison": per_task,
         "candidate_quality_retained": retained_quality,
         "candidate_exclusion_reason": None if retained_quality else "quality_regression_vs_baseline",
         "measured_cost_savings_microusd": cost_delta,
