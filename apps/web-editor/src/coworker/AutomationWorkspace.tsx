@@ -56,8 +56,14 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [editTime, setEditTime] = useState("08:00");
   const [editPreparationMinutes, setEditPreparationMinutes] = useState(30);
   const createKey = useRef("");
+  const [acceptedBriefingSchedule, setAcceptedBriefingSchedule] = useState<string | null>(null);
 
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
+  const briefingScheduleSnapshot = JSON.stringify([
+    selectedGoal?.id, selectedGoal?.revision, kind, briefing, at, timezone, quiet,
+    kind === "weekly" ? weekdays : [], briefingGrantIds,
+  ]);
+  const briefingScheduleApproved = acceptedBriefingSchedule === briefingScheduleSnapshot;
   const activeConnectorGrants = useMemo(
     () => connectorGrants.filter(item => item.state === "active"),
     [connectorGrants],
@@ -115,6 +121,10 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   async function create(event: FormEvent) {
     event.preventDefault();
     if (!selectedGoal || busy) return;
+    if ((kind === "daily" || kind === "weekly") && briefing && !briefingScheduleApproved) {
+      setError("Review and approve the exact recurring briefing schedule before saving.");
+      return;
+    }
     if (!createKey.current) createKey.current = crypto.randomUUID();
     const [hour, minute] = at.split(":").map(Number);
     setBusy("create"); setError(""); setNotice("");
@@ -140,6 +150,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         quiet_hours: quiet ? { start: "22:00", end: "07:00" } : null, expires_at: null,
       }, createKey.current);
       createKey.current = "";
+      setAcceptedBriefingSchedule(null);
       await reload();
       setNotice(kind === "event"
         ? "Automation saved. An authorized connected update can wake one bounded Agent run."
@@ -438,7 +449,19 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           {kind !== "event" && kind !== "meeting" && kind !== "email" && <label>Local time<input type="time" required value={at} onChange={event => { setAt(event.target.value); createKey.current = ""; }} /></label>}
           <label>Timezone<input required maxLength={64} value={timezone} onChange={event => { setTimezone(event.target.value); createKey.current = ""; }} /></label>
           <label><input type="checkbox" checked={quiet} onChange={event => { setQuiet(event.target.checked); createKey.current = ""; }} /> Delay in-app notifications during 22:00–07:00 quiet hours</label>
-          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId) || (kind === "proactive" && proactiveTools.length === 0)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
+          {(kind === "daily" || kind === "weekly") && briefing && <fieldset>
+            <legend>Approve this exact recurring briefing</legend>
+            <p className="cw-fineprint">
+              {kind === "daily" ? "Every day" : weekdays.join(", ")} at {at} ({timezone}).
+              Goal revision {selectedGoal?.revision ?? "not selected"}; {selectedGoal?.authorized_resources.filter(source => source.kind === "document").length ?? 0} authorized project document(s).
+              {quiet ? " Notifications are delayed during 22:00–07:00; the Agent run is not delayed." : " Notifications are not quiet-hours delayed."}
+              Each occurrence starts at most one bounded private run; it cannot send or publish.
+            </p>
+            <label><input type="checkbox" checked={briefingScheduleApproved}
+              onChange={event => setAcceptedBriefingSchedule(event.target.checked ? briefingScheduleSnapshot : null)} />
+              I approve this exact repeating time, timezone, goal revision, and read scope.</label>
+          </fieldset>
+          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || ((kind === "daily" || kind === "weekly") && briefing && !briefingScheduleApproved) || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId) || (kind === "proactive" && proactiveTools.length === 0)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Briefings are restricted to the existing daily-plan tool; selected provider content remains untrusted context. Consequential actions still use the separate approval boundary.</p>
         </form>
       </section>
