@@ -18,7 +18,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from temporalio.client import Client
 
 from scripts.staging_release_evidence import write_private_json
 from scripts.staging_release_freeze import canonical_sha256, clean_origin, valid_sha
@@ -328,6 +327,8 @@ def heartbeat_advanced(container: Container, before: dict, revision: str) -> dic
 
 
 async def temporal_completed(settings: Settings, workflow_id: str) -> None:
+    from temporalio.client import Client
+
     client = await Client.connect(
         settings.temporal_address, namespace=settings.temporal_namespace,
         api_key=settings.temporal_api_key or None, tls=settings.temporal_tls,
