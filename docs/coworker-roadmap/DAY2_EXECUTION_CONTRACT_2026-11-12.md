@@ -19,7 +19,9 @@ This patch includes:
   document** is uploaded through the real authenticated API, read back by the
   owner, denied to a second owner, used by the existing `report_email`
   workflow with `output_language=en`, and must reach `completed` with
-  positive persisted model attempts/tokens.
+  positive persisted model attempts/tokens. The extracted selected
+  DocumentVersion must appear in the persisted source manifest with matching
+  document ID and SHA-256, and a report section must cite that version ID.
 - The resulting `report.pdf` is read through the authorized artifact endpoint
   and a private S3 presigned URL. Both byte streams must match the
   repository-reported size and SHA-256. The signed URL must resolve to the
