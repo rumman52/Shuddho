@@ -12,8 +12,12 @@ import pytest
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, external_heldout,
     candidate_ledger, immutable_write, main, position_map, prepare_blind, registry_cases,
+    read_blinding_key,
     score_reviews, validate_manifest, verify_operations,
 )
+
+
+BLIND_KEY = b"m" * 32  # Synthetic TEST secret; never use for operated comparisons.
 
 
 def tasks():
@@ -85,7 +89,7 @@ def blind_votes(cases=None):
     for case in cases:
         cid = case["case_id"]
         for position in ("AB", "BA"):
-            mapping = position_map(cid, m["corpus_sha256"])[position]
+            mapping = position_map(cid, m["corpus_sha256"], blinding_key=BLIND_KEY)[position]
             chosen = "A" if mapping[0] == "candidate" else "B"
             for reviewer in ("D1", "D2"):
                 rows.append({"case_id": cid, "position": position, "reviewer_id": reviewer,
@@ -300,8 +304,24 @@ def test_operated_rows_reject_revision_mismatch_or_missing_row():
         verify_operations(rows[:-1], "a" * 40)
 
 
+def test_blinding_secret_must_be_private_and_external(external_dir):
+    path = external_dir / "blind.key"
+    path.write_bytes(BLIND_KEY)
+    with pytest.raises(EvidenceError, match="private to D"):
+        read_blinding_key(path)
+    path.chmod(0o600)
+    assert read_blinding_key(path) == BLIND_KEY
+    assert any(
+        position_map(task["case_id"], manifest()["corpus_sha256"], blinding_key=BLIND_KEY) !=
+        position_map(task["case_id"], manifest()["corpus_sha256"], blinding_key=b"n" * 32)
+        for task in tasks()
+    )
+    with pytest.raises(EvidenceError, match="secret 32-byte"):
+        position_map("case", "b" * 64, blinding_key=b"")
+
+
 def test_position_swap_deterministic_and_disjoint():
-    mapping = position_map("synthetic", "b" * 64)
+    mapping = position_map("synthetic", "b" * 64, blinding_key=BLIND_KEY)
     assert mapping["AB"] == tuple(reversed(mapping["BA"]))
     assert set(mapping["AB"]) == {"candidate", "competitor"}
 
@@ -311,22 +331,22 @@ def test_blind_comparison_rejects_missing_access_and_noncomparable_sources():
     bad = comparator()
     bad["source_set_sha256"] = "9" * 64
     with pytest.raises(EvidenceError, match="comparable"):
-        compare(tasks(), manifest(), bad, blind_votes())
+        compare(tasks(), manifest(), bad, blind_votes(), blinding_key=BLIND_KEY)
 
 
 def test_blind_comparison_uses_both_reviewers_and_swapped_positions():
-    result = compare(tasks(), manifest(), comparator(), blind_votes())
+    result = compare(tasks(), manifest(), comparator(), blind_votes(), blinding_key=BLIND_KEY)
     assert result["complete"] and result["wins"] == 40
     assert result["ties"] == result["losses"] == 0
     bad = blind_votes()[:-1]
     with pytest.raises(EvidenceError, match="both swapped"):
-        compare(tasks(), manifest(), comparator(), bad)
+        compare(tasks(), manifest(), comparator(), bad, blinding_key=BLIND_KEY)
 
 
 def test_blind_disagreement_detected_instead_of_silent_vote_merge():
     bad = blind_votes()
     bad[0]["preference"] = "B" if bad[0]["preference"] == "A" else "A"
-    result = compare(tasks(), manifest(), comparator(), bad)
+    result = compare(tasks(), manifest(), comparator(), bad, blinding_key=BLIND_KEY)
     assert not result["complete"]
     assert result["position_swap_inconsistent_cases"] == [tasks()[0]["case_id"]]
 
@@ -335,25 +355,25 @@ def test_blind_comparative_disagreement_requires_independent_adjudicator():
     judgments = blind_votes()
     judgments[0]["preference"] = "B" if judgments[0]["preference"] == "A" else "A"
     cid = tasks()[0]["case_id"]
-    unresolved = compare(tasks(), manifest(), comparator(), judgments)
+    unresolved = compare(tasks(), manifest(), comparator(), judgments, blinding_key=BLIND_KEY)
     assert not unresolved["complete"] and unresolved["remaining_disagreements"] == [cid]
     resolution = {"case_id": cid, "adjudicator_id": "D3", "position": "AB",
-                  "preference": ("A" if position_map(cid, manifest()["corpus_sha256"])["AB"][0] == "candidate" else "B"),
+                  "preference": ("A" if position_map(cid, manifest()["corpus_sha256"], blinding_key=BLIND_KEY)["AB"][0] == "candidate" else "B"),
                   "evidence_note": "Separate evaluation of source-grounded factual claims"}
-    accepted = compare(tasks(), manifest(), comparator(), judgments, [resolution])
+    accepted = compare(tasks(), manifest(), comparator(), judgments, [resolution], blinding_key=BLIND_KEY)
     assert accepted["complete"] and accepted["disagreements_adjudicated"] == 1
     assert accepted["wins"] == 40
     denial = dict(resolution, adjudicator_id="D1")
     with pytest.raises(EvidenceError, match="independent third"):
-        compare(tasks(), manifest(), comparator(), judgments, [denial])
+        compare(tasks(), manifest(), comparator(), judgments, [denial], blinding_key=BLIND_KEY)
     with pytest.raises(EvidenceError, match="duplicate"):
-        compare(tasks(), manifest(), comparator(), judgments, [resolution, resolution])
+        compare(tasks(), manifest(), comparator(), judgments, [resolution, resolution], blinding_key=BLIND_KEY)
 
 
 def test_packet_has_both_positions_without_product_labels(tmp_path):
     values = [{"case_id": c["case_id"], "output": "candidate text"} for c in tasks()]
     other = [{"case_id": c["case_id"], "output": "competitor text"} for c in tasks()]
-    packet = prepare_blind(tasks(), manifest(), values, other)
+    packet = prepare_blind(tasks(), manifest(), values, other, blinding_key=BLIND_KEY)
     assert len(packet) == 80
     for row in packet:
         assert row["response_a"] != row["response_b"]
