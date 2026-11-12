@@ -191,7 +191,8 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and isinstance(ci.get("workflow_run_url"), str) and ci["workflow_run_url"].startswith("https://github.com/")
          and isinstance(ci.get("required_checks"), dict)
          and all(ci["required_checks"].get(key) == "success" for key in
-                 ("test-and-build", "frontend", "coworker", "governance-audit", "ci-merge-gate")))
+                 ("test-and-build", "frontend", "coworker", "browser-qualification",
+                  "postgres-18-qualification", "governance-audit", "ci-merge-gate")))
     for key in PROOFS:
         need("operated_" + key, operated_proof_ok(key, artifacts.get(key), release, revision, rollout_hash))
     golden = artifacts.get("golden")
