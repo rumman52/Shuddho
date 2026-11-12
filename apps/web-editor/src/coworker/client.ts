@@ -497,7 +497,8 @@ export type WorkspaceManifest = {
 export type ConversationRecord = {
   id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
 };
-export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string };
+export type GroundedReplySource = { source_id: string; label: string; resource_type: "document_version" | "artifact" };
+export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string; sources?: GroundedReplySource[] };
 export type ConversationMessageRecord = {
   assistant_reply?: AssistantReply | null;
   id: string; conversation_id: string; sequence: number; text: string;
@@ -543,7 +544,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   runtimeManifest(signal?: AbortSignal) {
-    return this.json<{ capabilities: { conversation_replies?: boolean; projects?: boolean; fly_github?: boolean } }>("/api/v1/runtime-manifest", { signal });
+    return this.json<{ capabilities: { conversation_replies?: boolean; grounded_conversation_replies?: boolean; projects?: boolean; fly_github?: boolean } }>("/api/v1/runtime-manifest", { signal });
   }
   async replyToConversationMessageStream(
     id: string, messageId: string, sequence: number,
@@ -590,6 +591,14 @@ export class CoworkerClient {
             (reply.error !== undefined && reply.error !== null && typeof reply.error !== "string")) {
           throw new WorkspaceError("The AI reply stream contained an invalid reply.");
         }
+        if (reply.sources !== undefined && (
+          !Array.isArray(reply.sources) || reply.sources.length > 5 ||
+          new Set(reply.sources.map(source => source.source_id)).size !== reply.sources.length ||
+          reply.sources.some(source => !source || typeof source !== "object" ||
+            !/^src-[1-5]$/.test(source.source_id) ||
+            typeof source.label !== "string" || source.label.length > 160 ||
+            !["document_version", "artifact"].includes(source.resource_type))
+        )) throw new WorkspaceError("The AI reply contains invalid source references.");
         replyBytes = new TextEncoder().encode(reply.text).length;
         if (replyBytes > 16000) throw new WorkspaceError("The AI reply exceeded the allowed size.");
         if (event === "final" && reply.state === "generating") {
