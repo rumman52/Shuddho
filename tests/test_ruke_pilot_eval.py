@@ -210,6 +210,23 @@ def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
         candidate_ledger(tasks(), rows)
 
 
+def test_external_holdout_rejects_exposed_development_prompt_and_source(external_dir):
+    # Renaming a development task does not create genuinely unseen test data.
+    cases = tasks()
+    exposed = registry_cases()[0]
+    matching = next(row for row in cases
+                    if row["workflow"] == exposed["workflow"]
+                    and row["language"] == exposed["language"])
+    matching["instruction"] = exposed["instruction"]
+    matching["source_sha256"] = exposed["source_sha256"]
+    path = external_dir / "relabelled-development-task.jsonl"
+    path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in cases) + "\n")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    path.chmod(0o444)
+    with pytest.raises(EvidenceError, match="exposed"):
+        external_heldout(path, corpus_sha256=digest)
+
+
 def test_two_reviewers_full_rubric_accept_all_synthetic_cases():
     reviews, checks = reviews_and_checks()
     result = score_reviews(tasks(), reviews, [], checks)
