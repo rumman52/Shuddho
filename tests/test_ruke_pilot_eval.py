@@ -331,6 +331,25 @@ def test_blind_disagreement_detected_instead_of_silent_vote_merge():
     assert result["position_swap_inconsistent_cases"] == [tasks()[0]["case_id"]]
 
 
+def test_blind_comparative_disagreement_requires_independent_adjudicator():
+    judgments = blind_votes()
+    judgments[0]["preference"] = "B" if judgments[0]["preference"] == "A" else "A"
+    cid = tasks()[0]["case_id"]
+    unresolved = compare(tasks(), manifest(), comparator(), judgments)
+    assert not unresolved["complete"] and unresolved["remaining_disagreements"] == [cid]
+    resolution = {"case_id": cid, "adjudicator_id": "D3", "position": "AB",
+                  "preference": ("A" if position_map(cid, manifest()["corpus_sha256"])["AB"][0] == "candidate" else "B"),
+                  "evidence_note": "Separate evaluation of source-grounded factual claims"}
+    accepted = compare(tasks(), manifest(), comparator(), judgments, [resolution])
+    assert accepted["complete"] and accepted["disagreements_adjudicated"] == 1
+    assert accepted["wins"] == 40
+    denial = dict(resolution, adjudicator_id="D1")
+    with pytest.raises(EvidenceError, match="independent third"):
+        compare(tasks(), manifest(), comparator(), judgments, [denial])
+    with pytest.raises(EvidenceError, match="duplicate"):
+        compare(tasks(), manifest(), comparator(), judgments, [resolution, resolution])
+
+
 def test_packet_has_both_positions_without_product_labels(tmp_path):
     values = [{"case_id": c["case_id"], "output": "candidate text"} for c in tasks()]
     other = [{"case_id": c["case_id"], "output": "competitor text"} for c in tasks()]
