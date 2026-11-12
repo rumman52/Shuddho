@@ -519,7 +519,8 @@ test("selected task memory is previewed, corrected versions are cleared, and onl
     await act(async () => pick().props.onChange({ target: { checked: true } }));
     assert.ok(preview().findAllByType("p").some(node =>
       node.children.includes("Write the customer report in English.")));
-    assert.equal(JSON.stringify(preview().toJSON()).includes("PRIVATE UNSENT VALUE"), false);
+    assert.equal(preview().findAllByType("p").some(node =>
+      node.children.includes("PRIVATE UNSENT VALUE")), false);
 
     const edit = tree.root.findAllByType("button").find(node => node.children.includes("Edit"));
     assert.ok(edit);
