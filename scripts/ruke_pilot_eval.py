@@ -151,6 +151,24 @@ def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT) 
                 or type(row.get("max_output_bytes")) is not int
                 or not 1 <= row["max_output_bytes"] <= 24000):
             raise EvidenceError("heldout task missing bounded instruction/source contract")
+    # Copying a developer-visible task to a protected directory does not make
+    # it independently held out. Reject reused IDs and prompt/source pairs
+    # from BOTH historical splits, including renamed case IDs. Reusing a
+    # public source for a genuinely new task is not automatically forbidden.
+    known = load_suite()["cases"]
+    historical_ids = {case["id"] for case in known}
+    def prompt_binding(instruction: str, source_hash: str) -> tuple[str, str]:
+        return (" ".join(instruction.casefold().split()), source_hash)
+    historical_prompts = {
+        prompt_binding(case["instruction"], case["_source"]["sha256"])
+        for case in known
+    }
+    if any(
+        row["case_id"] in historical_ids
+        or prompt_binding(row["instruction"], row["source_sha256"]) in historical_prompts
+        for row in rows
+    ):
+        raise EvidenceError("external heldout contains exposed development or historical holdout content")
     return rows
 
 
