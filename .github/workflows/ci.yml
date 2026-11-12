@@ -149,6 +149,30 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      # Run the Day 6 regression surface before the long Coworker suite so
+      # export-contract failures cannot hide behind 20+ minutes of unrelated work.
+      - name: Qualify Day 6 workflows, native outputs, quality and interrupted exports
+        run: |
+          uv run --extra coworker pytest \
+            tests/test_coworker.py::test_export_checkpoint_commit_response_loss_preserves_referenced_objects \
+            tests/test_coworker.py::test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_export \
+            tests/test_coworker_services.py tests/test_coworker_office.py \
+            tests/test_coworker_research.py tests/test_coworker_quality_eval.py \
+            -q -rs --junitxml=/tmp/day6-workflows.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_services
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_office
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_research
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_quality_eval
+          uv run --extra coworker python scripts/coworker_quality_eval.py --release-id day6-ci-evidence-workflows --min-pass-rate 1.0 --min-fact-recall 1.0 --output /tmp/day6-quality.json
+      - name: Preserve Day 6 workflow verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day6-workflow-evidence-${{ github.sha }}
+          path: |
+            /tmp/day6-workflows.xml
+            /tmp/day6-quality.json
+          if-no-files-found: warn
       - name: Qualify browser and Fly fixtures without skips
         run: |
           uv run --extra coworker pytest tests/test_coworker_browser_fixture.py tests/test_fly_github_repository.py -q -rs --junitxml=/tmp/coworker-browser-fixture.xml
