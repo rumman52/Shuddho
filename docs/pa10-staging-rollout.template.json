@@ -13,6 +13,12 @@
   ],
   "capabilities": {
     "coworker": true,
+    "conversations": false,
+    "projects": false,
+    "fly_github": false,
+    "conversation_replies": false,
+    "agent_browser_read": false,
+    "reviewed_research": false,
     "work_services": true,
     "artifact_services": false,
     "agent_runtime": true,
