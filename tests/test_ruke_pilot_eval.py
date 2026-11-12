@@ -19,7 +19,10 @@ from scripts.ruke_pilot_eval import (
 def tasks():
     return [
         {"case_id": f"synthetic-{workflow}-{lang}-{i}",
-         "workflow": workflow, "language": lang}
+         "workflow": workflow, "language": lang,
+         "instruction": "Synthetic source-grounded task for harness testing only",
+         "source_id": "synthetic-source", "citation_id": "web-1",
+         "source_sha256": "f" * 64, "max_output_bytes": 24000}
         for workflow in ("research_brief", "project_report_email")
         for lang in ("bn", "en") for i in range(10)
     ]
@@ -104,6 +107,30 @@ def test_development_registry_balanced_bound_to_real_existing_suite():
     assert all(c["split"] == "development" and "expected_facts" not in c for c in cases)
     assert {c["language"] for c in cases} == {"bn", "en"}
     assert {c["workflow"] for c in cases} == {"research_brief", "project_report_email"}
+
+
+def test_registry_rejects_instruction_or_source_digest_rewrite(tmp_path):
+    from scripts.ruke_pilot_eval import REGISTRY
+    rows = [json.loads(line) for line in REGISTRY.read_text().splitlines() if line]
+    rows[0]["instruction"] += " Unreviewed instruction injection."
+    target = tmp_path / "rewritten-registry.jsonl"
+    target.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n")
+    with pytest.raises(EvidenceError, match="binding changed"):
+        registry_cases(target)
+    rows[0]["instruction"] = [json.loads(line) for line in REGISTRY.read_text().splitlines() if line][0]["instruction"]
+    rows[0]["source_sha256"] = "0" * 64
+    target.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n")
+    with pytest.raises(EvidenceError, match="binding changed"):
+        registry_cases(target)
+
+
+def test_external_holdout_missing_prompt_and_source_is_rejected(external_dir):
+    rows = tasks()
+    rows[0].pop("instruction")
+    held = external_dir / "incomplete-tasks.jsonl"
+    held.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    with pytest.raises(EvidenceError, match="instruction/source contract"):
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
 
 
 def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir):
