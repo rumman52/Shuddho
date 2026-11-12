@@ -92,6 +92,15 @@ class BrowserChatModel:
 
     async def generate(self, messages):
         self.messages = messages
+        user_text = messages[-1]["content"] if messages else ""
+        if "untrusted_selected_source_excerpts" in user_text:
+            # Deliberately deterministic real-HTTP browser fixture: only a
+            # selected source excerpt can drive a cited direct-chat answer.
+            if "Renewal date: 17 March 2027." not in user_text:
+                return "No renewal date was provided. [[src-1]]"
+            if "নবায়নের" in user_text:
+                return "নবায়নের তারিখ ১৭ মার্চ ২০২৭। [[src-1]]"
+            return "The renewal date is 17 March 2027. [[src-1]]"
         return "This reply used the project instructions."
 
 
