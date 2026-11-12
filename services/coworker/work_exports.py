@@ -114,7 +114,7 @@ def render_work_artifacts(skill_id, draft, sources):
         ("• " if block.kind == "bullet" else "☐ " if block.kind == "check" else "") + block.text for block in blocks)
     manifest = {"skill_id": skill_id, "output_language": draft.output_language,
                 "sources": sources, "missing_information": draft.missing_information,
-                "delivery_status": "draft_ready"}
+                "delivery_status": "needs_input" if draft.missing_information else "draft_ready"}
     return [
         (stem + ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx),
         (stem + ".pdf", "application/pdf", pdf),
