@@ -69,7 +69,7 @@ uv run --extra coworker python -m scripts.ruke_pilot_eval prepare-blind \
   --report /secure/d/day9/first-blind-packet.json
 ```
 
-Provide each reviewer only A/B response text (not product labels), randomized across IDs with the opposite ordering on the second pass. Judgments contain `case_id`, `reviewer_id`, `position` (AB or BA), `preference` (A/B/tie), and an evidence note; 2 reviewers × 2 positions × 40 cases = **160** rows. Position-inconsistent cases are reported and do not pass the comparator gate. Report candidate wins, ties, losses, actual versions, sample size and uncertainty. No unsupported claim may receive a preference simply due to fluency or length.
+Provide each reviewer only A/B response text (not product labels), randomized across IDs with the opposite ordering on the second pass. Judgments contain `case_id`, `reviewer_id`, `position` (AB or BA), `preference` (A/B/tie), and an evidence note; 2 reviewers × 2 positions × 40 cases = **160** rows. Position-inconsistent cases require a separate **blind comparative adjudication**, never majority-vote override. For each disputed case, the `comparison_adjudications` array supplies `case_id`, a third `adjudicator_id` (not D1/D2), blinded `position` (AB or BA), `preference` (A/B/tie), and an evidence-based note. Unresolved disagreements block the comparator gate. Report candidate wins, ties, losses, actual versions, sample size and uncertainty. No unsupported claim may receive a preference simply due to fluency or length.
 
 ## C — operated scenario inventory
 
@@ -111,6 +111,7 @@ The external `evidence.json` has these keys:
 - `operations`: 20 rows with `row` (1..20), exact `scenario` from `OPERATED`, `candidate_revision`, `execution`, `status`, `unauthorized_access`, `unauthorized_mutation`, `observed_at`, `trace_sha256`, and `boundaries` keyed by required component. Each boundary contains `mode=real`, `instance`, `trace_sha256`.
 - `competitor`: identity fields and comparable limits described above (or omitted, with gap disclosed).
 - `comparisons`: 160 blinded judgment records described above (or omitted, with gap disclosed).
+- `comparison_adjudications`: independent third-reviewer A/B decisions with source rationales for every unresolved comparative disagreement.
 - `custody`: external transfer receipt SHA, independent operator review=`verified`, developer negative read test=`denied`, replacement of exposed cases=`true`, custodian identity; these are **unverified operator statements to this CLI**, not cryptographic attestations.
 - `required_repository_checks` and `canonical_release_contract`: both `passed` only with independently inspected exact-head evidence; `unresolved_high_severity_failures` is a required array.
 
