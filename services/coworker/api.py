@@ -1318,6 +1318,7 @@ def runtime_manifest(
         "projects": settings.projects_enabled and settings.conversations_enabled,
         "fly_github": settings.fly_github_enabled,
         "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
+        "grounded_conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,
