@@ -770,7 +770,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                       {selectedMemoryPins.map(pin => {
                         const fact = memoryFacts.find(value => value.id === pin.fact_id && value.version === pin.expected_version);
                         return <li key={pin.fact_id}>
-                          {fact ? `${fact.namespace} / ${fact.key} · version ${fact.version}` : "Memory version changed · reselect"}
+                          {fact ? <><strong>{fact.namespace} / {fact.key} · version {fact.version}</strong>
+                            <p dir="auto">{fact.value}</p></> : "Memory version changed · reselect"}
                         </li>;
                       })}
                     </ul>}
