@@ -36,7 +36,7 @@ test("Ask Rukh on an attached PDF uses the reply endpoint without dispatching an
   let replyCalls = 0, dispatchCalls = 0;
   const manifest = {
     schema_version: 1, workspace_id: "workspace-1", workspace_name: "Workspace",
-    documents: [{ version_id: "version-1", name: "contract.pdf", available: true }],
+    documents: [{ document_id: "document-1", version_id: "version-1", name: "contract.pdf", version: 1, sha256: "a".repeat(64), available: true, trust: "untrusted_source" as const }],
     artifacts: [], memory: [], revision_sha256: "a".repeat(64),
     truncated: { documents: false, artifacts: false, memory: false },
   } as WorkspaceManifest;
