@@ -20,6 +20,12 @@ ALLOWED_ACTION_PROVIDERS = {"google", "microsoft", "linkedin", "opentable"}
 
 RUNTIME_CAPABILITY_KEYS = frozenset({
     "coworker",
+    "conversations",
+    "projects",
+    "fly_github",
+    "conversation_replies",
+    "agent_browser_read",
+    "reviewed_research",
     "work_services",
     "artifact_services",
     "agent_runtime",
@@ -74,6 +80,12 @@ PA10_REQUIRED_TRUE = frozenset({
 })
 
 PA10_REQUIRED_FALSE = frozenset({
+    "conversations",
+    "projects",
+    "fly_github",
+    "conversation_replies",
+    "agent_browser_read",
+    "reviewed_research",
     "research",
     "browser",
     "code_execution",
@@ -432,7 +444,7 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         or state.get("expected_environment") != "staging"
     ):
         raise StagingReleaseFreezeError("Release-freeze state is invalid.")
-    if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != 1:
+    if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != 2:
         raise StagingReleaseFreezeError(
             "Runtime manifest schema_version is unsupported."
         )
