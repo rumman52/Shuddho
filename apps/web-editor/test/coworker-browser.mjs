@@ -272,10 +272,24 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/writing-assistant-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
-  await page.getByRole("button", { name: "Coworker", exact: true }).click();
+  // The Writing Assistant sidebar uses an actual link for cross-app navigation.
+  // A same-named button in the editor must never count as returning to chat.
+  await page.getByRole("link", { name: "Coworker", exact: true }).click();
   await page.waitForURL(url => url.pathname === "/coworker");
   const coworkerPage = page;
-  await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  try {
+    await coworkerPage.getByRole("heading", { name: "What are we working on?", exact: true }).waitFor();
+  } catch (error) {
+    // Preserve the actual rendered state for diagnosing auth/routing regressions;
+    // never relax the authenticated-workspace assertion or silently retry.
+    await coworkerPage.screenshot({ path: join(folder, "screenshots/coworker-return-failure.png"), fullPage: true }).catch(() => {});
+    console.error("Coworker return diagnostic", {
+      url: coworkerPage.url(),
+      headings: await coworkerPage.locator("h1,h2").allTextContents().catch(() => []),
+      pageErrors: [...failures],
+    });
+    throw error;
+  }
   await coworkerPage.setViewportSize({ width: 390, height: 844 });
   assert.equal(await coworkerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await coworkerPage.screenshot({ path: join(folder, "screenshots/coworker-switch-mobile.png"), fullPage: true });
