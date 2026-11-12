@@ -10,11 +10,11 @@ import argparse
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
 import re
-import secrets
 import subprocess
 import sys
 
@@ -315,16 +315,31 @@ def verify_operations(rows: list[dict], candidate_revision: str) -> dict:
             "evidence_level": "operator_submitted_operated_traces_not_independently_attested"}
 
 
-def position_map(case_id: str, corpus_sha256: str) -> dict:
-    bit = int(hashlib.sha256((corpus_sha256 + ":" + case_id).encode()).hexdigest(), 16) & 1
+def read_blinding_key(path: Path) -> bytes:
+    """External secret custody, separate from reviewer packets and the repo."""
+    outside_repo(path)
+    if not path.is_file() or path.stat().st_size != 32:
+        raise EvidenceError("blind mapping requires a separate 32-byte D-controlled key")
+    mode = path.stat().st_mode & 0o777
+    if not mode & 0o400 or mode & 0o077:
+        raise EvidenceError("blinding key must be private to D (0600 or 0400)")
+    return path.read_bytes()
+
+
+def position_map(case_id: str, corpus_sha256: str, *, blinding_key: bytes) -> dict:
+    if not isinstance(blinding_key, bytes) or len(blinding_key) != 32:
+        raise EvidenceError("secret 32-byte blinding key required")
+    bit = hmac.digest(blinding_key, (corpus_sha256 + ":" + case_id).encode(), "sha256")[-1] & 1
     return {"AB": ("candidate", "competitor") if bit == 0 else ("competitor", "candidate"),
             "BA": ("competitor", "candidate") if bit == 0 else ("candidate", "competitor")}
 
 
 def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: list[dict] | None,
-            adjudications: list[dict] | None = None) -> dict:
+            adjudications: list[dict] | None = None, *, blinding_key: bytes | None = None) -> dict:
     if competitor is None or rows is None:
         return {"complete": False, "comparison_gap": "competitor access or blinded judgment evidence missing", "wins": None, "ties": None, "losses": None}
+    if not isinstance(blinding_key, bytes) or len(blinding_key) != 32:
+        raise EvidenceError("independent D-controlled secret mapping required for comparator")
     for field in ("product", "product_version", "model", "run_started_at"):
         if not isinstance(competitor.get(field), str) or not competitor[field].strip():
             raise EvidenceError("competitor identity incomplete: " + field)
@@ -350,7 +365,7 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
     votes = Counter()
     inconsistent = []
     for cid, values in judgments.items():
-        mapping = position_map(cid, manifest["corpus_sha256"])
+        mapping = position_map(cid, manifest["corpus_sha256"], blinding_key=blinding_key)
         choices = []
         for (_, order), row in values.items():
             pref = row["preference"]
@@ -371,7 +386,7 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
                 or row.get("preference") not in ("A", "B", "tie")
                 or not isinstance(row.get("evidence_note"), str) or not row["evidence_note"].strip()):
             raise EvidenceError("blind comparative adjudication needs an independent third reviewer and source rationale")
-        mapped = position_map(cid, manifest["corpus_sha256"])[row["position"]]
+        mapped = position_map(cid, manifest["corpus_sha256"], blinding_key=blinding_key)[row["position"]]
         label = "tie" if row["preference"] == "tie" else mapped[0 if row["preference"] == "A" else 1]
         votes[label] += 1
     remaining = sorted(contested - set(resolutions))
@@ -380,20 +395,22 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
             "disagreements_adjudicated": len(resolutions),
             "remaining_disagreements": remaining,
             "wins": votes["candidate"], "ties": votes["tie"], "losses": votes["competitor"],
+            "blinding_key_sha256": hashlib.sha256(blinding_key).hexdigest(),
             "candidate_product_version": manifest["candidate_product_version"],
             "competitor_product_version": competitor["product_version"],
             "time_limit_seconds": manifest["time_limit_seconds"],
             "source_set_sha256": manifest["source_set_sha256"]}
 
 
-def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], competitor: list[dict]) -> list[dict]:
+def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], competitor: list[dict],
+                  *, blinding_key: bytes) -> list[dict]:
     ids = {c["case_id"] for c in cases}
     a = _unique_rows(candidate, "case_id", ids, 40)
     b = _unique_rows(competitor, "case_id", ids, 40)
     result = []
     for case in cases:
         cid = case["case_id"]
-        for position, (left, right) in position_map(cid, manifest["corpus_sha256"]).items():
+        for position, (left, right) in position_map(cid, manifest["corpus_sha256"], blinding_key=blinding_key).items():
             values = {"candidate": a[cid]["output"], "competitor": b[cid]["output"]}
             result.append({"case_id": cid, "position": position, "response_a": values[left],
                            "response_b": values[right]})
@@ -431,6 +448,8 @@ def main(argv=None) -> int:
     parser.add_argument("--heldout", type=Path)
     parser.add_argument("--candidate", type=Path)
     parser.add_argument("--competitor-outputs", type=Path)
+    parser.add_argument("--blinding-key", type=Path,
+                        help="D-only secret 32-byte file outside checkout; never share with judges")
     parser.add_argument("--evidence", type=Path, help="JSON with reviews, deterministic, operations, adjudications, comparison")
     parser.add_argument("--report", type=Path, help="New output file; overwrite is forbidden")
     parser.add_argument("--regression-rerun", action="store_true")
@@ -459,9 +478,11 @@ def main(argv=None) -> int:
             if manifest["candidate_revision"] != head:
                 raise EvidenceError("manifest revision differs from exact checkout head")
             if args.action == "prepare-blind":
-                if not args.candidate or not args.competitor_outputs:
-                    raise EvidenceError("both real output files required for blind packet")
-                obj = prepare_blind(cases, manifest, read_jsonl(args.candidate), read_jsonl(args.competitor_outputs))
+                if not args.candidate or not args.competitor_outputs or not args.blinding_key:
+                    raise EvidenceError("real outputs and D-only blinding key required for blind packet")
+                key = read_blinding_key(args.blinding_key)
+                obj = prepare_blind(cases, manifest, read_jsonl(args.candidate),
+                                    read_jsonl(args.competitor_outputs), blinding_key=key)
             else:
                 if not args.evidence or not args.candidate:
                     raise EvidenceError("external independently scored evidence and candidate outputs required")
@@ -470,8 +491,9 @@ def main(argv=None) -> int:
                 scores = score_reviews(cases, evidence["reviews"], evidence.get("adjudications", []),
                                        evidence["deterministic"], output_hashes=output_hashes)
                 faults = verify_operations(evidence["operations"], manifest["candidate_revision"])
+                key = read_blinding_key(args.blinding_key) if args.blinding_key else None
                 comparative = compare(cases, manifest, evidence.get("competitor"), evidence.get("comparisons"),
-                                      evidence.get("comparison_adjudications", []))
+                                      evidence.get("comparison_adjudications", []), blinding_key=key)
                 custody = evidence.get("custody", {})
                 # A checked-in self-assertion is not a proof. Preserve the external
                 # custodian's status; independent attestation is reviewed out-of-band.
