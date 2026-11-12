@@ -113,7 +113,7 @@ def require_distinct_owners(client: httpx.Client, token_a: str, token_b: str) ->
         raise Day2Failure("Two distinct managed owners and workspaces are required.")
 
 
-def public_signed_url(url: object) -> str:
+def public_signed_url(url: object, *, trusted_storage_host: str | None = None) -> str:
     # A compromised API response must not make an operator runner fetch private
     # network addresses, metadata endpoints or credential-bearing URLs.
     if not isinstance(url, str) or len(url) > 8192:
@@ -134,6 +134,8 @@ def public_signed_url(url: object) -> str:
         pass
     else:
         raise Day2Failure("Presigned artifact URLs must not use IP literals.")
+    if trusted_storage_host is not None and host != trusted_storage_host:
+        raise Day2Failure("Presigned artifact URL does not match the configured private storage endpoint.")
     return url
 
 
@@ -145,6 +147,7 @@ def run_probe(
     source: bytes,
     *,
     timeout_seconds: int = 180,
+    trusted_storage_host: str | None = None,
 ) -> dict:
     """Prove a selected private document was executed by the real model-backed task.
 
@@ -270,7 +273,7 @@ def run_probe(
     if len(own_bytes) != expected_bytes or hashlib.sha256(own_bytes).hexdigest() != expected_sha:
         raise Day2Failure("Owned artifact bytes do not match persisted metadata.")
     signed = obj(checked(client.get(url_route, headers=a), 200, "private artifact URL"), "private artifact URL")
-    url = public_signed_url(signed.get("url"))
+    url = public_signed_url(signed.get("url"), trusted_storage_host=trusted_storage_host)
     signed_response = httpx.get(url, timeout=20, follow_redirects=False)
     if (
         signed_response.status_code != 200 or len(signed_response.content) != expected_bytes
@@ -367,6 +370,9 @@ def main() -> None:
         # Operator-only dependency: lightweight contract tests have no Auth/Temporal extras.
         from services.coworker.container import Container
 
+        endpoint = urlparse(settings.storage_endpoint or "")
+        if endpoint.scheme != "https" or not endpoint.hostname:
+            raise Day2Failure("Live Day 2 requires a reviewed HTTPS private S3 endpoint.")
         container = Container.create(settings)
         before = active_worker(container, release["source_revision"])
         marker = uuid.uuid4().hex
@@ -376,7 +382,10 @@ def main() -> None:
             "Only these synthetic facts may be used; no real customer data is present.\n"
         ).encode("utf-8")
         with httpx.Client(base_url=origin, timeout=20, follow_redirects=False) as client:
-            result = run_probe(client, token_a, token_b, freeze, source, timeout_seconds=args.timeout)
+            result = run_probe(
+                client, token_a, token_b, freeze, source,
+                timeout_seconds=args.timeout, trusted_storage_host=endpoint.hostname,
+            )
         asyncio.run(temporal_completed(settings, result["workflow_id"]))
         after = heartbeat_advanced(container, before, release["source_revision"])
         result["worker"] = {
