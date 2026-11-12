@@ -29,7 +29,7 @@ The canonical release contract is `scripts/release_contract.py`, validated by `s
 
 ## D — external held-out run
 
-Create `/secure/d/day9/` or a comparable independently permissioned location **outside the repo**. This is an operator example, not a claim that such a path exists here. Record independently observed access-denied evidence for A/B developer identities and the physical custody handoff. The externally frozen JSONL contains **40** generation-facing rows with `case_id`, `workflow` and `language` (ten per cell) and task prompts plus permitted-source pointers; omit answer keys. Record its exact SHA-256 in the manifest.
+Create `/secure/d/day9/` or a comparable independently permissioned location **outside the repo**. This is an operator example, not a claim that such a path exists here. Record independently observed access-denied evidence for A/B developer identities and the physical custody handoff. The externally frozen JSONL contains **40** generation-facing rows with `case_id`, `workflow` and `language` (ten per cell) and task prompts plus permitted-source pointers; omit answer keys. Each JSONL row must include nonempty `instruction`, `source_id`, `citation_id`, SHA-256 `source_sha256` and `max_output_bytes` (1..24000). Make the separate file read-only (e.g. `chmod 0444 tasks.jsonl` in D's independent workspace), and record its exact SHA-256 in the manifest.
 
 Manifest JSON fields:
 
@@ -106,7 +106,8 @@ The external `evidence.json` has these keys:
 
 - `reviews`: 80 rows, 2 fixed reviewer IDs; each row contains `case_id`, `reviewer_id`, `scores` (four rubric dimensions), `source_supported` (bool), `evidence_note`.
 - `adjudications`: one row for each disagreement, with `case_id`, third `adjudicator_id`, `scores`, `source_supported`, `evidence_note`.
-- `deterministic`: 40 rows with `case_id`, `passed`, `security_passed`, `output_sha256`.
+- `deterministic`: 40 rows with `case_id`, `passed`, `security_passed`, `output_sha256`. Hash each actual candidate output using UTF-8 JSON with sorted keys, compact separators and no NaN; a mismatch blocks evaluation.
+- `candidate-outputs.jsonl`: 40 rows with `case_id` and the full `output` draft JSON object; optional nonnegative integer `telemetry` with exactly `tokens`, `latency_ms`, `cost_microusd`. Incomplete telemetry yields unknown aggregate cost and cost-per-accepted-task, **not zero**.
 - `operations`: 20 rows with `row` (1..20), exact `scenario` from `OPERATED`, `candidate_revision`, `execution`, `status`, `unauthorized_access`, `unauthorized_mutation`, `observed_at`, `trace_sha256`, and `boundaries` keyed by required component. Each boundary contains `mode=real`, `instance`, `trace_sha256`.
 - `competitor`: identity fields and comparable limits described above (or omitted, with gap disclosed).
 - `comparisons`: 160 blinded judgment records described above (or omitted, with gap disclosed).
@@ -117,11 +118,12 @@ The external `evidence.json` has these keys:
 uv run --extra coworker python -m scripts.ruke_pilot_eval evaluate \
   --manifest /secure/d/day9/manifest.json \
   --heldout /secure/d/day9/tasks.jsonl \
+  --candidate /secure/d/day9/candidate-outputs.jsonl \
   --evidence /secure/d/day9/evidence.json \
   --report /secure/d/day9/first-run-result.json
 ```
 
-The report uses an exclusive create (`O_EXCL`), never clobbering a previous result. A later attempt uses a **different** filename and `--regression-rerun` to classify the evidence honestly. No script may change these labels to claim new independent measurements. Exit 0 means submitted **operator evidence** passes mechanical gates, *not* that release is authorized. Exit 1 means incomplete/failed gate, exit 2 malformed or missing evidence.
+The report uses an exclusive create (`O_EXCL`), never clobbering a previous result. Evaluation and blind-packet inputs and reports must be outside the repository; the run manifest's exact candidate revision must match the checkout HEAD. A later attempt uses a **different** filename and `--regression-rerun` to classify the evidence honestly. No script may change these labels to claim new independent measurements. Exit 0 means submitted **operator evidence** passes mechanical gates, *not* that release is authorized. Exit 1 means incomplete/failed gate, exit 2 malformed or missing evidence.
 
 **Important:** No document written in this repository, no developer-authored test fixture, no self-declared D identity, and no SHA alone proves access isolation, two actual human reviewers or 20 genuinely operated scenarios. The script emits `custody_independently_verified_by_this_program=false` and `release_authorization=false` even when operator inputs are mechanically complete. Human review plus the canonical cohort release gate remain required.
 
