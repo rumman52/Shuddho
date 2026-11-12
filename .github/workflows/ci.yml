@@ -149,6 +149,16 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      - name: Verify Day 8 economics comparisons and telemetry without skips
+        run: |
+          uv run --extra coworker pytest tests/test_core_agent_observability.py -q -rs --junitxml=/tmp/day8-economics.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_core_agent_observability
+      - name: Keep Day 8 economics evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day8-economics
+          path: /tmp/day8-economics.xml
       - name: Qualify browser and Fly fixtures without skips
         run: |
           uv run --extra coworker pytest tests/test_coworker_browser_fixture.py tests/test_fly_github_repository.py -q -rs --junitxml=/tmp/coworker-browser-fixture.xml

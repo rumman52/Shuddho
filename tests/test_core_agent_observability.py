@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -16,7 +18,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.models import AgentDecision, AgentRun
 from services.coworker.migrate import upgrade
 from services.coworker.schemas import TaskCreate
-from scripts.core_agent_observability import aggregate, collect_snapshot, estimated_cost_microusd, render_openmetrics
+from scripts.core_agent_observability import aggregate, collect_snapshot, compare_day8_development, estimated_cost_microusd, main, render_openmetrics
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -346,3 +348,164 @@ def test_snapshot_includes_persisted_planner_inference_latency(tmp_path):
     assert record["model_latency_ms_p50"] == 37
     assert record["model_latency_coverage"] == 1.0
     assert snapshot["dashboard"]["models"]["p95_latency_ms"] == 37
+
+
+
+def _day8_fixture():
+    """Four ten-task development cells and independently referenced outcomes."""
+    cases = []
+    for workflow in ("research_brief", "project_report_email"):
+        for language in ("bn", "en"):
+            for index in range(10):
+                cases.append({
+                    "id": f"{workflow}-{language}-{index}",
+                    "workflow": workflow, "language": language,
+                    "split": "development",
+                })
+    suite = {"manifest": {
+        "suite_id": "pilot",
+        "source_revision": "a" * 40,
+        "files": {"development": {"sha256": "d" * 64}},
+    }, "cases": cases}
+    identity = {"schema_version": 1, "split": "development",
+                "suite_id": "pilot", "source_revision": "a" * 40,
+                "case_file_sha256": "d" * 64,
+                "generation_identity_verified": True,
+                "receipts_independently_verified": True,
+                "provider_usage_receipt_sha256": "e" * 64,
+                "review_ledger_sha256": "f" * 64}
+    def make(profile, unit_cost):
+        return {
+            **identity,
+            "configuration": {
+                "profile": profile,
+                "provider": "deepseek",
+                "model": "deepseek-flash",
+                "model_settings_sha256": "1" * 64,
+                "behavior_sha256": ("2" if profile == "baseline" else "3") * 64,
+                "prompt_sha256": ("4" if profile == "baseline" else "5") * 64,
+                "tool_sha256": "6" * 64,
+            },
+            "results": [{
+                "id": case["id"], "workflow": case["workflow"],
+                "language": case["language"],
+                "passed": True, "human_accepted": True, "safety_passed": True,
+                "accepted_outcome_ref": "review:" + case["id"],
+                "verified_artifact_refs": ["artifact:" + case["id"]],
+                "input_tokens": 100, "output_tokens": 20,
+                "model_time_ms": 100, "tool_time_ms": 50,
+                "retry_count": 0, "cost_microusd": unit_cost,
+            } for case in cases],
+        }
+    return suite, make("baseline", 20), make("bounded_context_compact_observations", 15)
+
+
+def test_day8_selects_measured_least_cost_profile_with_receipts_and_freeze_hashes():
+    suite, baseline, candidate = _day8_fixture()
+    comparison = compare_day8_development(baseline, candidate, suite)
+    assert comparison["status"] == "FROZEN_FOR_DAY9"
+    assert comparison["measured_cost_savings_microusd"] == 200
+    assert comparison["selected_least_cost_qualified_profile"] == "bounded_context_compact_observations"
+    assert comparison["freeze"]["promotion_authorized"] is False
+    assert len(comparison["freeze"]["freeze_sha256"]) == 64
+    assert comparison["profile_summaries"]["baseline"]["total_input_tokens"] == 4000
+    assert comparison["profile_summaries"]["bounded_context_compact_observations"]["total_model_time_ms"] == 4000
+    assert len(comparison["per_task_comparison"]) == 40
+    first = comparison["per_task_comparison"][0]
+    assert first["baseline"]["input_tokens"] == 100
+    assert first["baseline"]["output_tokens"] == 20
+    assert first["baseline"]["measured_model_tool_time_ms"] == 150
+    assert first["baseline"]["accepted_outcome_ref"].startswith("review:")
+    assert first["measured_cost_savings_microusd"] == 5
+
+
+def test_day8_missing_cost_or_token_direction_blocks_choice_without_invented_savings():
+    suite, baseline, candidate = _day8_fixture()
+    candidate["results"][0]["input_tokens"] = None
+    comparison = compare_day8_development(baseline, candidate, suite)
+    assert comparison["status"] == "BLOCKED"
+    assert comparison["selected_least_cost_qualified_profile"] is None
+    assert comparison["measured_cost_savings_microusd"] is None
+    assert comparison["profile_summaries"]["bounded_context_compact_observations"]["total_cost_microusd"] is None
+    assert any(item["bounded_context_compact_observations"]["input_tokens"] is None
+               for item in comparison["per_task_comparison"])
+    assert comparison["freeze"] is None
+
+
+def test_day8_does_not_claim_quality_retention_when_one_language_cell_regresses():
+    suite, baseline, candidate = _day8_fixture()
+    candidate["results"][0]["human_accepted"] = False
+    candidate["results"][1]["human_accepted"] = False
+    comparison = compare_day8_development(baseline, candidate, suite)
+    assert comparison["status"] == "FROZEN_FOR_DAY9"
+    assert comparison["selected_least_cost_qualified_profile"] == "baseline"
+    assert comparison["candidate_quality_retained"] is False
+    assert comparison["candidate_exclusion_reason"] == "quality_regression_vs_baseline"
+    assert comparison["measured_cost_savings_microusd"] is None
+    assert comparison["profile_summaries"]["bounded_context_compact_observations"]["by_cell"]["research_brief/bn"] == 8
+
+
+def test_day8_rejects_unpaired_model_setting_and_unreferenced_accepted_outcome():
+    suite, baseline, candidate = _day8_fixture()
+    candidate["configuration"]["model_settings_sha256"] = "a" * 64
+    with pytest.raises(ValueError, match="preserve provider, model, parameters and tool surface"):
+        compare_day8_development(baseline, candidate, suite)
+    candidate["configuration"]["model_settings_sha256"] = baseline["configuration"]["model_settings_sha256"]
+    candidate["results"][0]["verified_artifact_refs"] = []
+    with pytest.raises(ValueError, match="accepted outcome lacks valid artifact"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_missing_independent_receipt_verification_blocks_freeze():
+    suite, baseline, candidate = _day8_fixture()
+    candidate["receipts_independently_verified"] = False
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert any("independently verified" in blocker for blocker in result["blockers"])
+
+
+def test_day8_operator_snapshot_does_not_infer_split_tokens_or_accepted_artifacts(tmp_path):
+    container = make_container(tmp_path)
+    account_id = owner(container, "day8")
+    run = create_run(container, account_id, "day8-run")
+    snapshot = collect_snapshot(container.settings)
+    record = next(record for record in snapshot["records"] if record["run_id"] == run["id"])
+    assert record["input_tokens"] is None
+    assert record["output_tokens"] is None
+    assert record["token_direction_breakdown_available"] is False
+    assert record["verified_artifact_references"] == []
+    assert record["accepted_outcome_references"] == []
+    assert "{" not in render_openmetrics(snapshot)
+
+
+def test_day8_cli_exit_code_fails_on_blocked_comparison(tmp_path, monkeypatch):
+    suite, baseline, candidate = _day8_fixture()
+    candidate["results"][0]["cost_microusd"] = None
+    baseline_file = tmp_path / "baseline.json"
+    candidate_file = tmp_path / "candidate.json"
+    report_file = tmp_path / "comparison.json"
+    baseline_file.write_text(json.dumps(baseline), encoding="utf-8")
+    candidate_file.write_text(json.dumps(candidate), encoding="utf-8")
+    monkeypatch.setattr("scripts.pilot_workflow_eval.load_suite", lambda: suite)
+    monkeypatch.setattr("sys.argv", [
+        "core_agent_observability",
+        "--day8-baseline", str(baseline_file),
+        "--day8-candidate", str(candidate_file),
+        "--day8-report", str(report_file),
+    ])
+    assert main() == 1
+    assert json.loads(report_file.read_text(encoding="utf-8"))["status"] == "BLOCKED"
+
+
+def test_day8_allows_nonaccepted_failed_tasks_to_lack_verified_artifacts():
+    suite, baseline, candidate = _day8_fixture()
+    for report in (baseline, candidate):
+        for row in report["results"]:
+            if row["id"].endswith("-9"):
+                row["passed"] = False
+                row["human_accepted"] = False
+                row["verified_artifact_refs"] = []
+                row["accepted_outcome_ref"] = None
+    comparison = compare_day8_development(baseline, candidate, suite)
+    assert comparison["status"] == "FROZEN_FOR_DAY9"
+    assert comparison["profile_summaries"]["baseline"]["human_accepted"] == 36
