@@ -152,6 +152,18 @@ def test_day2_rejects_foreign_artifact_download(monkeypatch):
         exercise(monkeypatch, Day2API(foreign_download=200))
 
 
+def test_day2_rejects_presigned_url_outside_reviewed_storage_endpoint(monkeypatch):
+    api = Day2API()
+    monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
+        200, content=ARTIFACT, request=httpx.Request("GET", url)))
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match="configured private storage endpoint"):
+            day2.run_probe(
+                client, "token-a", "token-b", frozen(api.manifest), SOURCE,
+                timeout_seconds=5, trusted_storage_host="approved-storage.example.test",
+            )
+
+
 def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
     api = Day2API()
     orig = api.__call__
