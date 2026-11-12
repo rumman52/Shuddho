@@ -23,6 +23,14 @@ function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifes
   return artifact?.name ?? "Attached source";
 }
 
+function chatSupportsSource(source: Record<string, unknown>, manifest: WorkspaceManifest | null): boolean {
+  const id = typeof source.resource_id === "string" ? source.resource_id : "";
+  const document = manifest?.documents.find(item => item.version_id === id && item.available);
+  const artifact = manifest?.artifacts.find(item => item.artifact_id === id && item.available);
+  const name = document?.name ?? artifact?.name;
+  return Boolean(name && /\.(pdf|txt|docx|csv|xlsx|pptx)$/i.test(name));
+}
+
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
 export default function ConversationWorkspace({ client, openAgent, initialDraft = "", onInitialDraftChange, onNavigate, email, signOut, startEmpty = false }: {
   startEmpty?: boolean;
@@ -56,6 +64,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [editingMemory, setEditingMemory] = useState("");
   const [memoryDraft, setMemoryDraft] = useState("");
   const [chatAvailable, setChatAvailable] = useState(false);
+  const [groundedAvailable, setGroundedAvailable] = useState(false);
   const [chatMode, setChatMode] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [replyingId, setReplyingId] = useState("");
@@ -246,8 +255,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       if (!controller.signal.aborted) {
         const enabled = result.capabilities.conversation_replies === true;
         setChatAvailable(enabled); setChatMode(enabled);
+        setGroundedAvailable(enabled && result.capabilities.grounded_conversation_replies === true);
       }
-    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatMode(false); } });
+    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatMode(false); setGroundedAvailable(false); } });
     return () => controller.abort();
   }, [client]);
 
@@ -451,11 +461,12 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       const currentManifest = await client.workspaceManifest().catch(() => null);
       if (currentManifest) setManifest(currentManifest);
       await reloadConversation(conversationId);
-      if (chatMode && sources.length === 0) {
+      if (chatMode && (sources.length === 0 || (groundedAvailable &&
+        sources.every(resource_id => chatSupportsSource({ resource_id }, manifest))))) {
         setNotice("");
         await askForReply(savedMessage);
       } else setNotice(sources.length
-        ? "Message saved with attachments. Use Start task to let the Agent read them; direct chat does not read attached files."
+        ? "Message saved with attachments. Ask Rukh can read supported PDF, TXT, DOCX, CSV, XLSX and PPTX files; for other files use Start task."
         : "Message saved. Choose Start task when you are ready.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Message could not be saved.");
@@ -586,7 +597,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         setSelectedSources(current => current.includes(source.version_id)
           ? current
           : current.length < 5 ? [...current, source.version_id] : current);
-        setNotice("Uploaded " + uploaded.filename + ". Use Start task to let the Agent read this untrusted source; direct chat does not read attached files.");
+        setNotice("Uploaded " + uploaded.filename + ". Ask Rukh can answer questions from supported files. Start task is separate for Agent actions.");
       } else {
         setNotice("Uploaded " + uploaded.filename + ". Remove a selected source before attaching another; the limit is five.");
       }
@@ -744,7 +755,12 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                 </div>
                 </div>
                 {(activeRun || canDispatch || linked || chatAvailable) && <div className="rukh-message-actions">
-                  {chatAvailable && !item.assistant_reply && item.sequence === selectedConversation?.message_sequence && <button type="button" disabled={composerDisabled || item.selected_sources.length > 0} onClick={() => { void askForReply(item); }}>Ask Rukh</button>}
+                  {chatAvailable && !item.assistant_reply && item.sequence === selectedConversation?.message_sequence && <button type="button"
+                    disabled={composerDisabled || (item.selected_sources.length > 0 &&
+                      (!groundedAvailable || !item.selected_sources.every(source => chatSupportsSource(source, manifest))))}
+                    title={item.selected_sources.length && (!groundedAvailable || !item.selected_sources.every(source => chatSupportsSource(source, manifest)))
+                      ? "These attached sources are unavailable or unsupported for chat. Select a supported file again." : undefined}
+                    onClick={() => { void askForReply(item); }}>Ask Rukh</button>}
                   {canSteer && <button type="button" aria-label="Steer Agent task" disabled={working}
                     onClick={() => { setSteeringMessageId(current => current === item.id ? "" : item.id); setSteeringDraft(""); }}>
                     {steeringMessageId === item.id ? "Close steering" : "Steer"}
@@ -785,20 +801,20 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
             placeholder="Ask Rukh to do something…" />
           <div className="rukh-composer-controls">
             <button type="button" className="rukh-design-attach" aria-label="Attach files" disabled={composerDisabled} onClick={toggleContext}><NavigationIcon name="plus" /><span>Attach files</span></button>
-            {selectedSources.length > 0 && <span className="rukh-selected-source-count">{selectedSources.length} attached · Start task to use files</span>}
+            {selectedSources.length > 0 && <span className="rukh-selected-source-count">{selectedSources.length} attached · Ask Rukh for supported files</span>}
             <details className="rukh-composer-tools"><summary>Tools</summary><div>
               {chatAvailable && <div className="rukh-chat-mode" aria-label="Message mode">
                 <button type="button" aria-pressed={chatMode} disabled={composerDisabled} onClick={() => setChatMode(true)}>Chat with Rukh</button>
                 <button type="button" aria-pressed={!chatMode} disabled={composerDisabled} onClick={() => setChatMode(false)}>Save only</button>
               </div>}
-              <p>Start task separately to use attached files.</p>
+              <p>Ask Rukh reads selected supported files only. Start task separately for Agent actions.</p>
             </div></details>
             <VoiceDictation key={selected} draft={draft} onDraftChange={setDraft} onListeningChange={setDictating} disabled={composerDisabled} compact />
             {replyingId && <button type="button" className="rukh-stop-stream" onClick={() => { replyController.current?.abort(); setNotice("Stopped receiving the response. A saved reply may still finish; reopen this conversation to recover it."); }}>Stop response</button>}
-            <button className="rukh-design-send" type="submit" aria-label={replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} disabled={composerDisabled || dictating || !draft.trim()}><NavigationIcon name="arrow" /></button>
+            <button className="rukh-design-send" type="submit" aria-label={replyingId ? "Replying…" : working ? "Saving…" : chatMode && (!selectedSources.length || groundedAvailable && selectedSources.every(resource_id => chatSupportsSource({ resource_id }, manifest))) ? "Send message" : "Save message"} disabled={composerDisabled || dictating || !draft.trim()}><NavigationIcon name="arrow" /></button>
           </div>
         </form>
-        <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Direct chat does not read attached files; use Start task." : "Start task separately."}</p>
+        <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Selected PDFs and supported files can be cited in chat. Start task separately for actions." : "Start task separately for actions."}</p>
     </section>
 
     <aside ref={contextPanelRef} id="rukh-context-panel" hidden={!contextOpen && mobilePanel !== "context"}
