@@ -272,7 +272,11 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.screenshot({ path: join(folder, "screenshots/writing-assistant-mobile.png"), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 960 });
-  await page.getByRole("button", { name: "Coworker", exact: true }).click();
+  // The shared primary navigation exposes Coworker as a route link, not a button.
+  const coworkerLink = page.getByRole("navigation", { name: "Primary workspace navigation" })
+    .getByRole("link", { name: "Coworker", exact: true });
+  assert.equal(await coworkerLink.getAttribute("href"), "/coworker");
+  await coworkerLink.click();
   await page.waitForURL(url => url.pathname === "/coworker");
   const coworkerPage = page;
   await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
