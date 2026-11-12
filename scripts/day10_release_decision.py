@@ -62,6 +62,11 @@ def proof_ok(row: object, release: str, revision: str, digest: str) -> bool:
 def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if not bound(value, release, revision, digest) or value.get("custody_established") is not True:
         return False
+    custody = value.get("custody_receipt")
+    if (not proof_ok(custody, release, revision, digest)
+            or custody.get("independent_d_controls_access") is not True
+            or custody.get("developer_negative_read_denied") is not True):
+        return False
     if value.get("mode") != "independent_human_holdout" or value.get("generation_identity_verified") is not True:
         return False
     reviewers = value.get("reviewers")
@@ -89,19 +94,43 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     return all(counts[cell] == 10 and accepted[cell] >= 9 for cell in CELLS) and sum(accepted.values()) >= 36
 
 
+def operated_proof_ok(kind: str, value: object, release: str, revision: str, digest: str) -> bool:
+    if not proof_ok(value, release, revision, digest):
+        return False
+    if kind == "rollback":
+        switches = value.get("kill_switches_verified")
+        return (isinstance(switches, list)
+                and {"SHUDDHO_COWORKER_ENABLED=false", "SHUDDHO_AGENT_RUNTIME_ENABLED=false"}.issubset(set(switches))
+                and value.get("worker_stop_observed") is True
+                and value.get("restoration_verified") is True)
+    if kind == "cancellation":
+        return (isinstance(value.get("cancelled_run_id"), str) and bool(value["cancelled_run_id"].strip())
+                and type(value.get("late_side_effects")) is int and value["late_side_effects"] == 0)
+    if kind == "paused_schedule":
+        return (isinstance(value.get("schedule_id"), str) and bool(value["schedule_id"].strip())
+                and type(value.get("executions_while_paused")) is int and value["executions_while_paused"] == 0)
+    if kind == "owner_isolation":
+        return (isinstance(value.get("owner_a_ref"), str) and bool(value["owner_a_ref"].strip())
+                and isinstance(value.get("owner_b_ref"), str) and bool(value["owner_b_ref"].strip())
+                and value["owner_a_ref"] != value["owner_b_ref"]
+                and value.get("cross_owner_denied") is True)
+    return False
+
+
 def recovery_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if not bound(value, release, revision, digest):
         return False
     rows = value.get("scenarios")
     if not isinstance(rows, list) or len(rows) != 20:
         return False
-    ids = set()
+    ids, refs = set(), set()
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"] or row["id"] in ids:
             return False
         ids.add(row["id"])
-        if not proof_ok(row, release, revision, digest):
+        if not proof_ok(row, release, revision, digest) or row["evidence_ref"] in refs:
             return False
+        refs.add(row["evidence_ref"])
     return True
 
 
@@ -154,9 +183,13 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and all(ci["required_checks"].get(key) == "success" for key in
                  ("test-and-build", "frontend", "coworker", "governance-audit", "ci-merge-gate")))
     for key in PROOFS:
-        need("operated_" + key, proof_ok(artifacts.get(key), release, revision, rollout_hash))
+        need("operated_" + key, operated_proof_ok(key, artifacts.get(key), release, revision, rollout_hash))
     golden = artifacts.get("golden")
     need("final_sha_integrated_golden", golden_ok(golden, release, revision, rollout_hash))
+    model = artifacts.get("model")
+    need("final_golden_provider_matches_live_gates", golden_ok(golden, release, revision, rollout_hash)
+         and isinstance(model, dict) and isinstance(model.get("provider_model"), str)
+         and golden.get("provider_model") == model["provider_model"])
     first_run = artifacts.get("day9_first_run")
     need("preserved_day9_first_run", isinstance(first_run, dict)
          and first_run.get("release_id") == release
