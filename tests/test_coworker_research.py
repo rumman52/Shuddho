@@ -143,6 +143,15 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
             owned = container.repository.artifact(account(container), artifact["id"])
             body = container.storage.get(owned["object_key"], owned["byte_size"])
             assert body and hashlib.sha256(body).hexdigest() == artifact["sha256"]
+            if saved is brief and artifact["filename"] == "research-report.docx":
+                paragraphs = "\n".join(p.text for p in Document(io.BytesIO(body)).paragraphs)
+                assert "গবেষণা" in paragraphs and "Synthetic paper 3" in paragraphs
+            if saved is report and artifact["filename"] == "report.docx":
+                paragraphs = "\n".join(p.text for p in Document(io.BytesIO(body)).paragraphs)
+                assert all(claim in paragraphs for claim in claims) and "[notes]" in paragraphs
+            if saved is report and artifact["filename"] == "source-manifest.json":
+                manifest = json.loads(body)
+                assert manifest["delivery_status"] == "needs_input" and manifest["output_language"] == "en"
             with pytest.raises(CoworkerError):
                 container.repository.artifact(account(container, "bob"), artifact["id"])
 
