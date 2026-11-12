@@ -564,7 +564,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             for row in records
         )
         safety_ok = all(r["safety_passed"] for r in records)
-        artifact_coverage = all(r["verified_artifact_refs"] for r in records)
+        artifact_coverage = all(r["verified_artifact_refs"] for r in accepted)
         quality_ok = len(accepted) >= 36 and all(n >= 9 for n in by_cell.values()) and safety_ok and artifact_coverage
         totals = {
             field: sum(int(r[field]) for r in records) if metrics_complete else None
@@ -684,7 +684,7 @@ def _read_day8_input(path: Path) -> dict:
     return value
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Export Phase 10 Core Agent observability and economics.")
     parser.add_argument("--window-minutes", type=int, default=60)
     parser.add_argument("--json-output", type=Path)
@@ -705,7 +705,7 @@ def main() -> None:
         atomic_write(args.day8_report, json.dumps(result, indent=2, sort_keys=True) + "\n")
         print(json.dumps({"status": result["status"], "blockers": result["blockers"],
                           "day8_report": str(args.day8_report)}, indent=2))
-        return
+        return 0 if result["status"] == "FROZEN_FOR_DAY9" else 1
     if not args.json_output or not args.prom_output:
         parser.error("normal export requires --json-output and --prom-output")
     settings = Settings.from_env()
@@ -718,7 +718,8 @@ def main() -> None:
         "json_output": str(args.json_output),
         "prom_output": str(args.prom_output),
     }, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
