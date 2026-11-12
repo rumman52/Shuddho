@@ -317,6 +317,10 @@ try {
   assert.equal(await coworkerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await coworkerPage.screenshot({ path: join(folder, "screenshots/coworker-switch-mobile.png"), fullPage: true });
   await page.reload();
+  // The responsive Coworker drawer is collapsed at 390px. Restore the
+  // desktop viewport before using the desktop-only More tools disclosure.
+  await page.setViewportSize({ width: 1365, height: 960 });
+  await page.getByRole("navigation", { name: "Primary workspace navigation" }).waitFor();
   await navigateWorkspace(page, "Files & drafts");
   const result = page.getByRole("region", { name: "Task result" });
   await result.getByText("Ready", { exact: true }).waitFor({ timeout: 60000 });
