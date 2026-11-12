@@ -46,7 +46,7 @@ test("Ask Rukh on an attached PDF uses the reply endpoint without dispatching an
     conversationActivityHistory: async () => ({ items: [] }),
     workspaceManifest: async () => manifest,
     memory: async () => ({ enabled: false, facts: [] }),
-    runtimeManifest: async () => ({ capabilities: { conversation_replies: true } }),
+    runtimeManifest: async () => ({ capabilities: { conversation_replies: true, grounded_conversation_replies: true } }),
     replyToConversationMessageStream: async (_conversation: string, _message: string, _sequence: number,
       onUpdate: (value: typeof response) => void) => { replyCalls++; onUpdate(response); return response; },
     dispatchConversationMessage: async () => { dispatchCalls++; },
