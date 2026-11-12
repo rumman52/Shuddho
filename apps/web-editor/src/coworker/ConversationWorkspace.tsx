@@ -723,7 +723,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
           <span className="rukh-project-chat-context-eyebrow">PROJECT CHAT</span>
           <strong>{projectContext?.name ?? (projectContextLoading ? "Loading project…" : "Project unavailable")}</strong>
           {projectContext?.description && <p>{projectContext.description}</p>}
-          <small>{projectContext?.description ? "Saved project instructions are applied to Rukh’s replies." : "No custom instructions saved. Edit this project to guide Rukh’s replies."} Linked files are not read automatically; attach a file and choose Start task.</small>
+          <small>{projectContext?.description ? "Saved project instructions are applied to Rukh’s replies." : "No custom instructions saved. Edit this project to guide Rukh’s replies."} Linked files are not read automatically; select a supported file to Ask Rukh, or choose Start task for Agent work.</small>
           {projectContextError && <span className="cw-error" role="alert">{projectContextError}</span>}
         </div>
         <button type="button" className="cw-text-button rukh-project-chat-back" onClick={() => onNavigate?.("projects")}>All projects</button>
@@ -869,7 +869,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
             </div>
           </>}
           {manifest.truncated.artifacts && <p className="rukh-muted">Only the first generated-artifact page is shown.</p>}
-          <p className="rukh-panel-footnote">Selected sources are untrusted inputs, not instructions or permissions. Maximum five per message. Direct chat does not read attached files; use Start task to let the Agent process them.</p>
+          <p className="rukh-panel-footnote">Selected sources are untrusted reference data, never instructions or permissions. Maximum five per message. Ask Rukh can answer from supported attachments; Start task separately for Agent work.</p>
         </>}
       </section>
       <section>
