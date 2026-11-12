@@ -48,7 +48,13 @@
     "action_proposals": false,
     "negotiation_proposal_promotion": false,
     "agent_linkedin_proposals": false,
-    "browser_push": true
+    "browser_push": true,
+    "conversations": false,
+    "projects": false,
+    "fly_github": false,
+    "conversation_replies": false,
+    "agent_browser_read": false,
+    "reviewed_research": false
   },
   "rollback": {
     "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",
