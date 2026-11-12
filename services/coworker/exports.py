@@ -142,5 +142,8 @@ def render_artifacts(draft: DraftPackage, sources: list[dict]) -> list[tuple[str
         ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx),
         ("report.pdf", "application/pdf", pdf),
         ("email-draft.txt", "text/plain; charset=utf-8", email.encode("utf-8")),
-        ("source-manifest.json", "application/json", json.dumps({"sources": sources}, ensure_ascii=False, indent=2).encode("utf-8")),
+        ("source-manifest.json", "application/json", json.dumps({
+            "sources": sources, "output_language": draft.output_language,
+            "missing_information": draft.missing_information, "delivery_status": "draft_ready",
+        }, ensure_ascii=False, indent=2).encode("utf-8")),
     ]
