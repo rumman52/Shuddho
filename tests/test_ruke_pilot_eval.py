@@ -114,7 +114,7 @@ def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir
     with pytest.raises(EvidenceError, match="hash mismatch"):
         external_heldout(held, corpus_sha256="0" * 64)
     with pytest.raises(EvidenceError, match="separate"):
-        external_heldout(held, corpus_sha256=digest, repo_root=tmp_path)
+        external_heldout(held, corpus_sha256=digest, repo_root=external_dir)
     m = manifest()
     m["corpus_sha256"] = digest
     assert validate_manifest(m, held) == tasks()
