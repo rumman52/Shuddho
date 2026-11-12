@@ -206,7 +206,7 @@ test("conversation context uploads a source and attaches it only for explicit Ag
     }));
     const checkbox = tree.root.findByProps({ "aria-label": "Attach source file brief.pdf" });
     assert.equal(checkbox.props.checked, true);
-    assert.match(JSON.stringify(tree.toJSON()), /direct chat does not read attached files/i);
+    assert.match(JSON.stringify(tree.toJSON()), /Ask Rukh for supported files/i);
   }, data);
 });
 
