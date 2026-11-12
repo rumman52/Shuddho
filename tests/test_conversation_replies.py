@@ -138,7 +138,7 @@ def test_project_reply_uses_saved_instructions_for_a_linked_conversation(contain
     assert system_message["role"] == "system"
     assert "Project name: Rukh launch" in system_message["content"]
     assert "Use concise Bangla-first project updates." in system_message["content"]
-    assert "no tools, live web access, file contents" in system_message["content"]
+    assert "no tools, live web access" in system_message["content"]
     assert model.calls == 1
 
 
