@@ -13,6 +13,7 @@ from .exports import render_in_subprocess
 from .schemas import ResearchOptions, parse_draft, source_references
 from .research import ResearchProvider, SearchFailure, TavilyResearchProvider, validate_evidence
 from .task_workflow_versions import task_skill_for_version
+from .skills import artifact_filenames
 
 PHASE_MESSAGES = {
     "extract": "Reading your source material.",
@@ -232,11 +233,36 @@ class DocumentRunner:
         draft = await asyncio.to_thread(self.repo.step, task["id"], "draft")
         if saved is None or draft is None:
             raise CoworkerError("checkpoint_missing", "The downloads could not be recovered. Please create a new task.")
-        for artifact in saved["artifacts"]:
-            body = await asyncio.to_thread(self.container.storage.get, artifact["object_key"], artifact["byte_size"])
-            if hashlib.sha256(body).hexdigest() != artifact["sha256"]:
+        # A persisted export step is not proof of a complete deliverable: test
+        # renderers and interrupted workers can checkpoint partial file sets.
+        # Keep recovery checkpoints intact, but never publish them as complete.
+        skill = task_skill_for_version(task["workflow_version"])
+        artifacts = saved.get("artifacts")
+        if (not isinstance(artifacts, list) or len(artifacts) != 4 or
+                {item.get("filename") for item in artifacts if isinstance(item, dict)} != artifact_filenames(skill.id)):
+            raise CoworkerError("export_invalid", "The generated files were incomplete. Please retry.")
+        try:
+            validated = parse_draft(skill.id, draft["draft"])
+            known_sources = {item["id"] for item in draft["sources"]}
+            if not source_references(validated).issubset(known_sources):
+                raise ValueError("Unrecognized source reference")
+            if task["output_language"] != "auto" and validated.output_language.lower() != task["output_language"].lower():
+                raise ValueError("Wrong output language")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise CoworkerError("artifact_invalid", "The generated draft could not be verified. Please retry.") from None
+        for artifact in artifacts:
+            # The key is server-owned, owner/task bound and content-addressed.
+            # Recheck it before completion, not just on upload.
+            expected_key = (f'{task["owner_id"]}/outputs/{task["id"]}/'
+                            f'{artifact["sha256"]}/{artifact["filename"]}')
+            if (artifact.get("object_key") != expected_key or
+                    not isinstance(artifact.get("byte_size"), int) or
+                    artifact["byte_size"] <= 0 or artifact["byte_size"] > 16 * 1024 * 1024):
                 raise CoworkerError("artifact_invalid", "A generated download could not be verified. Please retry.")
-        await asyncio.to_thread(self.repo.complete, task["id"], saved["artifacts"], bool(draft["draft"]["missing_information"]))
+            body = await asyncio.to_thread(self.container.storage.get, artifact["object_key"], artifact["byte_size"])
+            if len(body) != artifact["byte_size"] or hashlib.sha256(body).hexdigest() != artifact["sha256"]:
+                raise CoworkerError("artifact_invalid", "A generated download could not be verified. Please retry.")
+        await asyncio.to_thread(self.repo.complete, task["id"], artifacts, bool(validated.missing_information))
 
     async def run_for_test(self, task_id):
         """Same business steps for deterministic tests; never an HTTP background job."""
