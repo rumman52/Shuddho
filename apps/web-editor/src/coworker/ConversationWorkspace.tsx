@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type AssistantReply, type ConversationRecord,
-  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, type ProjectDetail, CoworkerView,
+  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, type MemoryPin, type ProjectDetail, CoworkerView,
 } from "./client";
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
@@ -51,6 +51,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [uploadError, setUploadError] = useState("");
   const [manifestError, setManifestError] = useState("");
   const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
+  const [selectedMemoryPins, setSelectedMemoryPins] = useState<MemoryPin[]>([]);
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [memoryError, setMemoryError] = useState("");
   const [editingMemory, setEditingMemory] = useState("");
@@ -290,6 +291,11 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     const reply = await client.memory();
     setMemoryEnabled(reply.enabled);
     setMemoryFacts(reply.enabled ? reply.facts : []);
+    // A corrected or deleted version cannot remain silently selected.
+    setSelectedMemoryPins(current => current.filter(pin =>
+      reply.enabled && reply.facts.some(fact =>
+        fact.id === pin.fact_id && fact.version === pin.expected_version && fact.active),
+    ));
   }
 
   async function saveMemory(fact: MemoryFact) {
@@ -404,7 +410,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
 
   function startNew() {
     if (working) return;
-    setSelected(""); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setError(""); setNotice("");
+    setSelected(""); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setSelectedMemoryPins([]); setError(""); setNotice("");
     setEditingTitle(false); setRenameDraft("");
     setMobilePanel(null); messageKey.current = null; firstMessage.current = null;
     composerRef.current?.focus();
@@ -466,7 +472,11 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     if (!selected || working) return;
     setWorking(true); setError(""); setNotice("");
     try {
-      await client.dispatchConversationMessage(selected, item.id, item.sequence, projectId);
+      await client.dispatchConversationMessage(
+        selected, item.id, item.sequence, projectId,
+        memoryEnabled ? selectedMemoryPins : undefined,
+      );
+      setSelectedMemoryPins([]);
       await reloadConversation(selected);
       setNotice("Task started. Follow progress below or open Agent activity.");
     } catch (cause) {
@@ -668,7 +678,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         </form>
         <ul className="rukh-conversation-items">
           {filteredConversations.map(item => <li key={item.id}>
-            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setEditingTitle(false); setRenameDraft(""); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
+            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setSelectedMemoryPins([]); setEditingTitle(false); setRenameDraft(""); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
               <span className="rukh-conversation-item-title">{item.title}</span>
               <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
             </button>
@@ -753,6 +763,19 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                   {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start task</button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
+                {canDispatch && memoryEnabled && <section className="rukh-task-memory-preview" aria-label="Task preview">
+                  <strong>Task preview · selected memories</strong>
+                  {selectedMemoryPins.length === 0 ? <p className="rukh-muted">No saved memory selected. This task will not use other saved facts.</p> :
+                    <ul aria-label="Selected task memories">
+                      {selectedMemoryPins.map(pin => {
+                        const fact = memoryFacts.find(value => value.id === pin.fact_id && value.version === pin.expected_version);
+                        return <li key={pin.fact_id}>
+                          {fact ? `${fact.namespace} / ${fact.key} · version ${fact.version}` : "Memory version changed · reselect"}
+                        </li>;
+                      })}
+                    </ul>}
+                  <small>Only selected fact IDs and versions are admitted; saved facts can be edited or deleted below.</small>
+                </section>}
                 {canSteer && steeringMessageId === item.id && run && <form className="rukh-steer-form" aria-label="Steer Agent form"
                   onSubmit={event => { event.preventDefault(); void steer(item, run); }}>
                   <label className="rukh-sr-only" htmlFor={`cw-steer-${item.id}`}>Instruction for Agent</label>
@@ -874,6 +897,15 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
             <ul>{memoryFacts.map(fact => <li key={fact.id}>
               <strong>{fact.namespace} / {fact.key}</strong><small>Version {fact.version}{!fact.active ? " · Expired" : ""}</small>
               <p dir="auto">{fact.value}</p>
+              <label className="rukh-memory-select">
+                <input type="checkbox" aria-label={`Use memory ${fact.namespace} / ${fact.key} in next task`}
+                  checked={selectedMemoryPins.some(pin => pin.fact_id === fact.id && pin.expected_version === fact.version)}
+                  disabled={working || !fact.active || (!selectedMemoryPins.some(pin => pin.fact_id === fact.id) && selectedMemoryPins.length >= 20)}
+                  onChange={event => setSelectedMemoryPins(current => event.target.checked
+                    ? [...current.filter(pin => pin.fact_id !== fact.id), { fact_id: fact.id, expected_version: fact.version }]
+                    : current.filter(pin => pin.fact_id !== fact.id))} />
+                Use in next task
+              </label>
               {editingMemory === fact.id ? <>
                 <label htmlFor="cw-memory-edit">Edit memory fact</label>
                 <textarea id="cw-memory-edit" value={memoryDraft} maxLength={2000} rows={3}
