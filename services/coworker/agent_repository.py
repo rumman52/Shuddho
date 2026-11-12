@@ -854,7 +854,7 @@ class AgentRepository:
                     Document.deleted.is_(False),
                     DocumentVersion.owner_id == owner,
                     DocumentVersion.state == "uploaded",
-                )).first()
+                ).order_by(DocumentVersion.version.desc())).first()
                 if row is None:
                     raise not_found()
                 versions.append(row[0].id)

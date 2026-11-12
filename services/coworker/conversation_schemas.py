@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .goal_schemas import _safe_text
+from .task_brief_schemas import MemoryPin
 
 
 class ConversationCreate(BaseModel):
@@ -52,6 +53,8 @@ class ConversationDispatchCreate(BaseModel):
     expected_sequence: int = Field(ge=1)
     output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
     project_id: UUID | None = None
+    # None: legacy dispatch; []: reviewed brief with no memory.
+    memory_pins: list[MemoryPin] | None = Field(default=None, max_length=20)
 
 
 class ConversationSteerRequest(BaseModel):
@@ -75,6 +78,10 @@ class ConversationCancelRequest(BaseModel):
 
 
 class ConversationReplyCreate(BaseModel):
+    """Only the persisted message's selected_sources may ground a reply.
+
+    No new file IDs, citations or action authority may be supplied here.
+    """
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
     project_id: UUID | None = None

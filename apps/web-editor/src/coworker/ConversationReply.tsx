@@ -15,6 +15,13 @@ export default function ConversationReply({ reply, pending, error, retry, disabl
     {complete ? <>
       <div className="rukh-answer-text"><MarkdownMessage content={reply.text} /></div>
       {reply.context_truncated && <p className="rukh-muted">This answer used the most recent messages that fit in the conversation context.</p>}
+      {Boolean(reply.sources?.length) && <div className="rukh-answer-sources" aria-label="Answer sources">
+        <strong>Sources</strong>
+        <ul>{reply.sources!.map(source => <li key={source.source_id}>
+          <span>{source.label}</span> <small>[{source.source_id}]</small>
+        </li>)}</ul>
+      </div>}
+
       <div className="rukh-speech-actions">
         <button type="button" className="cw-text-button" aria-label="Copy AI reply" onClick={async () => {
           try { await navigator.clipboard.writeText(reply.text); setCopyStatus("Copied"); }

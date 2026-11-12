@@ -149,6 +149,16 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      - name: Verify Day 8 economics comparisons and telemetry without skips
+        run: |
+          uv run --extra coworker pytest tests/test_core_agent_observability.py -q -rs --junitxml=/tmp/day8-economics.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_core_agent_observability
+      - name: Keep Day 8 economics evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day8-economics
+          path: /tmp/day8-economics.xml
       - name: Qualify browser and Fly fixtures without skips
         run: |
           uv run --extra coworker pytest tests/test_coworker_browser_fixture.py tests/test_fly_github_repository.py -q -rs --junitxml=/tmp/coworker-browser-fixture.xml
@@ -313,6 +323,19 @@ jobs:
         with:
           name: context-p02-security-evidence
           path: /tmp/context-p02-security.xml
+      - name: Qualify Day 5 exact memory selection without skips
+        run: |
+          uv run --extra coworker pytest tests/test_context_memory.py tests/test_context_policy_security.py tests/test_conversation_task_briefs.py tests/test_conversation_dispatch.py -q -rs --junitxml=/tmp/day5-memory-selection.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day5-memory-selection.xml --required-module tests.test_context_memory
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day5-memory-selection.xml --required-module tests.test_context_policy_security
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day5-memory-selection.xml --required-module tests.test_conversation_task_briefs
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day5-memory-selection.xml --required-module tests.test_conversation_dispatch
+      - name: Preserve Day 5 memory-selection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day5-memory-selection-evidence
+          path: /tmp/day5-memory-selection.xml
       - name: Qualify CW-11 trusted skill registry and staging collector without skips
         run: |
           uv run --extra coworker pytest tests/test_cw11_registry.py tests/test_cw11_registry_postgres.py tests/test_cw11_staging_evidence.py -q -rs --junitxml=/tmp/cw11-registry.xml

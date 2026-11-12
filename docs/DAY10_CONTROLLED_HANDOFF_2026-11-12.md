@@ -58,7 +58,7 @@ Owner C and founder jointly own **GO/NO-GO**, the allowlist, change control and 
 | Field | Verified now | Release requirement |
 |---|---|---|
 | Source code | API v2 freeze verifier repair proposed in isolated branch | Merge/review then exact-head green |
-| Final-head CI | **Not established** | All seven checks successful |
+| Final-head CI | Prior PR run had 5 passes; Coworker browser check failed on a hidden heading; merge gate failed consequentially. Fresh integrated CI is pending after the test correction. | All seven checks successful on the exact final head |
 | Exact API/worker/schema/model readbacks | **Not established** | Identical candidate and verified runtime receipts |
 | Live planner / quality at existing thresholds | **Not established** | Both live, canonical gate PASS |
 | Day 9 first-run results | **Not supplied** | Preserve original scores + artifact hash; never fabricate |
@@ -68,6 +68,10 @@ Owner C and founder jointly own **GO/NO-GO**, the allowlist, change control and 
 | Rollback / cancellation / paused schedule / owner isolation | **Not established** | Four operated receipts |
 | Founder+C pilot authorization | **Absent** | Separate verified decision, only 5–10 allowlisted users |
 | Actual pilot | **Not enabled** | Only after all gates, owner-executed manual admission |
+
+## Operational CI and preview distinction
+
+The Coworker Playwright regression previously waited for the `What are we working on?` heading, but the authenticated chat design deliberately hides the `cw-header` in conversation mode. The corrected browser test must assert the visible `#cw-conversation-message` and conversation layout after the Writing Assistant route switch. Do not suppress or skip the browser suite. PR #668's navigation link fix is already merged into main. Separately, Vercel reported its free-tier deployment quota (`api-deployments-free-per-day`, over 100/day); this is a provider limit, not evidence of an application build defect. Wait for quota availability or obtain independently authorized billing capacity; do not disable required checks or provision a paid service without approval.
 
 ## Ranked next backlog
 

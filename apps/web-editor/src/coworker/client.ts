@@ -77,7 +77,7 @@ export type PersonalGoal = {
 export type PersonalGoalCreate = {
   objective: string; success_criteria: string[]; constraints: string[]; deadline_at: string | null;
   timezone: string; state: "draft" | "active"; milestones: { label: string; due_at: string | null; completed: boolean }[];
-  budget: { max_runs: number; max_planner_tokens: number | null }; authorized_resources: []; next_review_at: string | null;
+  budget: { max_runs: number; max_planner_tokens: number | null }; authorized_resources: { kind: "document" | "memory_namespace"; reference: string }[]; next_review_at: string | null;
 };
 export type PersonalSuggestionPreferences = {
   available: boolean; enabled: boolean; delivery_available: boolean; delivery_enabled: boolean;
@@ -108,6 +108,7 @@ export type AutomationHistoryItem = {
   occurrence_state: string; reason: string | null; run_id: string | null; run_state: AgentRunState | null;
   run_message: string | null; run_updated_at: string | null;
 };
+export type MemoryPin = { fact_id: string; expected_version: number };
 export type MemoryFact = {
   id: string; namespace: "profile" | "preferences" | "project" | "organization" | "writing";
   key: string; value: string; language: string; version: number; active: boolean; expires_at?: string | null;
@@ -497,7 +498,8 @@ export type WorkspaceManifest = {
 export type ConversationRecord = {
   id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
 };
-export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string };
+export type GroundedReplySource = { source_id: string; label: string; resource_type: "document_version" | "artifact" };
+export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string; sources?: GroundedReplySource[] };
 export type ConversationMessageRecord = {
   assistant_reply?: AssistantReply | null;
   id: string; conversation_id: string; sequence: number; text: string;
@@ -543,7 +545,7 @@ export class CoworkerClient {
     return (await this.response(path, options)).json() as Promise<T>;
   }
   runtimeManifest(signal?: AbortSignal) {
-    return this.json<{ capabilities: { conversation_replies?: boolean; projects?: boolean; fly_github?: boolean } }>("/api/v1/runtime-manifest", { signal });
+    return this.json<{ capabilities: { conversation_replies?: boolean; grounded_conversation_replies?: boolean; projects?: boolean; fly_github?: boolean } }>("/api/v1/runtime-manifest", { signal });
   }
   async replyToConversationMessageStream(
     id: string, messageId: string, sequence: number,
@@ -590,6 +592,14 @@ export class CoworkerClient {
             (reply.error !== undefined && reply.error !== null && typeof reply.error !== "string")) {
           throw new WorkspaceError("The AI reply stream contained an invalid reply.");
         }
+        if (reply.sources !== undefined && (
+          !Array.isArray(reply.sources) || reply.sources.length > 5 ||
+          new Set(reply.sources.map(source => source.source_id)).size !== reply.sources.length ||
+          reply.sources.some(source => !source || typeof source !== "object" ||
+            !/^src-[1-5]$/.test(source.source_id) ||
+            typeof source.label !== "string" || source.label.length > 160 ||
+            !["document_version", "artifact"].includes(source.resource_type))
+        )) throw new WorkspaceError("The AI reply contains invalid source references.");
         replyBytes = new TextEncoder().encode(reply.text).length;
         if (replyBytes > 16000) throw new WorkspaceError("The AI reply exceeded the allowed size.");
         if (event === "final" && reply.state === "generating") {
@@ -766,13 +776,14 @@ export class CoworkerClient {
       body: JSON.stringify({ text, client_request_key: key, selected_resource_ids: selectedResourceIds }),
     });
   }
-  dispatchConversationMessage(id: string, messageId: string, sequence: number, projectId?: string | null) {
+  dispatchConversationMessage(id: string, messageId: string, sequence: number, projectId?: string | null, memoryPins?: MemoryPin[]) {
     return this.json<{ run_id: string; state: string; replayed: boolean }>(
       `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/dispatch`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           expected_sequence: sequence, output_language: "auto",
           ...(projectId ? { project_id: identifier(projectId) } : {}),
+          ...(memoryPins !== undefined ? { memory_pins: memoryPins } : {}),
         }),
       });
   }

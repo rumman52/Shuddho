@@ -1318,6 +1318,7 @@ def runtime_manifest(
         "projects": settings.projects_enabled and settings.conversations_enabled,
         "fly_github": settings.fly_github_enabled,
         "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
+        "grounded_conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,
@@ -1975,6 +1976,7 @@ def dispatch_conversation_message(
         identity.account_id, str(conversation_id), str(message_id),
         expected_sequence=payload.expected_sequence, output_language=payload.output_language,
         project_id=str(payload.project_id) if payload.project_id is not None else None,
+        memory_pins=payload.memory_pins,
     )
     response.headers["Location"] = f'/api/v1/agent-runs/{value["run_id"]}'
     response.headers["Idempotent-Replayed"] = str(not created).lower()

@@ -66,11 +66,11 @@ def prepared(tmp_path: Path):
 
 def runtime(state):
     return {
-        "schema_version": freeze.RUNTIME_SCHEMA_VERSION,
-        "reviewed_skills": {"research": {"state": "disabled"}},
+        "schema_version": 2,
         "source_revision": state["expected_source_revision"],
         "environment": state["expected_environment"],
         "capabilities": state["declared_capabilities"],
+        "reviewed_skills": {"research": {"state": "unselected"}},
         "action_providers": state["declared_action_providers"],
         "cohort": {
             "enforced": state["declared_cohort"]["enforced"],
@@ -378,7 +378,6 @@ def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
     freeze.main()
     assert len(client_calls) == 1
     assert json.loads(output_path.read_text())["status"] == "frozen"
-
 
 def test_runtime_v1_cannot_be_frozen_as_current_api(tmp_path):
     state = prepared(tmp_path)

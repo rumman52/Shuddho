@@ -347,3 +347,51 @@ def test_memory_review_edit_rejects_stale_version_and_can_delete(records):
     with repository.sessions() as session:
         assert session.get(MemoryFact, fact_id).value == "Reviewed new fact"
     assert repository.delete(owner, fact_id)["deleted"] is True
+
+
+def test_shared_source_extraction_rechecks_hash_and_revocation(monkeypatch):
+    import hashlib
+    from services.coworker.context import read_verified_source
+
+    payload = b"Renewal date: 17 March 2027."
+    digest = hashlib.sha256(payload).hexdigest()
+    state = {"active": True, "calls": 0}
+
+    class Storage:
+        def get(self, key, limit):
+            assert key == "private/test" and limit == len(payload)
+            state["calls"] += 1
+            return payload
+
+    monkeypatch.setattr(
+        "services.coworker.context.extract_in_subprocess",
+        lambda data, kind, limit: (state.__setitem__("active", False) or "Renewal date: 17 March 2027."),
+    )
+    with pytest.raises(CoworkerError) as error:
+        read_verified_source(
+            storage=Storage(), object_key="private/test", byte_size=len(payload),
+            sha256=digest, kind="txt", max_chars=20000,
+            is_current=lambda: state["active"],
+        )
+    assert error.value.code == "context_sources_changed"
+    assert state["calls"] == 1
+
+    state["active"] = True
+    with pytest.raises(CoworkerError) as error:
+        read_verified_source(
+            storage=Storage(), object_key="private/test", byte_size=len(payload),
+            sha256="f" * 64, kind="txt", max_chars=20000,
+            is_current=lambda: state["active"],
+        )
+    assert error.value.code == "context_source_changed"
+
+
+def test_grounding_rejects_invented_and_missing_citations():
+    from services.coworker.conversation_grounding import check_grounded_citations
+    allowed = {"src-1": {"resource_type": "document_version", "resource_id": "doc"}}
+    check_grounded_citations("The contract renews next March. [[src-1]]", allowed)
+    for answer in ("The contract renews next March.",
+                   "The contract renews next March. [[src-999]]",
+                   "[[src-1]] [[src-2]]", "[[src-1"):
+        with pytest.raises(ValueError):
+            check_grounded_citations(answer, allowed)

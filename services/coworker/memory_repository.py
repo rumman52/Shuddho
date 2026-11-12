@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import nullcontext
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 
@@ -15,6 +15,47 @@ from .agent_schemas import AgentMemoryProposal
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .models import Account, AgentRun, AuditEvent, Document, DocumentVersion, MemoryFact, MemoryProposal, Workspace, utcnow
 from .repository import aware, iso, not_found
+
+
+def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[dict], settings: Settings) -> list[MemoryFact]:
+    """Resolve exactly selected, current fact versions within the run owner's workspace.
+
+    Rechecked at admission AND on worker use. Invalidated or foreign pins fail
+    closed instead of silently selecting a replacement or falling back to a namespace.
+    """
+    if not settings.agent_memory_enabled:
+        raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
+    if not isinstance(pins, list) or len(pins) > settings.max_memory_context_facts:
+        raise CoworkerError("memory_selection_limit", "Too many selected memories for this task.", 409)
+    now = utcnow()
+    rows, seen = [], set()
+    for pin in pins:
+        if not isinstance(pin, dict):
+            raise CoworkerError("memory_pins_changed", "Review and reselect task memories.", 409)
+        fact_id, version = pin.get("fact_id"), pin.get("expected_version")
+        try:
+            valid_id = isinstance(fact_id, str) and str(UUID(fact_id)) == fact_id
+        except ValueError:
+            valid_id = False
+        if not valid_id or type(version) is not int or version < 1 or fact_id in seen:
+            raise CoworkerError("memory_pins_changed", "Review and reselect task memories.", 409)
+        seen.add(fact_id)
+        row = db.scalar(select(MemoryFact).where(
+            MemoryFact.id == fact_id,
+            MemoryFact.owner_id == owner,
+            MemoryFact.workspace_id == workspace_id,
+        ))
+        if (row is None or row.version != version
+            or (row.expires_at is not None and aware(row.expires_at) <= now)
+            or is_stale(row.updated_at, now=now,
+                        max_age_seconds=settings.max_memory_context_age_seconds)):
+            raise CoworkerError(
+                "memory_pins_changed",
+                "A selected memory was corrected, deleted, expired, or became stale. Review and reselect.",
+                409,
+            )
+        rows.append(row)
+    return rows
 
 
 class MemoryRepository:
@@ -319,27 +360,35 @@ class MemoryRepository:
             return self._proposal_dto(row)
 
     def context_for_run(self, owner: str, run_id: str) -> dict:
-        if not self.settings.agent_memory_enabled:
-            return {"facts": [], "provenance": []}
         with self.sessions() as db:
             run = db.scalar(select(AgentRun).where(
                 AgentRun.id == run_id, AgentRun.owner_id == owner,
             ))
             if run is None:
                 raise not_found()
-            namespaces = list(run.memory_namespaces or [])
-            if not namespaces:
-                return {"facts": [], "provenance": []}
+            # Presence, not truthiness, distinguishes an explicit empty brief
+            # selection from legacy Agent runs which retrieve by namespace.
+            brief_context = dict(run.project_context or {})
+            if "memory_pins" in brief_context:
+                rows = require_current_memory_pins(
+                    db, owner, run.workspace_id, brief_context["memory_pins"], self.settings,
+                )
+            else:
+                if not self.settings.agent_memory_enabled:
+                    return {"facts": [], "provenance": []}
+                namespaces = list(run.memory_namespaces or [])
+                if not namespaces:
+                    return {"facts": [], "provenance": []}
+                now = utcnow()
+                rows = db.scalars(select(MemoryFact).where(
+                    MemoryFact.owner_id == owner,
+                    MemoryFact.workspace_id == run.workspace_id,
+                    MemoryFact.namespace.in_(namespaces),
+                    (MemoryFact.expires_at.is_(None) | (MemoryFact.expires_at > now)),
+                ).order_by(MemoryFact.updated_at.desc()).limit(
+                    max(self.settings.max_memory_context_facts * 3, self.settings.max_memory_context_facts)
+                )).all()
             now = utcnow()
-            rows = db.scalars(select(MemoryFact).where(
-                MemoryFact.owner_id == owner,
-                MemoryFact.workspace_id == run.workspace_id,
-                MemoryFact.namespace.in_(namespaces),
-                (MemoryFact.expires_at.is_(None) | (MemoryFact.expires_at > now)),
-            ).order_by(MemoryFact.updated_at.desc()).limit(
-                max(self.settings.max_memory_context_facts * 3, self.settings.max_memory_context_facts)
-            )).all()
-
             ranked = []
             for row in rows:
                 if is_stale(

@@ -89,7 +89,10 @@ def revalidate_selected_sources(
 
 
 def require_current_selected_sources(db: Session, owner_id: str, selected_sources: list[dict]) -> list[dict]:
-    """Deny admission if any persisted source changed, expired or left scope."""
+    """Validate owner-bound selected pins at Agent admission, grounded chat read, and commit.
+
+    This is a live authority check; prior successful reads never authorize later output.
+    """
     result = revalidate_selected_sources(db, owner_id, selected_sources)
     if result["invalidated"]:
         raise CoworkerError(

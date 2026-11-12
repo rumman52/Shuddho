@@ -510,3 +510,28 @@ test("source text documents are read through the owner-authenticated content rou
     globalThis.fetch = original;
   }
 });
+
+test("task dispatch binds exact memory versions, including an explicit empty selection", async () => {
+  const original = globalThis.fetch;
+  const bodies: Record<string, unknown>[] = [];
+  const conversation = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const message = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  globalThis.fetch = (async (_url, options) => {
+    bodies.push(JSON.parse(String(options?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({ run_id: "run", state: "queued", replayed: false }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "day5-test-token");
+    const pin = { fact_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", expected_version: 3 };
+    await client.dispatchConversationMessage(conversation, message, 1, null, [pin]);
+    await client.dispatchConversationMessage(conversation, message, 1, null, []);
+    await client.dispatchConversationMessage(conversation, message, 1);
+    assert.deepEqual(bodies[0].memory_pins, [pin]);
+    assert.deepEqual(bodies[1].memory_pins, []);
+    assert.equal(Object.hasOwn(bodies[2], "memory_pins"), false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

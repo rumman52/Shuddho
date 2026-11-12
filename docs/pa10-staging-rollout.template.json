@@ -13,6 +13,12 @@
   ],
   "capabilities": {
     "coworker": true,
+    "conversations": false,
+    "projects": false,
+    "fly_github": false,
+    "conversation_replies": false,
+    "agent_browser_read": false,
+    "reviewed_research": false,
     "work_services": true,
     "artifact_services": false,
     "agent_runtime": true,
@@ -48,13 +54,7 @@
     "action_proposals": false,
     "negotiation_proposal_promotion": false,
     "agent_linkedin_proposals": false,
-    "browser_push": true,
-    "conversations": false,
-    "projects": false,
-    "fly_github": false,
-    "conversation_replies": false,
-    "agent_browser_read": false,
-    "reviewed_research": false
+    "browser_push": true
   },
   "rollback": {
     "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",

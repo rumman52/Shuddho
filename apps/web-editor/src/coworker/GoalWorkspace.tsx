@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CoworkerClient, WorkspaceError, type PersonalGoal, type PersonalSuggestion, type PersonalSuggestionPreferences } from "./client";
+import { CoworkerClient, WorkspaceError, type PersonalGoal, type PersonalSuggestion, type PersonalSuggestionPreferences, type ProjectRecord, type ProjectDetail, type SourceDocument } from "./client";
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "This goal action could not finish.";
 
@@ -10,6 +10,13 @@ function lines(value: string) {
 export default function GoalWorkspace({ client, openAgent, openAutomations }: { client: CoworkerClient; openAgent: () => void; openAutomations: () => void }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [goals, setGoals] = useState<PersonalGoal[]>([]);
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
+  const [documents, setDocuments] = useState<SourceDocument[]>([]);
+  const [authorizedDocumentIds, setAuthorizedDocumentIds] = useState<string[]>([]);
+  const [documentError, setDocumentError] = useState("");
+  const [approvedGoalSnapshot, setApprovedGoalSnapshot] = useState<string | null>(null);
   const [suggestionPreferences, setSuggestionPreferences] = useState<PersonalSuggestionPreferences | null>(null);
   const [suggestions, setSuggestions] = useState<PersonalSuggestion[]>([]);
   const [suggestionRankingMode, setSuggestionRankingMode] = useState<"deterministic" | "model">("deterministic");
@@ -31,6 +38,12 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
   const runInFlight = useRef(false);
 
   const current = goals.find(goal => goal.id === selected) ?? null;
+  const projectDocuments = (projectDetail?.id === projectId ? projectDetail.resources : [])
+    .filter(resource => resource.resource_type === "document"
+      && documents.some(doc => doc.id === resource.resource_id && doc.state === "uploaded"));
+  const goalSnapshot = JSON.stringify([objective, criteria, constraints, timezone, deadline,
+    maxRuns, projectId, authorizedDocumentIds]);
+  const documentsApproved = authorizedDocumentIds.length === 0 || approvedGoalSnapshot === goalSnapshot;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,6 +78,30 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
     return () => controller.abort();
   }, [client]);
 
+  useEffect(() => {
+    // Legacy goal-only clients and their tests do not provide project methods.
+    // Project document selection is an optional extension, not a goal prerequisite.
+    if (typeof client.projects !== "function" || typeof client.documents !== "function") return;
+    const controller = new AbortController();
+    Promise.all([client.projects(controller.signal), client.documents(controller.signal)])
+      .then(([projectResult, documentResult]) => {
+        if (controller.signal.aborted) return;
+        setProjects(projectResult.items);
+        setDocuments(documentResult.documents);
+      })
+      .catch(error => { if (!controller.signal.aborted) setDocumentError(errorMessage(error)); });
+    return () => controller.abort();
+  }, [client]);
+
+  useEffect(() => {
+    if (!projectId) { setProjectDetail(null); return; }
+    const controller = new AbortController();
+    client.project(projectId, controller.signal)
+      .then(detail => { if (!controller.signal.aborted) setProjectDetail(detail); })
+      .catch(error => { if (!controller.signal.aborted) { setProjectDetail(null); setDocumentError(errorMessage(error)); } });
+    return () => controller.abort();
+  }, [client, projectId]);
+
   function replaceGoal(next: PersonalGoal) {
     setGoals(previous => [next, ...previous.filter(goal => goal.id !== next.id)].sort((a, b) => b.updated_at.localeCompare(a.updated_at)));
     setSelected(next.id);
@@ -76,14 +113,19 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
     if (!createKey.current) createKey.current = crypto.randomUUID();
     setBusy("create"); setError(""); setNotice("");
     try {
+      if (!documentsApproved || authorizedDocumentIds.some(id => !projectDocuments.some(doc => doc.resource_id === id))) {
+        throw new Error("Review and approve currently linked project documents before creating this goal.");
+      }
       const next = await client.createGoal({
         objective, success_criteria: lines(criteria), constraints: lines(constraints),
         deadline_at: deadline ? new Date(deadline).toISOString() : null, timezone, state: "active",
         milestones: [], budget: { max_runs: maxRuns, max_planner_tokens: null },
-        authorized_resources: [], next_review_at: null,
+        authorized_resources: authorizedDocumentIds.map(reference => ({ kind: "document", reference })),
+        next_review_at: null,
       }, createKey.current);
       replaceGoal(next);
       setObjective(""); setCriteria(""); setConstraints(""); setDeadline(""); setMaxRuns(20);
+      setAuthorizedDocumentIds([]); setApprovedGoalSnapshot(null); setProjectId("");
       createKey.current = "";
       setNotice("Goal created. It will only do work when a bounded run or future automation wakes it.");
     } catch (error) { setError(errorMessage(error)); }
@@ -249,7 +291,35 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
           <label>Timezone<input value={timezone} maxLength={64} required onChange={event => { setTimezone(event.target.value); createKey.current = ""; }} /></label>
           <label>Deadline (optional)<input type="datetime-local" value={deadline} onChange={event => { setDeadline(event.target.value); createKey.current = ""; }} /></label>
           <label>Maximum bounded runs<input type="number" min={1} max={1000} value={maxRuns} onChange={event => { setMaxRuns(Number(event.target.value)); createKey.current = ""; }} /></label>
-          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !objective.trim()}>{busy === "create" ? "Creating…" : "Create goal"}<span aria-hidden="true">↗</span></button>
+          <fieldset><legend>Project documents (optional)</legend>
+            <p className="cw-fineprint">Select documents already linked to an owned project. This grants read context only for these document IDs; scheduling requires separate approval.</p>
+            <label>Source project<select value={projectId} onChange={event => {
+              setProjectId(event.target.value); setProjectDetail(null); setAuthorizedDocumentIds([]);
+              setApprovedGoalSnapshot(null); createKey.current = "";
+            }}>
+              <option value="">No project documents</option>
+              {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select></label>
+            {documentError && <p className="cw-fineprint">Document selection unavailable: {documentError}</p>}
+            {projectId && <div className="cw-agent-meta">{projectDocuments.length === 0
+              ? <span>No uploaded documents currently linked to this project.</span>
+              : projectDocuments.map(doc => <label key={doc.resource_id}><input type="checkbox"
+                  checked={authorizedDocumentIds.includes(doc.resource_id)}
+                  disabled={Boolean(busy) || (authorizedDocumentIds.length >= 5 && !authorizedDocumentIds.includes(doc.resource_id))}
+                  onChange={event => {
+                    setAuthorizedDocumentIds(previous => event.target.checked
+                      ? [...previous, doc.resource_id].slice(0, 5)
+                      : previous.filter(id => id !== doc.resource_id));
+                    setApprovedGoalSnapshot(null); createKey.current = "";
+                  }} /> {doc.title}</label>)}</div>}
+            {authorizedDocumentIds.length > 0 && <>
+              <p className="cw-fineprint">{authorizedDocumentIds.length} approved source candidate(s) · maximum five.</p>
+              <label><input type="checkbox" checked={documentsApproved}
+                onChange={event => setApprovedGoalSnapshot(event.target.checked ? goalSnapshot : null)} />
+                I approve this exact goal and document read scope.</label>
+            </>}
+          </fieldset>
+          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !objective.trim() || !documentsApproved}>{busy === "create" ? "Creating…" : "Create goal"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">Creating a goal does not send email, mutate calendars, connect accounts or grant provider permissions.</p>
         </form>
       </section>
@@ -304,6 +374,10 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
             <span className="cw-eyebrow">Revision {current.revision}</span>
             <h2>{current.objective}</h2>
             <div className="cw-agent-meta"><span>{current.state}</span><span>{current.timezone}</span><span>{current.budget.max_runs} max runs</span>{current.deadline_at && <span>Due {new Date(current.deadline_at).toLocaleString()}</span>}</div>
+            {current.authorized_resources.some(resource => resource.kind === "document") && <p className="cw-fineprint">
+              Authorized sources: {current.authorized_resources.filter(resource => resource.kind === "document").map(resource =>
+                documents.find(doc => doc.id === resource.reference)?.filename ?? resource.reference).join(", ")}
+            </p>}
             {current.success_criteria.length > 0 && <><strong>Success criteria</strong><ul>{current.success_criteria.map(item => <li key={item}>{item}</li>)}</ul></>}
             <div className="cw-proposal-controls"><div>
               <button type="button" className="cw-primary" disabled={Boolean(busy) || current.state !== "active"} onClick={runNow}>{busy === "run" ? "Starting…" : "Run bounded work now"}</button>
