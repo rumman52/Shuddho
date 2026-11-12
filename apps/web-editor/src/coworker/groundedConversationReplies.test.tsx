@@ -12,7 +12,7 @@ const source = { resource_type: "document_version", resource_id: "version-1", do
 const response = {
   state: "completed" as const,
   text: "The renewal date is 17 March 2027. [[src-1]]",
-  sources: [{ source_id: "src-1", label: "contract.pdf", resource_type: "document_version" }],
+  sources: [{ source_id: "src-1", label: "contract.pdf", resource_type: "document_version" as const }],
 };
 const message: ConversationMessageRecord = {
   id: "message-1", conversation_id: conversation.id, sequence: 1, text: "When does the contract renew?",
