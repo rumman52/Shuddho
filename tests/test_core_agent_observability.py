@@ -428,8 +428,11 @@ def test_day8_does_not_claim_quality_retention_when_one_language_cell_regresses(
     candidate["results"][0]["human_accepted"] = False
     candidate["results"][1]["human_accepted"] = False
     comparison = compare_day8_development(baseline, candidate, suite)
-    assert comparison["status"] == "BLOCKED"
+    assert comparison["status"] == "FROZEN_FOR_DAY9"
+    assert comparison["selected_least_cost_qualified_profile"] == "baseline"
     assert comparison["candidate_quality_retained"] is False
+    assert comparison["candidate_exclusion_reason"] == "quality_regression_vs_baseline"
+    assert comparison["measured_cost_savings_microusd"] is None
     assert comparison["profile_summaries"]["bounded_context_compact_observations"]["by_cell"]["research_brief/bn"] == 8
 
 
