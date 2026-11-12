@@ -595,8 +595,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     blockers = []
     if not a["metrics_complete"] or not b["metrics_complete"]:
         blockers.append("missing measured input/output tokens, model/tool time, retries or cost")
-    if not retained_quality:
-        blockers.append("candidate does not retain baseline human-accepted quality")
+    # Regressed candidate is excluded; a qualified baseline may still be frozen.
     if not (a["quality_gate_passed"] or b["quality_gate_passed"]):
         blockers.append("neither profile meets 36/40, 9/10-per-cell, safety and artifact gates")
     if not (baseline.get("generation_identity_verified") is True
@@ -651,6 +650,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         "evidence_scope": "development_40_only",
         "profile_summaries": summaries,
         "candidate_quality_retained": retained_quality,
+        "candidate_exclusion_reason": None if retained_quality else "quality_regression_vs_baseline",
         "measured_cost_savings_microusd": cost_delta,
         "selected_least_cost_qualified_profile": selected,
         "status": "FROZEN_FOR_DAY9" if selected is not None else "BLOCKED",
