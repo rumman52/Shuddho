@@ -20,6 +20,8 @@ from pypdf import PdfReader
 from test_coworker import container, signed_client, account
 from coworker_samples import WorkModel, work_draft
 from research_samples import PAGE_TEXT, SimulatedResearch, search_data
+from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.memory_schemas import MemoryFactCreate
 from services.coworker.drafting import DeepSeekDraftModel, DraftFailure
 from services.coworker.errors import CoworkerError
 from services.coworker.research import MAX_PAGE_CHARS, MAX_RESPONSE_BYTES, SEARCH_ENDPOINT, SearchFailure, TavilyResearchProvider, public_source_url, validate_evidence
@@ -115,14 +117,44 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
             for citation in finding["citations"]} == {"web-1", "web-2", "web-3"}
     assert all("text" not in source for source in brief["sources"])
 
-    # A reviewed short brief carries earlier limitations into the next task.
+    # A reviewed short brief and a deliberately selected memory namespace
+    # carry constraints into the next task; unrelated memory is not imported.
     notes = " ".join(claims) + " Reviewed limitation: these sources do not establish causality."
+    settings = replace(container.settings, agent_runtime_enabled=True,
+                       agent_runtime_v3_enabled=True, intelligent_planner_enabled=True,
+                       agent_memory_enabled=True, context_retrieval_enabled=True,
+                       work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    for service in (container.repository, container.agent, container.memory, container.context):
+        service.settings = settings
+    owner = account(container)
+    selected = container.memory.create(owner, MemoryFactCreate(
+        namespace="project", key="reviewed_causality_limit",
+        value="Preserve the reviewed limitation: none of the three studies establishes causality.",
+        language="en"))
+    container.memory.create(owner, MemoryFactCreate(
+        namespace="writing", key="excluded_style",
+        value="Use an unrelated style instruction from a different memory namespace.",
+        language="en"))
+    run, _ = container.agent.create(owner, AgentRunCreate(
+        goal="Preserve three study methods and limitations in the English report and draft email.",
+        memory_namespaces=["project"], output_language="en"), "day6-selected-memory-run")
     request = TaskCreate(skill_id="report_email",
                          instruction="Summarize three approaches in English; retain the reviewed limitation and prepare an unsent email.",
                          notes=notes, output_language="en")
-    second, _ = container.repository.create_task(account(container), request, "day6-reviewed-english-report")
+    second, _ = container.repository.create_task(
+        owner, request, "day6-reviewed-english-report", agent_run_id=run["id"])
 
     class EnglishReport(FakeModel):
+        def messages(self, task, sources):
+            memory = task.get("memory", [])
+            assert len(memory) == 1 and memory[0]["key"] == "reviewed_causality_limit"
+            assert "establishes causality" in memory[0]["value"]
+            assert "excluded_style" not in str(memory)
+            assert "Reviewed limitation" in task["notes"]
+            return super().messages(task, sources)
+
         async def generate(self, *args):
             result = await super().generate(*args)
             supported = " ".join(claims) + " The evidence does not establish causality."
@@ -137,6 +169,11 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
     assert report["state"] == "needs_input" and report["draft"]["output_language"] == "en"
     assert "recipient" in report["draft"]["missing_information"][0]
     assert all(claim in report["draft"]["email"]["body"] for claim in claims)
+    draft_checkpoint = container.repository.step(second["id"], "draft")
+    assert draft_checkpoint["memory_provenance"] == [
+        {"id": selected["id"], "version": selected["version"]}]
+    with pytest.raises(CoworkerError):
+        container.memory.context_for_run(account(container, "bob"), run["id"])
     for saved in (brief, report):
         assert len(saved["artifacts"]) == 4
         for artifact in saved["artifacts"]:
