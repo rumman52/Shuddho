@@ -3810,11 +3810,12 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
         def render(_draft, _sources, **_options):
             # Synthetic outputs exercise checkpoint recovery, not document parsing.
             return [
-            ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"fixture report document"),
-            ("report.pdf", "application/pdf", b"fixture report pdf"),
-            ("email-draft.txt", "text/plain; charset=utf-8", b"fixture unsent email"),
-            ("source-manifest.json", "application/json", b'{"delivery_status":"draft_ready"}'),
-        ]
+                ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                 b"fixture report document"),
+                ("report.pdf", "application/pdf", b"fixture report pdf"),
+                ("email-draft.txt", "text/plain; charset=utf-8", b"fixture unsent email"),
+                ("source-manifest.json", "application/json", b'{"delivery_status":"draft_ready"}'),
+            ]
 
         runner = DocumentRunner(container, FakeModel(), renderer=render)
         await runner.phase(task["id"], "extract")
@@ -3865,11 +3866,12 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
         def render(_draft, _sources, **_options):
             # All four declared outputs must exist before a task can complete.
             return [
-            ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"fixture report document"),
-            ("report.pdf", "application/pdf", b"fixture report pdf"),
-            ("email-draft.txt", "text/plain; charset=utf-8", b"fixture unsent email"),
-            ("source-manifest.json", "application/json", b'{"delivery_status":"draft_ready"}'),
-        ]
+                ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                 b"fixture report document"),
+                ("report.pdf", "application/pdf", b"fixture report pdf"),
+                ("email-draft.txt", "text/plain; charset=utf-8", b"fixture unsent email"),
+                ("source-manifest.json", "application/json", b'{"delivery_status":"draft_ready"}'),
+            ]
 
         class FaultingReadStore:
             def __init__(self, wrapped):
