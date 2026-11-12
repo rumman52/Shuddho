@@ -410,6 +410,13 @@ def test_day8_selects_measured_least_cost_profile_with_receipts_and_freeze_hashe
     assert len(comparison["freeze"]["freeze_sha256"]) == 64
     assert comparison["profile_summaries"]["baseline"]["total_input_tokens"] == 4000
     assert comparison["profile_summaries"]["bounded_context_compact_observations"]["total_model_time_ms"] == 4000
+    assert len(comparison["per_task_comparison"]) == 40
+    first = comparison["per_task_comparison"][0]
+    assert first["baseline"]["input_tokens"] == 100
+    assert first["baseline"]["output_tokens"] == 20
+    assert first["baseline"]["measured_model_tool_time_ms"] == 150
+    assert first["baseline"]["accepted_outcome_ref"].startswith("review:")
+    assert first["measured_cost_savings_microusd"] == 5
 
 
 def test_day8_missing_cost_or_token_direction_blocks_choice_without_invented_savings():
@@ -420,6 +427,8 @@ def test_day8_missing_cost_or_token_direction_blocks_choice_without_invented_sav
     assert comparison["selected_least_cost_qualified_profile"] is None
     assert comparison["measured_cost_savings_microusd"] is None
     assert comparison["profile_summaries"]["bounded_context_compact_observations"]["total_cost_microusd"] is None
+    assert any(item["bounded_context_compact_observations"]["input_tokens"] is None
+               for item in comparison["per_task_comparison"])
     assert comparison["freeze"] is None
 
 
