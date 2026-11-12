@@ -173,7 +173,7 @@ def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
     state = {
         "schema_version": 1, "status": "prepared", "release_id": "stage-day2-001",
         "expected_environment": "staging", "expected_source_revision": SHA,
-        "declared_capabilities": caps, "declared_action_providers": [],
+        "declared_capabilities": deepcopy(caps), "declared_action_providers": [],
         "declared_cohort": {"enforced": True, "max_users": 5},
         "build_reference": "image@sha256:test", "deployment_reference": "deploy-001",
         "rollout_manifest_sha256": "1" * 64, "provider_policy_sha256": "2" * 64,
