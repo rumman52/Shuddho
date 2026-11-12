@@ -169,7 +169,18 @@ def test_holdout_matrix_and_answer_key_prohibited(external_dir):
 
 
 def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
-    rows = [{"case_id": task["case_id"], "output": {"finding": "synthetic"}} for task in tasks()]
+    # Reuse *development* calibration shapes only to exercise schema validation,
+    # not as holdout outcomes or as model-generated quality evidence.
+    from scripts.pilot_workflow_eval import load_suite
+    suite = load_suite()
+    reference = {row["case_id"]: row["draft"] for row in suite["reference_outputs"]}
+    per_cell = {}
+    for task in suite["cases"]:
+        if task["split"] == "development":
+            per_cell.setdefault((task["workflow"], task["language"]), reference[task["id"]])
+    rows = [{"case_id": task["case_id"],
+             "output": deepcopy(per_cell[(task["workflow"], task["language"])])}
+            for task in tasks()]
     hashes, usage = candidate_ledger(tasks(), rows)
     assert len(hashes) == 40 and usage["reported_cost_microusd"] is None
     reviews, checks = reviews_and_checks()
@@ -185,6 +196,13 @@ def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
     assert usage["usage_complete"] and usage["reported_cost_microusd"] == 400
     rows[0]["telemetry"]["tokens"] = False
     with pytest.raises(EvidenceError, match="telemetry"):
+        candidate_ledger(tasks(), rows)
+    rows[0]["telemetry"]["tokens"] = 3
+    rows[0]["output"]["output_language"] = "xx"
+    with pytest.raises(EvidenceError, match="language/citation"):
+        candidate_ledger(tasks(), rows)
+    rows[0]["output"] = {}
+    with pytest.raises(EvidenceError, match="production draft schema"):
         candidate_ledger(tasks(), rows)
 
 
