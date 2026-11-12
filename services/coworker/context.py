@@ -76,6 +76,24 @@ def _snippet(text: str, goal: str, limit: int) -> str:
     return "\n\n".join(chosen)
 
 
+def read_verified_source(*, storage, object_key: str, byte_size: int, sha256: str,
+                         kind: str, max_chars: int, is_current) -> str:
+    """Verify the authoritative source before and after isolated extraction.
+
+    Both Agent context and direct grounded replies use this boundary. Bytes
+    are never trusted merely because an earlier database lookup succeeded.
+    """
+    if not is_current():
+        raise CoworkerError("context_sources_changed", "A selected source changed. Choose it again.", 409)
+    body = storage.get(object_key, byte_size)
+    if len(body) != byte_size or hashlib.sha256(body).hexdigest() != sha256:
+        raise CoworkerError("context_source_changed", "A context source could not be verified. Upload it again.", 409)
+    text = extract_in_subprocess(body, kind, max_chars)
+    if not is_current():
+        raise CoworkerError("context_sources_changed", "A selected source changed. Choose it again.", 409)
+    return text
+
+
 class ContextService:
     """Owner-scoped, deletion-aware context over resources already bound to a run."""
 
@@ -329,24 +347,19 @@ class ContextService:
                     "reason": "unavailable_or_changed",
                 })
                 continue
-            body = self.storage.get(source["object_key"], source["byte_size"])
-            if (
-                len(body) != source["byte_size"]
-                or hashlib.sha256(body).hexdigest() != source["sha256"]
-            ):
-                raise CoworkerError(
-                    "context_source_changed",
-                    "A context source could not be verified. Upload it again.",
-                    409,
+            try:
+                text = read_verified_source(
+                    storage=self.storage,
+                    object_key=source["object_key"],
+                    byte_size=source["byte_size"],
+                    sha256=source["sha256"],
+                    kind=source["kind"],
+                    max_chars=self.settings.max_source_chars,
+                    is_current=lambda: self._source_current(owner, source),
                 )
-            text = extract_in_subprocess(
-                body,
-                source["kind"],
-                self.settings.max_source_chars,
-            )
-            # Deletion/revocation during storage or extraction must not reach
-            # the model even if a previously authorized read returned bytes.
-            if not self._source_current(owner, source):
+            except CoworkerError as error:
+                if error.code != "context_sources_changed":
+                    raise
                 invalidated.append({
                     "source_id": source["source_id"],
                     "label": filter_sensitive(source["label"])[0],
