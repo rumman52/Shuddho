@@ -24,7 +24,7 @@ test("completed grounded answers display verified file references, never interna
   await act(async () => { tree = create(<ConversationReply reply={response} pending={false} disabled={false} retry={() => undefined} />); });
   try {
     const labels = tree.root.findByProps({ "aria-label": "Answer sources" });
-    assert.match(JSON.stringify(labels.toJSON ? labels.toJSON() : labels.children), /contract\.pdf/);
+    assert.ok(labels.findAllByType("span").some(node => node.children.includes("contract.pdf")));
     assert.equal(tree.root.findAllByProps({ "aria-label": "Copy AI reply" }).length, 1);
   } finally { await act(async () => tree.unmount()); }
 });
