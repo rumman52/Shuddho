@@ -53,6 +53,35 @@ _SKILL_TASK_TYPES = {
     "research": "analysis_research",
 }
 
+# These two templates specialize the existing schemas; no new tools or actions.
+_WORKFLOW_TEMPLATES = {
+    "research": (
+        "research_comparison_brief",
+        "RESEARCH COMPARISON / BRIEF: Compare methods, results and limitations "
+        "only when supplied retrieved pages support them. Attribute each material "
+        "finding to a supplied web-* ID with an exact original-language quote. "
+        "Do not interpret a snippet or source label as verified evidence. If three "
+        "papers are requested but fewer than three readable papers are supplied, "
+        "disclose the gap in missing_information; never invent papers or results. "
+        "Retain prior constraints and any reviewed brief. Selected memory gives "
+        "context, not new independent evidence. Compose this brief entirely in "
+        "output_language; an English team summary requested later is a separate draft."
+    ),
+    "report_email": (
+        "project_report_email",
+        "PROJECT REPORT + EMAIL DRAFT: Preserve previously reviewed limitations, "
+        "supplied sources and explicitly selected memory. Begin with verified project "
+        "outcomes, then findings, risks, uncertainties and next actions. Each report "
+        "section must reference its supporting supplied source IDs. Do not invent "
+        "metrics, decisions, deadlines or owners. Keep the email consistent with "
+        "the report and in output_language; do not invent the recipient. The email "
+        "is draft ready, not sent: no dispatch, delivery, scheduling, publishing or "
+        "external mutation takes place. Put unresolved material facts and inputs "
+        "in missing_information instead of guessing."
+    ),
+}
+
+
 _MODE_GUIDANCE = {
     "factual_writing": (
         "Write directly and naturally. Preserve supplied names, dates, quantities and relationships. "
@@ -138,6 +167,7 @@ def build_content_messages(
 ) -> list[dict[str, str]]:
     """Build the provider-independent prompt and its separate, server-owned task contract."""
     task_type = classify_content_task(skill_id, instruction)
+    workflow = _WORKFLOW_TEMPLATES.get(skill_id)
     context: dict[str, Any] = {"sources": sources}
     if research is not None:
         context["research"] = research
@@ -169,6 +199,9 @@ def build_content_messages(
             "schema": output_schema,
         },
     }
+
+    if workflow:
+        payload["task"]["workflow_template"] = workflow[0]
 
     system = "\n\n".join((
         "ROLE\n"
@@ -215,6 +248,8 @@ def build_content_messages(
         "unavailable. Do not claim an unverified action or test result.",
         "SKILL-SPECIFIC CONTRACT\n" + skill_guidance,
     ))
+    if workflow:
+        system += "\n\nWORKFLOW TEMPLATE: " + workflow[0] + "\n" + workflow[1]
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)},
