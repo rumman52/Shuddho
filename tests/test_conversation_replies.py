@@ -648,15 +648,17 @@ def _attached_chat_source(container, data, body: bytes, *, kind="txt", filename=
 
     service, _model, actual_owner, _conversation, message = data
     source_owner = owner or actual_owner
-    document_id, version_id, workspace_id = [str(uuid4()) for _ in range(3)]
+    document_id, version_id = [str(uuid4()) for _ in range(2)]
     sha = hashlib.sha256(body).hexdigest()
     key = "test-grounding/" + version_id
     container.storage.put(key, body, "application/pdf" if kind == "pdf" else "text/plain")
     with service.sessions.begin() as db:
-        db.add(Workspace(id=workspace_id, owner_id=source_owner, name="Grounded"))
-        db.flush()  # Explicitly satisfy SQLite foreign keys without ORM relationships.
+        # Every account already owns exactly one workspace. Reuse it rather
+        # than creating a second owner-unique workspace in the test fixture.
+        workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == source_owner))
+        assert workspace_id is not None
         db.add(Document(id=document_id, owner_id=source_owner, workspace_id=workspace_id, filename=filename, deleted=False))
-        db.flush()
+        db.flush()  # The document must exist before its foreign-keyed version.
         db.add(DocumentVersion(id=version_id, document_id=document_id, owner_id=source_owner, version=1,
             kind=kind, byte_size=len(body), sha256=sha, object_key=key, state="uploaded",
             expires_at=utcnow() + timedelta(days=1)))
