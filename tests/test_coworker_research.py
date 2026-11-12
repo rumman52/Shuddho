@@ -63,6 +63,90 @@ def test_day6_research_template_preserves_language_and_cited_comparison(containe
     assert "compare" in messages[0]["content"].lower()
 
 
+def test_day6_development_golden_bangla_comparison_then_english_report_email(container):
+    """Two task turns use actual native files; synthetic sources are not live claims."""
+    from services.coworker.research import ResearchResult
+    from services.coworker.schemas import parse_draft
+    from test_coworker import FakeModel
+
+    now = datetime.now(timezone.utc).isoformat()
+    claims = [
+        "Paper A used cohort measurement for twelve reviews.",
+        "Paper B used interviews for twelve reviews.",
+        "Paper C used a descriptive audit for twelve reviews.",
+    ]
+    sources = [{
+        "id": f"web-{index}", "kind": "web",
+        "url": f"https://example.org/paper-{index}",
+        "label": f"Synthetic paper {index}", "text": claim + " The source does not establish causality.",
+        "sha256": hashlib.sha256((claim + " The source does not establish causality.").encode()).hexdigest(),
+        "retrieved_at": now, "source_date": None, "date_basis": "provider_estimate",
+        "provider": "fixture", "truncated": False,
+    } for index, claim in enumerate(claims, 1)]
+
+    class ThreePapers:
+        calls = 0
+
+        async def retrieve(self, options):
+            self.calls += 1
+            assert options.query == "public project reviews"
+            return ResearchResult(sources, {"query": options.query, "time_range": options.time_range,
+                                            "provider": "fixture", "retrieved_at": now}, 1)
+
+    class BanglaComparison(WorkModel):
+        async def generate(self, messages, language, source_ids):
+            result = await super().generate(messages, language, source_ids)
+            value = result.draft.model_dump()
+            value["findings"] = [{
+                "heading": f"গবেষণা {index}",
+                "text": f"গবেষণা {index}: পদ্ধতি পৃথক; উৎসটি কার্যকারণ প্রমাণ করে না।",
+                "citations": [{"source_id": f"web-{index}", "quote": claim}],
+            } for index, claim in enumerate(claims, 1)]
+            result.draft = parse_draft("research", value)
+            return result
+
+    first = create_research(container, output_language="bn")
+    provider = ThreePapers()
+    asyncio.run(DocumentRunner(container, BanglaComparison(), research=provider).run_for_test(first["id"]))
+    brief = container.repository.get_task(account(container), first["id"])
+    assert brief["state"] == "completed" and provider.calls == 1
+    assert brief["draft"]["output_language"] == "bn"
+    assert {citation["source_id"] for finding in brief["draft"]["findings"]
+            for citation in finding["citations"]} == {"web-1", "web-2", "web-3"}
+    assert all("text" not in source for source in brief["sources"])
+
+    # A reviewed short brief carries earlier limitations into the next task.
+    notes = " ".join(claims) + " Reviewed limitation: these sources do not establish causality."
+    request = TaskCreate(skill_id="report_email",
+                         instruction="Summarize three approaches in English; retain the reviewed limitation and prepare an unsent email.",
+                         notes=notes, output_language="en")
+    second, _ = container.repository.create_task(account(container), request, "day6-reviewed-english-report")
+
+    class EnglishReport(FakeModel):
+        async def generate(self, *args):
+            result = await super().generate(*args)
+            supported = " ".join(claims) + " The evidence does not establish causality."
+            result.draft.report.summary = supported
+            result.draft.report.sections[0].paragraphs = [supported]
+            result.draft.email.body = supported
+            result.draft.missing_information = ["The email recipient was not supplied."]
+            return result
+
+    asyncio.run(DocumentRunner(container, EnglishReport()).run_for_test(second["id"]))
+    report = container.repository.get_task(account(container), second["id"])
+    assert report["state"] == "needs_input" and report["draft"]["output_language"] == "en"
+    assert "recipient" in report["draft"]["missing_information"][0]
+    assert all(claim in report["draft"]["email"]["body"] for claim in claims)
+    for saved in (brief, report):
+        assert len(saved["artifacts"]) == 4
+        for artifact in saved["artifacts"]:
+            owned = container.repository.artifact(account(container), artifact["id"])
+            body = container.storage.get(owned["object_key"], owned["byte_size"])
+            assert body and hashlib.sha256(body).hexdigest() == artifact["sha256"]
+            with pytest.raises(CoworkerError):
+                container.repository.artifact(account(container, "bob"), artifact["id"])
+
+
 def test_research_catalog_request_idempotency_isolation_and_flag_rollback(container, signed_client):
     client, headers = signed_client
     auth = headers() | {"Idempotency-Key": "research-api-key"}
