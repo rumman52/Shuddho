@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -16,7 +18,7 @@ from services.coworker.errors import CoworkerError
 from services.coworker.models import AgentDecision, AgentRun
 from services.coworker.migrate import upgrade
 from services.coworker.schemas import TaskCreate
-from scripts.core_agent_observability import aggregate, collect_snapshot, compare_day8_development, estimated_cost_microusd, render_openmetrics
+from scripts.core_agent_observability import aggregate, collect_snapshot, compare_day8_development, estimated_cost_microusd, main, render_openmetrics
 
 ISSUER = "https://identity.example.test/auth/v1"
 
@@ -462,3 +464,36 @@ def test_day8_operator_snapshot_does_not_infer_split_tokens_or_accepted_artifact
     assert record["verified_artifact_references"] == []
     assert record["accepted_outcome_references"] == []
     assert "{" not in render_openmetrics(snapshot)
+
+
+def test_day8_cli_exit_code_fails_on_blocked_comparison(tmp_path, monkeypatch):
+    suite, baseline, candidate = _day8_fixture()
+    candidate["results"][0]["cost_microusd"] = None
+    baseline_file = tmp_path / "baseline.json"
+    candidate_file = tmp_path / "candidate.json"
+    report_file = tmp_path / "comparison.json"
+    baseline_file.write_text(json.dumps(baseline), encoding="utf-8")
+    candidate_file.write_text(json.dumps(candidate), encoding="utf-8")
+    monkeypatch.setattr("scripts.pilot_workflow_eval.load_suite", lambda: suite)
+    monkeypatch.setattr("sys.argv", [
+        "core_agent_observability",
+        "--day8-baseline", str(baseline_file),
+        "--day8-candidate", str(candidate_file),
+        "--day8-report", str(report_file),
+    ])
+    assert main() == 1
+    assert json.loads(report_file.read_text(encoding="utf-8"))["status"] == "BLOCKED"
+
+
+def test_day8_allows_nonaccepted_failed_tasks_to_lack_verified_artifacts():
+    suite, baseline, candidate = _day8_fixture()
+    for report in (baseline, candidate):
+        for row in report["results"]:
+            if row["id"].endswith("-9"):
+                row["passed"] = False
+                row["human_accepted"] = False
+                row["verified_artifact_refs"] = []
+                row["accepted_outcome_ref"] = None
+    comparison = compare_day8_development(baseline, candidate, suite)
+    assert comparison["status"] == "FROZEN_FOR_DAY9"
+    assert comparison["profile_summaries"]["baseline"]["human_accepted"] == 36
