@@ -5,6 +5,8 @@
 **Decision authority:** owner C and the founder. A, B and independent D provide evidence; CI and this script cannot substitute for authorization.  
 **Initial decision:** **SOURCE_ONLY / NO-GO**. No pilot admission, production activation or deploy occurred as part of this source change.
 
+**Current operated readback (12 November 2026):** Render `shuddho-staging-db` (`dpg-dav98hfpn0mc739mndvg-a`) is `suspended` by `billing` and expired 31 October 2026. `shuddho-api-staging` (`srv-dav98otg1s2s73cod4gg`) lists its last live deployment from `fce72760456bd8bb03524ce98127120c7ac3dfb9` (2 October 2026), not the current reviewed source. Only three web services appear in the Render workspace; **no persistent Shuddho staging worker**. Supabase `shuddho-staging` being healthy does not prove this Render database or worker are operational. These are read-only inventories, not restored databases or live runtime execution receipts.
+
 ## Scope and non-negotiable qualification
 
 Existing `scripts/cohort_release_gate.py` remains the **canonical** `GO_CONTROLLED_COHORT` decision and keeps its existing 100% live planner pass-rate and 100% live curated-quality pass-rate/fact-recall thresholds (plus all previously defined infrastructure, feature, capability and rollback gates). `scripts/day10_release_decision.py` **adds** exact-release, operations and owner-signoff requirements; it never weakens or bypasses the canonical gate and never activates a pilot.
@@ -74,3 +76,5 @@ Owner C and founder jointly own **GO/NO-GO**, the allowlist, change control and 
 **P1:** Fill privacy-approved monitoring and alert dashboards for queue age, error rate, latency, cost, storage, failures; review support on-call and documentation; remediate observed quality regressions *without changing thresholds*; capture pilot feedback and revised regression evidence. **P2:** Plan wider cohorts only after a separately authorized monitored pilot with measured outcomes; do not infer general availability from a ten-day schedule.
 
 This document and the handoff script are **source changes**, not proof that Day 10's operational release criteria have been achieved.
+
+The release decision additionally checks that the canonical rollout cohort maximum is **5–10**, the authenticated API enforces membership and reports a matching cap, and the separate authorization cap equals the exact rollout cap. A not-yet-activated rollout may have zero configured members; the manual operator must validate the actual 5–10 account list at admission time.
