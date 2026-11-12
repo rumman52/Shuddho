@@ -1446,13 +1446,18 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
             assert db.get(AgentRun, second["run_id"]).input_versions == [v2]
         with restarted.repository.sessions.begin() as db:
             db.get(AgentRun, second["run_id"]).state = "completed"
+            # The latest uploaded version has expired, while an older version remains.
+            db.get(DocumentVersion, v2).expires_at = utcnow() - timedelta(seconds=1)
+        expired = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=2))
+        assert expired["run_id"] is None and expired["state"] in {"blocked", "skipped"}
+        with restarted.repository.sessions.begin() as db:
             db.get(Document, document_id).deleted = True
-        rejected = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=2))
+        rejected = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=3))
         assert rejected["run_id"] is None and rejected["state"] in {"blocked", "skipped"}
         paused = client.post(f'/api/v1/automations/{automation["id"]}/pause',
                              headers=auth, json={"expected_revision": 1})
         assert paused.status_code == 200
-        stopped = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=3))
+        stopped = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=4))
         assert stopped["state"] == "skipped"
         with restarted.repository.sessions() as db:
             assert len(db.scalars(select(AgentRun).where(AgentRun.goal_id == goal["id"])).all()) == 2
