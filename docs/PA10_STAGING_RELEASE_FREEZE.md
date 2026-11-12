@@ -14,6 +14,8 @@ A hand-written note saying “deploy main to staging” is not release identity.
 
 The verifier rejects:
 
+- any runtime-manifest schema other than the deployed v2 shape, including new capabilities not explicitly represented in the reviewed rollout; and
+
 - production environments;
 - non-HTTPS or credential-bearing API origins;
 - a source revision different from the frozen candidate;
