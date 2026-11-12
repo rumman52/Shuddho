@@ -25,6 +25,33 @@ def test_curated_multilingual_quality_fixture_passes():
     assert r["by_language"]["ar"]["required_fact_recall"]==1.0
     assert {"analysis_research","code","image_prompt","structured_data","creative_writing","summarisation","long_form_report","complex_planning"}.issubset(set(r["task_types"]))
 
+def test_day6_two_workflow_quality_contracts_are_fail_closed():
+    cases = {case["id"]: case for case in loaded()}
+    research = cases["day6-bn-three-study-comparison"]
+    report = cases["day6-en-reviewed-report-unsent-email"]
+    assert score(research, research["draft"])["passed"]
+    assert score(report, report["draft"])["passed"]
+    assert {citation["source_id"] for finding in research["draft"]["findings"]
+            for citation in finding["citations"]} == {"web-1", "web-2", "web-3"}
+    assert report["draft"]["missing_information"] == ["Email recipient was not provided."]
+
+    lost_paper = deepcopy(research["draft"])
+    lost_paper["findings"].pop()
+    assert not score(research, lost_paper)["checks"]["required_source_coverage"]
+
+    invented_quote = deepcopy(research["draft"])
+    invented_quote["findings"][0]["citations"][0]["quote"] = "An unobserved clinical result."
+    assert not score(research, invented_quote)["checks"]["citation_validation"]
+
+    missing_recipient_hidden = deepcopy(report["draft"])
+    missing_recipient_hidden["missing_information"] = []
+    assert not score(report, missing_recipient_hidden)["checks"]["missing_information_contract"]
+
+    reported_as_sent = deepcopy(report["draft"])
+    reported_as_sent["email"]["body"] += " Email was sent."
+    assert not score(report, reported_as_sent)["checks"]["forbidden_claim_absence"]
+
+
 def test_rejects_unsupported_claim():
     c=deepcopy(loaded()[0]); c["draft"]["report"]["summary"]+=" Budget is USD 15,000."
     r=score(c,c["draft"]); assert not r["passed"]; assert "USD 15,000" in r["found_forbidden_terms"]
