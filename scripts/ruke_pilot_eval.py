@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 from scripts.pilot_workflow_eval import load_suite
+from services.coworker.schemas import parse_draft, source_references
 
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "tests/fixtures/ruke_pilot_tasks.jsonl"
@@ -202,6 +203,14 @@ def candidate_ledger(cases: list[dict], outputs: list[dict]) -> tuple[dict[str, 
             raise EvidenceError("invalid candidate output encoding") from exc
         if len(encoded) > by_id[cid]["max_output_bytes"]:
             raise EvidenceError("candidate output exceeds task bound")
+        task = by_id[cid]
+        skill = "research" if task["workflow"] == "research_brief" else "report_email"
+        try:
+            parsed = parse_draft(skill, row["output"])
+        except (ValueError, TypeError, KeyError) as exc:
+            raise EvidenceError("candidate output violates production draft schema: " + cid) from exc
+        if parsed.output_language != task["language"] or source_references(parsed) != {task["citation_id"]}:
+            raise EvidenceError("candidate output language/citation scope mismatch: " + cid)
         hashes[cid] = hashlib.sha256(encoded).hexdigest()
         telemetry = row.get("telemetry")
         if telemetry is not None:
