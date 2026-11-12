@@ -618,7 +618,13 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         blockers.append("no eligible candidate with retained quality")
     cost_delta = (
         a["total_cost_microusd"] - b["total_cost_microusd"]
-        if a["total_cost_microusd"] is not None and b["total_cost_microusd"] is not None
+        if a["total_cost_microusd"] is not None
+        and b["total_cost_microusd"] is not None
+        and retained_quality
+        and baseline.get("receipts_independently_verified") is True
+        and candidate.get("receipts_independently_verified") is True
+        and baseline.get("generation_identity_verified") is True
+        and candidate.get("generation_identity_verified") is True
         else None
     )
     frozen = None
