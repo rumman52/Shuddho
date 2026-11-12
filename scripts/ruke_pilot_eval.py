@@ -515,7 +515,21 @@ def main(argv=None) -> int:
             return 0 if obj["passed"] else 1
         return 0
     except (EvidenceError, OSError, ValueError, KeyError, TypeError) as exc:
-        print(json.dumps({"error": str(exc), "qualified": False}))
+        failure = {"error": str(exc), "qualified": False,
+                   "result_kind": "regression_validation" if args.regression_rerun
+                   else "operator_submitted_first_run",
+                   "release_authorization": False}
+        if args.report:
+            # Preserve first-run failure evidence too. Never replace earlier results,
+            # even when inputs are invalid or a reviewer's submission is incomplete.
+            try:
+                outside_repo(args.report)
+                digest = immutable_write(args.report, failure)
+                print(json.dumps({"report": str(args.report), "sha256": digest, **failure}))
+            except (EvidenceError, OSError, ValueError) as save_exc:
+                print(json.dumps({**failure, "report_error": str(save_exc)}))
+        else:
+            print(json.dumps(failure))
         return 2
 
 
