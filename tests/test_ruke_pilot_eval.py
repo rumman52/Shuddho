@@ -11,7 +11,7 @@ import pytest
 
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, external_heldout,
-    immutable_write, main, position_map, prepare_blind, registry_cases,
+    candidate_ledger, immutable_write, main, position_map, prepare_blind, registry_cases,
     score_reviews, validate_manifest, verify_operations,
 )
 
@@ -129,6 +129,7 @@ def test_external_holdout_missing_prompt_and_source_is_rejected(external_dir):
     rows[0].pop("instruction")
     held = external_dir / "incomplete-tasks.jsonl"
     held.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    held.chmod(0o444)
     with pytest.raises(EvidenceError, match="instruction/source contract"):
         external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
 
@@ -137,6 +138,9 @@ def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir
     held = external_dir / "independent-test-only.jsonl"
     held.write_text("\n".join(json.dumps(x) for x in tasks()) + "\n")
     digest = hashlib.sha256(held.read_bytes()).hexdigest()
+    with pytest.raises(EvidenceError, match="read-only"):
+        external_heldout(held, corpus_sha256=digest)
+    held.chmod(0o444)
     assert len(external_heldout(held, corpus_sha256=digest)) == 40
     with pytest.raises(EvidenceError, match="hash mismatch"):
         external_heldout(held, corpus_sha256="0" * 64)
@@ -152,13 +156,36 @@ def test_holdout_matrix_and_answer_key_prohibited(external_dir):
     rows = tasks()
     rows[0]["expected_facts"] = [{"secret": "no"}]
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+    held.chmod(0o444)
     with pytest.raises(EvidenceError, match="answer keys"):
         external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
     rows[0].pop("expected_facts")
     rows[1]["case_id"] = rows[0]["case_id"]
+    held.chmod(0o644)
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+    held.chmod(0o444)
     with pytest.raises(EvidenceError, match="distinct"):
         external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
+
+
+def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
+    rows = [{"case_id": task["case_id"], "output": {"finding": "synthetic"}} for task in tasks()]
+    hashes, usage = candidate_ledger(tasks(), rows)
+    assert len(hashes) == 40 and usage["reported_cost_microusd"] is None
+    reviews, checks = reviews_and_checks()
+    for row in checks:
+        row["output_sha256"] = hashes[row["case_id"]]
+    assert score_reviews(tasks(), reviews, [], checks, output_hashes=hashes)["accepted"] == 40
+    checks[0]["output_sha256"] = "0" * 64
+    with pytest.raises(EvidenceError, match="not bound"):
+        score_reviews(tasks(), reviews, [], checks, output_hashes=hashes)
+    for row in rows:
+        row["telemetry"] = {"tokens": 3, "latency_ms": 12, "cost_microusd": 10}
+    hashes, usage = candidate_ledger(tasks(), rows)
+    assert usage["usage_complete"] and usage["reported_cost_microusd"] == 400
+    rows[0]["telemetry"]["tokens"] = False
+    with pytest.raises(EvidenceError, match="telemetry"):
+        candidate_ledger(tasks(), rows)
 
 
 def test_two_reviewers_full_rubric_accept_all_synthetic_cases():
