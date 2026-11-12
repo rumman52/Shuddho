@@ -48,6 +48,21 @@ def provider(container, handler):
     return TavilyResearchProvider(replace(container.settings, search_api_key="fixture-only-search-key"), httpx.MockTransport(handler))
 
 
+def test_day6_research_template_preserves_language_and_cited_comparison(container):
+    model = DeepSeekDraftModel(container.settings, skill_id="research")
+    sources = [{"id": "web-1", "kind": "web", "text": "A method yielded a measured result.",
+                "label": "Original study", "url": "https://example.org/study"}]
+    task = {"instruction": "Compare the methods of three papers in Bangla, keeping earlier limitations.",
+            "output_language": "bn", "research": {"query": "three methods", "time_range": "any"}}
+    messages = model.messages(task, sources)
+    payload = json.loads(messages[-1]["content"])
+    assert payload["task"]["workflow_template"] == "research_comparison_brief"
+    assert payload["task"]["output_language"] == "bn"
+    assert payload["context"]["sources"] == sources
+    assert "missing_information" in messages[0]["content"]
+    assert "compare" in messages[0]["content"].lower()
+
+
 def test_research_catalog_request_idempotency_isolation_and_flag_rollback(container, signed_client):
     client, headers = signed_client
     auth = headers() | {"Idempotency-Key": "research-api-key"}
