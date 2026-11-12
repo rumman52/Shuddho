@@ -198,6 +198,10 @@ def test_missing_information_and_rollout_rollback_preserve_saved_work(container)
     container.repository.settings = container.settings
     saved = container.repository.get_task(account(container), task["id"])
     assert saved["state"] == "needs_input" and len(saved["artifacts"]) == 4
+    manifest_item = next(item for item in saved["artifacts"] if item["filename"] == "source-manifest.json")
+    owned = container.repository.artifact(account(container), manifest_item["id"])
+    manifest = json.loads(container.storage.get(owned["object_key"], owned["byte_size"]))
+    assert manifest["delivery_status"] == "needs_input"
     assert create_work(container, "email")["id"] == task["id"]  # Replay is still safe with the flag off.
     with pytest.raises(CoworkerError) as error:
         create_work(container, "email", key="new-after-disable")
