@@ -509,6 +509,8 @@ jobs:
         run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium --only-shell
+      - name: Qualify Coworker mobile navigation after delayed authentication
+        run: node --test apps/web-editor/test/coworker-navigation-browser.test.mjs
       - name: Qualify real Chromium browser-worker network boundary without skips
         run: node --test scripts/browser_worker_chromium.test.mjs
       - uses: actions/setup-python@v5
