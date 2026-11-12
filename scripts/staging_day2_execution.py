@@ -22,7 +22,6 @@ import httpx
 from scripts.staging_release_evidence import write_private_json
 from scripts.staging_release_freeze import canonical_sha256, clean_origin, valid_sha
 from services.coworker.config import Settings
-from services.coworker.container import Container
 
 
 NEW_RUNTIME_CAPABILITIES = frozenset({
@@ -365,6 +364,9 @@ def main() -> None:
         if not require_distinct:
             raise Day2Failure("Two distinct approved synthetic staging tokens are required.")
         origin = clean_origin(os.getenv("SHUDDHO_STAGING_API_BASE_URL", ""))
+        # Operator-only dependency: lightweight contract tests have no Auth/Temporal extras.
+        from services.coworker.container import Container
+
         container = Container.create(settings)
         before = active_worker(container, release["source_revision"])
         marker = uuid.uuid4().hex
