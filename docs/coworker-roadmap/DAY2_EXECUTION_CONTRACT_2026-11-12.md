@@ -1,6 +1,6 @@
 # Day 2 — prove the real staging execution loop (12 November 2026)
 
-**Disposition: SOURCE WORK IN REVIEW; LIVE ACCEPTANCE BLOCKED.** This is a
+**Disposition: PR #670 MERGED; LIVE ACCEPTANCE BLOCKED.** This is a
 controlled nonproduction operator contract, not evidence that model execution,
 backup/restore, Temporal recovery or owner isolation has already succeeded.
 
@@ -13,7 +13,7 @@ conversations or the multi-turn golden path. Keep production actions,
 browser/agent actions and unrelated privileges disabled. Keep source SHA,
 release, task, artifact, worker and restore identities in private evidence.
 
-This patch includes:
+The merged Day 2 source includes:
 
 - `scripts/staging_day2_execution.py`: one selected **synthetic private TXT
   document** is uploaded through the real authenticated API, read back by the
@@ -156,6 +156,31 @@ document-only test. For backup, recover/export any retained original DB
 **before** adding a probe. The restore script rejects the original source
 database or original object storage as its target. It needs both actual
 backup and restore references; merely running commands does not count.
+
+## Evidence-chain reconciliation (after the real drills)
+
+Only after the real document task, active-worker restart and isolated
+PostgreSQL/object-storage restore have generated private receipt files,
+run the fail-closed source/identity gate:
+
+```bash
+uv run --extra coworker python scripts/staging_day2_acceptance.py \
+  --freeze /secure/day2/release-frozen.json \
+  --execution /secure/day2/document-execution.json \
+  --recovery /secure/day2/temporal-recovery.json \
+  --restored /secure/day2/restore-evidence.json \
+  --expected-revision "<reviewed-40-character-SHA>" \
+  --output /secure/day2/identity-consistency.json
+```
+
+This reconciles the same frozen release, runtime-manifest digest, rollout
+digest, document/version/task/workflow/artifact IDs and hashes, worker source
+and heartbeat, and nested restart/restore receipts. An absent, altered,
+out-of-order or different-release proof **fails closed**. Its result is only
+`evidence_consistent`, not an independent attestation of live platform
+events. An operator must still verify the real Render restart reference,
+model-usage records, source and target database/storage identities, backup
+artifacts and authorization checks. No CI mock or merged source changes that.
 
 ## Acceptance
 

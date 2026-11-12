@@ -275,6 +275,9 @@
 @media (max-width: 900px) {
  .rukh-cw-sections { display: flex; flex-direction: column; }
  .rukh-cw-sections > .cw-header { flex: 0 0 64px; min-height: 64px; padding: 8px 16px; gap: 12px; }
+  /* The selected-task shortcut needs its own height on mobile: a fixed 64px
+     header allowed the report preview below to cover the button hit target. */
+ .rukh-cw-sections > .cw-header:has(.cw-view-task) { flex-basis: auto; min-height: 64px; }
  .rukh-cw-sections > .cw-header .cw-account > span { display: none; }
  .rukh-cw-sections > .rukh-cw-shell { display: flex; flex-direction: column; min-height: 0; flex: 1; }
  .rukh-cw-sections .rukh-cw-content { flex: 1; width: 100%; }
