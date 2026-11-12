@@ -59,13 +59,20 @@ Required gate: **at least 36/40 accepted, and at least 9/10 in each cell.** Cost
 
 Use at least one **actually available** competitor. Its run records must specify product, exact version, model, recorded UTC run time, same `source_set_sha256` and same `time_limit_seconds`. If access is unavailable, submit an explicit comparison gap; do not fill it with an imaginary model or present a winner.
 
-Generate the position-swapped packet from real same-task outputs:
+The D custodian must generate a **fresh 32-byte cryptographic blinding key**, keep it in a restricted (mode 0600/0400) file outside the repository, and never expose it to either reviewer. A public task ID or corpus hash is **not** a secret blinding seed. For example, from D's independently permissioned workspace:
+
+```bash
+python -c 'from pathlib import Path; from secrets import token_bytes; p=Path("/secure/d/day9/blind.key"); p.write_bytes(token_bytes(32)); p.chmod(0o600)'
+```
+
+Do not disclose the key or candidate/competitor mapping in review packets. The script records only its SHA-256 fingerprint, not its contents. Generate the position-swapped packet from real same-task outputs:
 
 ```bash
 uv run --extra coworker python -m scripts.ruke_pilot_eval prepare-blind \
   --manifest /secure/d/day9/manifest.json --heldout /secure/d/day9/tasks.jsonl \
   --candidate /secure/d/day9/candidate-outputs.jsonl \
   --competitor-outputs /secure/d/day9/competitor-outputs.jsonl \
+  --blinding-key /secure/d/day9/blind.key \
   --report /secure/d/day9/first-blind-packet.json
 ```
 
@@ -120,6 +127,7 @@ uv run --extra coworker python -m scripts.ruke_pilot_eval evaluate \
   --manifest /secure/d/day9/manifest.json \
   --heldout /secure/d/day9/tasks.jsonl \
   --candidate /secure/d/day9/candidate-outputs.jsonl \
+  --blinding-key /secure/d/day9/blind.key \
   --evidence /secure/d/day9/evidence.json \
   --report /secure/d/day9/first-run-result.json
 ```
