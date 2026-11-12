@@ -22,8 +22,9 @@ This patch includes:
   positive persisted model attempts/tokens.
 - The resulting `report.pdf` is read through the authorized artifact endpoint
   and a private S3 presigned URL. Both byte streams must match the
-  repository-reported size and SHA-256. Cross-owner artifact download and
-  content requests must return 404.
+  repository-reported size and SHA-256. The signed URL must resolve to the
+  configured HTTPS S3 endpoint host, not an arbitrary third-party origin.
+  Cross-owner artifact download and content requests must return 404.
 - `staging_release_freeze.py` now compares the **actual v2 runtime manifest**
   against the exact reviewed declaration; newly exposed capabilities must be
   explicitly declared and cannot be silently added. The existing full PA-10
