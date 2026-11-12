@@ -3799,6 +3799,16 @@ def test_artifact_read_failure_blocks_completion_and_reuses_export_on_retry(cont
     asyncio.run(scenario())
 
 
+def _synthetic_complete_report_email_outputs():
+    """Four canonical file identities; renderer-format tests validate actual bytes separately."""
+    return [
+        ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"synthetic report docx"),
+        ("report.pdf", "application/pdf", b"synthetic report pdf"),
+        ("email-draft.txt", "text/plain; charset=utf-8", b"synthetic email draft"),
+        ("source-manifest.json", "application/json", b'{"sources": []}'),
+    ]
+
+
 def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(container, monkeypatch):
     """An ambiguous DB checkpoint commit must never trigger deletion of referenced blobs."""
     import asyncio
@@ -3808,7 +3818,7 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
         task = new_task(container, owner)
 
         def render(_draft, _sources, **_options):
-            return [("report.txt", "text/plain", b"durable report bytes")]
+            return _synthetic_complete_report_email_outputs()
 
         runner = DocumentRunner(container, FakeModel(), renderer=render)
         await runner.phase(task["id"], "extract")
@@ -3830,10 +3840,11 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
             await runner.phase(task["id"], "export")
 
         saved = container.repository.step(task["id"], "export")
-        assert saved is not None and len(saved["artifacts"]) == 1
+        assert saved is not None and len(saved["artifacts"]) == 4
         prefix = f"{owner}/outputs/{task['id']}/"
         objects_after_ambiguous_commit = container.storage.inventory(prefix=prefix)
-        assert len(objects_after_ambiguous_commit) == 1
+        assert len(objects_after_ambiguous_commit) == 4
+        assert {item["filename"] for item in saved["artifacts"]} == {row[0] for row in _synthetic_complete_report_email_outputs()}
 
         # Phase replay sees the durable checkpoint and does not re-export or delete its object.
         await runner.phase(task["id"], "export")
@@ -3841,7 +3852,7 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
         await runner.phase(task["id"], "complete")
         completed = container.repository.get_task(owner, task["id"])
         assert completed["state"] == "completed"
-        assert len(completed["artifacts"]) == 1
+        assert len(completed["artifacts"]) == 4
 
     asyncio.run(scenario())
 
@@ -3857,10 +3868,7 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
         delegate = container.storage
 
         def render(_draft, _sources, **_options):
-            return [
-                ("report.txt", "text/plain", b"verified report bytes"),
-                ("summary.txt", "text/plain", b"verified summary bytes"),
-            ]
+            return _synthetic_complete_report_email_outputs()
 
         class FaultingReadStore:
             def __init__(self, wrapped):
@@ -3890,9 +3898,9 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
         await runner.phase(task["id"], "export")
 
         exported = container.repository.step(task["id"], "export")
-        assert exported is not None and len(exported["artifacts"]) == 2
+        assert exported is not None and len(exported["artifacts"]) == 4
         expected_puts = list(storage.put_keys)
-        assert len(expected_puts) == 2
+        assert len(expected_puts) == 4
 
         # First attempt fails on artifact one.
         with pytest.raises(OSError, match="GET disconnect #1"):
@@ -3912,7 +3920,7 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
         await runner.phase(task["id"], "complete")
         completed = container.repository.get_task(owner, task["id"])
         assert completed["state"] == "completed"
-        assert len(completed["artifacts"]) == 2
+        assert len(completed["artifacts"]) == 4
         assert storage.put_keys == expected_puts
         for item in completed["artifacts"]:
             artifact = container.repository.artifact(owner, item["id"])
@@ -3920,6 +3928,32 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
             assert hashlib.sha256(body).hexdigest() == item["sha256"]
 
     asyncio.run(scenario())
+
+@pytest.mark.parametrize("malformation", ("missing", "duplicate", "unexpected"))
+def test_incomplete_export_checkpoint_is_never_published(container, malformation):
+    """An interrupted or tampered checkpoint cannot bypass four-file service contract."""
+    async def scenario():
+        owner = account(container)
+        task = new_task(container, owner)
+        outputs = _synthetic_complete_report_email_outputs()
+        if malformation == "missing":
+            outputs.pop()
+        elif malformation == "duplicate":
+            outputs[-1] = outputs[0]
+        else:
+            outputs[-1] = ("unexpected.txt", "text/plain", b"unreviewed file")
+        runner = DocumentRunner(container, FakeModel(), renderer=lambda *_args, **_kwargs: outputs)
+        await runner.phase(task["id"], "extract")
+        await runner.phase(task["id"], "draft")
+        await runner.phase(task["id"], "export")
+        with pytest.raises(CoworkerError, match="generated files were incomplete"):
+            await runner.phase(task["id"], "complete")
+        current = container.repository.get_task(owner, task["id"])
+        assert current["state"] == "running"
+        assert current["artifacts"] == []
+
+    asyncio.run(scenario())
+
 
 def test_model_usage_metadata_rejects_boolean_token_counts(container):
     settings = replace(container.settings, deepseek_api_key="test-only-placeholder")
