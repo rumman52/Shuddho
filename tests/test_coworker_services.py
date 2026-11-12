@@ -64,6 +64,40 @@ def test_day6_rejects_incomplete_renderer_outputs_before_publication(container):
     assert saved["state"] == "failed" and not saved["artifacts"]
 
 
+@pytest.mark.parametrize("defect", ["owner", "language", "reference"])
+def test_day6_completion_rechecks_checkpoint_before_reporting_success(container, monkeypatch, defect):
+    enable_services(container)
+    task = create_work(container, "email")
+    runner = DocumentRunner(container, WorkModel())
+
+    async def prepare():
+        for phase in ("extract", "draft", "export"):
+            await runner.phase(task["id"], phase)
+
+    asyncio.run(prepare())
+    original_step = container.repository.step
+
+    def changed_step(task_id, phase):
+        value = original_step(task_id, phase)
+        if phase not in {"draft", "export"}:
+            return value
+        # Copy checkpoint bytes rather than mutating the committed DB row.
+        value = json.loads(json.dumps(value))
+        if defect == "owner" and phase == "export":
+            value["artifacts"][0]["object_key"] = "another-owner/outputs/foreign/artifact"
+        if defect == "language" and phase == "draft":
+            value["draft"]["output_language"] = "bn"
+        if defect == "reference" and phase == "draft":
+            value["draft"]["source_ids"] = ["foreign-document"]
+        return value
+
+    monkeypatch.setattr(container.repository, "step", changed_step)
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.phase(task["id"], "complete"))
+    assert error.value.code == "artifact_invalid"
+    assert container.repository.get_task(account(container), task["id"])["state"] != "completed"
+
+
 def test_day6_report_and_email_artifacts_are_owned_editable_and_unsent(container):
     from test_coworker import FakeModel
 
