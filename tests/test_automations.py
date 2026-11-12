@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from uuid import uuid4
 
@@ -25,7 +26,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, BrowserPushDelivery, BrowserPushSubscription, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, BrowserPushDelivery, BrowserPushSubscription, Document, DocumentVersion, Notification, NotificationOutbox, PersonalGoal, Workspace, utcnow
 from services.coworker.web_push import WebPushSender, WebPushSubscriptionVault, b64url_encode, endpoint_fingerprint
 
 ISSUER = "https://identity.example.test/auth/v1"
@@ -1380,6 +1381,84 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         assert len(completed) == 1
         assert completed[0].title == "Briefing ready"
         assert "daily/weekly briefing" in completed[0].message
+
+
+def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation_client, automation_container):
+    """Controlled daily due timestamps; real daily wake-up needs operated staging."""
+    client, headers = automation_client
+    auth = headers()
+    settings = _enable_briefings(automation_container)
+    seed = client.post("/api/v1/goals", headers=auth | {"Idempotency-Key": "day7-seed"}, json=goal_payload())
+    assert seed.status_code == 201
+    document_id, v1, v2 = (str(uuid4()) for _ in range(3))
+    with automation_container.repository.sessions.begin() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner.id))
+        db.add(Document(id=document_id, owner_id=owner.id, workspace_id=workspace.id, filename="progress.txt"))
+        db.flush()
+        db.add(DocumentVersion(
+            id=v1, document_id=document_id, owner_id=owner.id, version=1,
+            kind="txt", byte_size=10, sha256="a" * 64,
+            object_key="inputs/progress-1", state="uploaded", expires_at=utcnow() + timedelta(days=7),
+        ))
+    payload = goal_payload()
+    payload["authorized_resources"] = [{"kind": "document", "reference": document_id}]
+    created = client.post("/api/v1/goals", headers=auth | {"Idempotency-Key": "day7-goal"}, json=payload)
+    assert created.status_code == 201
+    goal = created.json()
+    body = automation_payload(goal)
+    body["run_profile"] = "briefing"
+    body["schedule"] = {"kind": "daily", "hour": 23, "minute": 10, "weekdays": []}
+    body["quiet_hours"] = {"start": "22:00", "end": "07:00"}
+    response = client.post("/api/v1/automations", headers=auth | {"Idempotency-Key": "day7-briefing"}, json=body)
+    assert response.status_code == 201
+    automation = response.json()
+    due = (utcnow() + timedelta(days=1)).astimezone(ZoneInfo("Asia/Dhaka"))
+    due = due.replace(hour=23, minute=10, second=0, microsecond=0).astimezone(timezone.utc)
+    first = automation_container.automations.accept_occurrence(automation["id"], 1, due)
+    assert first["state"] == "accepted"
+    replay = automation_container.automations.accept_occurrence(automation["id"], 1, due)
+    assert replay["replayed"] and replay["run_id"] == first["run_id"]
+    with automation_container.repository.sessions.begin() as db:
+        assert db.get(AgentRun, first["run_id"]).input_versions == [v1]
+        db.get(AgentRun, first["run_id"]).state = "completed"
+        started = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"], Notification.kind == "automation_started"
+        )).all()
+        assert len(started) == 1 and started[0].visible_at.replace(tzinfo=timezone.utc) > due
+    automation_container.automations.notify_run_completed(first["run_id"])
+    automation_container.automations.notify_run_completed(first["run_id"])
+    with automation_container.repository.sessions.begin() as db:
+        db.add(DocumentVersion(
+            id=v2, document_id=document_id, owner_id=owner.id, version=2,
+            kind="txt", byte_size=12, sha256="b" * 64,
+            object_key="inputs/progress-2", state="uploaded", expires_at=utcnow() + timedelta(days=7),
+        ))
+    restarted = Container.create(settings)
+    try:
+        second = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=1))
+        assert second["state"] == "accepted"
+        assert second["run_id"] != first["run_id"]
+        with restarted.repository.sessions() as db:
+            assert db.get(AgentRun, first["run_id"]).input_versions == [v1]
+            assert db.get(AgentRun, second["run_id"]).input_versions == [v2]
+        with restarted.repository.sessions.begin() as db:
+            db.get(AgentRun, second["run_id"]).state = "completed"
+            db.get(Document, document_id).deleted = True
+        rejected = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=2))
+        assert rejected["run_id"] is None and rejected["state"] in {"blocked", "skipped"}
+        paused = client.post(f'/api/v1/automations/{automation["id"]}/pause',
+                             headers=auth, json={"expected_revision": 1})
+        assert paused.status_code == 200
+        stopped = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=3))
+        assert stopped["state"] == "skipped"
+        with restarted.repository.sessions() as db:
+            assert len(db.scalars(select(AgentRun).where(AgentRun.goal_id == goal["id"])).all()) == 2
+            assert len(db.scalars(select(Notification).where(
+                Notification.automation_id == automation["id"], Notification.kind == "automation_started"
+            )).all()) == 2
+    finally:
+        restarted.repository.sessions.kw["bind"].dispose()
 
 
 def test_briefing_profile_is_time_based_and_run_tool_scope_is_fail_closed(
