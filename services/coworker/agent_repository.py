@@ -855,7 +855,10 @@ class AgentRepository:
                     DocumentVersion.owner_id == owner,
                     DocumentVersion.state == "uploaded",
                 ).order_by(DocumentVersion.version.desc())).first()
-                if row is None:
+                # Fail closed when the latest upload has expired; never silently
+                # resurrect an older version that the goal owner did not review.
+                if row is None or (row[0].expires_at is not None
+                                   and aware(row[0].expires_at) <= utcnow()):
                     raise not_found()
                 versions.append(row[0].id)
 
