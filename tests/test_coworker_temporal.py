@@ -14,6 +14,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from test_coworker import container, account, new_task, FakeModel, enable_reviewed_pilot
+from test_automations import automation_client, automation_container
 from coworker_samples import WorkModel
 from research_samples import SimulatedResearch
 from services.coworker.drafting import DraftFailure
@@ -1596,5 +1597,66 @@ def test_attachment_storage_disconnect_retries_before_dispatch_and_never_resends
         # Replaying an already-confirmed action cannot send the email again.
         await container.actions.execute(approved["id"])
         assert len(provider.sent) == 1
+
+    asyncio.run(scenario())
+
+def test_day7_real_temporal_schedule_triggers_once_and_pauses(automation_client, automation_container):
+    """Real Temporal schedule API; explicit trigger is not a naturally elapsed day."""
+    from datetime import datetime
+    from services.coworker.automation_scheduler import AutomationScheduleReconciler, schedule_id
+    from services.coworker.worker import AutomationActivities
+    from services.coworker.workflow import AutomationOccurrenceWorkflow
+    from test_automations import _enable_briefings, automation_payload, goal_payload
+
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    response = client.post("/api/v1/goals", headers=auth | {"Idempotency-Key": "day7-temporal-goal"}, json=goal_payload())
+    assert response.status_code == 201
+    body = automation_payload(response.json())
+    body["run_profile"] = "briefing"
+    body["quiet_hours"] = {"start": "22:00", "end": "07:00"}
+    created = client.post("/api/v1/automations", headers=auth | {"Idempotency-Key": "day7-temporal-automation"}, json=body)
+    assert created.status_code == 201
+    automation = created.json()
+
+    async def scenario():
+        # Time-skipping Temporal does not implement the CreateSchedule RPC.
+        async with await WorkflowEnvironment.start_local() as env:
+            reconciler = AutomationScheduleReconciler(env.client, automation_container.settings.task_queue)
+            handle = env.client.get_schedule_handle(schedule_id(automation["id"]))
+            async with Worker(
+                env.client, task_queue=automation_container.settings.task_queue,
+                workflows=[AutomationOccurrenceWorkflow],
+                activities=[AutomationActivities(automation_container.automations).accept],
+            ):
+                assert await reconciler.apply(automation)
+                current = await handle.describe()
+                assert current.schedule.spec.time_zone_name == "Asia/Dhaka"
+                assert current.schedule.policy.catchup_window == timedelta(hours=1)
+                assert not current.schedule.state.paused
+                await handle.trigger()
+                for _ in range(100):
+                    result = client.get(f'/api/v1/automations/{automation["id"]}/history', headers=auth)
+                    assert result.status_code == 200
+                    if result.json()["history"]: break
+                    await asyncio.sleep(0.1)
+                observed = result.json()["history"]
+                assert len(observed) == 1
+                assert observed[0]["occurrence_state"] == "accepted"
+                assert observed[0]["run_id"]
+                due = datetime.fromisoformat(observed[0]["due_at"].replace("Z", "+00:00"))
+                replay = automation_container.automations.accept_occurrence(automation["id"], 1, due)
+                assert replay["replayed"] and replay["run_id"] == observed[0]["run_id"]
+
+            paused = client.post(f'/api/v1/automations/{automation["id"]}/pause',
+                                 headers=auth, json={"expected_revision": 1})
+            assert paused.status_code == 200 and paused.json()["state"] == "paused"
+            assert not await reconciler.apply(paused.json())
+            assert (await handle.describe()).schedule.state.paused
+            later = automation_container.automations.accept_occurrence(automation["id"], 1, due + timedelta(minutes=1))
+            assert later["state"] == "skipped" and later["run_id"] is None
+            assert len(client.get(f'/api/v1/automations/{automation["id"]}/history',
+                                  headers=auth).json()["history"]) == 2
 
     asyncio.run(scenario())
