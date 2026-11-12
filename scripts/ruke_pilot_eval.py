@@ -129,6 +129,8 @@ def outside_repo(path: Path, repo_root: Path = ROOT) -> None:
 def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT) -> list[dict]:
     """Validate external corpus structure, NOT custody/independence."""
     outside_repo(path, repo_root)
+    if path.stat().st_mode & 0o222:
+        raise EvidenceError("independent heldout fixture must be read-only")
     if sha256(path) != corpus_sha256 or not SHA.fullmatch(corpus_sha256):
         raise EvidenceError("external heldout hash mismatch")
     rows = read_jsonl(path)
@@ -184,7 +186,39 @@ def _unique_rows(rows: list[dict], key: str, allowed: set[str], count: int) -> d
     return indexed
 
 
-def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[dict], deterministic: list[dict]) -> dict:
+def candidate_ledger(cases: list[dict], outputs: list[dict]) -> tuple[dict[str, str], dict]:
+    """Bind scores to actual submitted outputs, preserving unknown usage as null."""
+    ids = {case["case_id"] for case in cases}
+    indexed = _unique_rows(outputs, "case_id", ids, 40)
+    by_id = {case["case_id"]: case for case in cases}
+    hashes, usage = {}, []
+    for cid, row in indexed.items():
+        if not isinstance(row.get("output"), dict):
+            raise EvidenceError("candidate output must be a draft object")
+        try:
+            encoded = json.dumps(row["output"], ensure_ascii=False, sort_keys=True,
+                                 separators=(",", ":"), allow_nan=False).encode()
+        except (ValueError, TypeError) as exc:
+            raise EvidenceError("invalid candidate output encoding") from exc
+        if len(encoded) > by_id[cid]["max_output_bytes"]:
+            raise EvidenceError("candidate output exceeds task bound")
+        hashes[cid] = hashlib.sha256(encoded).hexdigest()
+        telemetry = row.get("telemetry")
+        if telemetry is not None:
+            if (not isinstance(telemetry, dict)
+                    or set(telemetry) != {"tokens", "latency_ms", "cost_microusd"}
+                    or any(type(t) is not int or t < 0 for t in telemetry.values())):
+                raise EvidenceError("invalid candidate telemetry")
+            usage.append(telemetry)
+    complete = len(usage) == 40
+    return hashes, {"usage_complete": complete,
+                    "total_tokens": sum(t["tokens"] for t in usage) if complete else None,
+                    "total_latency_ms": sum(t["latency_ms"] for t in usage) if complete else None,
+                    "reported_cost_microusd": sum(t["cost_microusd"] for t in usage) if complete else None}
+
+
+def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[dict],
+                  deterministic: list[dict], *, output_hashes: dict | None = None) -> dict:
     ids = {c["case_id"] for c in cases}
     checks = _unique_rows(deterministic, "case_id", ids, 40)
     for case_id, check in checks.items():
@@ -192,6 +226,8 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             raise EvidenceError("deterministic/security result missing for " + case_id)
         if not SHA.fullmatch(check.get("output_sha256", "")):
             raise EvidenceError("output identity missing for " + case_id)
+        if output_hashes is not None and check["output_sha256"] != output_hashes[case_id]:
+            raise EvidenceError("deterministic evidence is not bound to actual output: " + case_id)
     if len(reviews) != 80:
         raise EvidenceError("exactly two independent scores per task required")
     by_id = defaultdict(dict)
@@ -391,15 +427,21 @@ def main(argv=None) -> int:
                 outside_repo(args.competitor_outputs)
             manifest = read_json(args.manifest)
             cases = validate_manifest(manifest, args.heldout)
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
+                                  text=True, capture_output=True, check=True).stdout.strip()
+            if manifest["candidate_revision"] != head:
+                raise EvidenceError("manifest revision differs from exact checkout head")
             if args.action == "prepare-blind":
                 if not args.candidate or not args.competitor_outputs:
                     raise EvidenceError("both real output files required for blind packet")
                 obj = prepare_blind(cases, manifest, read_jsonl(args.candidate), read_jsonl(args.competitor_outputs))
             else:
-                if not args.evidence:
-                    raise EvidenceError("external independently scored evidence required")
+                if not args.evidence or not args.candidate:
+                    raise EvidenceError("external independently scored evidence and candidate outputs required")
                 evidence = read_json(args.evidence)
-                scores = score_reviews(cases, evidence["reviews"], evidence.get("adjudications", []), evidence["deterministic"])
+                output_hashes, usage = candidate_ledger(cases, read_jsonl(args.candidate))
+                scores = score_reviews(cases, evidence["reviews"], evidence.get("adjudications", []),
+                                       evidence["deterministic"], output_hashes=output_hashes)
                 faults = verify_operations(evidence["operations"], manifest["candidate_revision"])
                 comparative = compare(cases, manifest, evidence.get("competitor"), evidence.get("comparisons"))
                 custody = evidence.get("custody", {})
@@ -418,10 +460,14 @@ def main(argv=None) -> int:
                     raise EvidenceError("high-severity findings inventory required")
                 eligible = bool(scores["outcome_gate_pass"] and faults["fault_gate_pass"] and comparative["complete"]
                                 and isolated and source_gate and not high_severity)
-                obj = {"schema_version": 1, "result_kind": "regression_validation" if args.regression_rerun else "independent_first_run_submission",
+                obj = {"schema_version": 1, "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
                        "candidate_revision": manifest["candidate_revision"], "manifest_sha256": sha256(args.manifest),
                        "corpus_sha256": manifest["corpus_sha256"], "input_evidence_sha256": sha256(args.evidence),
+                       "candidate_outputs_sha256": sha256(args.candidate),
                        "generated_at": datetime.now(timezone.utc).isoformat(), "outcomes": scores,
+                       "usage": {**usage, "reported_cost_per_accepted_task_microusd":
+                                 (usage["reported_cost_microusd"] / scores["accepted"]
+                                  if usage["reported_cost_microusd"] is not None and scores["accepted"] else None)},
                        "operations": faults, "comparison": comparative, "custody_claim_submitted": bool(isolated),
                        "custody_independently_verified_by_this_program": False,
                        "repository_checks_reported_pass": source_gate, "unresolved_high_severity_failures": high_severity,
