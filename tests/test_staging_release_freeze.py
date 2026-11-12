@@ -66,10 +66,11 @@ def prepared(tmp_path: Path):
 
 def runtime(state):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_revision": state["expected_source_revision"],
         "environment": state["expected_environment"],
         "capabilities": state["declared_capabilities"],
+        "reviewed_skills": {"research": {"state": "unselected"}},
         "action_providers": state["declared_action_providers"],
         "cohort": {
             "enforced": state["declared_cohort"]["enforced"],
