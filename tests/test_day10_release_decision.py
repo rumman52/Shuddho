@@ -25,7 +25,8 @@ def evidence():
                "cohort": {"max_users": 5}}
     api = {"schema_version": 2, "source_revision": REV, "environment": "production",
            "capabilities": {"coworker": True, "agent_runtime": True, "browser": False},
-           "action_providers": [], "reviewed_skills": {}}
+           "action_providers": [], "reviewed_skills": {},
+           "cohort": {"enforced": True, "max_users": 5, "configured_members": 0}}
     worker = {**proof(), "deployment_reference": "worker-image-sha256:abc"}
     schema = {**proof(), "migration_revision": "0069", "api_revision": "0069", "worker_revision": "0069"}
     ci = {**proof(), "required_checks": {name: "success" for name in
@@ -89,6 +90,10 @@ def test_missing_evidence_fails_closed(monkeypatch):
     (lambda a: a["api"].update(source_revision="c" * 40), "api_runtime_manifest_v2_exact_sha_and_flags"),
     (lambda a: a["api"]["capabilities"].update(browser=True), "api_runtime_manifest_v2_exact_sha_and_flags"),
     (lambda a: a["api"].update(schema_version=1), "api_runtime_manifest_v2_exact_sha_and_flags"),
+    (lambda a: a["api"]["cohort"].update(enforced=False), "api_runtime_manifest_v2_exact_sha_and_flags"),
+    (lambda a: a["api"]["cohort"].update(configured_members=6), "api_runtime_manifest_v2_exact_sha_and_flags"),
+    (lambda a: a["rollback"].update(kill_switches_verified=[{}]), "operated_rollback"),
+    (lambda a: a["approval"].update(max_users=6), "separate_founder_and_C_pilot_authorization"),
     (lambda a: a["schema"].update(worker_revision="0068"), "database_schema_api_worker_exact"),
     (lambda a: a["worker"].update(source_revision="c" * 40), "worker_exact_sha_and_deployment_receipt"),
     (lambda a: a["ci"]["required_checks"].update(coworker="skipped"), "final_head_ci"),
@@ -146,3 +151,12 @@ def test_only_authorization_missing_is_staging_only(monkeypatch):
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "STAGING_ONLY"
     assert result["pilot_activated"] is False
+
+
+def test_rollout_less_than_five_is_not_pilot(monkeypatch):
+    rollout, artifacts = evidence()
+    rollout["cohort"]["max_users"] = 4
+    artifacts["api"]["cohort"]["max_users"] = 4
+    result = decision(monkeypatch, rollout, artifacts)
+    assert "pilot_cohort_5_to_10" in result["blockers"]
+    assert result["decision"] == "SOURCE_ONLY"
