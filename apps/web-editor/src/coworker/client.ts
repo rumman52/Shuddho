@@ -108,6 +108,7 @@ export type AutomationHistoryItem = {
   occurrence_state: string; reason: string | null; run_id: string | null; run_state: AgentRunState | null;
   run_message: string | null; run_updated_at: string | null;
 };
+export type MemoryPin = { fact_id: string; expected_version: number };
 export type MemoryFact = {
   id: string; namespace: "profile" | "preferences" | "project" | "organization" | "writing";
   key: string; value: string; language: string; version: number; active: boolean; expires_at?: string | null;
@@ -775,13 +776,14 @@ export class CoworkerClient {
       body: JSON.stringify({ text, client_request_key: key, selected_resource_ids: selectedResourceIds }),
     });
   }
-  dispatchConversationMessage(id: string, messageId: string, sequence: number, projectId?: string | null) {
+  dispatchConversationMessage(id: string, messageId: string, sequence: number, projectId?: string | null, memoryPins?: MemoryPin[]) {
     return this.json<{ run_id: string; state: string; replayed: boolean }>(
       `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/dispatch`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           expected_sequence: sequence, output_language: "auto",
           ...(projectId ? { project_id: identifier(projectId) } : {}),
+          ...(memoryPins !== undefined ? { memory_pins: memoryPins } : {}),
         }),
       });
   }

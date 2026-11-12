@@ -1976,6 +1976,7 @@ def dispatch_conversation_message(
         identity.account_id, str(conversation_id), str(message_id),
         expected_sequence=payload.expected_sequence, output_language=payload.output_language,
         project_id=str(payload.project_id) if payload.project_id is not None else None,
+        memory_pins=payload.memory_pins,
     )
     response.headers["Location"] = f'/api/v1/agent-runs/{value["run_id"]}'
     response.headers["Idempotent-Replayed"] = str(not created).lower()

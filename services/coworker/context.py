@@ -221,6 +221,9 @@ class ContextService:
         run, sources = self._run_and_sources(owner, run_id)
         memory = self.memory.context_for_run(owner, run_id)
         project_context = dict(run.project_context or {})
+        # Fact pin identity is server-owned admission metadata. Only the
+        # validated, filtered memory values belong in model context.
+        project_context.pop("memory_pins", None)
         if project_context.get("instructions"):
             safe_instructions, redactions = filter_sensitive(str(project_context["instructions"]))
             project_context["instructions"] = safe_instructions

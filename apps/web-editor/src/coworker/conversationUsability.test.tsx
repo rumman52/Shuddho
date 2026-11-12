@@ -479,3 +479,68 @@ test("three queued conversation tasks show independent progress and controls", a
     assert.equal(tree.root.findAllByType("button").filter(node => node.children.join("") === "Cancel Agent work").length, 3);
   }, data, {}, "?conversation=conversation-1");
 });
+
+test("selected task memory is previewed, corrected versions are cleared, and only reviewed pins dispatch", async () => {
+  const data = fixture([{ ...record, message_sequence: 1 }]);
+  const factId = "11111111-1111-4111-8111-111111111111";
+  let facts = [
+    { id: factId, namespace: "project" as const, key: "release_language",
+      value: "Write the customer report in English.", language: "en", version: 1, active: true },
+    { id: "22222222-2222-4222-8222-222222222222", namespace: "project" as const,
+      key: "unselected_code", value: "PRIVATE UNSENT VALUE", language: "en", version: 1, active: true },
+  ];
+  const admissions: Array<unknown> = [];
+  data.client.conversationHistory = async () => ({ items: [{
+    id: "message-1", conversation_id: record.id, sequence: 1, text: "Prepare a report",
+    selected_sources: [], resource_links: [], created_at: timestamp,
+  }] });
+  Object.assign(data.client, {
+    memory: async () => ({ enabled: true, facts }),
+    updateMemoryFact: async (id: string, value: string, _language: string, expectedVersion: number) => {
+      const original = facts.find(item => item.id === id)!;
+      assert.equal(expectedVersion, original.version);
+      const updated = { ...original, value, version: original.version + 1 };
+      facts = facts.map(item => item.id === id ? updated : item);
+      return updated;
+    },
+    dispatchConversationMessage: async (_conversation: string, _message: string, _sequence: number,
+      _project: string | null, pins?: unknown) => {
+      admissions.push(pins);
+      return { run_id: "run-day5", state: "queued", replayed: false };
+    },
+  });
+  await mount(async tree => {
+    const preview = () => tree.root.findByProps({ "aria-label": "Task preview" });
+    const pick = () => tree.root.findByProps({
+      "aria-label": "Use memory project / release_language in next task",
+    });
+    assert.ok(preview().findAllByType("p").some(node =>
+      node.children.includes("No saved memory selected. This task will not use other saved facts.")));
+    await act(async () => pick().props.onChange({ target: { checked: true } }));
+    assert.ok(preview().findAllByType("p").some(node =>
+      node.children.includes("Write the customer report in English.")));
+    assert.equal(preview().findAllByType("p").some(node =>
+      node.children.includes("PRIVATE UNSENT VALUE")), false);
+
+    const edit = tree.root.findAllByType("button").find(node => node.children.includes("Edit"));
+    assert.ok(edit);
+    await act(async () => edit!.props.onClick());
+    await act(async () => tree.root.findByProps({ id: "cw-memory-edit" }).props.onChange({
+      target: { value: "Use corrected English." },
+    }));
+    const save = tree.root.findAllByType("button").find(node => node.children.includes("Save edit"));
+    assert.ok(save);
+    await act(async () => { await save!.props.onClick(); });
+    assert.equal(pick().props.checked, false);
+    assert.ok(preview().findAllByType("p").some(node =>
+      node.children.includes("No saved memory selected. This task will not use other saved facts.")));
+
+    await act(async () => pick().props.onChange({ target: { checked: true } }));
+    assert.ok(preview().findAllByType("p").some(node =>
+      node.children.includes("Use corrected English.")));
+    const start = tree.root.findAllByType("button").find(node => node.children.includes("Start task"));
+    assert.ok(start);
+    await act(async () => { await start!.props.onClick(); });
+    assert.deepEqual(admissions, [[{ fact_id: factId, expected_version: 2 }]]);
+  }, data);
+});
