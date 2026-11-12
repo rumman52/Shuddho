@@ -375,6 +375,17 @@ def test_cli_blocks_missing_independent_inputs(capsys):
     assert "external frozen manifest" in capsys.readouterr().out
 
 
+def test_cli_failure_preserves_first_run_and_cannot_overwrite(external_dir, capsys):
+    result_path = external_dir / "failed-first-run.json"
+    assert main(["evaluate", "--report", str(result_path)]) == 2
+    first_bytes = result_path.read_bytes()
+    result = json.loads(first_bytes)
+    assert result["qualified"] is False and result["release_authorization"] is False
+    assert result["result_kind"] == "operator_submitted_first_run"
+    assert main(["evaluate", "--report", str(result_path), "--regression-rerun"]) == 2
+    assert result_path.read_bytes() == first_bytes
+
+
 def test_fixture_is_not_a_production_operated_result():
     # The test creates syntactically valid envelopes but no PostgreSQL or
     # Temporal calls. The production evaluator explicitly marks these as
