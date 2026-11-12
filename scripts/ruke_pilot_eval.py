@@ -98,6 +98,14 @@ def registry_cases(path: Path = REGISTRY) -> list[dict]:
         raise EvidenceError("development registry ID mismatch")
     for row in rows:
         case = expected[row["case_id"]]
+        if set(row) != {"case_id", "split", "workflow", "language", "source_id",
+                        "citation_id", "source_revision", "source_sha256",
+                        "instruction", "max_output_bytes"}:
+            raise EvidenceError("development task registry schema drift")
+        if (row["instruction"] != case["instruction"]
+                or row["source_sha256"] != case["_source"]["sha256"]
+                or row["max_output_bytes"] != case["max_output_bytes"]):
+            raise EvidenceError("development prompt/source binding changed")
         for field in ("workflow", "language", "source_id", "citation_id"):
             if row.get(field) != case[field]:
                 raise EvidenceError("development registry source binding mismatch")
@@ -108,11 +116,19 @@ def registry_cases(path: Path = REGISTRY) -> list[dict]:
     return rows
 
 
+def outside_repo(path: Path, repo_root: Path = ROOT) -> None:
+    """Prevent accidentally writing independent evidence into developer checkout."""
+    resolved = path.resolve(strict=False)
+    if path.is_symlink() or resolved.is_relative_to(repo_root.resolve()):
+        raise EvidenceError("heldout/evidence must be a separate, non-symlinked external file")
+    # Parent symlinks can otherwise redirect an apparently external path.
+    if any(part.is_symlink() for part in (path, *path.parents)):
+        raise EvidenceError("symlinked custody path is prohibited")
+
+
 def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT) -> list[dict]:
     """Validate external corpus structure, NOT custody/independence."""
-    resolved = path.resolve(strict=True)
-    if path.is_symlink() or resolved.is_relative_to(repo_root.resolve()):
-        raise EvidenceError("heldout must be a separate, non-symlinked external file")
+    outside_repo(path, repo_root)
     if sha256(path) != corpus_sha256 or not SHA.fullmatch(corpus_sha256):
         raise EvidenceError("external heldout hash mismatch")
     rows = read_jsonl(path)
@@ -123,11 +139,22 @@ def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT) 
         raise EvidenceError("heldout IDs must be distinct")
     if any("expected_facts" in r or "reference_outputs" in r for r in rows):
         raise EvidenceError("generation-facing heldout must not expose answer keys")
+    for row in rows:
+        if (not isinstance(row.get("instruction"), str) or not row["instruction"].strip()
+                or len(row["instruction"]) > 4000
+                or not isinstance(row.get("source_id"), str) or not row["source_id"].strip()
+                or not isinstance(row.get("citation_id"), str) or not row["citation_id"].strip()
+                or not SHA.fullmatch(row.get("source_sha256", ""))
+                or type(row.get("max_output_bytes")) is not int
+                or not 1 <= row["max_output_bytes"] <= 24000):
+            raise EvidenceError("heldout task missing bounded instruction/source contract")
     return rows
 
 
 def validate_manifest(manifest: dict, corpus: Path) -> list[dict]:
     """Manifest is a recorded identity, never proof of independent custody."""
+    if not isinstance(manifest, dict):
+        raise EvidenceError("run manifest must be an object")
     if manifest.get("schema_version") != 1 or manifest.get("split") != "holdout":
         raise EvidenceError("invalid run manifest")
     if not REV.fullmatch(manifest.get("candidate_revision", "")):
@@ -353,6 +380,15 @@ def main(argv=None) -> int:
         else:
             if not args.manifest or not args.heldout:
                 raise EvidenceError("external frozen manifest and heldout required")
+            outside_repo(args.manifest)
+            if args.report:
+                outside_repo(args.report)
+            if args.evidence:
+                outside_repo(args.evidence)
+            if args.candidate:
+                outside_repo(args.candidate)
+            if args.competitor_outputs:
+                outside_repo(args.competitor_outputs)
             manifest = read_json(args.manifest)
             cases = validate_manifest(manifest, args.heldout)
             if args.action == "prepare-blind":
