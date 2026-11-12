@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -193,6 +194,19 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         "model": models[0] if len(models) == 1 else ("multiple" if models else None),
         "models": models,
         "tokens": accounted_tokens,
+        # The current persistence schema has aggregate/reserved tokens, not
+        # provider-verified per-direction usage; null means unknown, not zero.
+        "input_tokens": None,
+        "output_tokens": None,
+        "token_direction_breakdown_available": False,
+        "token_accounting_basis": "planner max(reserved, actual) plus charged child attempts",
+        "prompt_sha256s": sorted({item.prompt_sha256 for item in decisions if item.prompt_sha256}),
+        "tool_schema_sha256s": sorted({item.tool_schema_sha256 for item in decisions if item.tool_schema_sha256}),
+        # Step outputs and run completion do not independently certify an artifact
+        # or a human-approved outcome. External verification stays mandatory.
+        "verified_artifact_references": [],
+        "accepted_outcome_references": [],
+        "artifact_outcome_verification_available": False,
         "latency_ms": duration_ms(run.created_at, latency_end) or 0,
         "tool_calls": len(invocations),
         "tool_latency_ms": tool_latencies,
@@ -414,12 +428,280 @@ def atomic_write(path: Path, content: str) -> None:
         raise
 
 
+
+# Day 8 comparison is restricted to the existing 40 development tasks. These
+# records are operator-controlled evidence, never telemetry or provider receipts
+# inferred from the model's output.
+DAY8_PROFILES = {"baseline", "bounded_context_compact_observations"}
+DAY8_SHA_FIELDS = ("model_settings_sha256", "behavior_sha256", "prompt_sha256", "tool_sha256")
+DAY8_CASE_FIELDS = ("input_tokens", "output_tokens", "model_time_ms", "tool_time_ms",
+                    "retry_count", "cost_microusd")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_json(value: dict) -> str:
+    return hashlib.sha256(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+
+
+def _day8_digest(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def _day8_uint(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _day8_cases(report: dict, expected: dict, label: str) -> dict:
+    if not isinstance(report, dict) or report.get("schema_version") != 1 or report.get("split") != "development":
+        raise ValueError(f"{label}: require development-only schema v1")
+    config = report.get("configuration")
+    if not isinstance(config, dict) or config.get("profile") not in DAY8_PROFILES:
+        raise ValueError(f"{label}: missing bounded configuration identity")
+    if config["profile"] != label:
+        raise ValueError(f"{label}: mismatched profile")
+    if config.get("provider") != "deepseek" or not isinstance(config.get("model"), str) or not config["model"].strip():
+        raise ValueError(f"{label}: only the currently approved DeepSeek provider is supported")
+    if any(not _day8_digest(config.get(key)) for key in DAY8_SHA_FIELDS):
+        raise ValueError(f"{label}: missing model/behavior/prompt/tool SHA-256")
+    if not _day8_digest(report.get("provider_usage_receipt_sha256")):
+        raise ValueError(f"{label}: provider usage receipt hash required")
+    if not _day8_digest(report.get("review_ledger_sha256")):
+        raise ValueError(f"{label}: human-review ledger hash required")
+    results = report.get("results")
+    if not isinstance(results, list) or len(results) != 40:
+        raise ValueError(f"{label}: exactly 40 development task results required")
+    by_id = {}
+    for row in results:
+        if not isinstance(row, dict):
+            raise ValueError(f"{label}: invalid task evidence")
+        case_id = row.get("id")
+        if not isinstance(case_id, str) or case_id not in expected or case_id in by_id:
+            raise ValueError(f"{label}: unknown or duplicated development task ID")
+        if (row.get("workflow"), row.get("language")) != expected[case_id]:
+            raise ValueError(f"{label}: task workflow/language differs from frozen corpus")
+        for field in ("passed", "human_accepted", "safety_passed"):
+            if type(row.get(field)) is not bool:
+                raise ValueError(f"{label}: {field} must be an explicit reviewed boolean")
+        for field in DAY8_CASE_FIELDS:
+            if row.get(field) is not None and not _day8_uint(row[field]):
+                raise ValueError(f"{label}: {field} must be a measured nonnegative integer or null")
+        for field in ("verified_artifact_refs",):
+            if not isinstance(row.get(field), list) or any(
+                not isinstance(ref, str) or not ref.strip() for ref in row[field]
+            ):
+                raise ValueError(f"{label}: invalid verified artifact references")
+        if row["human_accepted"] and (
+            not row["passed"] or not row["safety_passed"]
+            or not row["verified_artifact_refs"]
+            or not isinstance(row.get("accepted_outcome_ref"), str)
+            or not row["accepted_outcome_ref"].strip()
+        ):
+            raise ValueError(f"{label}: accepted outcome lacks valid artifact/review reference")
+        by_id[case_id] = row
+    if set(by_id) != set(expected):
+        raise ValueError(f"{label}: incomplete frozen development task coverage")
+    return by_id
+
+
+def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> dict:
+    """Compare two externally evidenced, matched 40-task development results.
+
+    Evidence references and approval are furnished by an authorized evaluator;
+    this function checks their completeness and consistency but cannot attest
+    to remote receipt authenticity or replace independent human review.
+    """
+    expected = {
+        item["id"]: (item["workflow"], item["language"])
+        for item in suite["cases"] if item["split"] == "development"
+    }
+    if len(expected) != 40:
+        raise ValueError("expected exactly 40 frozen development cases")
+    identity = {
+        "suite_id": suite["manifest"]["suite_id"],
+        "source_revision": suite["manifest"]["source_revision"],
+        "case_file_sha256": suite["manifest"]["files"]["development"]["sha256"],
+    }
+    for label, report in (("baseline", baseline), ("bounded_context_compact_observations", candidate)):
+        if any(report.get(key) != value for key, value in identity.items()):
+            raise ValueError(f"{label}: development corpus identity mismatch")
+    base_cases = _day8_cases(baseline, expected, "baseline")
+    candidate_cases = _day8_cases(candidate, expected, "bounded_context_compact_observations")
+    base_config = baseline["configuration"]
+    candidate_config = candidate["configuration"]
+    if any(base_config[key] != candidate_config[key] for key in (
+        "provider", "model", "model_settings_sha256", "tool_sha256"
+    )):
+        raise ValueError("paired context experiment must preserve provider, model, parameters and tool surface")
+
+    summaries = {}
+    for label, report, items in (
+        ("baseline", baseline, base_cases),
+        ("bounded_context_compact_observations", candidate, candidate_cases),
+    ):
+        records = list(items.values())
+        accepted = [r for r in records if r["human_accepted"] and r["passed"] and r["safety_passed"]]
+        by_cell = {}
+        for workflow in ("research_brief", "project_report_email"):
+            for language in ("bn", "en"):
+                cell = [r for r in records if (r["workflow"], r["language"]) == (workflow, language)]
+                if len(cell) != 10:
+                    raise ValueError("frozen corpus requires ten cases in each workflow/language cell")
+                by_cell[f"{workflow}/{language}"] = sum(
+                    r["human_accepted"] and r["passed"] and r["safety_passed"] for r in cell
+                )
+        metrics_complete = all(
+            all(_day8_uint(row.get(field)) for field in DAY8_CASE_FIELDS)
+            for row in records
+        )
+        safety_ok = all(r["safety_passed"] for r in records)
+        artifact_coverage = all(r["verified_artifact_refs"] for r in records)
+        quality_ok = len(accepted) >= 36 and all(n >= 9 for n in by_cell.values()) and safety_ok and artifact_coverage
+        totals = {
+            field: sum(int(r[field]) for r in records) if metrics_complete else None
+            for field in DAY8_CASE_FIELDS
+        }
+        summaries[label] = {
+            "cases": 40,
+            "human_accepted": len(accepted),
+            "by_cell": by_cell,
+            "quality_gate_passed": quality_ok,
+            "metrics_complete": metrics_complete,
+            "total_input_tokens": totals["input_tokens"],
+            "total_output_tokens": totals["output_tokens"],
+            "total_model_time_ms": totals["model_time_ms"],
+            "total_tool_time_ms": totals["tool_time_ms"],
+            "total_retries": totals["retry_count"],
+            "total_cost_microusd": totals["cost_microusd"],
+            "mean_cost_microusd_per_task": (
+                round(totals["cost_microusd"] / 40, 2) if totals["cost_microusd"] is not None else None
+            ),
+            "configuration_sha256": _sha256_json(report["configuration"]),
+            "evidence_sha256": _sha256_json(report),
+        }
+    a, b = summaries["baseline"], summaries["bounded_context_compact_observations"]
+    retained_quality = b["human_accepted"] >= a["human_accepted"] and all(
+        b["by_cell"][key] >= a["by_cell"][key] for key in a["by_cell"]
+    )
+    blockers = []
+    if not a["metrics_complete"] or not b["metrics_complete"]:
+        blockers.append("missing measured input/output tokens, model/tool time, retries or cost")
+    if not retained_quality:
+        blockers.append("candidate does not retain baseline human-accepted quality")
+    if not (a["quality_gate_passed"] or b["quality_gate_passed"]):
+        blockers.append("neither profile meets 36/40, 9/10-per-cell, safety and artifact gates")
+    if not (baseline.get("generation_identity_verified") is True
+            and candidate.get("generation_identity_verified") is True):
+        blockers.append("generation identity not externally verified")
+    if not (baseline.get("receipts_independently_verified") is True
+            and candidate.get("receipts_independently_verified") is True):
+        blockers.append("provider, artifact and human-review receipts not independently verified")
+    selected = None
+    eligible = [
+        (label, summary)
+        for label, summary in summaries.items()
+        if summary["quality_gate_passed"]
+        and (label == "baseline" or retained_quality)
+    ]
+    if not blockers and len(eligible) > 0:
+        selected = min(eligible, key=lambda pair: (pair[1]["total_cost_microusd"], pair[0] != "baseline"))[0]
+    if selected is None and not blockers:
+        blockers.append("no eligible candidate with retained quality")
+    cost_delta = (
+        a["total_cost_microusd"] - b["total_cost_microusd"]
+        if a["total_cost_microusd"] is not None and b["total_cost_microusd"] is not None
+        else None
+    )
+    frozen = None
+    if selected is not None:
+        root = Path(__file__).resolve().parents[1]
+        files = (
+            "services/coworker/agent_planning_model.py",
+            "services/coworker/config.py",
+            "scripts/core_agent_observability.py",
+        )
+        frozen = {
+            "profile": selected,
+            "configuration": (baseline if selected == "baseline" else candidate)["configuration"],
+            "source_file_sha256": {path: _sha256_file(root / path) for path in files},
+            "baseline_evidence_sha256": a["evidence_sha256"],
+            "candidate_evidence_sha256": b["evidence_sha256"],
+            **identity,
+            "promotion_authorized": False,
+            "qualification_note": "Operator evidence must be independently checked; this freeze does not activate a deployment.",
+        }
+        frozen["freeze_sha256"] = _sha256_json(frozen)
+    return {
+        "schema_version": 1,
+        "evidence_scope": "development_40_only",
+        "profile_summaries": summaries,
+        "candidate_quality_retained": retained_quality,
+        "measured_cost_savings_microusd": cost_delta,
+        "selected_least_cost_qualified_profile": selected,
+        "status": "FROZEN_FOR_DAY9" if selected is not None else "BLOCKED",
+        "blockers": blockers,
+        "freeze": frozen,
+        "posthog_status": "incomplete_pending_privacy_approval_and_verified_ingestion",
+        "limitations": [
+            "Per-task evidence is operator-supplied and must be checked against independently held receipts.",
+            "Development results do not qualify protected holdout or production.",
+            "No PostHog ingestion or provider capability is inferred from this report.",
+        ],
+    }
+
+
+def _read_day8_input(path: Path) -> dict:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 2_000_000:
+        raise ValueError("Day 8 input must be a regular non-symlink file <=2 MB")
+    def unique(pairs):
+        value = {}
+        for key, element in pairs:
+            if key in value:
+                raise ValueError("duplicate Day 8 JSON key")
+            value[key] = element
+        return value
+    def invalid_constant(value):
+        raise ValueError(f"non-finite Day 8 JSON constant: {value}")
+    value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique,
+                       parse_constant=invalid_constant)
+    if not isinstance(value, dict):
+        raise ValueError("Day 8 input must be an object")
+    return value
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export Phase 10 Core Agent observability and economics.")
     parser.add_argument("--window-minutes", type=int, default=60)
-    parser.add_argument("--json-output", type=Path, required=True)
-    parser.add_argument("--prom-output", type=Path, required=True)
+    parser.add_argument("--json-output", type=Path)
+    parser.add_argument("--prom-output", type=Path)
+    parser.add_argument("--day8-baseline", type=Path)
+    parser.add_argument("--day8-candidate", type=Path)
+    parser.add_argument("--day8-report", type=Path)
     args = parser.parse_args()
+    if any((args.day8_baseline, args.day8_candidate, args.day8_report)):
+        if not all((args.day8_baseline, args.day8_candidate, args.day8_report)):
+            parser.error("Day 8 mode requires baseline, candidate and report paths")
+        from scripts.pilot_workflow_eval import load_suite
+        result = compare_day8_development(
+            _read_day8_input(args.day8_baseline),
+            _read_day8_input(args.day8_candidate),
+            load_suite(),
+        )
+        atomic_write(args.day8_report, json.dumps(result, indent=2, sort_keys=True) + "\n")
+        print(json.dumps({"status": result["status"], "blockers": result["blockers"],
+                          "day8_report": str(args.day8_report)}, indent=2))
+        return
+    if not args.json_output or not args.prom_output:
+        parser.error("normal export requires --json-output and --prom-output")
     settings = Settings.from_env()
     snapshot = collect_snapshot(settings, window_minutes=args.window_minutes)
     atomic_write(args.json_output, json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
