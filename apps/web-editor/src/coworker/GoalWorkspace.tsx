@@ -79,6 +79,9 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
   }, [client]);
 
   useEffect(() => {
+    // Legacy goal-only clients and their tests do not provide project methods.
+    // Project document selection is an optional extension, not a goal prerequisite.
+    if (typeof client.projects !== "function" || typeof client.documents !== "function") return;
     const controller = new AbortController();
     Promise.all([client.projects(controller.signal), client.documents(controller.signal)])
       .then(([projectResult, documentResult]) => {
