@@ -460,7 +460,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <label><input type="checkbox" checked={briefingScheduleApproved}
               onChange={event => setAcceptedBriefingSchedule(event.target.checked ? briefingScheduleSnapshot : null)} />
               I approve this exact repeating time, timezone, goal revision, and read scope.</label>
-          </fieldset>
+          </fieldset>}
           <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || ((kind === "daily" || kind === "weekly") && briefing && !briefingScheduleApproved) || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId) || (kind === "proactive" && proactiveTools.length === 0)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Briefings are restricted to the existing daily-plan tool; selected provider content remains untrusted context. Consequential actions still use the separate approval boundary.</p>
         </form>
