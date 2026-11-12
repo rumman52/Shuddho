@@ -167,9 +167,10 @@ def run_probe(
     a, b = bearer(token_a), bearer(token_b)
     marker = uuid.uuid4().hex
     source_sha = hashlib.sha256(source).hexdigest()
+    filename = "day2-synthetic-" + marker + ".txt"
 
     upload = obj(checked(client.post("/api/v1/documents", headers=a, json={
-        "filename": "day2-synthetic-" + marker + ".txt",
+        "filename": filename,
         "byte_size": len(source), "sha256": source_sha,
     }), 201, "private document create"), "private document create")
     document_id = str(upload.get("id") or "")
@@ -229,6 +230,19 @@ def run_probe(
         or result["input"].get("document_ids") != [document_id]
     ):
         raise Day2Failure("Completed task is not bound to the selected private document.")
+    # The real extractor records a digest-bound DocumentVersion as a source;
+    # input.document_ids alone would not prove the model received that source.
+    sources = result.get("sources")
+    if not isinstance(sources, list):
+        raise Day2Failure("Completed report is missing source provenance.")
+    selected_sources = [item for item in sources if (
+        isinstance(item, dict) and item.get("document_id") == document_id
+        and item.get("sha256") == source_sha and item.get("label") == filename
+        and isinstance(item.get("id"), str) and item["id"].strip()
+    )]
+    if len(selected_sources) != 1:
+        raise Day2Failure("Completed report lacks exact selected-document version provenance.")
+    source_version_id = selected_sources[0]["id"]
     usage = result.get("usage")
     if (
         not isinstance(usage, dict)
@@ -243,6 +257,12 @@ def run_probe(
         or not draft["report"]["summary"].strip()
     ):
         raise Day2Failure("Completed task has no generated report summary.")
+    sections = draft["report"].get("sections")
+    if not isinstance(sections, list) or not any(
+        isinstance(item, dict) and source_version_id in item.get("source_ids", [])
+        for item in sections
+    ):
+        raise Day2Failure("Generated report did not cite the selected document version.")
     events = obj(checked(client.get(task_route + "/events", headers=a), 200, "owned task events"), "owned task events")
     if events.get("terminal") is not True or events.get("state") != "completed" or not events.get("events"):
         raise Day2Failure("Durable task event history did not confirm completion.")
@@ -285,7 +305,8 @@ def run_probe(
         "release_id": release["release_id"],
         "source_revision": release["source_revision"],
         "runtime_manifest_sha256": freeze["runtime_manifest_sha256"],
-        "document_id": document_id, "document_sha256": source_sha,
+        "document_id": document_id, "document_version_id": source_version_id,
+        "document_sha256": source_sha,
         "task_id": task_id, "workflow_id": "shuddho-task-" + task_id,
         "artifact_id": artifact_id, "artifact_sha256": expected_sha,
         "artifact_bytes": expected_bytes, "model_attempts": usage["model_attempts"],
