@@ -150,6 +150,10 @@ references, retained quality against baseline, and complete measured usage,
 cost, model/tool times and retries plus independently verified receipts.
 It selects the least costly eligible profile (baseline wins an exact tie).
 BLOCKED means no freeze; unknown cost never becomes zero savings.
+The access-controlled comparison JSON also keeps all 40 matched per-task input/output
+usage values, model/tool durations, retries, costs, artifact/review references,
+and conditional savings, alongside aggregate results; no per-task content enters
+label-free OpenMetrics.
 FROZEN_FOR_DAY9 records configuration, evidence, corpus and current source
 hashes; promotion_authorized remains false. Holdout and production are not
 qualified by this development-only comparison.
