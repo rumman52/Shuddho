@@ -1419,6 +1419,7 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
     assert first["state"] == "accepted"
     replay = automation_container.automations.accept_occurrence(automation["id"], 1, due)
     assert replay["replayed"] and replay["run_id"] == first["run_id"]
+    assert client.get(f'/api/v1/agent-runs/{first["run_id"]}', headers=auth).json()["input_version_ids"] == [v1]
     with automation_container.repository.sessions.begin() as db:
         assert db.get(AgentRun, first["run_id"]).input_versions == [v1]
         db.get(AgentRun, first["run_id"]).state = "completed"
@@ -1439,6 +1440,7 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
         second = restarted.automations.accept_occurrence(automation["id"], 1, due + timedelta(days=1))
         assert second["state"] == "accepted"
         assert second["run_id"] != first["run_id"]
+        assert client.get(f'/api/v1/agent-runs/{second["run_id"]}', headers=auth).json()["input_version_ids"] == [v2]
         with restarted.repository.sessions() as db:
             assert db.get(AgentRun, first["run_id"]).input_versions == [v1]
             assert db.get(AgentRun, second["run_id"]).input_versions == [v2]
