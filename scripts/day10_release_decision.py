@@ -100,6 +100,7 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
     if kind == "rollback":
         switches = value.get("kill_switches_verified")
         return (isinstance(switches, list)
+                and all(isinstance(item, str) for item in switches)
                 and {"SHUDDHO_COWORKER_ENABLED=false", "SHUDDHO_AGENT_RUNTIME_ENABLED=false"}.issubset(set(switches))
                 and value.get("worker_stop_observed") is True
                 and value.get("restoration_verified") is True)
@@ -153,6 +154,9 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
         if not ok:
             blockers.append(name)
 
+    cohort = rollout.get("cohort")
+    cohort_limit = cohort.get("max_users") if isinstance(cohort, dict) else None
+    need("pilot_cohort_5_to_10", type(cohort_limit) is int and 5 <= cohort_limit <= 10)
     api = artifacts.get("api")
     capabilities = rollout.get("capabilities")
     need("api_runtime_manifest_v2_exact_sha_and_flags", (
@@ -166,6 +170,12 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
         and not any(v is True for k, v in api["capabilities"].items() if k not in capabilities)
         and isinstance(api.get("reviewed_skills"), dict)
         and api.get("action_providers") == rollout.get("action_providers", [])
+        and isinstance(api.get("cohort"), dict)
+        and api["cohort"].get("enforced") is True
+        and type(api["cohort"].get("max_users")) is int
+        and api["cohort"]["max_users"] == cohort_limit
+        and type(api["cohort"].get("configured_members")) is int
+        and 0 <= api["cohort"]["configured_members"] <= cohort_limit
     ))
     schema = artifacts.get("schema")
     need("database_schema_api_worker_exact", proof_ok(schema, release, revision, rollout_hash)
@@ -228,7 +238,9 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
                 and isinstance(approval.get("reference"), str) and bool(approval["reference"].strip())
                 and isinstance(approval.get("founder"), str) and bool(approval["founder"].strip())
                 and isinstance(approval.get("owner_c"), str) and bool(approval["owner_c"].strip())
-                and type(approval.get("max_users")) is int and 5 <= approval["max_users"] <= 10)
+                and type(approval.get("max_users")) is int
+                and 5 <= approval["max_users"] <= 10
+                and approval["max_users"] == cohort_limit)
     if not approved:
         blockers.append("separate_founder_and_C_pilot_authorization")
     blockers = sorted(set(blockers))
