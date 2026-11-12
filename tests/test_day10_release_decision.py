@@ -32,17 +32,19 @@ def evidence():
           ("test-and-build", "frontend", "coworker", "governance-audit", "ci-merge-gate")},
           "workflow_run_url": "https://github.com/rumman52/Shuddho/actions/runs/123"}
     golden = {**proof(), "scenario": "integrated_multi_turn", "run_id": "golden-final",
-              "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True}
+              "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True, "provider_model": "model-r"}
     first = {"release_id": RELEASE, "source_revision": "c" * 40,
              "rollout_manifest_sha256": "d" * 64, "run_kind": "first_run",
              "run_id": "day9-first", "scores": {"accepted": 28, "total": 40}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
                "generation_identity_verified": True, "reviewers": ["human-D1", "human-D2"],
+               "custody_receipt": {**proof(), "independent_d_controls_access": True,
+                                   "developer_negative_read_denied": True},
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
                           "accepted": True, "reviewer_scores": [7, 8]}
                          for w, l in cells for i in range(10)]}
-    recovery = {**proof(), "scenarios": [dict(proof(), id=f"recovery-{i}") for i in range(20)]}
+    recovery = {**proof(), "scenarios": [dict(proof(), id=f"recovery-{i}", evidence_ref=f"https://evidence.example.test/recovery-{i}") for i in range(20)]}
     approval = {**proof(), "explicit_separate_authorization": True,
                 "reference": "founder-C-approved-change", "founder": "founder-signoff",
                 "owner_c": "C-signoff", "max_users": 5}
@@ -51,6 +53,11 @@ def evidence():
                  "staging": {}, "quality": {**proof(), "provider_model": "model-r"},
                  "model": {**proof(), "provider_model": "model-r"}, "approval": approval}
     artifacts.update({key: proof() for key in day10.PROOFS})
+    artifacts["rollback"].update(kill_switches_verified=["SHUDDHO_COWORKER_ENABLED=false",
+         "SHUDDHO_AGENT_RUNTIME_ENABLED=false"], worker_stop_observed=True, restoration_verified=True)
+    artifacts["cancellation"].update(cancelled_run_id="run-cancelled", late_side_effects=0)
+    artifacts["paused_schedule"].update(schedule_id="schedule-paused", executions_while_paused=0)
+    artifacts["owner_isolation"].update(owner_a_ref="synthetic-A", owner_b_ref="synthetic-B", cross_owner_denied=True)
     return rollout, artifacts
 
 
@@ -86,6 +93,13 @@ def test_missing_evidence_fails_closed(monkeypatch):
     (lambda a: a["worker"].update(source_revision="c" * 40), "worker_exact_sha_and_deployment_receipt"),
     (lambda a: a["ci"]["required_checks"].update(coworker="skipped"), "final_head_ci"),
     (lambda a: a["rollback"].update(status="pending"), "operated_rollback"),
+    (lambda a: a["rollback"].update(worker_stop_observed=False), "operated_rollback"),
+    (lambda a: a["cancellation"].update(late_side_effects=1), "operated_cancellation"),
+    (lambda a: a["paused_schedule"].update(executions_while_paused=1), "operated_paused_schedule"),
+    (lambda a: a["owner_isolation"].update(cross_owner_denied=False), "operated_owner_isolation"),
+    (lambda a: a["golden"].update(provider_model="other"), "final_golden_provider_matches_live_gates"),
+    (lambda a: a["holdout"]["custody_receipt"].update(developer_negative_read_denied=False), "independent_day9_holdout_36_of_40"),
+    (lambda a: a["recovery"]["scenarios"][1].update(evidence_ref="https://evidence.example.test/recovery-0"), "twenty_operated_recovery_scenarios"),
     (lambda a: a["golden"].update(turns=1), "final_sha_integrated_golden"),
     (lambda a: a["day9_first_run"].update(run_id="golden-final"), "separate_final_rerun"),
     (lambda a: a["day9_first_run"].pop("scores"), "preserved_day9_first_run"),
