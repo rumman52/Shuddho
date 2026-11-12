@@ -16,6 +16,7 @@ SHA = "a" * 40
 DOC_ID = "11111111-1111-4111-8111-111111111111"
 TASK_ID = "22222222-2222-4222-8222-222222222222"
 ART_ID = "33333333-3333-4333-8333-333333333333"
+VERSION_ID = "44444444-4444-4444-8444-444444444444"
 SOURCE = b"Day 2 synthetic private note: the sample budget is forty-two units.\n"
 ARTIFACT = b"%PDF-1.4\nsynthetic-test-artifact\n"
 SIGNED = "https://storage.example.test/private?signature=redacted"
@@ -46,12 +47,14 @@ def frozen(manifest=None):
 
 
 class Day2API:
-    def __init__(self, *, attempts=1, foreign_download=404):
+    def __init__(self, *, attempts=1, foreign_download=404, document_grounded=True, cites_document=True):
         self.calls = []
         self.uploaded = None
         self.task_payload = None
         self.attempts = attempts
         self.foreign_download = foreign_download
+        self.document_grounded = document_grounded
+        self.cites_document = cites_document
         self.manifest = runtime()
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -68,6 +71,7 @@ class Day2API:
         if method == "POST" and path == "/api/v1/documents":
             value = json.loads(request.content)
             assert value["sha256"] == hashlib.sha256(SOURCE).hexdigest()
+            self.document_filename = value["filename"]
             return res(201, {"id": DOC_ID, "state": "pending"})
         if method == "PUT" and path == f"/api/v1/documents/{DOC_ID}/content":
             if user == "token-b":
@@ -88,7 +92,11 @@ class Day2API:
                 "id": TASK_ID, "state": "completed", "workflow_version": "report_email_v1",
                 "input": {"document_ids": [DOC_ID]},
                 "output_language": "en",
-                "draft": {"report": {"summary": "A short English summary."}},
+                "draft": {"report": {"summary": "A short English summary.",
+                                     "sections": [{"source_ids": [VERSION_ID if self.cites_document else "notes"]}]}},
+                "sources": [{"id": VERSION_ID, "document_id": DOC_ID,
+                             "label": self.document_filename,
+                             "sha256": hashlib.sha256(SOURCE).hexdigest()}] if self.document_grounded else [],
                 "usage": {"model_attempts": self.attempts, "accounted_tokens": 80 if self.attempts else 0},
                 "artifacts": [{"id": ART_ID, "filename": "report.pdf",
                                "byte_size": len(ARTIFACT), "sha256": hashlib.sha256(ARTIFACT).hexdigest()}],
@@ -162,6 +170,16 @@ def test_day2_rejects_presigned_url_outside_reviewed_storage_endpoint(monkeypatc
                 client, "token-a", "token-b", frozen(api.manifest), SOURCE,
                 timeout_seconds=5, trusted_storage_host="approved-storage.example.test",
             )
+
+
+def test_day2_rejects_missing_selected_document_provenance(monkeypatch):
+    with pytest.raises(day2.Day2Failure, match="provenance"):
+        exercise(monkeypatch, Day2API(document_grounded=False))
+
+
+def test_day2_rejects_report_without_document_citation(monkeypatch):
+    with pytest.raises(day2.Day2Failure, match="cite the selected document"):
+        exercise(monkeypatch, Day2API(cites_document=False))
 
 
 def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
