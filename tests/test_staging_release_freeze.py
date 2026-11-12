@@ -162,6 +162,7 @@ def test_verify_freezes_exact_runtime_identity(tmp_path):
     assert evidence["action_providers"] == ["google", "microsoft"]
     assert evidence["cohort"]["configured_members"] == 2
     assert len(evidence["runtime_manifest_sha256"]) == 64
+    assert len(evidence["reviewed_skills_sha256"]) == 64
 
 
 @pytest.mark.parametrize(
@@ -377,3 +378,34 @@ def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
     freeze.main()
     assert len(client_calls) == 1
     assert json.loads(output_path.read_text())["status"] == "frozen"
+
+def test_runtime_v1_cannot_be_frozen_as_current_api(tmp_path):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["schema_version"] = 1
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="schema_version"):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("capability", [
+    "conversations", "projects", "fly_github", "conversation_replies",
+    "agent_browser_read", "reviewed_research",
+])
+def test_new_runtime_flags_are_declared_and_fail_closed(tmp_path, capability):
+    candidate = rollout()
+    candidate["capabilities"][capability] = True
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="unrelated high-authority"):
+        freeze.validate_rollout(candidate)
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["capabilities"] = dict(observed["capabilities"], **{capability: True})
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="capability set"):
+        freeze.verify_runtime(state, observed)
+
+
+def test_runtime_v2_rejects_missing_reviewed_skills(tmp_path):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    del observed["reviewed_skills"]
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="reviewed_skills"):
+        freeze.verify_runtime(state, observed)

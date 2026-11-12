@@ -309,7 +309,10 @@ try {
   await coworkerLink.click();
   await page.waitForURL(url => url.pathname === "/coworker");
   const coworkerPage = page;
-  await coworkerPage.getByRole("heading", { name: "What are we working on?" }).waitFor();
+  // The chat-layout header is visually hidden by approved-design.css.
+  // Assert the actual signed-in destination, not an inaccessible heading.
+  await coworkerPage.locator(".rukh-cw-workspace.rukh-cw-chat").waitFor();
+  await coworkerPage.locator("#cw-conversation-message").waitFor();
   await coworkerPage.setViewportSize({ width: 390, height: 844 });
   assert.equal(await coworkerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await coworkerPage.screenshot({ path: join(folder, "screenshots/coworker-switch-mobile.png"), fullPage: true });

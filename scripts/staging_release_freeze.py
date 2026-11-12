@@ -13,7 +13,8 @@ from urllib.parse import urlparse
 import httpx
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 1  # PA-10 rollout / freeze evidence version
+RUNTIME_SCHEMA_VERSION = 2  # /api/v1/runtime-manifest
 EVIDENCE_KIND = "pa10_staging_release_freeze"
 PRODUCTION_ENVIRONMENTS = {"prod", "production"}
 ALLOWED_ACTION_PROVIDERS = {"google", "microsoft", "linkedin", "opentable"}
@@ -444,7 +445,7 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         or state.get("expected_environment") != "staging"
     ):
         raise StagingReleaseFreezeError("Release-freeze state is invalid.")
-    if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != 2:
+    if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != RUNTIME_SCHEMA_VERSION:
         raise StagingReleaseFreezeError(
             "Runtime manifest schema_version is unsupported."
         )
@@ -474,6 +475,10 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
     ):
         raise StagingReleaseFreezeError(
             "Deployed capability set does not exactly match the reviewed staging rollout."
+        )
+    if not isinstance(runtime.get("reviewed_skills"), dict):
+        raise StagingReleaseFreezeError(
+            "Runtime v2 reviewed_skills manifest must be an object."
         )
     providers = runtime.get("action_providers")
     if providers != state.get("declared_action_providers"):
@@ -524,6 +529,7 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         "action_providers": providers,
         "cohort": cohort,
         "runtime_manifest_sha256": canonical_sha256(runtime),
+        "reviewed_skills_sha256": canonical_sha256(runtime["reviewed_skills"]),
         "prepared_at": state["prepared_at"],
         "verified_at": verified_at,
     }

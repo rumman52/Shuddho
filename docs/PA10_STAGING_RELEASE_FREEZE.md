@@ -81,3 +81,14 @@ A successful artifact has `status="frozen"` and binds:
 - prepare and verify timestamps.
 
 All subsequent PA-10 scenario evidence should reference the same release identity. A meaningful code/config/provider-policy change invalidates the freeze and requires a fresh prepare/deploy/verify cycle.
+
+## Runtime-manifest v2 compatibility (Day 10)
+
+The PA-10 **rollout/freeze-evidence schema remains v1**, but the authenticated
+`/api/v1/runtime-manifest` endpoint emits **schema v2**. Freeze verification
+requires v2, a `reviewed_skills` object, and an exact full capability-key match,
+including `conversations`, `projects`, `fly_github`, `conversation_replies`,
+`agent_browser_read`, and `reviewed_research`. The bounded PA-10 staging
+rollout requires these unrelated features disabled; unknown/new keys fail
+closed until reviewed. The frozen receipt records the reviewed-skills digest.
+This source correction alone is not a live runtime receipt or a pilot GO.
