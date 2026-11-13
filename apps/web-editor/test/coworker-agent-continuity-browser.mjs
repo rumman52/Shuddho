@@ -25,6 +25,30 @@ async function waitFor(check, description, timeoutMs = 15000) {
   throw new Error(`Timed out waiting for ${description}. Last value: ${JSON.stringify(lastValue)}`);
 }
 
+async function startReviewedTask(page, objective) {
+  await page.getByRole("button", { name: "Start task", exact: true }).click();
+  const review = page.getByRole("region", { name: "Review task brief", exact: true });
+  const objectiveField = review.getByRole("textbox", { name: "Task objective", exact: true });
+  await objectiveField.waitFor();
+  assert.equal(await objectiveField.inputValue(), objective);
+
+  // Editing even an unchanged objective invalidates the suggested digest.
+  // A separate authoritative preview and explicit confirmation are required.
+  await objectiveField.fill(objective);
+  await review.getByRole("button", { name: "Validate task preview", exact: true }).click();
+  const confirm = review.getByRole("button", { name: "Confirm and start reviewed task", exact: true });
+  await confirm.waitFor();
+  const priorRuns = await getJson(page, "/runs");
+  assert.equal(priorRuns.runs.some(run => run.goal === objective), false,
+    "Preview must not authorize Agent execution");
+  await confirm.click();
+
+  // Wait for the link on this exact turn; older Agent links do not count.
+  const turn = page.getByLabel("Conversation messages", { exact: true })
+    .getByText(objective, { exact: true }).locator("xpath=ancestor::li");
+  await turn.getByRole("button", { name: "View Agent run", exact: true }).waitFor();
+}
+
 export async function verifyConversationAgentContinuity(page) {
   const taskA = "E2E Task A: Create a concise project document about the first milestone.";
   const taskB = "E2E Task B: Create a concise project document about the second milestone.";
@@ -52,7 +76,7 @@ export async function verifyConversationAgentContinuity(page) {
     let runs = await getJson(page, "/runs");
     assert.equal(runs.runs.filter(run => run.goal === taskA).length, 0);
 
-    await page.getByRole("button", { name: "Start task", exact: true }).click();
+    await startReviewedTask(page, taskA);
     await page.getByRole("button", { name: "Steer Agent task", exact: true }).first().waitFor();
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
@@ -63,14 +87,14 @@ export async function verifyConversationAgentContinuity(page) {
     await composer.fill(taskB);
     await page.locator(".rukh-design-send").click();
     await conversationMessage(taskB).waitFor();
-    await page.getByRole("button", { name: "Start task", exact: true }).click();
+    await startReviewedTask(page, taskB);
 
     // A third task demonstrates bounded, configurable concurrency rather than
     // accidentally coupling every run to one conversation-wide execution slot.
     await composer.fill(taskC);
     await page.locator(".rukh-design-send").click();
     await conversationMessage(taskC).waitFor();
-    await page.getByRole("button", { name: "Start task", exact: true }).click();
+    await startReviewedTask(page, taskC);
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
       return calls.calls.filter(call => call.goal === taskA || call.goal === taskB || call.goal === taskC).length === 3;
