@@ -443,6 +443,9 @@ try {
   await page.getByLabel("Email address", { exact: true }).fill("bob@example.test");
   await page.getByLabel("Password", { exact: true }).fill("test-password-only");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  // The account-switch URL may still target an explicit prior workspace.
+  // Navigate using visible controls before asserting new-owner chat isolation.
+  await navigateWorkspace(page, "Coworker");
   await page.locator("#cw-conversation-message").waitFor();
   await navigateWorkspace(page, "Files & drafts");
   await page.getByRole("button", { name: "Create report & email draft" }).waitFor();

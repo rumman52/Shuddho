@@ -14,7 +14,7 @@ const catalog = [
   { name: "Microsoft 365", provider: "microsoft", capability: "email", icon: "grid", description: "Connect supported Outlook and calendar actions.", supported: true, featured: false },
   { name: "LinkedIn", provider: "linkedin", capability: "social", icon: "globe", description: "Prepare posts for explicit approval.", supported: true, featured: false },
 ];
-export default function PluginsWorkspace({ client, children }: { client: CoworkerClient; children: (onConnectionsChanged: (value: ConnectedAccount[]) => void) => ReactNode }) {
+export default function PluginsWorkspace({ client, children, openForReview = false }: { client: CoworkerClient; openForReview?: boolean; children: (onConnectionsChanged: (value: ConnectedAccount[]) => void) => ReactNode }) {
   const [connections, setConnections] = useState<ConnectedAccount[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [socialEnabled, setSocialEnabled] = useState(false);
@@ -23,14 +23,14 @@ export default function PluginsWorkspace({ client, children }: { client: Coworke
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState("");
   const management = useRef<HTMLDetailsElement>(null);
-  const [returningFromOAuth] = useState(() =>
-    hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback());
+  const [showManagementOnMount] = useState(() =>
+    openForReview || hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback());
   useEffect(() => {
-    // OAuth is a full-page redirect. Restore the same visible connection
-    // controls on return; leave normal Plugins visits collapsed by default.
-    // Do not control the disclosure after mount: users can close it manually.
-    if (returningFromOAuth && management.current) management.current.open = true;
-  }, [returningFromOAuth]);
+    // Full-page OAuth returns and explicit action reviews must expose their
+    // controls; ordinary Plugins visits remain collapsed by default. Set the
+    // native disclosure once so the user can still close it manually.
+    if (showManagementOnMount && management.current) management.current.open = true;
+  }, [showManagementOnMount]);
   useEffect(() => {
     const controller = new AbortController();
     client.connections(controller.signal).then(value => { if (!controller.signal.aborted) { setConnections(value.connections); setEnabled(value.enabled); setSocialEnabled(value.social_publishing_enabled); } })
