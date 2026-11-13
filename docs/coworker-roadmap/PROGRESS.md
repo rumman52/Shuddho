@@ -1,3 +1,13 @@
+## V-01 source safeguard — 13 November 2026 (Asia/Dhaka)
+
+**Scope:** fail-closed pull-request ancestry check. Existing draft PR #695 is 171 commits behind `main` (GitHub compare on `ce8a21046970a94a65d0b53a31da4c55d048e51a` vs `1b98702c602a8e57848175b3063bdad298abb6ae`) and omits previously merged conversation memory-pin admission and revocation checks. A blocking code review was posted to #695. The new guard checks the actual PR head rather than the synthetic PR merge checkout; `ci-merge-gate` rejects failed or skipped PR ancestry checks, while push events remain governed by the existing governance audit.
+
+**Verification:** local synthetic Git DAG regression: 3 passed (stale branch rejected, merged-up-to-date head accepted, malformed/missing commit IDs rejected); Python syntax compilation passed. Branch `fix/ci-pr-base-ancestry-20261113`; base `ce8a210`. Exact remote PR-head CI and independent review pending. No production deployment, ruleset change, model call, paid resource, or release activation.
+
+**Evidence levels:** source implemented on review branch; local unit verified; **repository-wide exact-head CI pending**, staging unverified, release **NO-GO**. This guard is defense in depth only and **cannot replace native protected-main rules**. Owner must still enable main protections, restore authorized staging PG18 and provision a persistent worker, and complete independent holdout/fault-test approvals.
+
+---
+
 ## Day 1 final source-alignment follow-up — 10 November 2026 (Asia/Dhaka)
 
 After the source/UI ownership map identified an unsupported upload-picker claim, a React regression was committed first (`a8e7a37c6c86892976c7a67ffc4091297e8d308b`). GitHub frontend CI reproduced the precise RED: **240 passed, 1 failed**, actual picker `.txt,.docx,.pdf,.csv,.xlsx,.pptx` versus accepted `.txt,.docx,.pdf`. The subsequent code correction narrows the picker and hint without extending the upload client's formats, security boundaries, or the backend. **Exact corrected-head CI pending** at this source checkpoint.
