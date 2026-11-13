@@ -89,7 +89,10 @@ def revalidate_selected_sources(
 
 
 def require_current_selected_sources(db: Session, owner_id: str, selected_sources: list[dict]) -> list[dict]:
-    """Deny admission if any persisted source changed, expired or left scope."""
+    """Validate owner-bound selected pins at Agent admission, grounded chat read, and commit.
+
+    This is a live authority check; prior successful reads never authorize later output.
+    """
     result = revalidate_selected_sources(db, owner_id, selected_sources)
     if result["invalidated"]:
         raise CoworkerError(
@@ -156,12 +159,16 @@ def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> Non
                 or [pin.get("resource_id") for pin in originals] != [str(v) for v in brief.source_ids]):
                 raise ValueError("Reviewed sources not authorised by the conversation")
             pins = require_current_selected_sources(db, owner, originals)
-            saved_project = run.project_context or {}
+            saved_project = dict(run.project_context or {})
+            # Day 5 memory pins are separately validated and do not belong to
+            # the Day 4 project-only reviewed task brief digest.
+            reviewed_project = {key: value for key, value in saved_project.items()
+                                if key != "memory_pins"}
             current_project = ConversationTaskBriefService._project(
                 db, type("_S", (), {"projects_enabled": True})(),
-                owner, message.conversation_id, saved_project.get("project_id"))
-            if (current_project != saved_project
-                or canonical_brief_digest(brief, pins, saved_project, owner_id=owner,
+                owner, message.conversation_id, reviewed_project.get("project_id"))
+            if (current_project != reviewed_project
+                or canonical_brief_digest(brief, pins, reviewed_project, owner_id=owner,
                     conversation_id=message.conversation_id, message_id=message.id,
                     sequence=message.sequence) != reviewed["canonical_digest"]):
                 raise ValueError("Review changed")

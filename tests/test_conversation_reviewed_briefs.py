@@ -8,6 +8,12 @@ from hashlib import sha256
 from uuid import UUID, uuid4
 
 import pytest
+
+# The general baseline job intentionally does not install coworker extras.
+# The mandatory Day 4 gate runs with those extras and must execute these tests.
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("temporalio")
+
 from sqlalchemy import select, func
 from test_coworker import account, container, signed_client
 from services.coworker.agent_runtime import AgentRuntime

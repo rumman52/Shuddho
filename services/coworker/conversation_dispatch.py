@@ -19,8 +19,9 @@ from .agent_router import qualify_agent_goal
 from .agent_schemas import AgentRunCreate
 from .conversation_context import require_current_selected_sources
 from .conversation_task_briefs import ConversationTaskBriefService
-from .task_brief_schemas import TaskBrief
 from .errors import CoworkerError
+from .memory_repository import require_current_memory_pins
+from .task_brief_schemas import MemoryPin, TaskBriefMemorySelection, TaskBrief
 from .models import (
     Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, Conversation,
     ConversationMessage, Project, ProjectResource, Workspace, utcnow,
@@ -116,10 +117,12 @@ class ConversationDispatchService:
     def dispatch(self, owner: str, conversation_id: str, message_id: str, *, expected_sequence: int,
                  output_language: str = "auto", project_id: str | None = None,
                  reviewed_brief: TaskBrief | None = None,
-                 expected_digest: str | None = None) -> tuple[dict, bool]:
+                 expected_digest: str | None = None,
+                 memory_pins: list[MemoryPin] | None = None) -> tuple[dict, bool]:
         """Emulate the Postgres owner-row lock for SQLite integration tests."""
         kwargs = dict(expected_sequence=expected_sequence, output_language=output_language,
-                      project_id=project_id, reviewed_brief=reviewed_brief, expected_digest=expected_digest)
+                      project_id=project_id, reviewed_brief=reviewed_brief, expected_digest=expected_digest,
+                      memory_pins=memory_pins)
         bind = self.sessions.kw.get("bind")
         if bind is not None and bind.dialect.name == "sqlite":
             with _SQLITE_DISPATCH_LOCK:
@@ -129,9 +132,15 @@ class ConversationDispatchService:
     def _dispatch_once(self, owner: str, conversation_id: str, message_id: str, *, expected_sequence: int,
                  output_language: str = "auto", project_id: str | None = None,
                  reviewed_brief: TaskBrief | None = None,
-                 expected_digest: str | None = None) -> tuple[dict, bool]:
+                 expected_digest: str | None = None,
+                 memory_pins: list[MemoryPin] | None = None) -> tuple[dict, bool]:
         """Commit message link, run, initial event/checkpoint and outbox together."""
         self._enabled()
+        selection = None if memory_pins is None else TaskBriefMemorySelection(
+            memory_pins=memory_pins,
+        ).model_dump(mode="json")["memory_pins"]
+        if selection is not None and len(selection) > self.settings.max_memory_context_facts:
+            raise CoworkerError("memory_selection_limit", "Too many selected memories for this task.", 409)
         if expected_sequence < 1:
             raise CoworkerError("conversation_revision_conflict", "Reload the latest messages.", 409)
         if (reviewed_brief is None) != (expected_digest is None):
@@ -167,6 +176,11 @@ class ConversationDispatchService:
                 else:
                     replay_request = AgentRunCreate(goal=message.text, output_language=output_language)
                 saved_project_context = dict(run.project_context or {})
+                if (("memory_pins" in saved_project_context) != (selection is not None)
+                    or (selection is not None and saved_project_context["memory_pins"] != selection)):
+                    raise CoworkerError(
+                        "idempotency_conflict", "This task was dispatched with a different memory selection.", 409,
+                    )
                 requested_project_id = saved_project_context.get("project_id")
                 if (str(project_id) if project_id is not None else None) != requested_project_id:
                     raise CoworkerError(
@@ -261,6 +275,9 @@ class ConversationDispatchService:
             workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
             if workspace_id is None:
                 raise not_found()
+            if selection is not None:
+                require_current_memory_pins(db, owner, workspace_id, selection, self.settings)
+                project_context["memory_pins"] = selection
             # AgentRepository.create uses the same owner lock and run/outbox contracts.
             # This method does not open a second transaction or invoke that method.
             run_id = str(uuid4())

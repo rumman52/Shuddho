@@ -39,6 +39,7 @@ from .github_app import GitHubAppService
 from .project_repository import ProjectRepository
 from .conversation_repository import ConversationRepository
 from .conversation_replies import ConversationReplyService
+from .conversation_grounding import ConversationGroundingService
 from .conversation_dispatch import ConversationDispatchService
 from .conversation_task_briefs import ConversationTaskBriefService
 from .workspace_manifest import WorkspaceManifestService
@@ -90,7 +91,10 @@ class Container:
         if self.conversations is None:
             self.conversations = ConversationRepository(self.repository.sessions, self.settings)
         if self.conversation_replies is None:
-            self.conversation_replies = ConversationReplyService(self.conversations, self.settings)
+            self.conversation_replies = ConversationReplyService(
+                self.conversations, self.settings,
+                grounding=ConversationGroundingService(self.repository.sessions, self.settings, self.storage),
+            )
         if self.workspace_manifest is None:
             self.workspace_manifest = WorkspaceManifestService(self.repository.sessions, self.settings)
         if self.actions is None:

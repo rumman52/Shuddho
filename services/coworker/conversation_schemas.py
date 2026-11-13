@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .task_brief_schemas import TaskBrief
 
 from .goal_schemas import _safe_text
+from .task_brief_schemas import MemoryPin
 
 
 class ConversationCreate(BaseModel):
@@ -61,6 +62,8 @@ class ConversationDispatchCreate(BaseModel):
         if (self.reviewed_brief is None) != (self.expected_digest is None):
             raise ValueError("Reviewed dispatch requires both brief and digest")
         return self
+    # None: legacy dispatch; []: reviewed brief with no memory.
+    memory_pins: list[MemoryPin] | None = Field(default=None, max_length=20)
 
 
 class ConversationSteerRequest(BaseModel):
@@ -84,6 +87,10 @@ class ConversationCancelRequest(BaseModel):
 
 
 class ConversationReplyCreate(BaseModel):
+    """Only the persisted message's selected_sources may ground a reply.
+
+    No new file IDs, citations or action authority may be supplied here.
+    """
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
     project_id: UUID | None = None
