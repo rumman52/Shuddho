@@ -535,3 +535,41 @@ test("task dispatch binds exact memory versions, including an explicit empty sel
     globalThis.fetch = original;
   }
 });
+
+test("source uploads admit the API-catalog office formats and preserve owner-authenticated routes", async () => {
+  const original = globalThis.fetch;
+  const id = "00000000-0000-4000-8000-000000000000";
+  const seen: { url: string; options?: RequestInit }[] = [];
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(JSON.stringify({ id }), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "upload-test-token");
+    for (const filename of ["costs.csv", "budget.xlsx", "meeting.pptx"]) {
+      const file = new File(["example upload contents"], filename, { type: "application/octet-stream" });
+      const before = seen.length;
+      await client.upload(file);
+      assert.equal(seen.length, before + 2, filename);
+      assert.equal(seen[before].url, "/backend/api/v1/documents");
+      assert.equal(seen[before].options?.method, "POST");
+      assert.equal(new Headers(seen[before].options?.headers).get("Authorization"), "Bearer upload-test-token");
+      assert.deepEqual(JSON.parse(String(seen[before].options?.body)), {
+        filename,
+        byte_size: file.size,
+        sha256: createHash("sha256").update("example upload contents").digest("hex"),
+      });
+      assert.equal(seen[before + 1].url, `/backend/api/v1/documents/${id}/content`);
+      assert.equal(seen[before + 1].options?.method, "PUT");
+      assert.equal(seen[before + 1].options?.body, file);
+      assert.equal(seen[before + 1].options?.credentials, "omit");
+      assert.equal(seen[before + 1].options?.redirect, "error");
+    }
+    const before = seen.length;
+    await assert.rejects(client.upload(new File(["<script>"], "payload.html", { type: "text/html" })), WorkspaceError);
+    await assert.rejects(client.upload(new File([], "empty.csv")), WorkspaceError);
+    assert.equal(seen.length, before, "invalid file types and zero-length uploads never reach the API");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
