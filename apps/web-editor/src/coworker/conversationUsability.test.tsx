@@ -503,6 +503,17 @@ test("selected task memory is previewed, corrected versions are cleared, and onl
       facts = facts.map(item => item.id === id ? updated : item);
       return updated;
     },
+    proposeConversationTaskBrief: async () => ({
+      state: "ready", brief: {
+        objective: "Prepare a report", constraints: ["English"],
+        deliverables: ["Report"], source_ids: [], output_language: "en",
+      }, canonical_digest: null, question: null,
+    }),
+    previewConversationTaskBrief: async (_conversation: string, _message: string, _sequence: number,
+      brief: unknown) => ({
+      state: "ready", brief, canonical_digest: "a".repeat(64),
+      question: null,
+    }),
     dispatchConversationMessage: async (_conversation: string, _message: string, _sequence: number,
       _project: string | null, pins?: unknown) => {
       admissions.push(pins);
@@ -541,6 +552,18 @@ test("selected task memory is previewed, corrected versions are cleared, and onl
     const start = tree.root.findAllByType("button").find(node => node.children.includes("Start task"));
     assert.ok(start);
     await act(async () => { await start!.props.onClick(); });
+    // Day 4 requires proposal, preview and explicit confirmation. Starting
+    // the review must not bypass the Day 5 memory-selection contract.
+    assert.equal(admissions.length, 0);
+    const review = tree.root.findByProps({ "aria-label": "Review task brief" });
+    const taskForm = review.findByType("form");
+    await act(async () => {
+      taskForm.props.onSubmit({ preventDefault() {} });
+    });
+    assert.equal(admissions.length, 0);
+    await act(async () => {
+      taskForm.props.onSubmit({ preventDefault() {} });
+    });
     assert.deepEqual(admissions, [[{ fact_id: factId, expected_version: 2 }]]);
   }, data);
 });

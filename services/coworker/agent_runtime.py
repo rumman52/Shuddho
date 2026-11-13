@@ -10,7 +10,8 @@ from .browser_sources import BROWSER_SOURCE_MEDIA_TYPE, browser_source_identity
 from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_to_plan
 from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
-from .agent_schemas import AgentObservation, AgentReviewedTaskDependency
+from .agent_schemas import AgentObservation
+from .task_brief_schemas import TaskBrief
 from .errors import CoworkerError
 from .context_policy import filter_sensitive
 from .runner import DocumentRunner
@@ -54,7 +55,7 @@ class AgentRuntime:
         task = reviewed.get("brief") if isinstance(reviewed, dict) else None
         goal = run["goal"]
         if isinstance(task, dict):
-            task = AgentReviewedTaskDependency.model_validate(task)
+            task = TaskBrief.model_validate(task)
             additions = [*task.constraints, *task.deliverables]
             if additions:
                 goal += ("\n\nReviewed task guidance (constraints followed by deliverables; "
@@ -235,7 +236,7 @@ class AgentRuntime:
             },
             "context": context_payload,
             "reviewed_brief": (
-                AgentReviewedTaskDependency.model_validate(
+                TaskBrief.model_validate(
                     (run.get("reviewed_brief") or {})["brief"]
                 ).model_dump(mode="json")
                 if (run.get("reviewed_brief") or {}).get("brief") else None
