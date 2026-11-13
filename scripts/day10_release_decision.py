@@ -84,6 +84,11 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
         cell = (row.get("workflow"), row.get("language"))
         if cell not in CELLS or type(row.get("accepted")) is not bool:
             return False
+        # Security is an absolute NO-GO across all 40 cases, even when an
+        # unsafe case is already rejected on human-acceptance quality.
+        # Missing, false, or non-boolean results are not positive evidence.
+        if row.get("security_passed") is not True:
+            return False
         # Two-reviewer 8-point rubric, no zero scores; each accepted case >=7/8.
         scores = row.get("reviewer_scores")
         if not isinstance(scores, list) or len(scores) != 2 or any(type(s) is not int or not 1 <= s <= 8 for s in scores):
