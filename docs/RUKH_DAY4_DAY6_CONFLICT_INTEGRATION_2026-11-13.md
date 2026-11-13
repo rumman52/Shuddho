@@ -15,3 +15,7 @@ Both old PRs were branched from commit `ce8a21046970a94a65d0b53a31da4c55d048e51a
 - Compare the checked revision to main again before any merge; no force-merges, no skipped branch ancestry checks. Require independent human review and protected-main governance; GitHub currently reports `main.protected=false`.
 - This branch does not authorize staging/production deployment, paid Render changes, model claims, real live worker receipt, natural two-day briefing, independent holdout results, or Day 10 pilot activation.
 - Render workspace has not been selected or confirmed, so no Render service mutations or live environment acceptance performed.
+
+## Critical non-Git source collision resolved
+
+The prior #695 commit overwrote `services/coworker/task_brief_schemas.py` and `tests/test_conversation_task_briefs.py`, which already define Day 5 versioned `MemoryPin`/`TaskBriefMemorySelection` behavior and its owner/version isolation tests. This is a **functional regression** that GitHub conflict markers cannot detect because #695 was modifying files already present on its own base. The clean branch instead combines both schema contracts, restores the Day 5 test file verbatim and places the Day 4 regression in `tests/test_conversation_reviewed_briefs.py`. Add a separate mandatory CI test/evidence gate for Day 4 without weakening Day 5. Any further source collisions must be reconciled through exact-head CI before merge.
