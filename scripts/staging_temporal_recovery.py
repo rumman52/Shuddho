@@ -215,7 +215,9 @@ def validate_persisted_recovery(
         raise RecoveryFailure("Child task idempotency keys do not match the server-owned run/ordinal contract.")
 
     active_start = min(_utc(item.started_at) for item in ordered)
-    finish = _utc(run.updated_at) + timedelta(seconds=30)
+    # A restart after the final persisted step finished cannot prove recovery
+    # of active work, even if the AgentRun row was updated seconds later.
+    finish = _utc(ordered[2].finished_at)
     if not active_start <= restart_at <= finish:
         raise RecoveryFailure("Recorded worker restart did not occur after agent execution started and before the recovery run finished.")
     return {
