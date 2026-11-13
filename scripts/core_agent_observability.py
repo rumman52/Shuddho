@@ -482,6 +482,7 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
         raise ValueError(f"{label}: exactly 40 development task results required")
     by_id = {}
     seen_accepted_artifact_refs = set()
+    seen_accepted_review_refs = set()
     for row in results:
         if not isinstance(row, dict):
             raise ValueError(f"{label}: invalid task evidence")
@@ -509,6 +510,12 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
         ):
             raise ValueError(f"{label}: accepted outcome lacks valid artifact/review reference")
         if row["human_accepted"]:
+            # Distinct accepted tasks require distinct human-review evidence:
+            # a single receipt must not silently stand in for 40 reviews.
+            outcome_ref = row["accepted_outcome_ref"].strip()
+            if outcome_ref in seen_accepted_review_refs:
+                raise ValueError(f"{label}: reused accepted outcome reference across tasks")
+            seen_accepted_review_refs.add(outcome_ref)
             # A completed paid-model artifact needs nonzero provider usage;
             # zero cannot be substituted for an unavailable measurement.
             for field in ("input_tokens", "output_tokens", "model_time_ms"):
@@ -588,6 +595,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "human_accepted": len(accepted),
             "by_cell": by_cell,
             "quality_gate_passed": quality_ok,
+            "safety_gate_passed": safety_ok,
             "metrics_complete": metrics_complete,
             "total_input_tokens": totals["input_tokens"],
             "total_output_tokens": totals["output_tokens"],
@@ -636,9 +644,13 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         selected = min(eligible, key=lambda pair: (pair[1]["total_cost_microusd"], pair[0] != "baseline"))[0]
     if selected is None and not blockers:
         blockers.append("no eligible candidate with retained quality")
+    # Real token/cost differences from an unsafe or otherwise ineligible
+    # candidate are not *qualified savings*. Do not surface them as such.
+    qualified_savings = a["quality_gate_passed"] and b["quality_gate_passed"] and retained_quality
     cost_delta = (
         a["total_cost_microusd"] - b["total_cost_microusd"]
-        if a["total_cost_microusd"] is not None
+        if qualified_savings
+        and a["total_cost_microusd"] is not None
         and b["total_cost_microusd"] is not None
         and retained_quality
         and baseline.get("receipts_independently_verified") is True
@@ -692,7 +704,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         record["measured_cost_savings_microusd"] = (
             record["baseline"]["cost_microusd"]
             - record["bounded_context_compact_observations"]["cost_microusd"]
-            if retained_quality
+            if qualified_savings
             and baseline.get("generation_identity_verified") is True
             and candidate.get("generation_identity_verified") is True
             and baseline.get("receipts_independently_verified") is True
@@ -708,7 +720,11 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         "profile_summaries": summaries,
         "per_task_comparison": per_task,
         "candidate_quality_retained": retained_quality,
-        "candidate_exclusion_reason": None if retained_quality else "quality_regression_vs_baseline",
+        "candidate_exclusion_reason": (
+            "quality_regression_vs_baseline" if not retained_quality
+            else "failed_quality_or_safety_gate" if not b["quality_gate_passed"]
+            else None
+        ),
         "measured_cost_savings_microusd": cost_delta,
         "selected_least_cost_qualified_profile": selected,
         "status": "FROZEN_FOR_DAY9" if selected is not None else "BLOCKED",

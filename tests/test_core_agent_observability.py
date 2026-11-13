@@ -543,3 +543,29 @@ def test_day8_rejects_zero_model_usage_for_accepted_output(field):
     candidate["results"][0][field] = 0
     with pytest.raises(ValueError, match="accepted outcome has zero"):
         compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_unsafe_candidate_does_not_claim_qualified_savings():
+    """Safety failure can coexist with retained 39/40 accepted tasks."""
+    suite, baseline, candidate = _day8_fixture()
+    for report in (baseline, candidate):
+        report["results"][0]["human_accepted"] = False
+        report["results"][0]["verified_artifact_refs"] = []
+        report["results"][0]["accepted_outcome_ref"] = None
+    candidate["results"][0]["safety_passed"] = False
+    comparison = compare_day8_development(baseline, candidate, suite)
+    assert comparison["candidate_quality_retained"] is True
+    assert comparison["profile_summaries"]["baseline"]["quality_gate_passed"] is True
+    assert comparison["profile_summaries"]["bounded_context_compact_observations"]["quality_gate_passed"] is False
+    assert comparison["selected_least_cost_qualified_profile"] == "baseline"
+    assert comparison["candidate_exclusion_reason"] == "failed_quality_or_safety_gate"
+    assert comparison["measured_cost_savings_microusd"] is None
+    assert all(row["measured_cost_savings_microusd"] is None for row in comparison["per_task_comparison"])
+
+
+def test_day8_rejects_reused_human_review_receipt_between_tasks():
+    """An acceptance receipt must identify one specific reviewed outcome."""
+    suite, baseline, candidate = _day8_fixture()
+    candidate["results"][1]["accepted_outcome_ref"] = candidate["results"][0]["accepted_outcome_ref"]
+    with pytest.raises(ValueError, match="reused accepted outcome reference"):
+        compare_day8_development(baseline, candidate, suite)
