@@ -34,6 +34,12 @@ async function startReviewedTask(page, goal) {
   await objective.waitFor();
   // Preserve the exact fixture goal so run identity and concurrent steering stay testable.
   await objective.fill(goal);
+  // The proposed brief is already prevalidated. Editing any field must invalidate
+  // that digest and require an explicit new server-side preview.
+  await review.getByRole("textbox", { name: "Task constraints", exact: true })
+    .fill("Keep the document concise.");
+  assert.equal(await review.getByText(/^Validated preview:/).count(), 0,
+    "Editing the brief must invalidate its previous digest.");
   await review.getByRole("button", { name: "Validate task preview", exact: true }).click();
   await review.getByText(/^Validated preview: [0-9a-f]{12}…$/).waitFor();
   const before = await getJson(page, "/runs");
