@@ -272,6 +272,29 @@ def test_unsupported_source_or_failed_security_cannot_be_outweighed():
     assert not result["results"][1]["accepted"]
 
 
+
+def test_security_failure_is_absolute_nogo_even_when_quality_threshold_passes():
+    reviews, checks = reviews_and_checks()
+    compromised = tasks()[0]["case_id"]
+    checks[0]["security_passed"] = False
+    result = score_reviews(tasks(), reviews, [], checks)
+    assert result["accepted"] == 39
+    assert all(cell["accepted"] >= 9 for cell in result["by_cell"].values())
+    assert result["outcome_gate_pass"] is False
+    assert result["security_gate_pass"] is False
+    assert result["security_failed_cases"] == [compromised]
+
+
+def test_nonsecurity_deterministic_failure_can_use_one_case_quality_tolerance():
+    reviews, checks = reviews_and_checks()
+    checks[0]["passed"] = False
+    result = score_reviews(tasks(), reviews, [], checks)
+    assert result["accepted"] == 39
+    assert result["outcome_gate_pass"] is True
+    assert result["security_gate_pass"] is True
+    assert result["security_failed_cases"] == []
+
+
 def test_missing_or_duplicate_reviewers_and_bad_rubric_block():
     reviews, checks = reviews_and_checks()
     with pytest.raises(EvidenceError, match="exactly two"):
