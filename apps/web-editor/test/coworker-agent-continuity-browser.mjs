@@ -36,6 +36,9 @@ async function startReviewedTask(page, goal) {
   await objective.waitFor();
   assert.equal(await objective.inputValue(), goal,
     "the proposed brief must be bound to the selected conversation message");
+  const unconfirmed = await getJson(page, "/runs");
+  assert.equal(unconfirmed.runs.filter(run => run.goal === goal).length, 0,
+    "proposing a task brief must not dispatch an Agent run");
   // Preserve the exact fixture goal so run identity and concurrent steering stay testable.
   await objective.fill(goal);
   // The proposed brief is already prevalidated. Editing any field must invalidate
@@ -54,6 +57,7 @@ async function startReviewedTask(page, goal) {
     const snapshot = await getJson(page, "/runs");
     return snapshot.runs.filter(run => run.goal === goal).length === 1;
   }, `exactly one admitted Agent run for ${goal}`);
+  await turn.getByRole("button", { name: "View Agent run", exact: true }).waitFor();
 }
 
 export async function verifyConversationAgentContinuity(page) {
