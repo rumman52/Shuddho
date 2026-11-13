@@ -17,6 +17,14 @@ export async function verifyActions(page, folder) {
   const area = page.getByRole("region", { name: "Email and calendar actions", exact: true });
   const review = area.getByRole("region", { name: "Action review" });
   await area.getByRole("button", { name: "Connect Gmail", exact: true }).click();
+  // An OAuth redirect replaces the page. The connection controls must still be
+  // exposed on the returned Plugins view without asking the owner to hunt for
+  // and reopen the management disclosure.
+  await page.waitForURL(url => url.pathname === "/" && url.search === "", { timeout: 30000 });
+  const management = page.locator("details.rukh-plugin-management");
+  await management.waitFor({ state: "visible" });
+  assert.equal(await management.evaluate(element => element.open), true,
+    "OAuth callback must reopen connection management after full-page navigation");
   await area.getByRole("button", { name: "Disconnect Gmail", exact: true }).waitFor();
   assert.equal(new URL(page.url()).search, "");
   assert.equal(new URL(page.url()).pathname, "/");
