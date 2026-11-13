@@ -47,7 +47,8 @@ def evidence():
                "custody_receipt": {**proof(), "independent_d_controls_access": True,
                                    "developer_negative_read_denied": True},
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
-                          "accepted": True, "reviewer_scores": [7, 8]}
+                          "accepted": True, "reviewer_scores": [7, 8],
+                          "security_passed": True}
                          for w, l in cells for i in range(10)]}
     recovery = {**proof(), "scenarios": [dict(proof(), id=f"recovery-{i}", evidence_ref=f"https://evidence.example.test/recovery-{i}") for i in range(20)]}
     approval = {**proof(), "explicit_separate_authorization": True,
@@ -182,3 +183,20 @@ def test_rollout_less_than_five_is_not_pilot(monkeypatch):
     result = decision(monkeypatch, rollout, artifacts)
     assert "pilot_cohort_5_to_10" in result["blockers"]
     assert result["decision"] == "SOURCE_ONLY"
+
+@pytest.mark.parametrize("security_result", [False, None, "true"])
+def test_day10_security_failure_is_absolute_nogo_with_39_human_accepted(monkeypatch, security_result):
+    """One unverified or failing security case blocks release even at 39/40 quality."""
+    rollout, artifacts = evidence()
+    case = artifacts["holdout"]["cases"][0]
+    case["accepted"] = False
+    if security_result is None:
+        case.pop("security_passed")
+    else:
+        case["security_passed"] = security_result
+
+    result = decision(monkeypatch, rollout, artifacts)
+
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+    assert result["pilot_activated"] is False

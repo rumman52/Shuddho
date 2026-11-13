@@ -25,31 +25,32 @@ async function waitFor(check, description, timeoutMs = 15000) {
   throw new Error(`Timed out waiting for ${description}. Last value: ${JSON.stringify(lastValue)}`);
 }
 
-// Day 4 task admission is a reviewed two-step handoff, never an immediate
-// dispatch from Start task. Keep the real browser path and owner approval gate.
-async function startReviewedAgentTask(page, goal) {
+// The Day 4 admission boundary is review -> validated digest -> explicit confirmation.
+// A preview alone must not launch an Agent run.
+async function startReviewedTask(page, goal) {
   await page.getByRole("button", { name: "Start task", exact: true }).click();
   const review = page.getByRole("region", { name: "Review task brief", exact: true });
-  await review.waitFor();
   const objective = review.getByRole("textbox", { name: "Task objective", exact: true });
-  assert.equal(await objective.inputValue(), goal);
-  const pending = await getJson(page, "/runs");
-  assert.equal(pending.runs.filter(run => run.goal === goal).length, 0,
-    "Opening review must not dispatch Agent work");
-  // A proposed brief may be prevalidated; an offline provider may instead
-  // offer a manual brief. Both paths require an exact reviewed digest and an
-  // explicit user confirmation before the real Temporal-backed dispatch.
-  const validate = review.getByRole("button", { name: "Validate task preview", exact: true });
-  const confirm = review.getByRole("button", { name: "Confirm and start reviewed task", exact: true });
-  await review.getByRole("button", { name: /^(Validate task preview|Confirm and start reviewed task)$/ }).waitFor();
-  if (await validate.isVisible()) await validate.click();
-  await review.getByText(/Validated preview:/).waitFor();
-  await confirm.click();
-  // Wait for the server's admitted run to replace the review before the next
-  // message; a queued button click alone is not successful authorization.
-  await review.waitFor({ state: "hidden", timeout: 30000 });
+  await objective.waitFor();
+  // Preserve the exact fixture goal so run identity and concurrent steering stay testable.
+  await objective.fill(goal);
+  // The proposed brief is already prevalidated. Editing any field must invalidate
+  // that digest and require an explicit new server-side preview.
+  await review.getByRole("textbox", { name: "Task constraints", exact: true })
+    .fill("Keep the document concise.");
+  assert.equal(await review.getByText(/^Validated preview:/).count(), 0,
+    "Editing the brief must invalidate its previous digest.");
+  await review.getByRole("button", { name: "Validate task preview", exact: true }).click();
+  await review.getByText(/^Validated preview: [0-9a-f]{12}…$/).waitFor();
+  const before = await getJson(page, "/runs");
+  assert.equal(before.runs.filter(run => run.goal === goal).length, 0,
+    "Reviewing a task must not admit an Agent run.");
+  await review.getByRole("button", { name: "Confirm and start reviewed task", exact: true }).click();
+  await waitFor(async () => {
+    const snapshot = await getJson(page, "/runs");
+    return snapshot.runs.filter(run => run.goal === goal).length === 1;
+  }, `exactly one admitted Agent run for ${goal}`);
 }
-
 
 export async function verifyConversationAgentContinuity(page) {
   const taskA = "E2E Task A: Create a concise project document about the first milestone.";
@@ -78,7 +79,7 @@ export async function verifyConversationAgentContinuity(page) {
     let runs = await getJson(page, "/runs");
     assert.equal(runs.runs.filter(run => run.goal === taskA).length, 0);
 
-    await startReviewedAgentTask(page, taskA);
+    await startReviewedTask(page, taskA);
     await page.getByRole("button", { name: "Steer Agent task", exact: true }).first().waitFor();
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
@@ -89,14 +90,14 @@ export async function verifyConversationAgentContinuity(page) {
     await composer.fill(taskB);
     await page.locator(".rukh-design-send").click();
     await conversationMessage(taskB).waitFor();
-    await startReviewedAgentTask(page, taskB);
+    await startReviewedTask(page, taskB);
 
     // A third task demonstrates bounded, configurable concurrency rather than
     // accidentally coupling every run to one conversation-wide execution slot.
     await composer.fill(taskC);
     await page.locator(".rukh-design-send").click();
     await conversationMessage(taskC).waitFor();
-    await startReviewedAgentTask(page, taskC);
+    await startReviewedTask(page, taskC);
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
       return calls.calls.filter(call => call.goal === taskA || call.goal === taskB || call.goal === taskC).length === 3;

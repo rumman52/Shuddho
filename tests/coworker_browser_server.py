@@ -34,6 +34,7 @@ from services.coworker.container import Container
 from services.coworker.drafting import DraftResult
 from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentPlannerProposal, AgentV3Decision
+from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion
 from services.coworker.migrate import upgrade
 from services.coworker.runner import DocumentRunner
 from services.coworker.models import AgentRun
@@ -69,6 +70,7 @@ container.repository.settings = settings
 container.projects.settings = settings
 container.conversations.settings = settings
 container.conversation_replies.settings = settings
+container.conversation_task_briefs.settings = settings
 container.actions.repo.settings = settings
 container.agent.settings = settings
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -106,6 +108,23 @@ class BrowserChatModel:
 
 chat_model = BrowserChatModel()
 container.conversation_replies.model = chat_model
+
+
+class BrowserTaskBriefPlanner:
+    """Deterministic inert brief suggestion for real HTTP preview/dispatch tests."""
+
+    async def propose_task_brief(self, history, source_ids):
+        assert history and set(history[-1]["source_ids"]).issubset(set(source_ids))
+        return TaskBriefSuggestion(state="ready", brief=TaskBrief(
+            objective=history[-1]["text"],
+            deliverables=["Concise project document"],
+            constraints=[],
+            source_ids=history[-1]["source_ids"],
+            output_language="auto",
+        )), 24
+
+
+container.conversation_task_briefs.model = BrowserTaskBriefPlanner()
 
 
 class BrowserModel(FakeModel):
@@ -260,6 +279,7 @@ def _set_agent_runtime_v3(enabled: bool):
     services = (
         container.repository, container.projects, container.conversations,
         container.conversation_replies, container.conversation_dispatch,
+        container.conversation_task_briefs,
         container.agent, getattr(container, "context", None),
         getattr(container, "memory", None),
     )
