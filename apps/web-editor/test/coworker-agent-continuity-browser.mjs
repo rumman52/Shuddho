@@ -32,8 +32,9 @@ async function startReviewedTask(page, objective) {
   await objectiveField.waitFor();
   assert.equal(await objectiveField.inputValue(), objective);
 
-  // Editing even an unchanged objective invalidates the suggested digest.
-  // A separate authoritative preview and explicit confirmation are required.
+  // A real edit must invalidate the suggested digest; restore the exact
+  // objective before the authoritative preview and explicit confirmation.
+  await objectiveField.fill(`${objective} Reviewed`);
   await objectiveField.fill(objective);
   await review.getByRole("button", { name: "Validate task preview", exact: true }).click();
   const confirm = review.getByRole("button", { name: "Confirm and start reviewed task", exact: true });
