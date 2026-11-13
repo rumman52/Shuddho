@@ -58,6 +58,25 @@ def test_canonical_preview_digest_changes_on_edit(container):
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=changed)["canonical_digest"] != first["canonical_digest"]
 
 
+def test_review_and_repreview_never_dispatch_before_explicit_confirmation(container):
+    """An editable task brief and even a valid digest do not authorize an AgentRun."""
+    owner, conversation, messages, service, dispatch = setup(container, "review-not-admission")
+    item = append(messages, owner, conversation, "Draft a sales report.", "review-msg")
+    original = brief()
+    first = service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=original)
+    changed = original.model_copy(update={"objective": "Draft a revised sales report"})
+    revised = service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=changed)
+    assert first["state"] == revised["state"] == "ready"
+    assert first["canonical_digest"] != revised["canonical_digest"]
+    with pytest.raises(CoworkerError):
+        dispatch.dispatch(owner, conversation["id"], item["id"], expected_sequence=1,
+                          output_language="en-GB", reviewed_brief=changed,
+                          expected_digest=first["canonical_digest"])
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
+
+
 def test_ambiguous_second_option_asks_for_input(container):
     owner, conversation, messages, service, _ = setup(container, "ambiguous")
     item = append(messages, owner, conversation, "Use the second option, please.", "msg-one")
