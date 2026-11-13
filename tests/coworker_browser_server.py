@@ -110,6 +110,23 @@ chat_model = BrowserChatModel()
 container.conversation_replies.model = chat_model
 
 
+class BrowserTaskBriefPlanner:
+    """Deterministic inert brief suggestion for real HTTP preview/dispatch tests."""
+
+    async def propose_task_brief(self, history, source_ids):
+        assert history and set(history[-1]["source_ids"]).issubset(set(source_ids))
+        return TaskBriefSuggestion(state="ready", brief=TaskBrief(
+            objective=history[-1]["text"],
+            deliverables=["Concise project document"],
+            constraints=[],
+            source_ids=history[-1]["source_ids"],
+            output_language="auto",
+        )), 24
+
+
+container.conversation_task_briefs.model = BrowserTaskBriefPlanner()
+
+
 class BrowserModel(FakeModel):
     def messages(self, task, sources):
         return [{"role": "user", "content": json.dumps({
@@ -130,27 +147,6 @@ class BrowserModel(FakeModel):
         else:
             value = work_draft(skill_id, language, sorted(source_ids))
         return DraftResult(value, 180, 2000)
-
-
-class BrowserTaskBriefPlanner:
-    """Deterministic inert task proposals for the real reviewed-admission UI path."""
-
-    async def propose_task_brief(self, history, source_ids):
-        assert history
-        selected = [item for item in history[-1]["source_ids"] if item in source_ids]
-        return TaskBriefSuggestion(
-            state="ready",
-            brief=TaskBrief(
-                objective=history[-1]["text"],
-                deliverables=["Concise project document"],
-                constraints=[],
-                source_ids=selected,
-                output_language="auto",
-            ),
-        ), 42
-
-
-container.conversation_task_briefs.model = BrowserTaskBriefPlanner()
 
 
 class BrowserAgentPlanner:

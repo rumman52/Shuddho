@@ -25,29 +25,31 @@ async function waitFor(check, description, timeoutMs = 15000) {
   throw new Error(`Timed out waiting for ${description}. Last value: ${JSON.stringify(lastValue)}`);
 }
 
-async function startReviewedTask(page, objective) {
+// The Day 4 admission boundary is review -> validated digest -> explicit confirmation.
+// A preview alone must not launch an Agent run.
+async function startReviewedTask(page, goal) {
   await page.getByRole("button", { name: "Start task", exact: true }).click();
   const review = page.getByRole("region", { name: "Review task brief", exact: true });
-  const objectiveField = review.getByRole("textbox", { name: "Task objective", exact: true });
-  await objectiveField.waitFor();
-  assert.equal(await objectiveField.inputValue(), objective);
-
-  // A real edit must invalidate the suggested digest; restore the exact
-  // objective before the authoritative preview and explicit confirmation.
-  await objectiveField.fill(`${objective} Reviewed`);
-  await objectiveField.fill(objective);
+  const objective = review.getByRole("textbox", { name: "Task objective", exact: true });
+  await objective.waitFor();
+  // Preserve the exact fixture goal so run identity and concurrent steering stay testable.
+  await objective.fill(goal);
+  // The proposed brief is already prevalidated. Editing any field must invalidate
+  // that digest and require an explicit new server-side preview.
+  await review.getByRole("textbox", { name: "Task constraints", exact: true })
+    .fill("Keep the document concise.");
+  assert.equal(await review.getByText(/^Validated preview:/).count(), 0,
+    "Editing the brief must invalidate its previous digest.");
   await review.getByRole("button", { name: "Validate task preview", exact: true }).click();
-  const confirm = review.getByRole("button", { name: "Confirm and start reviewed task", exact: true });
-  await confirm.waitFor();
-  const priorRuns = await getJson(page, "/runs");
-  assert.equal(priorRuns.runs.some(run => run.goal === objective), false,
-    "Preview must not authorize Agent execution");
-  await confirm.click();
-
-  // Wait for the link on this exact turn; older Agent links do not count.
-  const turn = page.getByLabel("Conversation messages", { exact: true })
-    .getByText(objective, { exact: true }).locator("xpath=ancestor::li");
-  await turn.getByRole("button", { name: "View Agent run", exact: true }).waitFor();
+  await review.getByText(/^Validated preview: [0-9a-f]{12}…$/).waitFor();
+  const before = await getJson(page, "/runs");
+  assert.equal(before.runs.filter(run => run.goal === goal).length, 0,
+    "Reviewing a task must not admit an Agent run.");
+  await review.getByRole("button", { name: "Confirm and start reviewed task", exact: true }).click();
+  await waitFor(async () => {
+    const snapshot = await getJson(page, "/runs");
+    return snapshot.runs.filter(run => run.goal === goal).length === 1;
+  }, `exactly one admitted Agent run for ${goal}`);
 }
 
 export async function verifyConversationAgentContinuity(page) {

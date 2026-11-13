@@ -69,7 +69,13 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
         value = first.get(field)
         require(isinstance(value, str) and bool(value.strip()),
                 f"Evidence must have a nonblank {field}.")
-    identity = ("release", "owner_id", "automation_id", "synthetic_account_label")
+    goal_id = first.get("goal_id")
+    goal_revision = first.get("goal_revision")
+    require(isinstance(goal_id, str) and bool(goal_id.strip())
+            and type(goal_revision) is int and goal_revision >= 1,
+            "Daily briefing must identify one owner-approved goal and revision.")
+    identity = ("release", "owner_id", "automation_id", "synthetic_account_label",
+                "goal_id", "goal_revision", "authorized_document_ids")
     schedule_identity = ("timezone", "schedule", "automation_revision", "run_profile",
                          "output_language", "quiet_hours")
     for index, item in enumerate((first, second), start=1):
@@ -142,7 +148,10 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
         require(first.get(field) != second.get(field), f"Both days reused {field}.")
     docs_first = strings(first.get("document_ids"), "Day 7 source documents")
     docs_second = strings(second.get("document_ids"), "Day 8 source documents")
-    require(set(docs_first) == set(docs_second), "The authorized document set changed between days.")
+    approved = strings(first.get("authorized_document_ids"), "Owner-approved goal document scope")
+    require(len(approved) <= 5 and set(docs_first) == set(docs_second) == set(approved)
+            and len(docs_first) == len(approved),
+            "Both daily Agent runs must use exactly the owner-approved goal documents.")
     pins_first = strings(first.get("input_version_ids"), "Day 7 immutable source pins")
     pins_second = strings(second.get("input_version_ids"), "Day 8 immutable source pins")
     require(len(pins_first) == len(docs_first) == len(pins_second),

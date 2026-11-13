@@ -154,9 +154,16 @@ the candidate may not lose any previously accepted baseline task even if it
 gains a different task in the same workflow/language cell. Within each profile,
 accepted tasks must have distinct artifact references and strictly positive
 measured input/output tokens and model duration; missing values remain null
-and block the freeze. These checks detect inconsistent operator evidence but
-do not independently authenticate provider receipts or human judgments.
+and block the freeze. Distinct accepted tasks also require distinct
+human-review outcome references; reusing one receipt across tasks fails closed.
+These checks detect inconsistent operator evidence but do not independently
+authenticate provider receipts or human judgments.
 BLOCKED means no freeze; unknown cost never becomes zero savings.
+A measured cost difference is **not qualified savings** unless both profiles
+meet the acceptance and all-task safety gates and the candidate retains every
+baseline-accepted task; an unsafe candidate is excluded with an explicit
+reason even if its token bill is lower. An otherwise eligible baseline may
+still be selected. Code cannot certify external provider usage or reviewer sign-off.
 The access-controlled comparison JSON also keeps all 40 matched per-task input/output
 usage values, model/tool durations, retries, costs, artifact/review references,
 and conditional savings, alongside aggregate results; no per-task content enters
