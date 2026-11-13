@@ -36,10 +36,15 @@ async function startReviewedAgentTask(page, goal) {
   const pending = await getJson(page, "/runs");
   assert.equal(pending.runs.filter(run => run.goal === goal).length, 0,
     "Opening review must not dispatch Agent work");
-  // The fixture's deterministic proposal comes prevalidated. The user must
-  // still explicitly confirm it; a real provider is never contacted here.
+  // A proposed brief may be prevalidated; an offline provider may instead
+  // offer a manual brief. Both paths require an exact reviewed digest and an
+  // explicit user confirmation before the real Temporal-backed dispatch.
+  const validate = review.getByRole("button", { name: "Validate task preview", exact: true });
+  const confirm = review.getByRole("button", { name: "Confirm and start reviewed task", exact: true });
+  await review.getByRole("button", { name: /^(Validate task preview|Confirm and start reviewed task)$/ }).waitFor();
+  if (await validate.isVisible()) await validate.click();
   await review.getByText(/Validated preview:/).waitFor();
-  await review.getByRole("button", { name: "Confirm and start reviewed task", exact: true }).click();
+  await confirm.click();
 }
 
 
