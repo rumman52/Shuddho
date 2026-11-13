@@ -588,6 +588,25 @@ jobs:
             uv run --extra coworker python -m scripts.mandatory_test_gate \
               /tmp/priority4-postgres18.xml --required-module "$module"
           done
+  # Defense in depth: a synthetic PR merge checkout can hide an out-of-date
+  # source head. Validate the actual head against the target base SHA.
+  pr-base-ancestry:
+    name: PR head ancestry
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Reject stale PR heads before merge approval
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python -m scripts.pr_base_ancestry --base-sha "$PR_BASE_SHA" --head-sha "$PR_HEAD_SHA"
+
   ci-merge-gate:
     name: ci-merge-gate
     if: always()
@@ -598,6 +617,7 @@ jobs:
       - browser-qualification
       - postgres-18-qualification
       - governance-audit
+      - pr-base-ancestry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -610,6 +630,7 @@ jobs:
           POSTGRES18_RESULT: ${{ needs['postgres-18-qualification'].result }}
           GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}
           CI_EVENT_NAME: ${{ github.event_name }}
+          PR_ANCESTRY_RESULT: ${{ needs['pr-base-ancestry'].result }}
         run: |
           echo "test-and-build=$TEST_AND_BUILD_RESULT"
           echo "frontend=$FRONTEND_RESULT"
@@ -629,6 +650,10 @@ jobs:
               fi
               ;;
             pull_request|pull_request_review)
+              if [ "$PR_ANCESTRY_RESULT" != "success" ]; then
+                echo "CI merge gate failed: PR head does not include the target branch commit."
+                exit 1
+              fi
               # The read-only audit is push-only. Never give PR code an admin
               # credential to inspect hidden ruleset bypass settings.
               if [ "$GOVERNANCE_AUDIT_RESULT" != "skipped" ] && [ "$GOVERNANCE_AUDIT_RESULT" != "success" ]; then

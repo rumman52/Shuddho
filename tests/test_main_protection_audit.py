@@ -172,10 +172,12 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     assert "      - browser-qualification\n" in needs
     assert "      - postgres-18-qualification\n" in needs
     assert "      - governance-audit\n" in needs
+    assert "      - pr-base-ancestry\n" in needs
     assert "FRONTEND_RESULT: ${{ needs.frontend.result }}" in gate
     assert "BROWSER_QUALIFICATION_RESULT: ${{ needs['browser-qualification'].result }}" in gate
     assert "POSTGRES18_RESULT: ${{ needs['postgres-18-qualification'].result }}" in gate
     assert "GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}" in gate
+    assert "PR_ANCESTRY_RESULT: ${{ needs[\'pr-base-ancestry\'].result }}" in gate
     assert "continue-on-error" not in gate
     assert "python -m scripts.independent_review_gate" in gate
 
@@ -187,7 +189,7 @@ def _run_ci_result_gate(results: dict[str, str]) -> subprocess.CompletedProcess:
     body = step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
     return subprocess.run(
         ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", textwrap.dedent(body)],
-        env={**os.environ, "CI_EVENT_NAME": "push", "POSTGRES18_RESULT": "success", **results}, text=True, capture_output=True, timeout=5,
+        env={**os.environ, "CI_EVENT_NAME": "push", "POSTGRES18_RESULT": "success", "PR_ANCESTRY_RESULT": "success", **results}, text=True, capture_output=True, timeout=5,
     )
 
 
@@ -228,6 +230,22 @@ def test_pr_gate_preserves_expected_audit_skip_before_independent_review(event):
         "GOVERNANCE_AUDIT_RESULT": "skipped",
     })
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize("event", ["pull_request", "pull_request_review"])
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_pr_gate_rejects_unsuccessful_head_ancestry(event, result):
+    completed = _run_ci_result_gate({
+        "CI_EVENT_NAME": event,
+        "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": "success",
+        "COWORKER_RESULT": "success",
+        "BROWSER_QUALIFICATION_RESULT": "success",
+        "GOVERNANCE_AUDIT_RESULT": "skipped",
+        "PR_ANCESTRY_RESULT": result,
+    })
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    assert "PR head does not include" in completed.stdout
 
 
 @pytest.mark.parametrize("event", ["pull_request", "pull_request_review"])
