@@ -1814,6 +1814,7 @@ class AgentRun(Base):
     input_versions: Mapped[list[str]] = mapped_column(JSON, default=list)
     input_artifacts: Mapped[list[str]] = mapped_column(JSON, default=list)
     project_context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    reviewed_brief: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     steering_revision: Mapped[int] = mapped_column(Integer, default=0)
     steering_instructions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     action_ids: Mapped[list[str]] = mapped_column(JSON, default=list)

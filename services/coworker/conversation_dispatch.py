@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from datetime import timedelta
 from pathlib import PurePath
 from uuid import uuid4
@@ -17,12 +18,17 @@ from .agent_repository import ACTIVE_RUN_STATES
 from .agent_router import qualify_agent_goal
 from .agent_schemas import AgentRunCreate
 from .conversation_context import require_current_selected_sources
+from .conversation_task_briefs import ConversationTaskBriefService
+from .task_brief_schemas import TaskBrief
 from .errors import CoworkerError
 from .models import (
     Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, Conversation,
     ConversationMessage, Project, ProjectResource, Workspace, utcnow,
 )
 from .repository import iso, not_found
+
+
+_SQLITE_DISPATCH_LOCK = threading.Lock()
 
 
 class ConversationDispatchService:
@@ -65,7 +71,7 @@ class ConversationDispatchService:
         return row
 
     @staticmethod
-    def _dispatch_fingerprint(request: AgentRunCreate, selected_sources: list[dict], project_context: dict) -> str:
+    def _dispatch_fingerprint(request: AgentRunCreate, selected_sources: list[dict], project_context: dict, reviewed_digest: str | None = None) -> str:
         sources = [{
             "resource_type": item.get("resource_type"),
             "resource_id": item.get("resource_id"),
@@ -78,6 +84,8 @@ class ConversationDispatchService:
             "selected_sources": sources,
             "project_context": project_context or {},
         }
+        if reviewed_digest is not None:
+            payload["reviewed_digest"] = reviewed_digest
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     def _project_snapshot(self, db, owner: str, conversation_id: str, project_id: str | None) -> dict:
@@ -106,11 +114,28 @@ class ConversationDispatchService:
         }
 
     def dispatch(self, owner: str, conversation_id: str, message_id: str, *, expected_sequence: int,
-                 output_language: str = "auto", project_id: str | None = None) -> tuple[dict, bool]:
+                 output_language: str = "auto", project_id: str | None = None,
+                 reviewed_brief: TaskBrief | None = None,
+                 expected_digest: str | None = None) -> tuple[dict, bool]:
+        """Emulate the Postgres owner-row lock for SQLite integration tests."""
+        kwargs = dict(expected_sequence=expected_sequence, output_language=output_language,
+                      project_id=project_id, reviewed_brief=reviewed_brief, expected_digest=expected_digest)
+        bind = self.sessions.kw.get("bind")
+        if bind is not None and bind.dialect.name == "sqlite":
+            with _SQLITE_DISPATCH_LOCK:
+                return self._dispatch_once(owner, conversation_id, message_id, **kwargs)
+        return self._dispatch_once(owner, conversation_id, message_id, **kwargs)
+
+    def _dispatch_once(self, owner: str, conversation_id: str, message_id: str, *, expected_sequence: int,
+                 output_language: str = "auto", project_id: str | None = None,
+                 reviewed_brief: TaskBrief | None = None,
+                 expected_digest: str | None = None) -> tuple[dict, bool]:
         """Commit message link, run, initial event/checkpoint and outbox together."""
         self._enabled()
         if expected_sequence < 1:
             raise CoworkerError("conversation_revision_conflict", "Reload the latest messages.", 409)
+        if (reviewed_brief is None) != (expected_digest is None):
+            raise CoworkerError("task_brief_digest_required", "Review the task brief before admission.", 422)
         with self.sessions.begin() as db:
             self._lock_account(db, owner)
             conversation = self._conversation(db, owner, conversation_id)
@@ -124,7 +149,23 @@ class ConversationDispatchService:
                 ))
                 if run is None:
                     raise CoworkerError("conversation_run_missing", "The linked run is unavailable.", 409)
-                replay_request = AgentRunCreate(goal=message.text, output_language=output_language)
+                reviewed_snapshot = dict(run.reviewed_brief or {})
+                if bool(reviewed_snapshot) != bool(reviewed_brief):
+                    raise CoworkerError("idempotency_conflict",
+                                        "This message was already started with different run options.", 409)
+                if reviewed_brief is not None:
+                    if output_language not in {"auto", reviewed_brief.output_language}:
+                        raise CoworkerError("idempotency_conflict", "Output language changed.", 409)
+                    preview = ConversationTaskBriefService.validate_in_session(
+                        db, self.settings, owner, conversation_id, message_id,
+                        expected_sequence, reviewed_brief, project_id)
+                    if (preview["canonical_digest"] != expected_digest
+                            or reviewed_snapshot.get("canonical_digest") != expected_digest):
+                        raise CoworkerError("idempotency_conflict", "Reviewed brief or sources changed.", 409)
+                    replay_request = AgentRunCreate(
+                        goal=reviewed_brief.objective, output_language=reviewed_brief.output_language)
+                else:
+                    replay_request = AgentRunCreate(goal=message.text, output_language=output_language)
                 saved_project_context = dict(run.project_context or {})
                 requested_project_id = saved_project_context.get("project_id")
                 if (str(project_id) if project_id is not None else None) != requested_project_id:
@@ -132,13 +173,15 @@ class ConversationDispatchService:
                         "idempotency_conflict", "This message was dispatched with different project context.", 409,
                     )
                 fingerprint = self._dispatch_fingerprint(
-                    replay_request, message.selected_sources or [], saved_project_context,
+                    replay_request,
+                    preview["selected_sources"] if reviewed_brief is not None else message.selected_sources or [],
+                    saved_project_context, reviewed_digest=expected_digest,
                 )
                 legacy_fingerprint = hashlib.sha256(json.dumps(
                     replay_request.model_dump(mode="json"), sort_keys=True,
                 ).encode()).hexdigest()
                 if run.fingerprint != fingerprint and not (
-                    run.fingerprint == legacy_fingerprint
+                    reviewed_brief is None and run.fingerprint == legacy_fingerprint
                     and not saved_project_context
                     and not list(getattr(run, "input_artifacts", []) or [])
                 ):
@@ -151,9 +194,25 @@ class ConversationDispatchService:
                 raise CoworkerError(
                     "conversation_revision_conflict", "The conversation changed. Review the latest message.", 409,
                 )
-            if len(message.text) > 4000 or len(message.text) < 3:
+            if reviewed_brief is not None:
+                preview = ConversationTaskBriefService.validate_in_session(
+                    db, self.settings, owner, conversation_id, message_id,
+                    expected_sequence, reviewed_brief, project_id)
+                if preview["canonical_digest"] != expected_digest:
+                    raise CoworkerError("task_brief_digest_mismatch", "Brief changed. Preview it again.", 409)
+                if output_language not in {"auto", reviewed_brief.output_language}:
+                    raise CoworkerError("task_brief_language_mismatch", "Output language mismatch.", 409)
+                goal = reviewed_brief.objective
+                selected_source_pins = preview["selected_sources"]
+            else:
+                goal = message.text
+                selected_source_pins = message.selected_sources or []
+            if len(goal) > 4000 or len(goal) < 3:
                 raise CoworkerError("conversation_goal_invalid", "Use a task brief of 3 to 4000 characters.", 422)
-            request = AgentRunCreate(goal=message.text, output_language=output_language)
+            request = AgentRunCreate(
+                goal=goal,
+                output_language=reviewed_brief.output_language if reviewed_brief is not None else output_language,
+            )
             decision = qualify_agent_goal(request.goal, self.settings, has_attached_actions=False)
             if decision.execution != "agent_run" or decision.consequential or not decision.capability_available:
                 raise CoworkerError(
@@ -161,7 +220,7 @@ class ConversationDispatchService:
                     "This request needs another explicit workflow; chat does not approve external actions.",
                     409,
                 )
-            pins = require_current_selected_sources(db, owner, message.selected_sources or [])
+            pins = require_current_selected_sources(db, owner, selected_source_pins)
             if len(pins) > 5:
                 raise CoworkerError("conversation_source_limit", "Select at most five sources.", 409)
             document_pins = [pin for pin in pins if pin["resource_type"] == "document_version"]
@@ -193,6 +252,8 @@ class ConversationDispatchService:
                             409,
                         )
             project_context = self._project_snapshot(db, owner, conversation_id, project_id)
+            if reviewed_brief is not None and project_context != preview["project_context"]:
+                raise CoworkerError("task_brief_digest_mismatch", "Project context changed.", 409)
             if db.scalar(select(func.count()).select_from(AgentRun).where(
                 AgentRun.owner_id == owner, AgentRun.state.in_(ACTIVE_RUN_STATES),
             )) >= self.settings.max_active_agent_runs:
@@ -203,7 +264,7 @@ class ConversationDispatchService:
             # AgentRepository.create uses the same owner lock and run/outbox contracts.
             # This method does not open a second transaction or invoke that method.
             run_id = str(uuid4())
-            fingerprint = self._dispatch_fingerprint(request, pins, project_context)
+            fingerprint = self._dispatch_fingerprint(request, pins, project_context, reviewed_digest=expected_digest)
             now = utcnow()
             run = AgentRun(
                 id=run_id, owner_id=owner, workspace_id=workspace_id,
@@ -212,6 +273,11 @@ class ConversationDispatchService:
                 input_versions=[pin["resource_id"] for pin in document_pins],
                 input_artifacts=[pin["resource_id"] for pin in artifact_pins],
                 project_context=project_context,
+                reviewed_brief=({
+                    "schema_version": 1, "brief": reviewed_brief.model_dump(mode="json"),
+                    "source_pins": pins, "canonical_digest": expected_digest,
+                    "message_sequence": expected_sequence,
+                } if reviewed_brief is not None else {}),
                 steering_revision=0, steering_instructions=[],
                 action_ids=[], memory_namespaces=[], connector_read_grant_ids=[],
                 connector_snapshot_ids=[], tool_allowlist=[],

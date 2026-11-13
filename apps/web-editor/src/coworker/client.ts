@@ -498,6 +498,16 @@ export type ConversationRecord = {
   id: string; title: string; message_sequence: number; created_at: string; updated_at: string;
 };
 export type AssistantReply = { state: "generating" | "completed" | "failed" | "interrupted"; text: string; error?: string | null; context_truncated?: boolean; started_at?: string; completed_at?: string };
+export type TaskBrief = {
+  objective: string; constraints: string[]; deliverables: string[];
+  source_ids: string[]; output_language: string;
+};
+export type TaskBriefPreview = {
+  state: "ready" | "needs_input"; brief: TaskBrief | null;
+  canonical_digest: string | null; question?: string | null;
+  selected_sources?: Array<Record<string, unknown>>;
+  project_context?: Record<string, unknown>;
+};
 export type ConversationMessageRecord = {
   assistant_reply?: AssistantReply | null;
   id: string; conversation_id: string; sequence: number; text: string;
@@ -766,13 +776,32 @@ export class CoworkerClient {
       body: JSON.stringify({ text, client_request_key: key, selected_resource_ids: selectedResourceIds }),
     });
   }
-  dispatchConversationMessage(id: string, messageId: string, sequence: number, projectId?: string | null) {
+  proposeConversationTaskBrief(id: string, messageId: string, sequence: number, projectId?: string | null) {
+    return this.json<TaskBriefPreview>(
+      "/api/v1/conversations/" + identifier(id) + "/messages/" + identifier(messageId) + "/task-brief/propose", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_sequence: sequence,
+          ...(projectId ? { project_id: identifier(projectId) } : {}) }),
+      });
+  }
+  previewConversationTaskBrief(id: string, messageId: string, sequence: number, brief: TaskBrief, projectId?: string | null) {
+    return this.json<TaskBriefPreview>(
+      "/api/v1/conversations/" + identifier(id) + "/messages/" + identifier(messageId) + "/task-brief/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_sequence: sequence, brief,
+          ...(projectId ? { project_id: identifier(projectId) } : {}) }),
+      });
+  }
+  dispatchConversationMessage(id: string, messageId: string, sequence: number, projectId?: string | null,
+                              reviewedBrief?: TaskBrief, canonicalDigest?: string) {
     return this.json<{ run_id: string; state: string; replayed: boolean }>(
-      `/api/v1/conversations/${identifier(id)}/messages/${identifier(messageId)}/dispatch`, {
+      "/api/v1/conversations/" + identifier(id) + "/messages/" + identifier(messageId) + "/dispatch", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          expected_sequence: sequence, output_language: "auto",
+          expected_sequence: sequence,
+          output_language: reviewedBrief?.output_language ?? "auto",
           ...(projectId ? { project_id: identifier(projectId) } : {}),
+          ...(reviewedBrief && canonicalDigest ? { reviewed_brief: reviewedBrief, expected_digest: canonicalDigest } : {}),
         }),
       });
   }

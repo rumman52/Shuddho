@@ -40,6 +40,7 @@ from .project_repository import ProjectRepository
 from .conversation_repository import ConversationRepository
 from .conversation_replies import ConversationReplyService
 from .conversation_dispatch import ConversationDispatchService
+from .conversation_task_briefs import ConversationTaskBriefService
 from .workspace_manifest import WorkspaceManifestService
 from .fly_workspace import FlyWorkspaceService
 from .fly_code import FlyCodeService
@@ -78,6 +79,7 @@ class Container:
     conversations: ConversationRepository | None = None
     conversation_replies: ConversationReplyService | None = None
     conversation_dispatch: ConversationDispatchService | None = None
+    conversation_task_briefs: ConversationTaskBriefService | None = None
     workspace_manifest: WorkspaceManifestService | None = None
     fly_workspace: FlyWorkspaceService | None = None
     fly_code: FlyCodeService | None = None
@@ -134,6 +136,8 @@ class Container:
             )
         if self.agent is None:
             self.agent = AgentRepository(self.repository.sessions, self.settings)
+        if self.conversation_task_briefs is None:
+            self.conversation_task_briefs = ConversationTaskBriefService(self.repository.sessions, self.settings)
         if self.conversation_dispatch is None:
             self.conversation_dispatch = ConversationDispatchService(self.repository.sessions, self.settings, self.agent)
         if self.goals is None:
