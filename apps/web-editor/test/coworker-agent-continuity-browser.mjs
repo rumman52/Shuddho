@@ -45,6 +45,9 @@ async function startReviewedAgentTask(page, goal) {
   if (await validate.isVisible()) await validate.click();
   await review.getByText(/Validated preview:/).waitFor();
   await confirm.click();
+  // Wait for the server's admitted run to replace the review before the next
+  // message; a queued button click alone is not successful authorization.
+  await review.waitFor({ state: "hidden", timeout: 30000 });
 }
 
 
