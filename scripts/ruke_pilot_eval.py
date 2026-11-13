@@ -310,9 +310,18 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
         results.append({"case_id": cid, "cell": cell, "score": sum(ratings.values()), "accepted": accepted,
                         "deterministic_pass": deterministic_ok, "source_supported": chosen["source_supported"]})
     accepted = sum(r["accepted"] for r in results)
-    gate = accepted >= 36 and all(x["total"] == 10 and x["accepted"] >= 9 for x in per_cell.values())
+    # A deterministic security violation is never an acceptable quality miss:
+    # the 36/40 tolerance applies to task quality, not owner/safety boundaries.
+    security_failed_cases = sorted(cid for cid, check in checks.items() if not check["security_passed"])
+    security_gate_pass = not security_failed_cases
+    quality_gate_pass = accepted >= 36 and all(
+        x["total"] == 10 and x["accepted"] >= 9 for x in per_cell.values()
+    )
     return {"accepted": accepted, "total": 40, "by_cell": dict(sorted(per_cell.items())),
-            "outcome_gate_pass": gate, "disagreements_adjudicated": len(pending),
+            "outcome_gate_pass": quality_gate_pass and security_gate_pass,
+            "security_gate_pass": security_gate_pass,
+            "security_failed_cases": security_failed_cases,
+            "disagreements_adjudicated": len(pending),
             "reviewer_count": len(reviewer_set), "results": results}
 
 
