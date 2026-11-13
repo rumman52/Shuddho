@@ -14,7 +14,7 @@ const catalog = [
   { name: "Microsoft 365", provider: "microsoft", capability: "email", icon: "grid", description: "Connect supported Outlook and calendar actions.", supported: true, featured: false },
   { name: "LinkedIn", provider: "linkedin", capability: "social", icon: "globe", description: "Prepare posts for explicit approval.", supported: true, featured: false },
 ];
-export default function PluginsWorkspace({ client, children }: { client: CoworkerClient; children: (onConnectionsChanged: (value: ConnectedAccount[]) => void) => ReactNode }) {
+export default function PluginsWorkspace({ client, children, expandApprovals = false }: { client: CoworkerClient; children: (onConnectionsChanged: (value: ConnectedAccount[]) => void) => ReactNode; expandApprovals?: boolean }) {
   const [connections, setConnections] = useState<ConnectedAccount[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [socialEnabled, setSocialEnabled] = useState(false);
@@ -26,11 +26,12 @@ export default function PluginsWorkspace({ client, children }: { client: Coworke
   const [returningFromOAuth] = useState(() =>
     hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback());
   useEffect(() => {
-    // OAuth is a full-page redirect. Restore the same visible connection
-    // controls on return; leave normal Plugins visits collapsed by default.
-    // Do not control the disclosure after mount: users can close it manually.
-    if (returningFromOAuth && management.current) management.current.open = true;
-  }, [returningFromOAuth]);
+    // OAuth callback or an explicit Agent proposal must expose the approval
+    // preview; otherwise an action is loaded inside a collapsed details region.
+    // Only open on entry. Never control the disclosure after mount: the user
+    // can close it manually, and approval remains a separate explicit step.
+    if ((returningFromOAuth || expandApprovals) && management.current) management.current.open = true;
+  }, [returningFromOAuth, expandApprovals]);
   useEffect(() => {
     const controller = new AbortController();
     client.connections(controller.signal).then(value => { if (!controller.signal.aborted) { setConnections(value.connections); setEnabled(value.enabled); setSocialEnabled(value.social_publishing_enabled); } })
