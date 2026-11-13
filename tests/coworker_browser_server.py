@@ -70,6 +70,7 @@ container.repository.settings = settings
 container.projects.settings = settings
 container.conversations.settings = settings
 container.conversation_replies.settings = settings
+container.conversation_task_briefs.settings = settings
 container.actions.repo.settings = settings
 container.agent.settings = settings
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
