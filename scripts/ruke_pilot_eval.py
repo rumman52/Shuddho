@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
 from services.coworker.schemas import parse_draft, source_references
@@ -55,6 +56,16 @@ OPERATED = {
 
 class EvidenceError(ValueError):
     """Malformed, missing, or non-qualifying evaluation input."""
+
+
+def reviewer_identity(value: object) -> str | None:
+    """Normalize claimed reviewer IDs; this does not attest real independence."""
+    if (not isinstance(value, str) or not value or value != value.strip()
+            or not value.isprintable()):
+        return None
+    # Case and Unicode width variants are not separate human reviewers.
+    identity = unicodedata.normalize("NFKC", value).casefold()
+    return identity if identity.strip() and len(identity) <= 128 else None
 
 
 def sha256(path: Path) -> str:
@@ -261,8 +272,8 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
     for row in reviews:
         if not isinstance(row, dict) or row.get("case_id") not in ids:
             raise EvidenceError("unknown reviewer task")
-        reviewer = row.get("reviewer_id")
-        if not isinstance(reviewer, str) or not reviewer.strip() or reviewer in by_id[row["case_id"]]:
+        reviewer = reviewer_identity(row.get("reviewer_id"))
+        if reviewer is None or reviewer in by_id[row["case_id"]]:
             raise EvidenceError("reviewers must be independent per task")
         scores = row.get("scores")
         if not isinstance(scores, dict) or set(scores) != set(RUBRIC) or any(type(scores[d]) is not int or scores[d] not in (0, 1, 2) for d in RUBRIC):
@@ -278,7 +289,8 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
     pending = {cid for cid, r in by_id.items() if len({(tuple(x["scores"][d] for d in RUBRIC), x["source_supported"]) for x in r.values()}) > 1}
     resolved = _unique_rows(adjudications, "case_id", pending, len(pending))
     for cid, row in resolved.items():
-        if row.get("adjudicator_id") in reviewer_set or not isinstance(row.get("evidence_note"), str) or not row["evidence_note"].strip():
+        adjudicator = reviewer_identity(row.get("adjudicator_id"))
+        if adjudicator is None or adjudicator in reviewer_set or not isinstance(row.get("evidence_note"), str) or not row["evidence_note"].strip():
             raise EvidenceError("separate adjudicator and rationale required")
         if type(row.get("source_supported")) is not bool or not isinstance(row.get("scores"), dict) or set(row["scores"]) != set(RUBRIC):
             raise EvidenceError("bad adjudication")
@@ -368,8 +380,8 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
     ids = {c["case_id"] for c in cases}
     judgments = defaultdict(dict)
     for r in rows:
-        cid, reviewer, order = r.get("case_id"), r.get("reviewer_id"), r.get("position")
-        if cid not in ids or not isinstance(reviewer, str) or not reviewer.strip() or order not in ("AB", "BA"):
+        cid, reviewer, order = r.get("case_id"), reviewer_identity(r.get("reviewer_id")), r.get("position")
+        if cid not in ids or reviewer is None or order not in ("AB", "BA"):
             raise EvidenceError("invalid blinded judgment identity")
         if r.get("preference") not in ("A", "B", "tie") or not isinstance(r.get("evidence_note"), str) or not r["evidence_note"].strip():
             raise EvidenceError("blinded judgment needs preference and evidence")
@@ -399,8 +411,9 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
     adjudications = [] if adjudications is None else adjudications
     resolutions = _unique_rows(adjudications, "case_id", contested, len(adjudications))
     for cid, row in resolutions.items():
-        if (row.get("adjudicator_id") in reviewers or not isinstance(row.get("adjudicator_id"), str)
-                or not row["adjudicator_id"].strip() or row.get("position") not in ("AB", "BA")
+        adjudicator = reviewer_identity(row.get("adjudicator_id"))
+        if (adjudicator is None or adjudicator in reviewers
+                or row.get("position") not in ("AB", "BA")
                 or row.get("preference") not in ("A", "B", "tie")
                 or not isinstance(row.get("evidence_note"), str) or not row["evidence_note"].strip()):
             raise EvidenceError("blind comparative adjudication needs an independent third reviewer and source rationale")
