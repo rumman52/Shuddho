@@ -119,3 +119,105 @@ def test_synthetic_plan_is_two_research_branches_then_document():
         "research.search",
         "document.create",
     ]
+
+
+def _private_recovery_settings():
+    return SimpleNamespace(
+        source_revision="a" * 40,
+        agent_runtime_enabled=True,
+        agent_dependency_graph_enabled=True,
+        agent_parallel_execution_enabled=True,
+        research_services_enabled=True,
+        work_services_enabled=True,
+        max_agent_parallel_steps=2,
+        agent_run_timeout_seconds=60,
+        task_queue="test-staging-queue",
+    )
+
+
+@pytest.mark.parametrize("destination", ["existing", "symlink", "missing_directory"])
+def test_recovery_prepare_rejects_unsafe_state_before_remote_mutation(
+    monkeypatch, tmp_path, destination,
+):
+    import asyncio
+    import json
+
+    from scripts.staging_release_evidence import StagingReleaseEvidenceError
+
+    rollout = tmp_path / "rollout.json"
+    rollout.write_text(json.dumps({"release_id": "synthetic-release"}), encoding="utf-8")
+    state = tmp_path / "state.json"
+    if destination == "existing":
+        state.write_text('{"original":true}', encoding="utf-8")
+    elif destination == "symlink":
+        original = tmp_path / "original.json"
+        original.write_text('{"original":true}', encoding="utf-8")
+        state.symlink_to(original)
+    else:
+        state = tmp_path / "missing" / "state.json"
+
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RECOVERY_EXERCISE", "true")
+    monkeypatch.setattr(
+        recovery, "staging_owner",
+        lambda: pytest.fail("remote owner lookup occurred before private state preflight"),
+    )
+    with pytest.raises(StagingReleaseEvidenceError):
+        asyncio.run(recovery.prepare(_private_recovery_settings(), state, rollout))
+
+    if destination == "existing":
+        assert state.read_text(encoding="utf-8") == '{"original":true}'
+    elif destination == "symlink":
+        assert original.read_text(encoding="utf-8") == '{"original":true}'
+
+
+def test_recovery_prepare_publishes_private_atomic_state(monkeypatch, tmp_path):
+    import asyncio
+    import json
+    import stat
+
+    rollout = tmp_path / "rollout.json"
+    rollout.write_text(json.dumps({"release_id": "synthetic-release"}), encoding="utf-8")
+    state = tmp_path / "state.json"
+    calls = []
+
+    class FakeAgent:
+        def create(self, owner, request, key):
+            calls.append("create")
+            return {"id": "synthetic-run", "created_at": "2026-11-13T00:00:00+00:00"}, True
+
+        def save_plan(self, owner, run_id, plan):
+            calls.append("save_plan")
+            return {"steps": [
+                {"depends_on": []}, {"depends_on": []},
+                {"depends_on": [1, 2]},
+            ]}
+
+        def delivered(self, run_id):
+            calls.append("delivered")
+
+    class FakeSessions:
+        kw = {"bind": SimpleNamespace(dispose=lambda: calls.append("dispose"))}
+
+    async def fake_start(*args, **kwargs):
+        calls.append("start_workflow")
+
+    async def fake_temporal_client(_settings):
+        return SimpleNamespace(start_workflow=fake_start)
+
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RECOVERY_EXERCISE", "true")
+    monkeypatch.setattr(recovery, "staging_owner", lambda: "synthetic-owner")
+    monkeypatch.setattr(
+        recovery.Container, "create",
+        lambda _settings: SimpleNamespace(
+            agent=FakeAgent(), repository=SimpleNamespace(sessions=FakeSessions()),
+        ),
+    )
+    monkeypatch.setattr(recovery, "temporal_client", fake_temporal_client)
+
+    result = asyncio.run(recovery.prepare(_private_recovery_settings(), state, rollout))
+
+    assert result["owner_id"] == "synthetic-owner"
+    assert calls == ["create", "save_plan", "start_workflow", "delivered", "dispose"]
+    assert stat.S_IMODE(state.stat().st_mode) == 0o600
+    assert json.loads(state.read_text(encoding="utf-8"))["run_id"] == "synthetic-run"
+    assert not list(tmp_path.glob(".state.json.*"))
