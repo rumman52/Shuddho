@@ -509,3 +509,37 @@ def test_day8_allows_nonaccepted_failed_tasks_to_lack_verified_artifacts():
     comparison = compare_day8_development(baseline, candidate, suite)
     assert comparison["status"] == "FROZEN_FOR_DAY9"
     assert comparison["profile_summaries"]["baseline"]["human_accepted"] == 36
+
+
+def test_day8_does_not_trade_away_a_previously_accepted_task_for_another():
+    """Per-cell totals cannot hide a regression on a matched frozen task."""
+    suite, baseline, candidate = _day8_fixture()
+    # Both runs still pass 39/40 and the same 9/10 cell gate.
+    baseline["results"][0]["human_accepted"] = False
+    baseline["results"][0]["verified_artifact_refs"] = []
+    baseline["results"][0]["accepted_outcome_ref"] = None
+    candidate["results"][1]["human_accepted"] = False
+    candidate["results"][1]["verified_artifact_refs"] = []
+    candidate["results"][1]["accepted_outcome_ref"] = None
+
+    comparison = compare_day8_development(baseline, candidate, suite)
+    assert comparison["profile_summaries"]["baseline"]["human_accepted"] == 39
+    assert comparison["profile_summaries"]["bounded_context_compact_observations"]["human_accepted"] == 39
+    assert comparison["candidate_quality_retained"] is False
+    assert comparison["selected_least_cost_qualified_profile"] == "baseline"
+    assert comparison["measured_cost_savings_microusd"] is None
+
+
+def test_day8_rejects_reused_artifact_receipt_between_distinct_tasks():
+    suite, baseline, candidate = _day8_fixture()
+    candidate["results"][1]["verified_artifact_refs"] = candidate["results"][0]["verified_artifact_refs"]
+    with pytest.raises(ValueError, match="reused artifact reference"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+@pytest.mark.parametrize("field", ["input_tokens", "output_tokens", "model_time_ms"])
+def test_day8_rejects_zero_model_usage_for_accepted_output(field):
+    suite, baseline, candidate = _day8_fixture()
+    candidate["results"][0][field] = 0
+    with pytest.raises(ValueError, match="accepted outcome has zero"):
+        compare_day8_development(baseline, candidate, suite)
