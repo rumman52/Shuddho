@@ -162,6 +162,48 @@ def release_identity(
     }
 
 
+def load_authorized_daily_scope(client: httpx.Client, token: str, automation: dict) -> dict:
+    """Bind the daily briefing's read scope to the current owner-scoped goal."""
+    goal_id = automation.get("goal_id")
+    revision = automation.get("goal_revision")
+    grants = automation.get("connector_read_grant_ids")
+    if not isinstance(goal_id, str) or not goal_id.strip() or type(revision) is not int or revision < 1:
+        raise ScheduledProfileProbeFailure("Daily briefing automation has no pinned owner goal/revision.")
+    if grants != []:
+        raise ScheduledProfileProbeFailure("Day 7 permits document-only reads, not connector grants.")
+    goal = json_object(client.get(f"/api/v1/goals/{goal_id}", headers=auth(token)),
+                       "owner-approved daily briefing goal")
+    if (goal.get("id") != goal_id or goal.get("revision") != revision
+            or goal.get("state") != "active"):
+        raise ScheduledProfileProbeFailure("Owner-approved goal identity/revision/state changed.")
+    resources = goal.get("authorized_resources")
+    if (not isinstance(resources, list) or not 1 <= len(resources) <= 5
+            or any(not isinstance(resource, dict)
+                   or resource.get("kind") != "document"
+                   or not isinstance(resource.get("reference"), str)
+                   or not resource["reference"].strip() for resource in resources)):
+        raise ScheduledProfileProbeFailure(
+            "Day 7 goal must authorize one to five selected documents only."
+        )
+    documents = [resource["reference"] for resource in resources]
+    if len(set(documents)) != len(documents):
+        raise ScheduledProfileProbeFailure("Owner-approved goal contains duplicate documents.")
+    return {"goal_id": goal_id, "goal_revision": revision,
+            "authorized_document_ids": documents}
+
+
+def require_daily_run_scope(document_ids: object, scope: dict) -> None:
+    """Reject Agent run document reads outside exactly the pinned goal scope."""
+    approved = scope.get("authorized_document_ids")
+    if (not isinstance(document_ids, list) or not document_ids
+            or any(not isinstance(item, str) or not item.strip() for item in document_ids)
+            or len(set(document_ids)) != len(document_ids)
+            or not isinstance(approved, list) or document_ids != approved):
+        raise ScheduledProfileProbeFailure(
+            "Daily briefing Agent run did not use exactly the owner-approved documents."
+        )
+
+
 def load_owned(
     client: httpx.Client,
     token: str,
@@ -202,6 +244,10 @@ def load_owned(
             f"Automation does not match the {scenario} profile/schedule contract."
         )
 
+    daily_scope = (
+        load_authorized_daily_scope(client, token, automation)
+        if scenario == "daily_coworker" else {}
+    )
     history = json_object(
         client.get(f"/api/v1/automations/{automation_id}/history", headers=auth(token)),
         "automation history",
@@ -217,6 +263,7 @@ def load_owned(
     return {
         "owner_id": owner_id,
         "automation": automation,
+        "daily_scope": daily_scope,
         "history": history,
         "notifications": notices,
     }
@@ -247,6 +294,7 @@ def prepare(args: argparse.Namespace) -> dict:
         "run_profile": current["automation"]["run_profile"],
         "output_language": current["automation"]["output_language"],
         "quiet_hours": current["automation"].get("quiet_hours"),
+        **current["daily_scope"],
         "baseline_occurrence_ids": sorted(
             str(item.get("occurrence_id"))
             for item in current["history"]
@@ -297,6 +345,15 @@ def verify(args: argparse.Namespace) -> dict:
                     raise ScheduledProfileProbeFailure(
                         "Synthetic account identity changed during the scenario."
                     )
+                daily_scope = current["daily_scope"] if scenario == "daily_coworker" else {}
+                if scenario == "daily_coworker":
+                    if (not daily_scope
+                            or any(state.get(field) != daily_scope.get(field) for field in (
+                                "goal_id", "goal_revision", "authorized_document_ids"
+                            ))):
+                        raise ScheduledProfileProbeFailure(
+                            "Owner-approved goal or selected document scope changed since preparation."
+                        )
                 if int(current["automation"]["revision"]) != int(state["automation_revision"]):
                     raise ScheduledProfileProbeFailure(
                         "Automation revision changed during the scenario."
@@ -357,7 +414,9 @@ def verify(args: argparse.Namespace) -> dict:
                         raise ScheduledProfileProbeFailure(
                             "Daily briefing Agent run has no complete immutable document-version pins."
                         )
+                    require_daily_run_scope(documents, daily_scope)
                     pin_evidence = {
+                        **daily_scope,
                         "input_version_ids": versions,
                         "document_ids": documents,
                     }
@@ -368,6 +427,9 @@ def verify(args: argparse.Namespace) -> dict:
                                 or prior.get("release") != release
                                 or prior.get("owner_id") != state.get("owner_id")
                                 or prior.get("automation_id") != state.get("automation_id")
+                                or any(prior.get(field) != daily_scope.get(field) for field in (
+                                    "goal_id", "goal_revision", "authorized_document_ids"
+                                ))
                                 or not isinstance(prior.get("input_version_ids"), list)
                                 or not prior["input_version_ids"]):
                             raise ScheduledProfileProbeFailure(
@@ -382,7 +444,8 @@ def verify(args: argparse.Namespace) -> dict:
                         old_versions = prior_run.get("input_version_ids")
                         if (str(prior_run.get("id")) != str(prior["run_id"])
                                 or prior_run.get("state") != "completed"
-                                or old_versions != prior["input_version_ids"]):
+                                or old_versions != prior["input_version_ids"]
+                                or prior_run.get("document_ids") != daily_scope["authorized_document_ids"]):
                             raise ScheduledProfileProbeFailure(
                                 "Original Day 7 document pins were not preserved at Day 8 verification."
                             )
@@ -458,7 +521,16 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         if (current["owner_id"] != state.get("owner_id")
                 or int(current["automation"]["revision"]) != revision):
             raise ScheduledProfileProbeFailure("Owner or revision changed before two-day pause.")
+        daily_scope = current["daily_scope"]
+        if (not daily_scope
+                or any(item.get(field) != daily_scope.get(field)
+                       for item in (state, first, second)
+                       for field in ("goal_id", "goal_revision", "authorized_document_ids"))):
+            raise ScheduledProfileProbeFailure(
+                "Live owner-approved goal scope changed before two-day pause."
+            )
         evidence = {
+            **daily_scope,
             "status": "paused", "release": release,
             "synthetic_account_label": state["synthetic_account_label"],
             "owner_id": state["owner_id"], "automation_id": state["automation_id"],

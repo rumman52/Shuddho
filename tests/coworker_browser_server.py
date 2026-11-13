@@ -34,10 +34,10 @@ from services.coworker.container import Container
 from services.coworker.drafting import DraftResult
 from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentPlannerProposal, AgentV3Decision
+from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion
 from services.coworker.migrate import upgrade
 from services.coworker.runner import DocumentRunner
 from services.coworker.models import AgentRun
-from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion
 
 if os.getenv("SHUDDHO_BROWSER_TESTS") != "true":
     raise RuntimeError("This fixture requires SHUDDHO_BROWSER_TESTS=true")
@@ -108,6 +108,23 @@ class BrowserChatModel:
 
 chat_model = BrowserChatModel()
 container.conversation_replies.model = chat_model
+
+
+class BrowserTaskBriefPlanner:
+    """Deterministic inert brief suggestion for real HTTP preview/dispatch tests."""
+
+    async def propose_task_brief(self, history, source_ids):
+        assert history and set(history[-1]["source_ids"]).issubset(set(source_ids))
+        return TaskBriefSuggestion(state="ready", brief=TaskBrief(
+            objective=history[-1]["text"],
+            deliverables=["Concise project document"],
+            constraints=[],
+            source_ids=history[-1]["source_ids"],
+            output_language="auto",
+        )), 24
+
+
+container.conversation_task_briefs.model = BrowserTaskBriefPlanner()
 
 
 class BrowserModel(FakeModel):
@@ -205,26 +222,6 @@ class BrowserAgentPlanner:
         }), 42, 1
 
 
-class BrowserTaskBriefPlanner:
-    """Deterministic proposal in the local browser fixture; no live model calls."""
-
-    async def propose_task_brief(self, history, source_ids):
-        latest = history[-1]
-        proposal = TaskBriefSuggestion(
-            state="ready",
-            brief=TaskBrief(
-                objective=latest["text"],
-                constraints=[],
-                deliverables=["Concise project document"],
-                source_ids=latest["source_ids"],
-                output_language="auto",
-            ),
-        )
-        return proposal, 42
-
-
-container.conversation_task_briefs.model = BrowserTaskBriefPlanner()
-
 browser_agent_planner = None
 
 
@@ -281,7 +278,8 @@ def _set_agent_runtime_v3(enabled: bool):
     container.settings = updated
     services = (
         container.repository, container.projects, container.conversations,
-        container.conversation_replies, container.conversation_task_briefs, container.conversation_dispatch,
+        container.conversation_replies, container.conversation_dispatch,
+        container.conversation_task_briefs,
         container.agent, getattr(container, "context", None),
         getattr(container, "memory", None),
     )
