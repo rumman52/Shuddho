@@ -179,3 +179,19 @@ def test_staging_script_requires_prior_evidence_option_for_recheck():
         "--output", "day8.json", "--prior-evidence", "day7.json",
     ])
     assert str(parsed.prior_evidence) == "day7.json"
+
+@pytest.mark.parametrize("broken", ["empty_release", "empty_deployment_reference", "blank_synthetic_account", "mismatched_operator_case"])
+def test_two_day_gate_rejects_unbound_staging_evidence(broken):
+    first, second, paused = valid_pair()
+    if broken == "empty_release":
+        first["release"] = second["release"] = paused["release"] = {}
+    elif broken == "empty_deployment_reference":
+        for entry in (first, second, paused):
+            entry["release"]["deployment_reference"] = ""
+    elif broken == "blank_synthetic_account":
+        for entry in (first, second, paused):
+            entry["synthetic_account_label"] = " "
+    else:
+        second["operator_case_reference"] = "UNRELATED-CASE"
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
