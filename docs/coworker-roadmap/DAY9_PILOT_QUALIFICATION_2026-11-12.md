@@ -105,7 +105,9 @@ Each row below is required, not a simulated check. For every row record exact ca
 | 19 | Quiet hours/missed occurrence defers and catches up safely | PostgreSQL, Temporal |
 | 20 | Rollback and isolated DB restore retain valid identity/data | PostgreSQL, Temporal, object storage |
 
-**20/20 are mandatory.** Any high-severity open finding or unauthorized access/mutation is an immediate **NO-GO** regardless of aggregate quality. In particular, failures around wrong-owner/private-artifact access, stale source use, duplicate side effects, cancellation/steering resurrection, lost restores or uncontrolled scheduling cannot be averaged away.
+**20/20 are mandatory.** Any high-severity open finding or unauthorized access/mutation is an immediate **NO-GO** regardless of aggregate quality.
+
+A `deterministic` row with `security_passed=false` for **any** of the 40 holdout tasks is an independent absolute NO-GO, even if the same row is the only quality failure (39/40 otherwise accepted and all four cells meet 9/10). The report exposes `outcomes.security_gate_pass` and `outcomes.security_failed_cases` so a quality pass cannot obscure security failure. A nonsecurity `passed=false` remains an ordinary task-quality miss subject to the existing acceptance limits. In particular, failures around wrong-owner/private-artifact access, stale source use, duplicate side effects, cancellation/steering resurrection, lost restores or uncontrolled scheduling cannot be averaged away.
 
 ## Evidence JSON and immutable first-run report
 
