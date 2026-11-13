@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -50,6 +51,24 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     """Check cross-day pins, local schedule, identity, notices and paused state."""
     require(all(isinstance(x, dict) for x in (first, second, paused)),
             "Expected three JSON evidence objects.")
+    release = first.get("release")
+    require(isinstance(release, dict), "Release identity must be a JSON object.")
+    for field in ("release_id", "source_revision", "environment", "deployment_reference",
+                  "rollout_manifest_sha256", "provider_policy_sha256"):
+        value = release.get(field)
+        require(isinstance(value, str) and bool(value.strip()),
+                f"Release identity is missing {field}.")
+    require(re.fullmatch(r"[0-9a-f]{40}", release["source_revision"]) is not None,
+            "Release identity source revision must be a full lowercase SHA-1.")
+    for field in ("rollout_manifest_sha256", "provider_policy_sha256"):
+        require(re.fullmatch(r"[0-9a-f]{64}", release[field]) is not None,
+                f"Release identity {field} must be a lowercase SHA-256.")
+    require(release["environment"].strip().lower() not in {"prod", "production"},
+            "Day 7 acceptance requires a nonproduction deployment.")
+    for field in ("owner_id", "automation_id", "synthetic_account_label"):
+        value = first.get(field)
+        require(isinstance(value, str) and bool(value.strip()),
+                f"Evidence must have a nonblank {field}.")
     identity = ("release", "owner_id", "automation_id", "synthetic_account_label")
     schedule_identity = ("timezone", "schedule", "automation_revision", "run_profile",
                          "output_language", "quiet_hours")
@@ -67,6 +86,11 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
                 f"Day {index} is missing one-run/two-notice evidence.")
         for field in (*identity, *schedule_identity):
             require(item.get(field) == first.get(field), f"Day {index} changed {field}.")
+    case_reference = first.get("operator_case_reference")
+    require(isinstance(case_reference, str) and bool(case_reference.strip())
+            and second.get("operator_case_reference") == case_reference
+            and paused.get("operator_case_reference") == case_reference,
+            "Both natural-day probes and pause must link the same operator case.")
     for field in identity:
         require(paused.get(field) == first.get(field), f"Pause evidence changed {field}.")
     require(paused.get("status") == "paused"
