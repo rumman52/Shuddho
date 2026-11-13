@@ -21,6 +21,7 @@ from scripts.staging_release_evidence import (
     passed,
     prepared_release_context,
     validate_prepared_release_context,
+    write_private_json,
 )
 from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
@@ -49,6 +50,19 @@ def parse_utc(value: str) -> datetime:
     if result.tzinfo is None:
         raise RecoveryFailure("Restart time must include a timezone.")
     return result.astimezone(timezone.utc)
+
+
+def _preflight_private_state(path: Path) -> None:
+    """Fail before staging mutations if private evidence cannot be published safely."""
+    if path.exists() or path.is_symlink():
+        raise StagingReleaseEvidenceError("Refusing to overwrite existing private evidence file.")
+    if not path.parent.is_dir():
+        raise StagingReleaseEvidenceError("Private evidence directory does not exist.")
+    probe = path.parent / f".{path.name}.{uuid.uuid4().hex}.preflight"
+    try:
+        write_private_json(probe, {"preflight": True})
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 def require_exercise_guard() -> None:
@@ -120,6 +134,8 @@ async def temporal_client(settings: Settings) -> Client:
 async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
     require_exercise_guard()
     require_runtime(settings)
+    context = prepared_release_context(settings, rollout_path)
+    _preflight_private_state(state_path)
     owner = staging_owner()
     container = Container.create(settings)
     key = "staging-temporal-recovery-" + uuid.uuid4().hex
@@ -151,14 +167,14 @@ async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> d
             pass
         container.agent.delivered(run["id"])
         state = {
-            "release_context": prepared_release_context(settings, rollout_path),
+            "release_context": context,
             "run_id": run["id"],
             "workflow_id": workflow_id,
             "owner_id": owner,
             "created_at": run["created_at"],
             "prepared_at": datetime.now(timezone.utc).isoformat(),
         }
-        state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        write_private_json(state_path, state)
         return state
     finally:
         container.repository.sessions.kw["bind"].dispose()
@@ -285,7 +301,7 @@ async def verify(
                 now=verified_at,
             ),
         })
-        evidence_path.write_text(json.dumps(base, indent=2) + "\n", encoding="utf-8")
+        write_private_json(evidence_path, base)
         return {"checks": {"temporal": "passed", "parallel_restart": "passed", "fan_in": "passed"}}
     finally:
         container.repository.sessions.kw["bind"].dispose()
