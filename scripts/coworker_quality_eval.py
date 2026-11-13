@@ -33,6 +33,18 @@ def strings(v):
     if isinstance(v, list):
         return sum((strings(item) for item in v), [])
     return []
+# Evidence quotes and provenance validate citation integrity, not facts
+# actually carried into the user-visible draft. In particular a research
+# finding cannot pass fact recall merely by attaching a source quote.
+NON_AUTHOR_CONTENT_KEYS=frozenset({"citations","source_ids","labels","output_language"})
+def authored_strings(v):
+    if isinstance(v,dict):
+        return sum((authored_strings(item) for key,item in v.items()
+                    if key not in NON_AUTHOR_CONTENT_KEYS),[])
+    if isinstance(v,list):
+        return sum((authored_strings(item) for item in v),[])
+    return strings(v)
+
 def at(v,path):
     for part in path.split("."):
         if not isinstance(v,dict) or part not in v: return object()
@@ -75,7 +87,7 @@ def score(case,draft_value):
             r["checks"]["citation_validation"]=True
         except (ValueError,TypeError,KeyError):
             r["checks"]["citation_validation"]=False
-    text=norm("\n".join(strings(p)))
+    text=norm("\n".join(authored_strings(p)))
     missing=[x for x in case["required_terms"] if norm(x) not in text]
     forbidden=[x for x in case["forbidden_terms"] if norm(x) in text]
     r["missing_required_terms"]=missing; r["found_forbidden_terms"]=forbidden
