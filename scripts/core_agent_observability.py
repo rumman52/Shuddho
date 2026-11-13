@@ -481,6 +481,7 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
     if not isinstance(results, list) or len(results) != 40:
         raise ValueError(f"{label}: exactly 40 development task results required")
     by_id = {}
+    seen_accepted_artifact_refs = set()
     for row in results:
         if not isinstance(row, dict):
             raise ValueError(f"{label}: invalid task evidence")
@@ -507,6 +508,18 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
             or not row["accepted_outcome_ref"].strip()
         ):
             raise ValueError(f"{label}: accepted outcome lacks valid artifact/review reference")
+        if row["human_accepted"]:
+            # A completed paid-model artifact needs nonzero provider usage;
+            # zero cannot be substituted for an unavailable measurement.
+            for field in ("input_tokens", "output_tokens", "model_time_ms"):
+                if row.get(field) == 0:
+                    raise ValueError(f"{label}: accepted outcome has zero {field}")
+            # One artifact cannot independently prove two different tasks.
+            for ref in row["verified_artifact_refs"]:
+                artifact_ref = ref.strip()
+                if artifact_ref in seen_accepted_artifact_refs:
+                    raise ValueError(f"{label}: reused artifact reference across accepted tasks")
+                seen_accepted_artifact_refs.add(artifact_ref)
         by_id[case_id] = row
     if set(by_id) != set(expected):
         raise ValueError(f"{label}: incomplete frozen development task coverage")
@@ -589,8 +602,16 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "evidence_sha256": _sha256_json(report),
         }
     a, b = summaries["baseline"], summaries["bounded_context_compact_observations"]
-    retained_quality = b["human_accepted"] >= a["human_accepted"] and all(
-        b["by_cell"][key] >= a["by_cell"][key] for key in a["by_cell"]
+    retained_quality = (
+        b["human_accepted"] >= a["human_accepted"]
+        and all(b["by_cell"][key] >= a["by_cell"][key] for key in a["by_cell"])
+        # Aggregate and per-cell totals can conceal a loss on a matched task
+        # when a different task newly succeeds. Do not trade accepted results.
+        and all(
+            not base_cases[case_id]["human_accepted"]
+            or candidate_cases[case_id]["human_accepted"]
+            for case_id in expected
+        )
     )
     blockers = []
     if not a["metrics_complete"] or not b["metrics_complete"]:
