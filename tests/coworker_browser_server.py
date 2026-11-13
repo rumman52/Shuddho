@@ -37,6 +37,7 @@ from services.coworker.agent_schemas import AgentPlannerProposal, AgentV3Decisio
 from services.coworker.migrate import upgrade
 from services.coworker.runner import DocumentRunner
 from services.coworker.models import AgentRun
+from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion
 
 if os.getenv("SHUDDHO_BROWSER_TESTS") != "true":
     raise RuntimeError("This fixture requires SHUDDHO_BROWSER_TESTS=true")
@@ -69,6 +70,7 @@ container.repository.settings = settings
 container.projects.settings = settings
 container.conversations.settings = settings
 container.conversation_replies.settings = settings
+container.conversation_task_briefs.settings = settings
 container.actions.repo.settings = settings
 container.agent.settings = settings
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -203,6 +205,26 @@ class BrowserAgentPlanner:
         }), 42, 1
 
 
+class BrowserTaskBriefPlanner:
+    """Deterministic proposal in the local browser fixture; no live model calls."""
+
+    async def propose_task_brief(self, history, source_ids):
+        latest = history[-1]
+        proposal = TaskBriefSuggestion(
+            state="ready",
+            brief=TaskBrief(
+                objective=latest["text"],
+                constraints=[],
+                deliverables=["Concise project document"],
+                source_ids=latest["source_ids"],
+                output_language="auto",
+            ),
+        )
+        return proposal, 42
+
+
+container.conversation_task_briefs.model = BrowserTaskBriefPlanner()
+
 browser_agent_planner = None
 
 
@@ -259,7 +281,7 @@ def _set_agent_runtime_v3(enabled: bool):
     container.settings = updated
     services = (
         container.repository, container.projects, container.conversations,
-        container.conversation_replies, container.conversation_dispatch,
+        container.conversation_replies, container.conversation_task_briefs, container.conversation_dispatch,
         container.agent, getattr(container, "context", None),
         getattr(container, "memory", None),
     )

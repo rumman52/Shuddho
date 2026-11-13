@@ -25,6 +25,29 @@ async function waitFor(check, description, timeoutMs = 15000) {
   throw new Error(`Timed out waiting for ${description}. Last value: ${JSON.stringify(lastValue)}`);
 }
 
+async function startReviewedTask(page, goal) {
+  const turn = page.getByLabel("Conversation messages", { exact: true })
+    .getByText(goal, { exact: true }).locator("xpath=ancestor::li");
+  await turn.getByRole("button", { name: "Start task", exact: true }).click();
+  const review = turn.getByRole("region", { name: "Review task brief", exact: true });
+  await review.waitFor();
+  const objective = review.getByRole("textbox", { name: "Task objective", exact: true });
+  await objective.waitFor();
+  assert.equal(await objective.inputValue(), goal,
+    "the reviewed brief must remain bound to the selected conversation message");
+
+  // Merely opening the proposal must never authorize a new Agent run.
+  const unconfirmed = await getJson(page, "/runs");
+  assert.equal(unconfirmed.runs.filter(run => run.goal === goal).length, 0,
+    "proposing a task brief must not dispatch Agent work");
+
+  const confirm = review.getByRole("button", { name: "Confirm and start reviewed task", exact: true });
+  await confirm.waitFor();
+  await review.getByText(/^Validated preview: [0-9a-f]{12}…$/).waitFor();
+  await confirm.click();
+  await turn.getByRole("button", { name: "Steer Agent task", exact: true }).waitFor();
+}
+
 export async function verifyConversationAgentContinuity(page) {
   const taskA = "E2E Task A: Create a concise project document about the first milestone.";
   const taskB = "E2E Task B: Create a concise project document about the second milestone.";
@@ -52,8 +75,7 @@ export async function verifyConversationAgentContinuity(page) {
     let runs = await getJson(page, "/runs");
     assert.equal(runs.runs.filter(run => run.goal === taskA).length, 0);
 
-    await page.getByRole("button", { name: "Start task", exact: true }).click();
-    await page.getByRole("button", { name: "Steer Agent task", exact: true }).first().waitFor();
+    await startReviewedTask(page, taskA);
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
       return calls.calls.some(call => call.goal === taskA);
@@ -63,14 +85,14 @@ export async function verifyConversationAgentContinuity(page) {
     await composer.fill(taskB);
     await page.locator(".rukh-design-send").click();
     await conversationMessage(taskB).waitFor();
-    await page.getByRole("button", { name: "Start task", exact: true }).click();
+    await startReviewedTask(page, taskB);
 
     // A third task demonstrates bounded, configurable concurrency rather than
     // accidentally coupling every run to one conversation-wide execution slot.
     await composer.fill(taskC);
     await page.locator(".rukh-design-send").click();
     await conversationMessage(taskC).waitFor();
-    await page.getByRole("button", { name: "Start task", exact: true }).click();
+    await startReviewedTask(page, taskC);
     await waitFor(async () => {
       const calls = await getJson(page, "/planner-calls");
       return calls.calls.filter(call => call.goal === taskA || call.goal === taskB || call.goal === taskC).length === 3;
