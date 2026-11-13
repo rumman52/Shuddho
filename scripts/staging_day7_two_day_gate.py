@@ -86,6 +86,16 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
                 f"Day {index} is missing one-run/two-notice evidence.")
         for field in (*identity, *schedule_identity):
             require(item.get(field) == first.get(field), f"Day {index} changed {field}.")
+    # Two different lifecycle notices must have different persisted IDs, both
+    # within an occurrence and across consecutive scheduled occurrences.
+    notice_ids = [
+        item.get(field)
+        for item in (first, second)
+        for field in ("started_notification_id", "completion_notification_id")
+    ]
+    require(all(isinstance(value, str) and bool(value.strip()) for value in notice_ids)
+            and len(notice_ids) == len(set(notice_ids)),
+            "Both days must have four distinct nonblank notification IDs.")
     case_reference = first.get("operator_case_reference")
     require(isinstance(case_reference, str) and bool(case_reference.strip())
             and second.get("operator_case_reference") == case_reference
@@ -122,6 +132,9 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
                 "Occurrence must happen between its staging preparation and verification.")
         due_timestamps.append(due)
         local_dates.append(local.date())
+    require(timestamp(second.get("prepared_at"), "Day 8 prepared_at") >
+            timestamp(first.get("verified_at"), "Day 7 verified_at"),
+            "Day 8 baseline must be prepared after Day 7 verification.")
     require(local_dates[1] == local_dates[0] + timedelta(days=1)
             and due_timestamps[1] > due_timestamps[0],
             "Expected consecutive *local calendar days*, not two same-day triggers.")

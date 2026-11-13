@@ -195,3 +195,21 @@ def test_two_day_gate_rejects_unbound_staging_evidence(broken):
         second["operator_case_reference"] = "UNRELATED-CASE"
     with pytest.raises(GateFailure):
         verify_two_day(first, second, paused)
+
+@pytest.mark.parametrize("defect", [
+    "same_day_duplicate_notice_id",
+    "cross_day_duplicate_notice_id",
+    "stale_day8_baseline",
+])
+def test_two_day_gate_rejects_non_unique_notices_and_stale_baseline(defect):
+    first, second, paused = valid_pair()
+    if defect == "same_day_duplicate_notice_id":
+        first["completion_notification_id"] = first["started_notification_id"]
+    elif defect == "cross_day_duplicate_notice_id":
+        second["started_notification_id"] = first["completion_notification_id"]
+    else:
+        # A second-day baseline must be captured after the first day's verified run,
+        # otherwise it cannot prove the second independent natural occurrence.
+        second["prepared_at"] = first["prepared_at"]
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
