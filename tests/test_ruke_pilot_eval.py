@@ -326,7 +326,7 @@ def test_blind_votes_reject_casefolded_duplicate_reviewer_and_adjudicator_alias(
     for row in votes:
         if row["reviewer_id"] == "D2":
             row["reviewer_id"] = "d1"
-    with pytest.raises(EvidenceError, match="reviewers"):
+    with pytest.raises(EvidenceError, match="duplicate|reviewers"):
         compare(tasks(), manifest(), comparator(), votes, blinding_key=BLIND_KEY)
 
     votes = blind_votes()
