@@ -34,6 +34,7 @@ from services.coworker.container import Container
 from services.coworker.drafting import DraftResult
 from services.coworker.agent_runtime import AgentRuntime
 from services.coworker.agent_schemas import AgentPlannerProposal, AgentV3Decision
+from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion
 from services.coworker.migrate import upgrade
 from services.coworker.runner import DocumentRunner
 from services.coworker.models import AgentRun
@@ -106,6 +107,37 @@ class BrowserChatModel:
 
 chat_model = BrowserChatModel()
 container.conversation_replies.model = chat_model
+
+
+class BrowserTaskBriefModel:
+    """Typed, fixture-only task suggestion. Never contacts a real provider.
+
+    The tested API still validates the owner, source ledger, canonical review
+    digest and explicit dispatch. This class supplies only inert suggestion
+    text so Chromium can test those boundaries without a DeepSeek API call.
+    """
+
+    async def propose_task_brief(self, history, source_ids):
+        objective = history[-1]["text"].strip() if history else ""
+        if not objective:
+            return TaskBriefSuggestion(
+                state="needs_input", question="What task would you like to run?"
+            ), 0
+        return TaskBriefSuggestion(
+            state="ready",
+            brief=TaskBrief(
+                objective=objective,
+                deliverables=["Requested project document"],
+                constraints=[],
+                # No unreviewed source may be promoted by a suggestion.
+                # The real ledger validation still runs on preview/dispatch.
+                source_ids=[],
+                output_language="auto",
+            ),
+        ), 32
+
+
+container.conversation_task_briefs.model = BrowserTaskBriefModel()
 
 
 class BrowserModel(FakeModel):
