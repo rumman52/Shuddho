@@ -30,6 +30,49 @@ test("notification digest client uses authenticated bounded inbox routes and exa
   } finally { globalThis.fetch = original; }
 });
 
+test("source uploads accept all six advertised formats without accepting unknown extensions", async () => {
+  const original = globalThis.fetch;
+  const seen: Array<{ url: string; options?: RequestInit }> = [];
+  const id = "00000000-0000-4000-8000-000000000001";
+  const bytes = Uint8Array.from([65, 44, 66, 10]);
+  const file = (name: string, size = bytes.byteLength) => ({
+    name, size, arrayBuffer: async () => bytes.buffer,
+  }) as unknown as File;
+  globalThis.fetch = (async (url, options) => {
+    seen.push({ url: String(url), options });
+    return new Response(JSON.stringify({ id }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new CoworkerClient("/backend", async () => "owner-test-token");
+    for (const extension of ["txt", "docx", "pdf", "csv", "xlsx", "pptx"]) {
+      const name = "sample." + extension;
+      const result = await client.upload(file(name));
+      assert.equal(result.id, id);
+      const creation = seen[seen.length - 2];
+      const content = seen[seen.length - 1];
+      assert.equal(creation.url, "/backend/api/v1/documents");
+      assert.equal(creation.options?.method, "POST");
+      const metadata = JSON.parse(String(creation.options?.body));
+      assert.equal(metadata.filename, name);
+      assert.equal(metadata.byte_size, bytes.byteLength);
+      assert.equal(metadata.sha256, createHash("sha256").update(bytes).digest("hex"));
+      assert.equal(content.url, `/backend/api/v1/documents/${id}/content`);
+      assert.equal(content.options?.method, "PUT");
+      assert.equal(content.options?.body instanceof Object, true);
+      assert.equal(new Headers(content.options?.headers).get("Authorization"), "Bearer owner-test-token");
+    }
+    assert.equal(seen.length, 12);
+    for (const name of ["sample.csv.exe", "sample.svg", "sample.xlsm"]) {
+      await assert.rejects(client.upload(file(name)), error => error instanceof WorkspaceError);
+    }
+    await assert.rejects(client.upload(file("sample.csv", 0)), error => error instanceof WorkspaceError);
+    await assert.rejects(client.upload(file("sample.csv", 8 * 1024 * 1024 + 1)), error => error instanceof WorkspaceError);
+    assert.equal(seen.length, 12, "rejected sources never request upload credentials");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("research links cannot become script, local, credential-bearing, or nonstandard-port links", () => {
   assert.equal(sourceLink("https://example.org/research?q=বাংলা"), "https://example.org/research?q=%E0%A6%AC%E0%A6%BE%E0%A6%82%E0%A6%B2%E0%A6%BE");
   for (const value of [undefined, "javascript:alert(1)", "data:text/html,bad", "file:///etc/passwd", "http://127.0.0.1/", "http://[::1]/",
