@@ -38,6 +38,12 @@ export async function verifyAgentProposals(page, folder) {
   await account.selectOption({ index: 1 });
   await agent.getByRole("button", { name: "Promote exact proposal", exact: true }).click();
 
+  // Promoting from Agent activity opens the Plugins page; the exact approval
+  // preview must not remain hidden in its normally collapsed disclosure.
+  await page.locator("details.rukh-plugin-management").waitFor();
+  await page.waitForFunction(() =>
+    document.querySelector("details.rukh-plugin-management")?.open === true,
+    null, { timeout: 5000 });
   const review = page.getByRole("region", { name: "Action review", exact: true });
   await review.getByRole("heading", { name: "Needs your approval", exact: true }).waitFor();
   assert.equal(await review.getByRole("button", { name: "Approve & send email", exact: true }).isDisabled(), true);
