@@ -1202,8 +1202,8 @@ export class CoworkerClient {
   }
 
   async upload(file: File): Promise<SourceDocument> {
-    if (!/\.(txt|docx|pdf)$/i.test(file.name) || file.size < 1 || file.size > 8 * 1024 * 1024) {
-      throw new WorkspaceError("Choose a TXT, DOCX, or PDF file up to 8 MB.");
+    if (!/\.(txt|docx|pdf|csv|xlsx|pptx)$/i.test(file.name) || file.size < 1 || file.size > 8 * 1024 * 1024) {
+      throw new WorkspaceError("Choose a TXT, DOCX, PDF, CSV, XLSX, or PPTX file up to 8 MB.");
     }
     const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
     const sha256 = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
