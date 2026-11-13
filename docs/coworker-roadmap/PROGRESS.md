@@ -1,3 +1,13 @@
+## Day 10 holdout security absolute NO-GO — 13 November 2026 (Asia/Dhaka)
+
+**Root cause:** `scripts/day10_release_decision.py::holdout_ok` previously allowed a 39/40 accepted independent holdout with `security_passed=false` or a missing security verdict to reach `READY_FOR_OWNER_CONTROLLED_PILOT` when other submitted gates passed. This contradicts Day 9's absolute security NO-GO rule. No existing release approval or operated evidence was changed.
+
+**Review:** [draft PR #705](https://github.com/rumman52/Shuddho/pull/705), branch `fix/day10-holdout-security-absolute-nogo-20261113`, base main `6b604e4cc13e98f740729f3b11df3ed432e04dcb`. [RED exact-head CI #43461268411](https://github.com/rumman52/Shuddho/actions/runs/43461268411): **three expected security regression failures, 1,947 Python tests passed, 81 skipped**. The targeted fix requires explicit boolean `security_passed=true` for **every one** of the 40 cases, including human-rejected cases; operator handoff and [task contract](DAY10_HOLDOUT_SECURITY_GATE_2026-11-13.md) updated.
+
+**Levels:** implemented in draft source; **corrected-head CI and independent review pending**, staging unverified, production NO-GO, pilot disabled. In particular Render staging PG18 remains billing-suspended, no persistent worker exists, `main` remains unprotected, D custody and 20 operated fault rows are missing. No paid provisioning, migrations, external sends, telemetry or cohort admission.
+
+---
+
 ## V-01 source safeguard — 13 November 2026 (Asia/Dhaka)
 
 **Scope:** fail-closed pull-request ancestry check. Existing draft PR #695 is 171 commits behind `main` (GitHub compare on `ce8a21046970a94a65d0b53a31da4c55d048e51a` vs `1b98702c602a8e57848175b3063bdad298abb6ae`) and omits previously merged conversation memory-pin admission and revocation checks. A blocking code review was posted to #695. The new guard checks the actual PR head rather than the synthetic PR merge checkout; `ci-merge-gate` rejects failed or skipped PR ancestry checks, while push events remain governed by the existing governance audit.

@@ -110,35 +110,21 @@ chat_model = BrowserChatModel()
 container.conversation_replies.model = chat_model
 
 
-class BrowserTaskBriefModel:
-    """Typed, fixture-only task suggestion. Never contacts a real provider.
-
-    The tested API still validates the owner, source ledger, canonical review
-    digest and explicit dispatch. This class supplies only inert suggestion
-    text so Chromium can test those boundaries without a DeepSeek API call.
-    """
+class BrowserTaskBriefPlanner:
+    """Deterministic inert brief suggestion for real HTTP preview/dispatch tests."""
 
     async def propose_task_brief(self, history, source_ids):
-        objective = history[-1]["text"].strip() if history else ""
-        if not objective:
-            return TaskBriefSuggestion(
-                state="needs_input", question="What task would you like to run?"
-            ), 0
-        return TaskBriefSuggestion(
-            state="ready",
-            brief=TaskBrief(
-                objective=objective,
-                deliverables=["Requested project document"],
-                constraints=[],
-                # No unreviewed source may be promoted by a suggestion.
-                # The real ledger validation still runs on preview/dispatch.
-                source_ids=[],
-                output_language="auto",
-            ),
-        ), 32
+        assert history and set(history[-1]["source_ids"]).issubset(set(source_ids))
+        return TaskBriefSuggestion(state="ready", brief=TaskBrief(
+            objective=history[-1]["text"],
+            deliverables=["Concise project document"],
+            constraints=[],
+            source_ids=history[-1]["source_ids"],
+            output_language="auto",
+        )), 24
 
 
-container.conversation_task_briefs.model = BrowserTaskBriefModel()
+container.conversation_task_briefs.model = BrowserTaskBriefPlanner()
 
 
 class BrowserModel(FakeModel):
@@ -293,6 +279,7 @@ def _set_agent_runtime_v3(enabled: bool):
     services = (
         container.repository, container.projects, container.conversations,
         container.conversation_replies, container.conversation_dispatch,
+        container.conversation_task_briefs,
         container.agent, getattr(container, "context", None),
         getattr(container, "memory", None),
     )
