@@ -221,3 +221,15 @@ def test_recovery_prepare_publishes_private_atomic_state(monkeypatch, tmp_path):
     assert stat.S_IMODE(state.stat().st_mode) == 0o600
     assert json.loads(state.read_text(encoding="utf-8"))["run_id"] == "synthetic-run"
     assert not list(tmp_path.glob(".state.json.*"))
+
+
+@pytest.mark.parametrize("offset_seconds", [26, 35, 59])
+def test_validate_persisted_recovery_rejects_restart_after_final_step_finished(offset_seconds):
+    """A post-completion restart must not qualify as an active-worker recovery."""
+    base, run, steps, tasks = completed_fixture()
+    # The final persisted step ended at base + 25 seconds. The agent row
+    # updated at base + 30 seconds, and the old validator allowed + 30 more.
+    with pytest.raises(recovery.RecoveryFailure, match="before the recovery run finished"):
+        recovery.validate_persisted_recovery(
+            run, steps, tasks, base + timedelta(seconds=offset_seconds)
+        )
