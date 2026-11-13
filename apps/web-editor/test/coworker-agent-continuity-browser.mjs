@@ -28,10 +28,14 @@ async function waitFor(check, description, timeoutMs = 15000) {
 // The Day 4 admission boundary is review -> validated digest -> explicit confirmation.
 // A preview alone must not launch an Agent run.
 async function startReviewedTask(page, goal) {
-  await page.getByRole("button", { name: "Start task", exact: true }).click();
-  const review = page.getByRole("region", { name: "Review task brief", exact: true });
+  const turn = page.getByLabel("Conversation messages", { exact: true })
+    .getByText(goal, { exact: true }).locator("xpath=ancestor::li");
+  await turn.getByRole("button", { name: "Start task", exact: true }).click();
+  const review = turn.getByRole("region", { name: "Review task brief", exact: true });
   const objective = review.getByRole("textbox", { name: "Task objective", exact: true });
   await objective.waitFor();
+  assert.equal(await objective.inputValue(), goal,
+    "the proposed brief must be bound to the selected conversation message");
   // Preserve the exact fixture goal so run identity and concurrent steering stay testable.
   await objective.fill(goal);
   // The proposed brief is already prevalidated. Editing any field must invalidate
