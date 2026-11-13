@@ -27,6 +27,7 @@ def evidence(day: int, version: str) -> dict:
         "run_state": "completed", "started_notification_id": f"started-{day}",
         "completion_notification_id": f"completed-{day}", "new_notification_count": 2,
         "input_version_ids": [version], "document_ids": ["doc-1"],
+        "authorized_document_ids": ["doc-1"], "goal_id": "goal-1", "goal_revision": 1,
         "operator_case_reference": "CASE-7",
     }
 
@@ -34,7 +35,9 @@ def evidence(day: int, version: str) -> dict:
 def pause_evidence() -> dict:
     return {"status": "paused", "release": deepcopy(RELEASE), "owner_id": "owner-1",
             "synthetic_account_label": "stage-day7-synthetic",
-            "automation_id": "automation-1", "previous_revision": 1, "paused_revision": 2,
+            "automation_id": "automation-1", "goal_id": "goal-1",
+            "goal_revision": 1, "authorized_document_ids": ["doc-1"],
+            "previous_revision": 1, "paused_revision": 2,
             "paused_at": "2026-11-13T02:10:00+00:00",
             "operator_case_reference": "CASE-7"}
 
@@ -114,6 +117,8 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
         "owner_id": "owner-1", "automation_id": "automation-1",
         "automation_revision": 1,
         "synthetic_account_label": "stage-day7-synthetic",
+        "goal_id": "goal-1", "goal_revision": 1,
+        "authorized_document_ids": ["doc-1"],
     }))
     args = argparse.Namespace(
         state=state_path, first_evidence=first_path, second_evidence=second_path,
@@ -128,6 +133,8 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
     monkeypatch.setattr(probe, "release_identity", lambda *_args: deepcopy(RELEASE))
     monkeypatch.setattr(probe, "load_owned", lambda *_args: {
         "owner_id": "owner-1", "automation": {"revision": 1},
+        "daily_scope": {"goal_id": "goal-1", "goal_revision": 1,
+                        "authorized_document_ids": ["doc-1"]},
     })
 
     class Response:
@@ -211,5 +218,22 @@ def test_two_day_gate_rejects_non_unique_notices_and_stale_baseline(defect):
         # A second-day baseline must be captured after the first day's verified run,
         # otherwise it cannot prove the second independent natural occurrence.
         second["prepared_at"] = first["prepared_at"]
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
+
+
+@pytest.mark.parametrize("defect", [
+    "run_uses_unapproved_document", "missing_owner_approved_scope",
+    "approval_changed_between_days",
+])
+def test_day7_gate_rejects_unapproved_goal_scope(defect):
+    first, second, paused = valid_pair()
+    if defect == "run_uses_unapproved_document":
+        first["document_ids"] = second["document_ids"] = ["doc-evil"]
+    elif defect == "missing_owner_approved_scope":
+        for item in (first, second):
+            del item["authorized_document_ids"]
+    else:
+        second["authorized_document_ids"] = ["doc-evil"]
     with pytest.raises(GateFailure):
         verify_two_day(first, second, paused)
