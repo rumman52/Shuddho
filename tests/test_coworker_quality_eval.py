@@ -81,6 +81,37 @@ def test_rejects_a_task_type_mismatch():
     assert not r["checks"]["task_type_match"]
 
 
+def test_research_fact_recall_excludes_verbatim_evidence_quote():
+    case = deepcopy(next(c for c in loaded() if c["id"] == "research-en-exact-evidence"))
+    assert score(case, case["draft"])["passed"]
+
+    # A citation can be perfectly real even when the generated comparison
+    # omitted the numbers and update date. Those are not authored facts.
+    case["draft"]["findings"][0]["text"] = (
+        "The retrieved dataset page was reviewed, but this summary omitted the confirmed details."
+    )
+    result = score(case, case["draft"])
+    assert result["checks"]["schema_valid"]
+    assert result["checks"]["citation_validation"]
+    assert result["checks"]["required_source_coverage"]
+    assert not result["checks"]["required_fact_preservation"]
+    assert {"120 records", "1 October 2026"}.issubset(result["missing_required_terms"])
+    assert not result["passed"]
+
+
+def test_research_forbidden_term_only_inside_source_quote_is_not_an_authored_claim():
+    case = deepcopy(next(c for c in loaded() if c["id"] == "research-en-exact-evidence"))
+    quote = "An incorrect report had once stated 150 records."
+    case["sources"][0]["text"] += " " + quote
+    case["draft"]["findings"][0]["citations"].append(
+        {"source_id": "web-1", "quote": quote}
+    )
+    result = score(case, case["draft"])
+    assert result["checks"]["citation_validation"]
+    assert result["checks"]["forbidden_claim_absence"]
+    assert result["passed"]
+
+
 def test_rejects_a_research_quote_not_present_in_the_source():
     c=deepcopy(next(x for x in loaded() if x["skill_id"]=="research"))
     c["draft"]["findings"][0]["citations"][0]["quote"]="An invented statement that is not in the source."

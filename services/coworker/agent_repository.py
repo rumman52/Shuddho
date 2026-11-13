@@ -1153,6 +1153,7 @@ class AgentRepository:
             "input_version_ids": list(run.input_versions or []),  # Owner-scoped immutable source-pin evidence
             "artifact_ids": list(run.input_artifacts or []),
             "project_context": dict(run.project_context or {}),
+            "reviewed_brief": dict(run.reviewed_brief or {}),
             "steering_revision": run.steering_revision,
             "steering_instructions": list(run.steering_instructions or []),
             "action_ids": list(run.action_ids),
@@ -1937,6 +1938,7 @@ class AgentRepository:
                 "output_language": run.output_language, "document_ids": documents,
                 "artifact_ids": list(run.input_artifacts or []),
                 "project_context": dict(run.project_context or {}),
+            "reviewed_brief": dict(run.reviewed_brief or {}),
                 "steering_revision": run.steering_revision,
                 "steering_instructions": list(run.steering_instructions or []),
                 "tool_allowlist": list(run.tool_allowlist or []),

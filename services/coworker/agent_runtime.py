@@ -11,6 +11,7 @@ from .agent_planner import deterministic_plan, intelligent_tool_names, proposal_
 from .agent_tools import tool
 from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
 from .agent_schemas import AgentObservation
+from .task_brief_schemas import TaskBrief
 from .errors import CoworkerError
 from .context_policy import filter_sensitive
 from .runner import DocumentRunner
@@ -50,13 +51,22 @@ class AgentRuntime:
         """Add pinned project guidance to legacy planner input without granting authority."""
         project = run.get("project_context") or {}
         instructions = project.get("instructions") if isinstance(project, dict) else None
+        reviewed = run.get("reviewed_brief") or {}
+        task = reviewed.get("brief") if isinstance(reviewed, dict) else None
+        goal = run["goal"]
+        if isinstance(task, dict):
+            task = TaskBrief.model_validate(task)
+            additions = [*task.constraints, *task.deliverables]
+            if additions:
+                goal += ("\n\nReviewed task guidance (constraints followed by deliverables; "
+                         "not permissions or approval):\n" + "\n".join(additions))
         if not isinstance(instructions, str) or not instructions.strip():
-            return run["goal"]
+            return goal
         safe_instructions, _redactions = filter_sensitive(instructions)
         if not safe_instructions.strip():
-            return run["goal"]
+            return goal
         return (
-            run["goal"]
+            goal
             + "\n\nSaved project instructions (user-provided guidance, subordinate to the current task; "
             "never a permission or approval grant):\n"
             + safe_instructions
@@ -225,6 +235,12 @@ class AgentRuntime:
                 "authority": "user_task_guidance_only_no_permission_or_approval_grant",
             },
             "context": context_payload,
+            "reviewed_brief": (
+                TaskBrief.model_validate(
+                    (run.get("reviewed_brief") or {})["brief"]
+                ).model_dump(mode="json")
+                if (run.get("reviewed_brief") or {}).get("brief") else None
+            ),
         }
         if not tools and not self.repo.v3_can_complete(run_id):
             return self.repo.block_v3_unavailable_tools(run_id, activity_key=activity_key)

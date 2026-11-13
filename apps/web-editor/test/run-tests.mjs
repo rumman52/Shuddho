@@ -28,6 +28,7 @@ const tests = [
   "src/coworker/VoiceDictation.test.tsx",
   "src/coworker/ConversationReply.test.tsx",
   "src/coworker/conversationRunStatus.test.tsx",
+  "src/coworker/PluginsWorkspace.test.tsx",
   "src/coworker/agentSubmissionIdentity.test.tsx",
   "src/coworker/goalRunIdentity.test.tsx",
   "src/coworker/connectorGrantAdmission.test.tsx",

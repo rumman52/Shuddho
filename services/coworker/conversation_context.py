@@ -139,7 +139,46 @@ def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> Non
             409,
         )
 
-    pins = require_current_selected_sources(db, owner, message.selected_sources or [])
+    reviewed = dict(run.reviewed_brief or {})
+    if reviewed:
+        # Revalidate exact owner-pinned revisions from any prior user message.
+        from .task_brief_schemas import TaskBrief, canonical_brief_digest
+        from .conversation_task_briefs import ConversationTaskBriefService
+        try:
+            brief = TaskBrief.model_validate(reviewed["brief"])
+            originals = list(reviewed["source_pins"])
+            history = list(db.scalars(select(ConversationMessage).where(
+                ConversationMessage.owner_id == owner,
+                ConversationMessage.conversation_id == message.conversation_id,
+                ConversationMessage.sequence <= message.sequence,
+            )))
+            known = {(pin.get("resource_id"), pin.get("sha256"))
+                     for row in history for pin in (row.selected_sources or []) if isinstance(pin, dict)}
+            if (len(originals) != len(brief.source_ids)
+                or any((pin.get("resource_id"), pin.get("sha256")) not in known for pin in originals)
+                or [pin.get("resource_id") for pin in originals] != [str(v) for v in brief.source_ids]):
+                raise ValueError("Reviewed sources not authorised by the conversation")
+            pins = require_current_selected_sources(db, owner, originals)
+            saved_project = dict(run.project_context or {})
+            # Day 5 memory pins are separately validated and do not belong to
+            # the Day 4 project-only reviewed task brief digest.
+            reviewed_project = {key: value for key, value in saved_project.items()
+                                if key != "memory_pins"}
+            current_project = ConversationTaskBriefService._project(
+                db, type("_S", (), {"projects_enabled": True})(),
+                owner, message.conversation_id, reviewed_project.get("project_id"))
+            if (current_project != reviewed_project
+                or canonical_brief_digest(brief, pins, reviewed_project, owner_id=owner,
+                    conversation_id=message.conversation_id, message_id=message.id,
+                    sequence=message.sequence) != reviewed["canonical_digest"]):
+                raise ValueError("Review changed")
+        except CoworkerError:
+            raise
+        except (ValueError, TypeError, KeyError):
+            raise CoworkerError("context_sources_changed",
+                "The reviewed task context changed. Review again.", 409) from None
+    else:
+        pins = require_current_selected_sources(db, owner, message.selected_sources or [])
     document_ids = [pin["resource_id"] for pin in pins if pin["resource_type"] == "document_version"]
     artifact_ids = [pin["resource_id"] for pin in pins if pin["resource_type"] == "artifact"]
     if document_ids != list(run.input_versions or []) or artifact_ids != list(run.input_artifacts or []):

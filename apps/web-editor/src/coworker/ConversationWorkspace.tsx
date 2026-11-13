@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type AssistantReply, type ConversationRecord,
-  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, type MemoryPin, type ProjectDetail, CoworkerView,
+  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, type MemoryPin, type TaskBrief, type TaskBriefPreview, type ProjectDetail, CoworkerView,
 } from "./client";
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
@@ -81,6 +81,10 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState(initialDraft);
   const [working, setWorking] = useState(false);
+  const [briefMessageId, setBriefMessageId] = useState("");
+  const [briefDraft, setBriefDraft] = useState<TaskBrief | null>(null);
+  const [briefPreview, setBriefPreview] = useState<TaskBriefPreview | null>(null);
+  const [briefQuestion, setBriefQuestion] = useState("");
   const [steeringMessageId, setSteeringMessageId] = useState("");
   const [steeringDraft, setSteeringDraft] = useState("");
   const [error, setError] = useState("");
@@ -91,6 +95,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const refreshOrder = useRef(new RefreshOrder());
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  useEffect(() => {
+    setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null); setBriefQuestion("");
+  }, [selected, projectId]);
   const [mobilePanel, setMobilePanel] = useState<"conversations" | "context" | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const mobilePanelTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -479,18 +486,65 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     } finally { setWorking(false); }
   }
 
-  async function dispatch(item: ConversationMessageRecord) {
+  async function proposeBrief(item: ConversationMessageRecord) {
     if (!selected || working) return;
+    if (briefMessageId === item.id) {
+      setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null); setBriefQuestion("");
+      return;
+    }
+    setBriefMessageId(item.id); setBriefPreview(null); setBriefQuestion(""); setBriefDraft(null);
+    setWorking(true); setError("");
+    try {
+      const suggestion = await client.proposeConversationTaskBrief(selected, item.id, item.sequence, projectId);
+      if (selectedRef.current !== selected) return;
+      if (suggestion.state === "needs_input") {
+        setBriefQuestion(suggestion.question ?? "Please clarify the requested task.");
+      } else {
+        setBriefDraft(suggestion.brief);
+        setBriefPreview(suggestion);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Task brief proposal failed.");
+      // Allow a manual review when the proposal provider is offline.
+      setBriefDraft({ objective: item.text.slice(0, 4000), deliverables: ["Requested task output"],
+        constraints: [], source_ids: item.selected_sources.map(source => String(source.resource_id)),
+        output_language: "auto" });
+    } finally { setWorking(false); }
+  }
+
+  function editBrief(patch: Partial<TaskBrief>) {
+    setBriefDraft(current => current ? { ...current, ...patch } : null);
+    setBriefPreview(null);
+  }
+
+  async function previewBrief(item: ConversationMessageRecord) {
+    if (!selected || !briefDraft || working) return;
+    setWorking(true); setError("");
+    try {
+      const preview = await client.previewConversationTaskBrief(
+        selected, item.id, item.sequence, briefDraft, projectId);
+      if (selectedRef.current === selected) setBriefPreview(preview);
+    } catch (cause) {
+      setBriefPreview(null);
+      setError(cause instanceof Error ? cause.message : "Task brief could not be validated.");
+    } finally { setWorking(false); }
+  }
+
+  async function dispatch(item: ConversationMessageRecord) {
+    if (!selected || working || !briefDraft || !briefPreview?.canonical_digest
+      || briefMessageId !== item.id) return;
     setWorking(true); setError(""); setNotice("");
     try {
       await client.dispatchConversationMessage(
         selected, item.id, item.sequence, projectId,
         memoryEnabled ? selectedMemoryPins : undefined,
-      );
+        briefDraft, briefPreview.canonical_digest);
+      setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null);
       setSelectedMemoryPins([]);
       await reloadConversation(selected);
-      setNotice("Task started. Follow progress below or open Agent activity.");
+      setNotice("Reviewed task started. Follow progress below or open Agent activity.");
     } catch (cause) {
+      setBriefPreview(null);
       setError(cause instanceof Error ? cause.message : "Agent admission was not accepted.");
     } finally { setWorking(false); }
   }
@@ -776,7 +830,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                     {steeringMessageId === item.id ? "Close steering" : "Steer"}
                   </button>}
                   {activeRun && run && <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>Cancel Agent work</button>}
-                  {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start task</button>}
+                  {canDispatch && <button type="button" disabled={working} onClick={() => { void proposeBrief(item); }}>
+                    {briefMessageId === item.id ? "Close task brief" : "Start task"}
+                  </button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
                 {canDispatch && memoryEnabled && <section className="rukh-task-memory-preview" aria-label="Task preview">
@@ -793,7 +849,50 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                     </ul>}
                   <small>Only selected fact IDs and versions are admitted; saved facts can be edited or deleted below.</small>
                 </section>}
-                {canSteer && steeringMessageId === item.id && run && <form className="rukh-steer-form" aria-label="Steer Agent form"
+                {canDispatch && briefMessageId === item.id && <section className="rukh-task-brief-review" aria-label="Review task brief">
+                  <h3>Review task before starting</h3>
+                  {briefQuestion && <p role="status">{briefQuestion} Reply in the conversation to clarify.</p>}
+                  {briefDraft && <form className="rukh-steer-form" onSubmit={event => {
+                    event.preventDefault();
+                    if (briefPreview?.canonical_digest) void dispatch(item);
+                    else void previewBrief(item);
+                  }}>
+                    <label>Task objective
+                      <textarea value={briefDraft.objective} maxLength={4000} rows={3} disabled={working}
+                        onChange={event => editBrief({ objective: event.target.value })} />
+                    </label>
+                    <label>Constraints (one per line)
+                      <textarea aria-label="Task constraints" value={briefDraft.constraints.join("\n")} rows={3} disabled={working}
+                        onChange={event => editBrief({ constraints: event.target.value.split("\n").map(v => v.trim()).filter(Boolean) })} />
+                    </label>
+                    <label>Deliverables (one per line)
+                      <textarea aria-label="Task deliverables" value={briefDraft.deliverables.join("\n")} rows={3} disabled={working}
+                        onChange={event => editBrief({ deliverables: event.target.value.split("\n").map(v => v.trim()).filter(Boolean) })} />
+                    </label>
+                    <label>Output language
+                      <input aria-label="Task output language" value={briefDraft.output_language} maxLength={35}
+                        disabled={working} onChange={event => editBrief({ output_language: event.target.value })} />
+                    </label>
+                    {Array.from(new Map(messages.flatMap(message => message.selected_sources)
+                      .filter(source => typeof source.resource_id === "string")
+                      .map(source => [String(source.resource_id), source])).values()).map(source => {
+                      const sourceId = String(source.resource_id);
+                      return <label key={sourceId}>
+                        <input type="checkbox" checked={briefDraft.source_ids.includes(sourceId)} disabled={working ||
+                            (!briefDraft.source_ids.includes(sourceId) && briefDraft.source_ids.length >= 5)}
+                          onChange={event => editBrief({ source_ids: event.target.checked
+                            ? [...briefDraft.source_ids, sourceId] : briefDraft.source_ids.filter(id => id !== sourceId) })} />
+                        {sourceLabel(source, manifest)}
+                      </label>;
+                    })}
+                    {briefPreview?.canonical_digest && <p role="status">Validated preview: {briefPreview.canonical_digest.slice(0, 12)}…</p>}
+                    <small>Edits invalidate the preview. Sources are untrusted data; this does not approve external actions.</small>
+                    <button type="submit" disabled={working || !briefDraft.objective.trim() || briefDraft.deliverables.length === 0}>
+                      {briefPreview?.canonical_digest ? "Confirm and start reviewed task" : "Validate task preview"}
+                    </button>
+                  </form>}
+                </section>}
+                                {canSteer && steeringMessageId === item.id && run && <form className="rukh-steer-form" aria-label="Steer Agent form"
                   onSubmit={event => { event.preventDefault(); void steer(item, run); }}>
                   <label className="rukh-sr-only" htmlFor={`cw-steer-${item.id}`}>Instruction for Agent</label>
                   <textarea id={`cw-steer-${item.id}`} aria-label="Instruction for Agent" dir="auto" rows={2}

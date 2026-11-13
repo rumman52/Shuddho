@@ -315,6 +315,19 @@ jobs:
         with:
           name: fly-repository-coding-tests
           path: /tmp/fly-repository-coding.xml
+      # Preserve the Day 5 memory-selection gate: Day 4 reviewed briefs use a
+      # distinct regression module instead of replacing Day 5's test file.
+      - name: Qualify Day 4 reviewed multi-turn task admission without skips
+        run: |
+          uv run --extra coworker pytest tests/test_conversation_reviewed_briefs.py -q -rs --junitxml=/tmp/day4-reviewed-task-briefs.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day4-reviewed-task-briefs.xml --required-module tests.test_conversation_reviewed_briefs
+      - name: Preserve Day 4 reviewed-brief acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day4-reviewed-task-briefs
+          path: /tmp/day4-reviewed-task-briefs.xml
+          if-no-files-found: warn
       - name: Verify durable conversation ownership and PostgreSQL races
         run: |
           uv run --extra coworker pytest tests/test_coworker_projects.py tests/test_conversations.py tests/test_conversation_replies.py tests/test_conversation_context.py tests/test_conversation_dispatch.py tests/test_coworker_postgres.py tests/test_coworker.py::test_simple_question_does_not_create_agent_run -q -rs --junitxml=/tmp/conversations.xml
