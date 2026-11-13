@@ -1,6 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CoworkerClient, type ConnectedAccount } from "./client";
 import NavigationIcon from "./WorkspaceNavigationIcon";
+import { hasPendingGoogleCallback } from "./googleCallback";
+import { hasPendingMicrosoftCallback } from "./microsoftCallback";
+import { hasPendingLinkedInCallback } from "./linkedinCallback";
 const catalog = [
   { name: "Google Drive", provider: "google", capability: "drive", icon: "folder", description: "Find and work with your documents.", supported: true, featured: true },
   { name: "GitHub", provider: "github", capability: "code", icon: "terminal", description: "Bring repositories into your work.", supported: false, featured: true },
@@ -19,6 +22,15 @@ export default function PluginsWorkspace({ client, children }: { client: Coworke
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState("");
+  const management = useRef<HTMLDetailsElement>(null);
+  const [returningFromOAuth] = useState(() =>
+    hasPendingGoogleCallback() || hasPendingMicrosoftCallback() || hasPendingLinkedInCallback());
+  useEffect(() => {
+    // OAuth is a full-page redirect. Restore the same visible connection
+    // controls on return; leave normal Plugins visits collapsed by default.
+    // Do not control the disclosure after mount: users can close it manually.
+    if (returningFromOAuth && management.current) management.current.open = true;
+  }, [returningFromOAuth]);
   useEffect(() => {
     const controller = new AbortController();
     client.connections(controller.signal).then(value => { if (!controller.signal.aborted) { setConnections(value.connections); setEnabled(value.enabled); setSocialEnabled(value.social_publishing_enabled); } })
@@ -46,6 +58,6 @@ export default function PluginsWorkspace({ client, children }: { client: Coworke
       </>;
     })()}
     {selected && <section className="rukh-plugin-detail"><h2>{selected}</h2><p>{catalog.find(item => item.name === selected)?.supported ? "Use the connection controls below to review permissions and connect or disconnect your account. A connection alone does not approve external actions." : "This connector is shown in the approved design but is not currently enabled by a provider integration. No account access is granted."}</p><button className="cw-text-button" type="button" onClick={() => setSelected("")}>Close details</button></section>}
-    <details className="rukh-plugin-management"><summary>Connections, permissions &amp; approvals</summary>{children(setConnections)}</details>
+    <details ref={management} className="rukh-plugin-management"><summary>Connections, permissions &amp; approvals</summary>{children(setConnections)}</details>
   </section>;
 }
