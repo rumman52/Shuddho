@@ -25,6 +25,7 @@ from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete,
 from .fly_code_schemas import FlyWorkspaceSync
 from .fly_code_schemas import FlyPatchApplyRequest, FlyPatchGenerateRequest, FlyPatchReviewRequest
 from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest, ConversationSteerRequest
+from .task_brief_schemas import TaskBriefProposeRequest, TaskBriefPreviewRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -1318,7 +1319,6 @@ def runtime_manifest(
         "projects": settings.projects_enabled and settings.conversations_enabled,
         "fly_github": settings.fly_github_enabled,
         "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
-        "grounded_conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
         "runtime_v3": settings.agent_runtime_v3_enabled,
         "context_retrieval": settings.context_retrieval_enabled,
         "personal_goals": settings.personal_goals_enabled,
@@ -1967,6 +1967,32 @@ async def stream_reply_to_conversation_message(
     })
 
 
+@router.post("/conversations/{conversation_id}/messages/{message_id}/task-brief/propose")
+async def propose_conversation_task_brief(
+    conversation_id: UUID, message_id: UUID, payload: TaskBriefProposeRequest,
+    identity: Identity, services: Services, response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await services.conversation_task_briefs.propose(
+        identity.account_id, str(conversation_id), str(message_id),
+        expected_sequence=payload.expected_sequence,
+        project_id=str(payload.project_id) if payload.project_id is not None else None,
+    )
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/task-brief/preview")
+def preview_conversation_task_brief(
+    conversation_id: UUID, message_id: UUID, payload: TaskBriefPreviewRequest,
+    identity: Identity, services: Services, response: Response,
+):
+    response.headers["Cache-Control"] = "no-store"
+    return services.conversation_task_briefs.validate(
+        identity.account_id, str(conversation_id), str(message_id),
+        expected_sequence=payload.expected_sequence, brief=payload.brief,
+        project_id=str(payload.project_id) if payload.project_id is not None else None,
+    )
+
+
 @router.post("/conversations/{conversation_id}/messages/{message_id}/dispatch", status_code=202)
 def dispatch_conversation_message(
     conversation_id: UUID, message_id: UUID, payload: ConversationDispatchCreate,
@@ -1976,7 +2002,7 @@ def dispatch_conversation_message(
         identity.account_id, str(conversation_id), str(message_id),
         expected_sequence=payload.expected_sequence, output_language=payload.output_language,
         project_id=str(payload.project_id) if payload.project_id is not None else None,
-        memory_pins=payload.memory_pins,
+        reviewed_brief=payload.reviewed_brief, expected_digest=payload.expected_digest,
     )
     response.headers["Location"] = f'/api/v1/agent-runs/{value["run_id"]}'
     response.headers["Idempotent-Replayed"] = str(not created).lower()

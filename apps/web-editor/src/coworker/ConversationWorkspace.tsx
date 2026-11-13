@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   CoworkerClient, WorkspaceError, type AssistantReply, type ConversationRecord,
-  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, type MemoryPin, type ProjectDetail, CoworkerView,
+  type ConversationMessageRecord, type ConversationActivityRecord, type WorkspaceManifest, type MemoryFact, type TaskBrief, type TaskBriefPreview, type ProjectDetail, CoworkerView,
 } from "./client";
 import ConversationReply from "./ConversationReply";
 import ConversationRunStatus from "./ConversationRunStatus";
@@ -21,14 +21,6 @@ function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifes
   if (document) return document.name;
   const artifact = manifest?.artifacts.find(item => item.artifact_id === resourceId);
   return artifact?.name ?? "Attached source";
-}
-
-function chatSupportsSource(source: Record<string, unknown>, manifest: WorkspaceManifest | null): boolean {
-  const id = typeof source.resource_id === "string" ? source.resource_id : "";
-  const document = manifest?.documents.find(item => item.version_id === id && item.available);
-  const artifact = manifest?.artifacts.find(item => item.artifact_id === id && item.available);
-  const name = document?.name ?? artifact?.name;
-  return Boolean(name && /\.(pdf|txt|docx|csv|xlsx|pptx)$/i.test(name));
 }
 
 /** CW-07: messages are not run authorizations; explicit dispatch is a separate click. */
@@ -59,13 +51,11 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [uploadError, setUploadError] = useState("");
   const [manifestError, setManifestError] = useState("");
   const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
-  const [selectedMemoryPins, setSelectedMemoryPins] = useState<MemoryPin[]>([]);
   const [memoryEnabled, setMemoryEnabled] = useState(false);
   const [memoryError, setMemoryError] = useState("");
   const [editingMemory, setEditingMemory] = useState("");
   const [memoryDraft, setMemoryDraft] = useState("");
   const [chatAvailable, setChatAvailable] = useState(false);
-  const [groundedAvailable, setGroundedAvailable] = useState(false);
   const [chatMode, setChatMode] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [replyingId, setReplyingId] = useState("");
@@ -81,6 +71,10 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState(initialDraft);
   const [working, setWorking] = useState(false);
+  const [briefMessageId, setBriefMessageId] = useState("");
+  const [briefDraft, setBriefDraft] = useState<TaskBrief | null>(null);
+  const [briefPreview, setBriefPreview] = useState<TaskBriefPreview | null>(null);
+  const [briefQuestion, setBriefQuestion] = useState("");
   const [steeringMessageId, setSteeringMessageId] = useState("");
   const [steeringDraft, setSteeringDraft] = useState("");
   const [error, setError] = useState("");
@@ -91,6 +85,9 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const refreshOrder = useRef(new RefreshOrder());
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  useEffect(() => {
+    setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null); setBriefQuestion("");
+  }, [selected, projectId]);
   const [mobilePanel, setMobilePanel] = useState<"conversations" | "context" | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const mobilePanelTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -256,9 +253,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       if (!controller.signal.aborted) {
         const enabled = result.capabilities.conversation_replies === true;
         setChatAvailable(enabled); setChatMode(enabled);
-        setGroundedAvailable(enabled && result.capabilities.grounded_conversation_replies === true);
       }
-    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatMode(false); setGroundedAvailable(false); } });
+    }).catch(() => { if (!controller.signal.aborted) { setChatAvailable(false); setChatMode(false); } });
     return () => controller.abort();
   }, [client]);
 
@@ -301,11 +297,6 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     const reply = await client.memory();
     setMemoryEnabled(reply.enabled);
     setMemoryFacts(reply.enabled ? reply.facts : []);
-    // A corrected or deleted version cannot remain silently selected.
-    setSelectedMemoryPins(current => current.filter(pin =>
-      reply.enabled && reply.facts.some(fact =>
-        fact.id === pin.fact_id && fact.version === pin.expected_version && fact.active),
-    ));
   }
 
   async function saveMemory(fact: MemoryFact) {
@@ -420,7 +411,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
 
   function startNew() {
     if (working) return;
-    setSelected(""); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setSelectedMemoryPins([]); setError(""); setNotice("");
+    setSelected(""); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setError(""); setNotice("");
     setEditingTitle(false); setRenameDraft("");
     setMobilePanel(null); messageKey.current = null; firstMessage.current = null;
     composerRef.current?.focus();
@@ -467,30 +458,73 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       const currentManifest = await client.workspaceManifest().catch(() => null);
       if (currentManifest) setManifest(currentManifest);
       await reloadConversation(conversationId);
-      if (chatMode && (sources.length === 0 || (groundedAvailable &&
-        sources.every(resource_id => chatSupportsSource({ resource_id }, manifest))))) {
+      if (chatMode && sources.length === 0) {
         setNotice("");
         await askForReply(savedMessage);
       } else setNotice(sources.length
-        ? "Message saved with attachments. Ask Rukh can read supported PDF, TXT, DOCX, CSV, XLSX and PPTX files; for other files use Start task."
+        ? "Message saved with attachments. Use Start task to let the Agent read them; direct chat does not read attached files."
         : "Message saved. Choose Start task when you are ready.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Message could not be saved.");
     } finally { setWorking(false); }
   }
 
-  async function dispatch(item: ConversationMessageRecord) {
+  async function proposeBrief(item: ConversationMessageRecord) {
     if (!selected || working) return;
+    if (briefMessageId === item.id) {
+      setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null); setBriefQuestion("");
+      return;
+    }
+    setBriefMessageId(item.id); setBriefPreview(null); setBriefQuestion(""); setBriefDraft(null);
+    setWorking(true); setError("");
+    try {
+      const suggestion = await client.proposeConversationTaskBrief(selected, item.id, item.sequence, projectId);
+      if (selectedRef.current !== selected) return;
+      if (suggestion.state === "needs_input") {
+        setBriefQuestion(suggestion.question ?? "Please clarify the requested task.");
+      } else {
+        setBriefDraft(suggestion.brief);
+        setBriefPreview(suggestion);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Task brief proposal failed.");
+      // Allow a manual review when the proposal provider is offline.
+      setBriefDraft({ objective: item.text.slice(0, 4000), deliverables: ["Requested task output"],
+        constraints: [], source_ids: item.selected_sources.map(source => String(source.resource_id)),
+        output_language: "auto" });
+    } finally { setWorking(false); }
+  }
+
+  function editBrief(patch: Partial<TaskBrief>) {
+    setBriefDraft(current => current ? { ...current, ...patch } : null);
+    setBriefPreview(null);
+  }
+
+  async function previewBrief(item: ConversationMessageRecord) {
+    if (!selected || !briefDraft || working) return;
+    setWorking(true); setError("");
+    try {
+      const preview = await client.previewConversationTaskBrief(
+        selected, item.id, item.sequence, briefDraft, projectId);
+      if (selectedRef.current === selected) setBriefPreview(preview);
+    } catch (cause) {
+      setBriefPreview(null);
+      setError(cause instanceof Error ? cause.message : "Task brief could not be validated.");
+    } finally { setWorking(false); }
+  }
+
+  async function dispatch(item: ConversationMessageRecord) {
+    if (!selected || working || !briefDraft || !briefPreview?.canonical_digest
+      || briefMessageId !== item.id) return;
     setWorking(true); setError(""); setNotice("");
     try {
       await client.dispatchConversationMessage(
-        selected, item.id, item.sequence, projectId,
-        memoryEnabled ? selectedMemoryPins : undefined,
-      );
-      setSelectedMemoryPins([]);
+        selected, item.id, item.sequence, projectId, briefDraft, briefPreview.canonical_digest);
+      setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null);
       await reloadConversation(selected);
-      setNotice("Task started. Follow progress below or open Agent activity.");
+      setNotice("Reviewed task started. Follow progress below or open Agent activity.");
     } catch (cause) {
+      setBriefPreview(null);
       setError(cause instanceof Error ? cause.message : "Agent admission was not accepted.");
     } finally { setWorking(false); }
   }
@@ -607,7 +641,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         setSelectedSources(current => current.includes(source.version_id)
           ? current
           : current.length < 5 ? [...current, source.version_id] : current);
-        setNotice("Uploaded " + uploaded.filename + ". Ask Rukh can answer questions from supported files. Start task is separate for Agent actions.");
+        setNotice("Uploaded " + uploaded.filename + ". Use Start task to let the Agent read this untrusted source; direct chat does not read attached files.");
       } else {
         setNotice("Uploaded " + uploaded.filename + ". Remove a selected source before attaching another; the limit is five.");
       }
@@ -689,7 +723,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         </form>
         <ul className="rukh-conversation-items">
           {filteredConversations.map(item => <li key={item.id}>
-            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setSelectedMemoryPins([]); setEditingTitle(false); setRenameDraft(""); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
+            <button type="button" disabled={working} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setDraft(""); onInitialDraftChange?.(""); setSelectedSources([]); setEditingTitle(false); setRenameDraft(""); messageKey.current = null; setMobilePanel(null); firstMessage.current = null; }}>
               <span className="rukh-conversation-item-title">{item.title}</span>
               <small>{new Date(item.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</small>
             </button>
@@ -733,7 +767,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
           <span className="rukh-project-chat-context-eyebrow">PROJECT CHAT</span>
           <strong>{projectContext?.name ?? (projectContextLoading ? "Loading project…" : "Project unavailable")}</strong>
           {projectContext?.description && <p>{projectContext.description}</p>}
-          <small>{projectContext?.description ? "Saved project instructions are applied to Rukh’s replies." : "No custom instructions saved. Edit this project to guide Rukh’s replies."} Linked files are not read automatically; select a supported file to Ask Rukh, or choose Start task for Agent work.</small>
+          <small>{projectContext?.description ? "Saved project instructions are applied to Rukh’s replies." : "No custom instructions saved. Edit this project to guide Rukh’s replies."} Linked files are not read automatically; attach a file and choose Start task.</small>
           {projectContextError && <span className="cw-error" role="alert">{projectContextError}</span>}
         </div>
         <button type="button" className="cw-text-button rukh-project-chat-back" onClick={() => onNavigate?.("projects")}>All projects</button>
@@ -765,33 +799,59 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                 </div>
                 </div>
                 {(activeRun || canDispatch || linked || chatAvailable) && <div className="rukh-message-actions">
-                  {chatAvailable && !item.assistant_reply && item.sequence === selectedConversation?.message_sequence && <button type="button"
-                    disabled={composerDisabled || (item.selected_sources.length > 0 &&
-                      (!groundedAvailable || !item.selected_sources.every(source => chatSupportsSource(source, manifest))))}
-                    title={item.selected_sources.length && (!groundedAvailable || !item.selected_sources.every(source => chatSupportsSource(source, manifest)))
-                      ? "These attached sources are unavailable or unsupported for chat. Select a supported file again." : undefined}
-                    onClick={() => { void askForReply(item); }}>Ask Rukh</button>}
+                  {chatAvailable && !item.assistant_reply && item.sequence === selectedConversation?.message_sequence && <button type="button" disabled={composerDisabled || item.selected_sources.length > 0} onClick={() => { void askForReply(item); }}>Ask Rukh</button>}
                   {canSteer && <button type="button" aria-label="Steer Agent task" disabled={working}
                     onClick={() => { setSteeringMessageId(current => current === item.id ? "" : item.id); setSteeringDraft(""); }}>
                     {steeringMessageId === item.id ? "Close steering" : "Steer"}
                   </button>}
                   {activeRun && run && <button type="button" disabled={working} onClick={() => { void cancel(item, run); }}>Cancel Agent work</button>}
-                  {canDispatch && <button type="button" disabled={working} onClick={() => { void dispatch(item); }}>Start task</button>}
+                  {canDispatch && <button type="button" disabled={working} onClick={() => { void proposeBrief(item); }}>
+                    {briefMessageId === item.id ? "Close task brief" : "Start task"}
+                  </button>}
                   {linked && <button type="button" onClick={() => openAgent(linked.resource_id)}>View Agent run</button>}
                 </div>}
-                {canDispatch && memoryEnabled && <section className="rukh-task-memory-preview" aria-label="Task preview">
-                  <strong>Task preview · selected memories</strong>
-                  {selectedMemoryPins.length === 0 ? <p className="rukh-muted">No saved memory selected. This task will not use other saved facts.</p> :
-                    <ul aria-label="Selected task memories">
-                      {selectedMemoryPins.map(pin => {
-                        const fact = memoryFacts.find(value => value.id === pin.fact_id && value.version === pin.expected_version);
-                        return <li key={pin.fact_id}>
-                          {fact ? <><strong>{fact.namespace} / {fact.key} · version {fact.version}</strong>
-                            <p dir="auto">{fact.value}</p></> : "Memory version changed · reselect"}
-                        </li>;
-                      })}
-                    </ul>}
-                  <small>Only selected fact IDs and versions are admitted; saved facts can be edited or deleted below.</small>
+                {canDispatch && briefMessageId === item.id && <section className="rukh-task-brief-review" aria-label="Review task brief">
+                  <h3>Review task before starting</h3>
+                  {briefQuestion && <p role="status">{briefQuestion} Reply in the conversation to clarify.</p>}
+                  {briefDraft && <form className="rukh-steer-form" onSubmit={event => {
+                    event.preventDefault();
+                    if (briefPreview?.canonical_digest) void dispatch(item);
+                    else void previewBrief(item);
+                  }}>
+                    <label>Task objective
+                      <textarea value={briefDraft.objective} maxLength={4000} rows={3} disabled={working}
+                        onChange={event => editBrief({ objective: event.target.value })} />
+                    </label>
+                    <label>Constraints (one per line)
+                      <textarea aria-label="Task constraints" value={briefDraft.constraints.join("\n")} rows={3} disabled={working}
+                        onChange={event => editBrief({ constraints: event.target.value.split("\n").map(v => v.trim()).filter(Boolean) })} />
+                    </label>
+                    <label>Deliverables (one per line)
+                      <textarea aria-label="Task deliverables" value={briefDraft.deliverables.join("\n")} rows={3} disabled={working}
+                        onChange={event => editBrief({ deliverables: event.target.value.split("\n").map(v => v.trim()).filter(Boolean) })} />
+                    </label>
+                    <label>Output language
+                      <input aria-label="Task output language" value={briefDraft.output_language} maxLength={35}
+                        disabled={working} onChange={event => editBrief({ output_language: event.target.value })} />
+                    </label>
+                    {Array.from(new Map(messages.flatMap(message => message.selected_sources)
+                      .filter(source => typeof source.resource_id === "string")
+                      .map(source => [String(source.resource_id), source])).values()).map(source => {
+                      const sourceId = String(source.resource_id);
+                      return <label key={sourceId}>
+                        <input type="checkbox" checked={briefDraft.source_ids.includes(sourceId)} disabled={working ||
+                            (!briefDraft.source_ids.includes(sourceId) && briefDraft.source_ids.length >= 5)}
+                          onChange={event => editBrief({ source_ids: event.target.checked
+                            ? [...briefDraft.source_ids, sourceId] : briefDraft.source_ids.filter(id => id !== sourceId) })} />
+                        {sourceLabel(source, manifest)}
+                      </label>;
+                    })}
+                    {briefPreview?.canonical_digest && <p role="status">Validated preview: {briefPreview.canonical_digest.slice(0, 12)}…</p>}
+                    <small>Edits invalidate the preview. Sources are untrusted data; this does not approve external actions.</small>
+                    <button type="submit" disabled={working || !briefDraft.objective.trim() || briefDraft.deliverables.length === 0}>
+                      {briefPreview?.canonical_digest ? "Confirm and start reviewed task" : "Validate task preview"}
+                    </button>
+                  </form>}
                 </section>}
                 {canSteer && steeringMessageId === item.id && run && <form className="rukh-steer-form" aria-label="Steer Agent form"
                   onSubmit={event => { event.preventDefault(); void steer(item, run); }}>
@@ -825,20 +885,20 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
             placeholder="Ask Rukh to do something…" />
           <div className="rukh-composer-controls">
             <button type="button" className="rukh-design-attach" aria-label="Attach files" disabled={composerDisabled} onClick={toggleContext}><NavigationIcon name="plus" /><span>Attach files</span></button>
-            {selectedSources.length > 0 && <span className="rukh-selected-source-count">{selectedSources.length} attached · Ask Rukh for supported files</span>}
+            {selectedSources.length > 0 && <span className="rukh-selected-source-count">{selectedSources.length} attached · Start task to use files</span>}
             <details className="rukh-composer-tools"><summary>Tools</summary><div>
               {chatAvailable && <div className="rukh-chat-mode" aria-label="Message mode">
                 <button type="button" aria-pressed={chatMode} disabled={composerDisabled} onClick={() => setChatMode(true)}>Chat with Rukh</button>
                 <button type="button" aria-pressed={!chatMode} disabled={composerDisabled} onClick={() => setChatMode(false)}>Save only</button>
               </div>}
-              <p>Ask Rukh reads selected supported files only. Start task separately for Agent actions.</p>
+              <p>Start task separately to use attached files.</p>
             </div></details>
             <VoiceDictation key={selected} draft={draft} onDraftChange={setDraft} onListeningChange={setDictating} disabled={composerDisabled} compact />
             {replyingId && <button type="button" className="rukh-stop-stream" onClick={() => { replyController.current?.abort(); setNotice("Stopped receiving the response. A saved reply may still finish; reopen this conversation to recover it."); }}>Stop response</button>}
-            <button className="rukh-design-send" type="submit" aria-label={replyingId ? "Replying…" : working ? "Saving…" : chatMode && (!selectedSources.length || groundedAvailable && selectedSources.every(resource_id => chatSupportsSource({ resource_id }, manifest))) ? "Send message" : "Save message"} disabled={composerDisabled || dictating || !draft.trim()}><NavigationIcon name="arrow" /></button>
+            <button className="rukh-design-send" type="submit" aria-label={replyingId ? "Replying…" : working ? "Saving…" : chatMode && !selectedSources.length ? "Send message" : "Save message"} disabled={composerDisabled || dictating || !draft.trim()}><NavigationIcon name="arrow" /></button>
           </div>
         </form>
-        <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Selected PDFs and supported files can be cited in chat. Start task separately for actions." : "Start task separately for actions."}</p>
+        <p className="rukh-composer-hint">{chatMode ? "Enter to send" : "Enter to save"} · Shift + Enter for a new line · {selectedSources.length ? "Direct chat does not read attached files; use Start task." : "Start task separately."}</p>
     </section>
 
     <aside ref={contextPanelRef} id="rukh-context-panel" hidden={!contextOpen && mobilePanel !== "context"}
@@ -893,7 +953,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
             </div>
           </>}
           {manifest.truncated.artifacts && <p className="rukh-muted">Only the first generated-artifact page is shown.</p>}
-          <p className="rukh-panel-footnote">Selected sources are untrusted reference data, never instructions or permissions. Maximum five per message. Ask Rukh can answer from supported attachments; Start task separately for Agent work.</p>
+          <p className="rukh-panel-footnote">Selected sources are untrusted inputs, not instructions or permissions. Maximum five per message. Direct chat does not read attached files; use Start task to let the Agent process them.</p>
         </>}
       </section>
       <section>
@@ -914,15 +974,6 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
             <ul>{memoryFacts.map(fact => <li key={fact.id}>
               <strong>{fact.namespace} / {fact.key}</strong><small>Version {fact.version}{!fact.active ? " · Expired" : ""}</small>
               <p dir="auto">{fact.value}</p>
-              <label className="rukh-memory-select">
-                <input type="checkbox" aria-label={`Use memory ${fact.namespace} / ${fact.key} in next task`}
-                  checked={selectedMemoryPins.some(pin => pin.fact_id === fact.id && pin.expected_version === fact.version)}
-                  disabled={working || !fact.active || (!selectedMemoryPins.some(pin => pin.fact_id === fact.id) && selectedMemoryPins.length >= 20)}
-                  onChange={event => setSelectedMemoryPins(current => event.target.checked
-                    ? [...current.filter(pin => pin.fact_id !== fact.id), { fact_id: fact.id, expected_version: fact.version }]
-                    : current.filter(pin => pin.fact_id !== fact.id))} />
-                Use in next task
-              </label>
               {editingMemory === fact.id ? <>
                 <label htmlFor="cw-memory-edit">Edit memory fact</label>
                 <textarea id="cw-memory-edit" value={memoryDraft} maxLength={2000} rows={3}

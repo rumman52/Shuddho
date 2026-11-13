@@ -1,10 +1,10 @@
 """Bounded user-authored conversation inputs; chat conveys no approval grant."""
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from .task_brief_schemas import TaskBrief
 
 from .goal_schemas import _safe_text
-from .task_brief_schemas import MemoryPin
 
 
 class ConversationCreate(BaseModel):
@@ -53,8 +53,14 @@ class ConversationDispatchCreate(BaseModel):
     expected_sequence: int = Field(ge=1)
     output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
     project_id: UUID | None = None
-    # None: legacy dispatch; []: reviewed brief with no memory.
-    memory_pins: list[MemoryPin] | None = Field(default=None, max_length=20)
+    reviewed_brief: TaskBrief | None = None
+    expected_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def reviewed_pair(self):
+        if (self.reviewed_brief is None) != (self.expected_digest is None):
+            raise ValueError("Reviewed dispatch requires both brief and digest")
+        return self
 
 
 class ConversationSteerRequest(BaseModel):
@@ -78,10 +84,6 @@ class ConversationCancelRequest(BaseModel):
 
 
 class ConversationReplyCreate(BaseModel):
-    """Only the persisted message's selected_sources may ground a reply.
-
-    No new file IDs, citations or action authority may be supplied here.
-    """
     model_config = ConfigDict(extra="forbid")
     expected_sequence: int = Field(ge=1)
     project_id: UUID | None = None

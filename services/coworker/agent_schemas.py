@@ -38,6 +38,15 @@ class AgentRouteDecision(AgentModel):
     message: str = Field(min_length=1, max_length=300)
 
 
+class AgentReviewedTaskDependency(AgentModel):
+    """Typed planner-only reviewed guidance. Never external-action authority."""
+    objective: str = Field(min_length=3, max_length=4000)
+    constraints: list[str] = Field(default_factory=list, max_length=12)
+    deliverables: list[str] = Field(min_length=1, max_length=8)
+    source_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    output_language: str = Field(default="auto", max_length=35)
+
+
 class AgentRunCreate(AgentModel):
     goal: str = Field(min_length=3, max_length=4000)
     document_ids: list[UUID] = Field(default_factory=list, max_length=5)
