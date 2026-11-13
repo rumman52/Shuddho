@@ -20,11 +20,14 @@ def proof():
 
 
 def evidence():
+    # A schema-v2 release must enumerate every runtime capability (including false).
+    capabilities = {key: key in {"coworker", "agent_runtime"}
+                    for key in day10.RUNTIME_CAPABILITY_KEYS}
     rollout = {"release_id": RELEASE, "environment": "production", "action_providers": [],
-               "capabilities": {"coworker": True, "agent_runtime": True},
+               "capabilities": capabilities,
                "cohort": {"max_users": 5}}
     api = {"schema_version": 2, "source_revision": REV, "environment": "production",
-           "capabilities": {"coworker": True, "agent_runtime": True, "browser": False},
+           "capabilities": dict(capabilities),
            "action_providers": [], "reviewed_skills": {},
            "cohort": {"enforced": True, "max_users": 5, "configured_members": 0}}
     worker = {**proof(), "deployment_reference": "worker-image-sha256:abc"}
@@ -76,6 +79,22 @@ def test_not_a_production_activation_even_when_qualified(monkeypatch):
     assert result["canonical_decision"] == "GO_CONTROLLED_COHORT"
     assert result["pilot_activated"] is False
     assert result["blockers"] == []
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda rollout, artifacts: artifacts["api"]["capabilities"].pop("projects"),
+    lambda rollout, artifacts: artifacts["api"]["capabilities"].update(unreviewed_disabled=False),
+    lambda rollout, artifacts: rollout["capabilities"].pop("projects"),
+    lambda rollout, artifacts: rollout["capabilities"].update(unreviewed_disabled=False),
+    lambda rollout, artifacts: artifacts["api"]["capabilities"].update(projects=0),
+    lambda rollout, artifacts: rollout["capabilities"].update(projects=0),
+])
+def test_incomplete_or_unreviewed_capability_inventory_fails_closed(monkeypatch, mutation):
+    rollout, artifacts = evidence()
+    mutation(rollout, artifacts)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "api_runtime_manifest_v2_exact_sha_and_flags" in result["blockers"]
 
 
 def test_missing_evidence_fails_closed(monkeypatch):

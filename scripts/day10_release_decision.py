@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_release_gate import evaluate_release
+from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -165,9 +166,13 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
         and api.get("environment") == rollout.get("environment")
         and isinstance(api.get("capabilities"), dict)
         and isinstance(capabilities, dict)
+        # Match the complete v2 API capability inventory, including disabled flags.
+        # A partial rollout or an unreviewed extra disabled flag is not a freeze.
+        and set(api["capabilities"]) == RUNTIME_CAPABILITY_KEYS
+        and set(capabilities) == RUNTIME_CAPABILITY_KEYS
+        and all(type(v) is bool for v in capabilities.values())
         and all(type(v) is bool for v in api["capabilities"].values())
-        and all(api["capabilities"].get(k) is v for k, v in capabilities.items())
-        and not any(v is True for k, v in api["capabilities"].items() if k not in capabilities)
+        and api["capabilities"] == capabilities
         and isinstance(api.get("reviewed_skills"), dict)
         and api.get("action_providers") == rollout.get("action_providers", [])
         and isinstance(api.get("cohort"), dict)
