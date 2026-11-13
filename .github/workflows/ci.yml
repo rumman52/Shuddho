@@ -449,7 +449,7 @@ jobs:
       - name: Prepare multilingual research export previews
         run: PYTHONPATH=.:tests uv run --extra coworker python tests/verify_research_exports.py /tmp/shuddho-coworker-browser/screenshots/research
       - uses: actions/setup-node@v4
-        with: { node-version: "20", cache: npm }
+        with: { node-version: "22", cache: npm }
       - run: npm ci
       - name: Test isolated browser worker policy and real HTTPS CONNECT boundary
         run: node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs
