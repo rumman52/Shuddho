@@ -300,6 +300,45 @@ def test_adjudication_required_and_third_reviewer_must_be_separate():
         score_reviews(tasks(), reviews, adjudication, checks)
 
 
+def test_rubric_rejects_missing_or_impersonated_third_adjudicator():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    reviews[0]["scores"][RUBRIC[0]] = 1
+    for fake in (None, "", " ", "D1 ", "d1", "D２"):
+        resolution = [{"case_id": cases[0]["case_id"], "adjudicator_id": fake,
+                       "scores": dict.fromkeys(RUBRIC, 2),
+                       "source_supported": True, "evidence_note": "Synthetic reasoning"}]
+        with pytest.raises(EvidenceError, match="separate adjudicator"):
+            score_reviews(cases, reviews, resolution, checks)
+
+
+def test_rubric_rejects_casefolded_duplicate_reviewer_identity():
+    reviews, checks = reviews_and_checks()
+    for row in reviews:
+        if row["reviewer_id"] == "D2":
+            row["reviewer_id"] = "d1"
+    with pytest.raises(EvidenceError, match="independent"):
+        score_reviews(tasks(), reviews, [], checks)
+
+
+def test_blind_votes_reject_casefolded_duplicate_reviewer_and_adjudicator_alias():
+    votes = blind_votes()
+    for row in votes:
+        if row["reviewer_id"] == "D2":
+            row["reviewer_id"] = "d1"
+    with pytest.raises(EvidenceError, match="reviewers"):
+        compare(tasks(), manifest(), comparator(), votes, blinding_key=BLIND_KEY)
+
+    votes = blind_votes()
+    votes[0]["preference"] = "B" if votes[0]["preference"] == "A" else "A"
+    cid = tasks()[0]["case_id"]
+    for fake in ("D1 ", "d1", "D２"):
+        resolution = [{"case_id": cid, "adjudicator_id": fake, "position": "AB",
+                       "preference": "tie", "evidence_note": "Synthetic rationale"}]
+        with pytest.raises(EvidenceError, match="independent third"):
+            compare(tasks(), manifest(), comparator(), votes, resolution, blinding_key=BLIND_KEY)
+
+
 def test_operated_twenty_require_real_boundary_envelopes_and_no_unauthorized_effects():
     assert verify_operations(operations(), "a" * 40)["passed"] == 20
     rows = operations()
