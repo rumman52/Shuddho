@@ -319,8 +319,9 @@ jobs:
       # distinct regression module instead of replacing Day 5's test file.
       - name: Qualify Day 4 reviewed multi-turn task admission without skips
         run: |
-          uv run --extra coworker pytest tests/test_conversation_reviewed_briefs.py -q -rs --junitxml=/tmp/day4-reviewed-task-briefs.xml
+          uv run --extra coworker pytest tests/test_conversation_reviewed_briefs.py tests/test_reviewed_task_objective_digest.py -q -rs --junitxml=/tmp/day4-reviewed-task-briefs.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day4-reviewed-task-briefs.xml --required-module tests.test_conversation_reviewed_briefs
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day4-reviewed-task-briefs.xml --required-module tests.test_reviewed_task_objective_digest
       - name: Preserve Day 4 reviewed-brief acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
