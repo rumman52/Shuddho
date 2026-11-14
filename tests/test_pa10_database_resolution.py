@@ -6,7 +6,6 @@ import sys
 import pytest
 
 from scripts.staging_prerequisite_preflight import PreflightFailure, _validate_postgresql_url
-from services.coworker.migrate import upgrade
 
 
 STAGING_URL = (
@@ -38,6 +37,9 @@ def test_staging_database_rejects_wrong_project_role_or_connection_mode(url):
 
 
 def test_readiness_requires_migration_head_and_can_repeat_without_writing(tmp_path, monkeypatch):
+    pytest.importorskip("alembic", reason="Install the coworker extra for migration checks")
+    from services.coworker.migrate import upgrade
+
     url = f"sqlite:///{tmp_path / 'runtime.sqlite3'}"
     monkeypatch.setenv("SHUDDHO_COWORKER_DATABASE_URL", url)
     command = [sys.executable, "-m", "services.coworker.migrate", "--check"]
