@@ -266,6 +266,7 @@ def test_http_reviewed_preview_and_dispatch_endpoint(container, signed_client):
 def test_additive_migration_works_with_old_reader_and_default(tmp_path):
     """An existing SQL reader continues to work after the additive schema upgrade."""
     from alembic import command
+    from alembic.script import ScriptDirectory
     from sqlalchemy import create_engine, inspect, text
     from services.coworker.migrate import migration_config
     url = f"sqlite:///{tmp_path / 'day4-migrate.sqlite3'}"
@@ -283,6 +284,7 @@ def test_additive_migration_works_with_old_reader_and_default(tmp_path):
             columns = {column["name"] for column in inspect(db).get_columns("cw_agent_runs")}
             assert "reviewed_brief" in columns
             assert db.execute(text("SELECT id, goal, output_language FROM cw_agent_runs")).all() == []
-            assert db.execute(text("SELECT version_num FROM cw_alembic_version")).scalar() == "0069_conversation_task_briefs"
+            revision = db.execute(text("SELECT version_num FROM cw_alembic_version")).scalar_one()
+            assert revision == ScriptDirectory.from_config(config).get_current_head()
     finally:
         engine.dispose()

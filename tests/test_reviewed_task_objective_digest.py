@@ -12,6 +12,7 @@ pytest.importorskip("temporalio")
 
 from sqlalchemy import func, select
 from test_conversation_reviewed_briefs import append, brief, setup
+from test_coworker import container
 from services.coworker.errors import CoworkerError
 from services.coworker.models import AgentRun, AgentOutbox
 
