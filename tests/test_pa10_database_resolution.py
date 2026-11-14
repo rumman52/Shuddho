@@ -1,153 +1,52 @@
-"""Run both checked-in database-resolution steps without provider access.
+"""Exercise the database admission check at the staging workflow entry point."""
 
-The Render CLI alone is replaced. Bash, jq, and the real lifecycle gate execute
-as they do in Actions, so an admission failure must actually stop the shell
-before the sensitive connection-info request or GitHub output publication.
-"""
-from __future__ import annotations
-
-from datetime import datetime, timedelta, timezone
-import json
-import os
-from pathlib import Path
 import subprocess
-import tempfile
-import textwrap
-import unittest
+import sys
+
+import pytest
+
+from scripts.staging_prerequisite_preflight import PreflightFailure, _validate_postgresql_url
+from services.coworker.migrate import upgrade
 
 
-ROOT = Path(__file__).resolve().parents[1]
-WORKFLOWS = (
-    ROOT / ".github/workflows/pa10-staging-prerequisite-preflight.yml",
-    ROOT / ".github/workflows/provision-pa10-staging-worker.yml",
+STAGING_URL = (
+    "postgresql+psycopg://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-secret"
+    "@aws-0-us-west-1.pooler.supabase.com:5432/postgres"
+    "?sslmode=verify-full&sslrootcert=system"
 )
-DATABASE_URL = "postgresql://fixture-user:fixture-password@fixture.invalid/staging"
 
 
-def resolution_script(workflow: Path) -> str:
-    step = workflow.read_text().split(
-        "      - name: Resolve private Render Postgres URL\n", 1
-    )[1].split("\n      - name:", 1)[0]
-    return textwrap.dedent(step.split("        run: |\n", 1)[1])
+def test_staging_database_accepts_bound_runtime_session():
+    _validate_postgresql_url(STAGING_URL)
 
 
-class DatabaseResolutionTests(unittest.TestCase):
-    def run_resolution(self, workflow, metadata, *, cli_exit=0, sensitive=None):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            calls = root / "calls.jsonl"
-            output = root / "github-output"
-            render = root / "render"
-            render.write_text(textwrap.dedent("""\
-                #!/usr/bin/env python3
-                import json, os, sys
-                args = sys.argv[1:]
-                with open(os.environ['RENDER_CALLS'], 'a') as stream:
-                    stream.write(json.dumps(args) + '\\n')
-                if args == ['pg', 'get', 'shuddho-staging-db', '--output', 'json']:
-                    print(os.environ['RENDER_METADATA'])
-                    sys.exit(int(os.environ['RENDER_METADATA_EXIT']))
-                if args == ['pg', 'get', 'shuddho-staging-db',
-                            '--include-sensitive-connection-info', '--output', 'json']:
-                    print(os.environ['RENDER_SENSITIVE'])
-                    sys.exit(0)
-                sys.exit('Unexpected Render command')
-                """))
-            render.chmod(0o755)
-            if sensitive is None:
-                sensitive = {"data": {"connectionInfo": {
-                    "internalConnectionString": DATABASE_URL,
-                }}}
-            result = subprocess.run(
-                ["bash", "-c", resolution_script(workflow)],
-                cwd=ROOT,
-                env=os.environ | {
-                    "PATH": f"{root}:{os.environ['PATH']}",
-                    "RENDER_CALLS": str(calls),
-                    "RENDER_METADATA": metadata,
-                    "RENDER_METADATA_EXIT": str(cli_exit),
-                    "RENDER_SENSITIVE": json.dumps(sensitive),
-                    "GITHUB_OUTPUT": str(output),
-                },
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            return (
-                result,
-                [json.loads(line) for line in calls.read_text().splitlines()],
-                output.read_text() if output.exists() else None,
-            )
-
-    def test_unsafe_metadata_stops_before_sensitive_request_and_output(self):
-        current = datetime.now(timezone.utc)
-        cases = {
-            "near expiry": {"data": {"plan": "free", "expiresAt": (
-                current + timedelta(days=6)
-            ).isoformat()}},
-            "expired": {"data": {"plan": "free", "expiresAt": (
-                current - timedelta(seconds=1)
-            ).isoformat()}},
-            "free without expiry": {"data": {"plan": "free"}},
-            "custom without expiry": {"data": {"plan": "custom"}},
-            "unknown plan": {"data": {"plan": "unreviewed-plan"}},
-            "missing plan": {"data": {}},
-            "missing envelope": {"plan": "starter"},
-            "invalid timestamp": {"data": {"plan": "free", "expiresAt": "invalid"}},
-            "naive timestamp": {"data": {"plan": "free", "expiresAt": (
-                current + timedelta(days=14)
-            ).replace(tzinfo=None).isoformat()}},
-        }
-        for workflow in WORKFLOWS:
-            for label, metadata in cases.items():
-                with self.subTest(workflow=workflow.name, case=label):
-                    result, calls, output = self.run_resolution(workflow, json.dumps(metadata))
-                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertEqual(calls, [[
-                        "pg", "get", "shuddho-staging-db", "--output", "json",
-                    ]])
-                    self.assertIsNone(output)
-                    self.assertNotIn(DATABASE_URL, result.stdout + result.stderr)
-
-    def test_invalid_json_and_cli_failure_stop_before_sensitive_request(self):
-        for workflow in WORKFLOWS:
-            for metadata, cli_exit in (("not-json", 0), ("{}", 23)):
-                with self.subTest(workflow=workflow.name, cli_exit=cli_exit):
-                    result, calls, output = self.run_resolution(
-                        workflow, metadata, cli_exit=cli_exit,
-                    )
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(len(calls), 1)
-                    self.assertNotIn("--include-sensitive-connection-info", calls[0])
-                    self.assertIsNone(output)
-
-    def test_safe_metadata_retrieves_then_masks_and_publishes_private_url(self):
-        safe_expiry = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
-        for workflow in WORKFLOWS:
-            for metadata in (
-                {"data": {"plan": "free", "expiresAt": safe_expiry}},
-                {"data": {"plan": "starter", "expiresAt": None}},
-            ):
-                with self.subTest(workflow=workflow.name, metadata=metadata):
-                    result, calls, output = self.run_resolution(workflow, json.dumps(metadata))
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertEqual(len(calls), 2)
-                    self.assertNotIn("--include-sensitive-connection-info", calls[0])
-                    self.assertIn("--include-sensitive-connection-info", calls[1])
-                    self.assertIn(f"::add-mask::{DATABASE_URL}\n", result.stdout)
-                    self.assertEqual(output, f"database_url<<EOF\n{DATABASE_URL}\nEOF\n")
-
-    def test_missing_private_connection_string_never_publishes_output(self):
-        for workflow in WORKFLOWS:
-            with self.subTest(workflow=workflow.name):
-                result, calls, output = self.run_resolution(
-                    workflow, json.dumps({"data": {"plan": "starter"}}),
-                    sensitive={"data": {}},
-                )
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(len(calls), 2)
-                self.assertIsNone(output)
+@pytest.mark.parametrize("url", [
+    "",
+    STAGING_URL.replace("bsmbvjenpvcyfjzwtuax", "wrong_project"),
+    STAGING_URL.replace("shuddho_staging_runtime.", "postgres."),
+    STAGING_URL.replace("aws-0-us-west-1.pooler.supabase.com", "wrong.example"),
+    STAGING_URL.replace(":5432", ":6543"),
+    STAGING_URL.replace("verify-full", "require"),
+    STAGING_URL + "&host=wrong.example",
+    STAGING_URL + "&sslmode=disable",
+])
+def test_staging_database_rejects_wrong_project_role_or_connection_mode(url):
+    with pytest.raises(PreflightFailure, match="SHUDDHO_COWORKER_DATABASE_URL") as error:
+        _validate_postgresql_url(url)
+    assert "fixture-secret" not in str(error.value)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_readiness_requires_migration_head_and_can_repeat_without_writing(tmp_path, monkeypatch):
+    url = f"sqlite:///{tmp_path / 'runtime.sqlite3'}"
+    monkeypatch.setenv("SHUDDHO_COWORKER_DATABASE_URL", url)
+    command = [sys.executable, "-m", "services.coworker.migrate", "--check"]
+    stale = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    assert stale.returncode == 1
+    assert "not at the required migration revision" in stale.stderr
+
+    upgrade(url)
+    current = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    assert current.returncode == 0, current.stderr
+    assert "migration revision verified" in current.stdout
+    repeated = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    assert repeated.returncode == 0, repeated.stderr

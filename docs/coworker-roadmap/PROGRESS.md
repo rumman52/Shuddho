@@ -1,3 +1,20 @@
+## Replacement staging PostgreSQL — 15 November 2026 (Asia/Dhaka)
+
+The expired Render database returned 404. A clean PostgreSQL 17 database in
+Supabase `shuddho-staging` has 84 tables in the private `shuddho_coworker`
+schema at Alembic revision `0070`. The restricted runtime role can read and
+write application rows, but it cannot create schema objects or change the
+migration ledger. A synthetic account and conversation round trip passed in
+a rolled-back transaction. Direct verification used no historical data.
+
+The staging Blueprint and PA-10 workflows now read a secret for the Supabase
+session pooler. Runtime checks verify the Alembic head without running DDL.
+See [staging operations](../../infra/README.md#coworker-staging-on-supabase)
+for credentials, schema-owner migrations, and backup recovery. Full hosted
+API/worker and external-provider qualification require separate live evidence.
+
+---
+
 ## Day 10 holdout security absolute NO-GO — 13 November 2026 (Asia/Dhaka)
 
 **Root cause:** `scripts/day10_release_decision.py::holdout_ok` previously allowed a 39/40 accepted independent holdout with `security_passed=false` or a missing security verdict to reach `READY_FOR_OWNER_CONTROLLED_PILOT` when other submitted gates passed. This contradicts Day 9's absolute security NO-GO rule. No existing release approval or operated evidence was changed.

@@ -125,36 +125,10 @@ jobs:
           set -euo pipefail
           render blueprints validate infra/render.staging.yaml --workspace "${RENDER_WORKSPACE_ID}" --output text
 
-      - name: Resolve private Render Postgres URL
-        id: postgres
-        shell: bash
-        run: |
-          set -euo pipefail
-          pg_metadata="$(render pg get shuddho-staging-db --output json)"
-          plan="$(jq -r '.data.plan // empty' <<<"${pg_metadata}")"
-          expires_at="$(jq -r '.data.expiresAt // empty' <<<"${pg_metadata}")"
-          python3 -m scripts.pa10_database_expiry_gate \
-            --plan "${plan}" \
-            --expires-at "${expires_at}" \
-            --minimum-remaining-days 7
-          # Request the private connection string only after lifecycle admission passes.
-          pg_json="$(render pg get shuddho-staging-db --include-sensitive-connection-info --output json)"
-          db_url="$(jq -r '.data.connectionInfo.internalConnectionString // empty' <<<"${pg_json}")"
-          if [[ -z "${db_url}" || "${db_url}" != postgres*://* ]]; then
-            echo "::error::Could not resolve the private shuddho-staging-db connection string."
-            exit 1
-          fi
-          echo "::add-mask::${db_url}"
-          {
-            echo "database_url<<EOF"
-            echo "${db_url}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
-
       - name: Validate staging prerequisites without provisioning
         shell: bash
         env:
-          SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}
+          SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.PA10_STAGING_DATABASE_URL }}
         run: |
           set -euo pipefail
           python scripts/staging_prerequisite_preflight.py --output "${RUNNER_TEMP}/pa10-staging-preflight.json"

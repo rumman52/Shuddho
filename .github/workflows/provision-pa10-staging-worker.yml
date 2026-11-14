@@ -132,36 +132,10 @@ jobs:
           set -euo pipefail
           render blueprints validate infra/render.staging.yaml             --workspace "${RENDER_WORKSPACE_ID}"             --output text
 
-      - name: Resolve private Render Postgres URL
-        id: postgres
-        shell: bash
-        run: |
-          set -euo pipefail
-          pg_metadata="$(render pg get shuddho-staging-db --output json)"
-          plan="$(jq -r '.data.plan // empty' <<<"${pg_metadata}")"
-          expires_at="$(jq -r '.data.expiresAt // empty' <<<"${pg_metadata}")"
-          python3 -m scripts.pa10_database_expiry_gate \
-            --plan "${plan}" \
-            --expires-at "${expires_at}" \
-            --minimum-remaining-days 7
-          # Request the private connection string only after lifecycle admission passes.
-          pg_json="$(render pg get shuddho-staging-db --include-sensitive-connection-info --output json)"
-          db_url="$(jq -r '.data.connectionInfo.internalConnectionString // empty' <<<"${pg_json}")"
-          if [[ -z "${db_url}" || "${db_url}" != postgres*://* ]]; then
-            echo "::error::Could not resolve the private shuddho-staging-db connection string."
-            exit 1
-          fi
-          echo "::add-mask::${db_url}"
-          {
-            echo "database_url<<EOF"
-            echo "${db_url}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
-
       - name: Validate staging prerequisites
         shell: bash
         env:
-          SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}
+          SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.PA10_STAGING_DATABASE_URL }}
         run: |
           set -euo pipefail
           python3 scripts/staging_prerequisite_preflight.py
@@ -206,7 +180,7 @@ jobs:
             --runtime python
             --build-command "pip install uv && uv sync --frozen --no-dev --extra coworker"
             --start-command "uv run --extra coworker python -m services.coworker.worker"
-            --pre-deploy-command "uv run --extra coworker python -m services.coworker.migrate"
+            --pre-deploy-command "uv run --extra coworker python -m services.coworker.migrate --check"
             --plan 0.5c-512mb
             --max-shutdown-delay 120
             --auto-deploy=false
@@ -227,7 +201,7 @@ jobs:
               echo "::error::Existing shuddho-worker-staging has unexpected type '${worker_type}'. Refusing to mutate it."
               exit 1
             fi
-            render services update "${worker_id}"               --branch main               --repo https://github.com/rumman52/Shuddho               --runtime python               --build-command "pip install uv && uv sync --frozen --no-dev --extra coworker"               --start-command "uv run --extra coworker python -m services.coworker.worker"               --pre-deploy-command "uv run --extra coworker python -m services.coworker.migrate"               --plan 0.5c-512mb               --max-shutdown-delay 120               --auto-deploy=false               --output json               --confirm >/dev/null
+            render services update "${worker_id}"               --branch main               --repo https://github.com/rumman52/Shuddho               --runtime python               --build-command "pip install uv && uv sync --frozen --no-dev --extra coworker"               --start-command "uv run --extra coworker python -m services.coworker.worker"               --pre-deploy-command "uv run --extra coworker python -m services.coworker.migrate --check"               --plan 0.5c-512mb               --max-shutdown-delay 120               --auto-deploy=false               --output json               --confirm >/dev/null
           fi
 
           if [[ ! "${worker_id}" =~ ^srv-[a-z0-9]+$ ]]; then
@@ -262,7 +236,7 @@ jobs:
               and .serviceDetails.maxShutdownDelaySeconds == 120
               and .serviceDetails.envSpecificDetails.buildCommand == "pip install uv && uv sync --frozen --no-dev --extra coworker"
               and .serviceDetails.envSpecificDetails.startCommand == "uv run --extra coworker python -m services.coworker.worker"
-              and .serviceDetails.envSpecificDetails.preDeployCommand == "uv run --extra coworker python -m services.coworker.migrate"
+              and .serviceDetails.envSpecificDetails.preDeployCommand == "uv run --extra coworker python -m services.coworker.migrate --check"
             else
               false
             end
@@ -275,7 +249,7 @@ jobs:
         shell: bash
         env:
           WORKER_ID: ${{ steps.worker.outputs.worker_id }}
-          SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}
+          SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.PA10_STAGING_DATABASE_URL }}
         run: |
           set -euo pipefail
 
@@ -318,7 +292,7 @@ jobs:
           python3 -m scripts.pa10_main_head_guard \
             --repository "${GITHUB_REPOSITORY}" \
             --sha "${GITHUB_SHA}"
-      - name: Deploy exact main revision and require migration success
+      - name: Deploy exact main revision and require database readiness
         shell: bash
         env:
           WORKER_ID: ${{ steps.worker.outputs.worker_id }}
