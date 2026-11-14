@@ -12,7 +12,7 @@ from services.coworker.migrate import upgrade
 STAGING_URL = (
     "postgresql+psycopg://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-secret"
     "@aws-0-us-west-1.pooler.supabase.com:5432/postgres"
-    "?sslmode=verify-full&sslrootcert=system"
+    "?sslmode=verify-full&sslrootcert=infra/supabase-root-2021.pem"
 )
 
 
@@ -27,6 +27,7 @@ def test_staging_database_accepts_bound_runtime_session():
     STAGING_URL.replace("aws-0-us-west-1.pooler.supabase.com", "wrong.example"),
     STAGING_URL.replace(":5432", ":6543"),
     STAGING_URL.replace("verify-full", "require"),
+    STAGING_URL.replace("infra/supabase-root-2021.pem", "system"),
     STAGING_URL + "&host=wrong.example",
     STAGING_URL + "&sslmode=disable",
 ])

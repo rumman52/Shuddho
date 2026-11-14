@@ -66,7 +66,7 @@ class WorkerProvisioningTests(unittest.TestCase):
             "AWS_DEFAULT_REGION": "us-west-1",
             "SHUDDHO_COWORKER_DATABASE_URL": (
                 "postgresql://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-secret"
-                "@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&sslrootcert=system"
+                "@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&sslrootcert=infra/supabase-root-2021.pem"
             ),
             "WORKER_ID": "srv-test123",
             "GITHUB_OUTPUT": str(self.root / "output"),

@@ -121,8 +121,7 @@ def _validate_postgresql_url(value: str) -> None:
         or parsed.params
         or set(tls) != {"sslmode", "sslrootcert"}
         or tls["sslmode"] != ["verify-full"]
-        or len(tls["sslrootcert"]) != 1
-        or not tls["sslrootcert"][0]
+        or tls["sslrootcert"] != ["infra/supabase-root-2021.pem"]
     ):
         raise PreflightFailure(message)
 
