@@ -21,14 +21,14 @@ class SourceGateError(ValueError):
     """The dispatched source has not met the read-only staging entry gate."""
 
 
-def require_qualified_source(branch: object, runs: object, jobs: object, sha: str) -> int:
+def require_qualified_source(branch: object, runs: object, jobs: object, sha: str, *, require_protected: bool = True) -> int:
     """Return the qualified push workflow run ID, or reject incomplete evidence."""
     if not isinstance(branch, dict) or branch.get("name") != "main":
         raise SourceGateError("main branch identity could not be confirmed")
     commit = branch.get("commit")
     if not isinstance(commit, dict) or commit.get("sha") != sha:
         raise SourceGateError("dispatched revision is not the current main head")
-    if branch.get("protected") is not True:
+    if require_protected and branch.get("protected") is not True:
         raise SourceGateError("native main branch protection is not enabled")
     if not isinstance(runs, dict) or type(runs.get("total_count")) is not int:
         raise SourceGateError("CI workflow results unavailable")
@@ -81,7 +81,7 @@ def inspect_source(repository: str, sha: str, token: str, *, ci_only: bool = Fal
     if run_id <= 0:
         raise SourceGateError("invalid CI workflow run identifier")
     jobs = _get_json(root + f"/actions/runs/{run_id}/jobs?per_page=100&filter=latest", token)
-    return rule_id, require_qualified_source(branch, runs, jobs, sha)
+    return rule_id, require_qualified_source(branch, runs, jobs, sha, require_protected=not ci_only)
 
 
 def main() -> None:
