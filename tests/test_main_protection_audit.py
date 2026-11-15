@@ -146,18 +146,19 @@ def test_repository_inspection_reads_actual_ruleset_detail_and_branch(monkeypatc
     assert len(calls) == 3
 
 
-def test_installation_token_only_reads_ruleset_details(monkeypatch):
+def test_installation_token_reads_branch_and_ruleset_details(monkeypatch):
     from scripts import main_protection_audit as mod
 
     rule = approved_ruleset()
 
     def fake_get_json(url, token):
+        if url.endswith("/branches/main"):
+            assert token == "installation-token"
+            return protected_branch()
         if url.endswith("/rulesets/123"):
             assert token == "installation-token"
             return rule
         assert token == "workflow-token"
-        if url.endswith("/branches/main"):
-            return protected_branch()
         assert url.endswith("/rulesets?includes_parents=true&per_page=100")
         return [{"id": 123, "target": "branch", "enforcement": "active"}]
 
