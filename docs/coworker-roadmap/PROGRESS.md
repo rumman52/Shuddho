@@ -7,13 +7,14 @@ ruleset view, requires one approval, dismisses stale approvals, requires the
 last push to be approved, resolves review threads, and requires strict
 `test-and-build`, `coworker`, and `ci-merge-gate` checks.
 
-The push-only V-01 audit still fails closed because its read-only Actions token
-cannot see `bypass_actors`. GitHub redacts that field unless the caller has
-write access to the ruleset. The audit must not treat an omitted field as an
-empty list, and no privileged token is exposed to pull-request code. PR
-[#715](https://github.com/rumman52/Shuddho/pull/715) adds a regression test and
-an explicit diagnostic; owner-admin verification and native negative/positive
-merge-control tests remain outstanding.
+The push-only V-01 audit uses a read-only Actions token and cannot see
+`bypass_actors`; GitHub redacts that field unless the caller has write access
+to the ruleset. PR [#715](https://github.com/rumman52/Shuddho/pull/715) reports
+this as `bypass_actors_visibility=redacted`, never as an empty list. Explicit
+bypass actors still fail the audit. The result remains
+`qualified=false`; owner-admin verification and native negative/positive
+merge-control tests remain outstanding. No privileged token is exposed to
+pull-request code.
 
 The substantive exact-head CI jobs on PR #713 passed. Its merge gate ran after
 the PR had already been merged and correctly rejected the closed PR as
