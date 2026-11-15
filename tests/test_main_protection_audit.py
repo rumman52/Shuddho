@@ -212,16 +212,17 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     assert "python -m scripts.independent_review_gate" in gate
 
 
-def test_ruleset_audit_action_scopes_credential_to_one_repo_and_one_check():
+def test_ruleset_audit_action_scopes_credential_to_one_repo_and_rechecks_protection():
     action = Path(".github/actions/audit-main-ruleset/action.yml").read_text(encoding="utf-8")
-    guard, mint_and_audit = action.split("    - name: Mint installation token", 1)
-    mint, audit = mint_and_audit.split("    - name: Inspect active V-01 main governance", 1)
-    assert "scripts.pa10_main_head_guard" in guard
-    assert "inputs.private-key" not in guard + audit
+    mint, guard_and_audit = action.split("    - name: Mint installation token", 1)
+    guard, audit = guard_and_audit.split("    - name: Inspect active V-01 main governance", 1)
     assert "actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3" in mint
     assert "owner: rumman52" in mint and "repositories: Shuddho" in mint
     assert "permission-administration: write" in mint
     assert "skip-token-revoke" not in mint
+    assert "inputs.private-key" not in guard + audit
+    assert "scripts.pa10_main_head_guard" in guard
+    assert "GITHUB_TOKEN: ${{ steps.installation.outputs.token }}" in guard
     assert "GITHUB_RULESET_AUDIT_TOKEN: ${{ steps.installation.outputs.token }}" in audit
     assert "python3 -m scripts.main_protection_audit" in audit
 
