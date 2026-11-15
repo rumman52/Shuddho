@@ -711,6 +711,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Inspect active V-01 main governance
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}
         run: |
           python -m scripts.main_protection_audit --repository "${{ github.repository }}"
