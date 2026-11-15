@@ -1,3 +1,40 @@
+## V-01 ruleset is active; read-only audit cannot inspect bypass actors — 16 November 2026 (Asia/Dhaka)
+
+The default branch now reports `protected=true`. Repository ruleset
+[27324410](https://github.com/rumman52/Shuddho/rules/27324410) is active for
+`~DEFAULT_BRANCH`, has no configured bypass actors in the owner-authorized
+ruleset view, requires one approval, dismisses stale approvals, requires the
+last push to be approved, resolves review threads, and requires strict
+`test-and-build`, `coworker`, and `ci-merge-gate` checks.
+
+The push-only V-01 audit still fails closed because its read-only Actions token
+cannot see `bypass_actors`. GitHub redacts that field unless the caller has
+write access to the ruleset. The audit must not treat an omitted field as an
+empty list, and no privileged token is exposed to pull-request code. PR
+[#715](https://github.com/rumman52/Shuddho/pull/715) adds a regression test and
+an explicit diagnostic; owner-admin verification and native negative/positive
+merge-control tests remain outstanding.
+
+The substantive exact-head CI jobs on PR #713 passed. Its merge gate ran after
+the PR had already been merged and correctly rejected the closed PR as
+ineligible for current-head independent review. The ruleset above was created
+after that merge; future PRs must remain open until required checks and an
+independent approval are recorded.
+
+Current staging observations: Supabase PostgreSQL 17.11 has 84 tables in the
+private `shuddho_coworker` schema at Alembic revision `0070`; the staging
+bucket `shuddho-coworker-staging` exists and is private, with zero objects.
+The Render API service is active on its Free plan with auto-deploy disabled;
+its startup log records a successful migration check and application startup.
+The Coworker worker registry is empty. No live database archive/receipt,
+isolated live restore, persistent worker, Temporal restart recovery, or
+release-bound object-storage recovery has been operated.
+
+No paid worker was provisioned, no database DDL was run, and no model/provider
+call or capability activation was performed.
+
+---
+
 ## PA-10 live database check before worker provisioning — 16 November 2026 (Asia/Dhaka)
 
 The paid worker workflow now requires the live Supabase database to be reachable
