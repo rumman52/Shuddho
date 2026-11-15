@@ -15,7 +15,10 @@ import textwrap
 
 import pytest
 
-from scripts.main_protection_audit import (\n    GovernanceAuditError, audit_governance, audit_governance_result,\n    inspect_repository, inspect_repository_result,\n)
+from scripts.main_protection_audit import (
+    GovernanceAuditError, audit_governance, audit_governance_result,
+    inspect_repository, inspect_repository_result,
+)
 
 
 CHECKS = {"coworker", "test-and-build", "ci-merge-gate"}
