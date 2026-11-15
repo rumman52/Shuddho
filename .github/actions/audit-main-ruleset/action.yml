@@ -18,6 +18,7 @@ runs:
         private-key: ${{ inputs.private-key }}
         owner: rumman52
         repositories: Shuddho
+        permission-contents: read
         permission-administration: write
     - name: Confirm the checked-out revision is still protected main
       shell: bash
