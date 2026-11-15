@@ -222,6 +222,7 @@ def test_ruleset_audit_action_scopes_credential_to_one_repo_and_rechecks_protect
     assert "actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3" in mint
     assert "owner: rumman52" in mint and "repositories: Shuddho" in mint
     assert "permission-administration: write" in mint
+    assert "permission-contents: read" in mint
     assert "skip-token-revoke" not in mint
     assert "inputs.private-key" not in guard + audit
     assert "scripts.pa10_main_head_guard" in guard
