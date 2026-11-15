@@ -199,7 +199,11 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     assert "GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}" in job
     provision = Path(".github/workflows/provision-pa10-staging-worker.yml").read_text(encoding="utf-8")
     source_gate = provision.split("\n  source_gate:\n", 1)[1].split("\n  verify_database:\n", 1)[0]
-    assert "GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}" in source_gate
+    # The PA-10 source gate runs BEFORE any protected-environment approval.
+    # Keep it secret-free; a successful privileged main CI audit must be
+    # established separately before staging credential access can be unlocked.
+    assert "GITHUB_TOKEN: ${{ github.token }}" in source_gate
+    assert "secrets." not in source_gate
     assert "github.ref == 'refs/heads/main'" in source_gate
     assert "inputs.confirm == 'PROVISION'" in source_gate
     assert "continue-on-error" not in job
