@@ -214,8 +214,11 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
 
 def test_ruleset_audit_action_scopes_credential_to_one_repo_and_rechecks_protection():
     action = Path(".github/actions/audit-main-ruleset/action.yml").read_text(encoding="utf-8")
-    mint, guard_and_audit = action.split("    - name: Mint installation token", 1)
-    guard, audit = guard_and_audit.split("    - name: Inspect active V-01 main governance", 1)
+    _, after_mint = action.split("    - name: Mint installation token", 1)
+    mint, after_guard = after_mint.split("    - name: Confirm the checked-out revision is still protected main", 1)
+    guard, audit = after_guard.split("    - name: Inspect active V-01 main governance", 1)
+    mint = "    - name: Mint installation token" + mint
+    guard = "    - name: Confirm the checked-out revision is still protected main" + guard
     assert "actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3" in mint
     assert "owner: rumman52" in mint and "repositories: Shuddho" in mint
     assert "permission-administration: write" in mint
