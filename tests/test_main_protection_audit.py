@@ -15,7 +15,7 @@ import textwrap
 
 import pytest
 
-from scripts.main_protection_audit import GovernanceAuditError, audit_governance, inspect_repository
+from scripts.main_protection_audit import (\n    GovernanceAuditError, audit_governance, audit_governance_result,\n    inspect_repository, inspect_repository_result,\n)
 
 
 CHECKS = {"coworker", "test-and-build", "ci-merge-gate"}
@@ -143,6 +143,11 @@ def test_repository_inspection_reads_actual_ruleset_detail_and_branch(monkeypatc
 
     monkeypatch.setattr(mod, "_get_json", fake_get_json)
     assert inspect_repository("owner/repo", "ci-token") == 123
+    assert len(calls) == 3
+    calls.clear()
+    assert inspect_repository_result("owner/repo", "ci-token") == {
+        "ruleset_id": 123, "bypass_actors_visibility": "visible_empty",
+    }
     assert len(calls) == 3
 
 
@@ -291,4 +296,31 @@ def test_redacted_bypass_actor_field_is_candidate_not_verified():
     """A read-only token may inspect policy shape but must not infer no bypasses."""
     rule = approved_ruleset()
     rule.pop("bypass_actors")
+    result = audit_governance_result(protected_branch(), [rule])
+    assert result == {"ruleset_id": 123, "bypass_actors_visibility": "redacted"}
     assert audit_governance(protected_branch(), [rule]) == 123
+
+
+def test_visible_empty_bypass_actor_list_is_reported_as_visible():
+    assert audit_governance_result(
+        protected_branch(), [approved_ruleset()]
+    ) == {"ruleset_id": 123, "bypass_actors_visibility": "visible_empty"}
+
+
+def test_read_only_candidate_never_claims_release_qualification(monkeypatch, capsys):
+    from scripts import main_protection_audit as mod
+    import sys
+
+    monkeypatch.setattr(
+        mod, "inspect_repository_result",
+        lambda _repository, _token: {
+            "ruleset_id": 123, "bypass_actors_visibility": "redacted",
+        },
+    )
+    monkeypatch.setenv("GITHUB_TOKEN", "ci-token")
+    monkeypatch.setattr(sys, "argv", ["main_protection_audit", "--repository", "owner/repo"])
+    mod.main()
+    result = json.loads(capsys.readouterr().out)
+    assert result["bypass_actors_visibility"] == "redacted"
+    assert result["qualified"] is False
+    assert "Owner-admin verification" in result["required_next"]
