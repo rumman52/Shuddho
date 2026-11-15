@@ -1,4 +1,6 @@
 name: CI
+run-name: >-
+  ${{ github.event.pull_request.number && format('PR #{0} CI at {1}', github.event.pull_request.number, github.sha) || '' }}
 
 on:
   push:
@@ -10,7 +12,7 @@ on:
     types: [submitted, dismissed]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request_review' && 'review' || 'checks' }}
   cancel-in-progress: true
 
 permissions:
@@ -19,6 +21,8 @@ permissions:
 
 jobs:
   test-and-build:
+    name: ${{ github.event_name == 'pull_request_review' && 'Omitted test-and-build on review' || 'test-and-build' }}
+    if: github.event_name != 'pull_request_review'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +95,7 @@ jobs:
           NODE
 
   frontend:
+    if: github.event_name != 'pull_request_review'
     name: Frontend tests and builds
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -116,6 +121,8 @@ jobs:
         run: npm run build --workspace @rukh/editor
 
   coworker:
+    name: ${{ github.event_name == 'pull_request_review' && 'Omitted coworker on review' || 'coworker' }}
+    if: github.event_name != 'pull_request_review'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -506,6 +513,7 @@ jobs:
           path: /tmp/shuddho-coworker-browser/screenshots/
 
   browser-qualification:
+    if: github.event_name != 'pull_request_review'
     name: browser-qualification
     permissions:
       contents: read
@@ -546,6 +554,7 @@ jobs:
           path: /tmp/browser-source-qualification.xml
 
   postgres-18-qualification:
+    if: github.event_name != 'pull_request_review'
     name: PostgreSQL 18 staging compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -611,7 +620,7 @@ jobs:
   # source head. Validate the actual head against the target base SHA.
   pr-base-ancestry:
     name: PR head ancestry
-    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -638,9 +647,17 @@ jobs:
       - governance-audit
       - pr-base-ancestry
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Require complete CI success
+        if: github.event_name != 'pull_request_review'
         env:
           TEST_AND_BUILD_RESULT: ${{ needs.test-and-build.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
@@ -686,6 +703,15 @@ jobs:
               ;;
           esac
           echo "Required upstream checks passed; PR review is checked separately."
+      - name: Reuse exact PR test results on a review
+        if: github.event_name == 'pull_request_review'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python -m scripts.pr_ci_reuse --repository "$GITHUB_REPOSITORY" \
+            --pull-request "$PR_NUMBER" --head-sha "$PR_HEAD_SHA" --merge-sha "$GITHUB_SHA"
       - name: Require independent current-head review
         if: github.event_name != 'push'
         env:
