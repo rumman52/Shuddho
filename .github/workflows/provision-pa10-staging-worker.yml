@@ -36,10 +36,56 @@ jobs:
           python3 -m scripts.pa10_source_gate \
             --repository "${GITHUB_REPOSITORY}" \
             --sha "${GITHUB_SHA}"
-  provision:
+  verify_database:
+    needs: source_gate
     if: ${{ needs.source_gate.result == 'success' && inputs.confirm == 'PROVISION' && github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    needs: source_gate
+    environment: pa10-staging
+    timeout-minutes: 10
+    steps:
+      - name: Checkout the qualified staging revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.7.22"
+          enable-cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install locked coworker dependencies
+        run: uv sync --frozen --no-dev --extra coworker
+      - name: Revalidate current protected main before database access
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m scripts.pa10_main_head_guard \
+            --repository "${GITHUB_REPOSITORY}" \
+            --sha "${GITHUB_SHA}"
+      - name: Verify live staging database before paid provisioning
+        shell: bash
+        env:
+          SHUDDHO_COWORKER_ENV: staging
+          SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.PA10_STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+
+          from scripts.staging_prerequisite_preflight import PreflightFailure, _validate_postgresql_url
+
+          try:
+              _validate_postgresql_url(os.environ.get("SHUDDHO_COWORKER_DATABASE_URL", ""))
+          except PreflightFailure as error:
+              raise SystemExit(str(error)) from None
+          PY
+          timeout 45s uv run --no-sync --extra coworker python -m services.coworker.migrate --check
+
+  provision:
+    if: ${{ needs.source_gate.result == 'success' && needs.verify_database.result == 'success' && inputs.confirm == 'PROVISION' && github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    needs: [source_gate, verify_database]
     environment: pa10-staging
     timeout-minutes: 30
     env:

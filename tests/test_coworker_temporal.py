@@ -1639,9 +1639,11 @@ def test_day7_real_temporal_schedule_triggers_once_and_pauses(automation_client,
                 for _ in range(100):
                     result = client.get(f'/api/v1/automations/{automation["id"]}/history', headers=auth)
                     assert result.status_code == 200
-                    if result.json()["history"]: break
+                    observed = result.json()["history"]
+                    assert len(observed) <= 1
+                    if observed and observed[0]["occurrence_state"] != "accepting":
+                        break
                     await asyncio.sleep(0.1)
-                observed = result.json()["history"]
                 assert len(observed) == 1
                 assert observed[0]["occurrence_state"] == "accepted"
                 assert observed[0]["run_id"]
