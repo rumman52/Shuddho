@@ -194,7 +194,14 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     job = workflow.split("\n  governance-audit:\n", 1)[1]
     assert "github.event_name == 'push'" in job
     assert "python -m scripts.main_protection_audit" in job
-    assert "GITHUB_TOKEN: ${{ github.token }}" in job
+    # Only a push to protected main receives the optional privileged audit
+    # credential. The ordinary GitHub token remains the safe fail-closed fallback.
+    assert "GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}" in job
+    provision = Path(".github/workflows/provision-pa10-staging-worker.yml").read_text(encoding="utf-8")
+    source_gate = provision.split("\n  source_gate:\n", 1)[1].split("\n  verify_database:\n", 1)[0]
+    assert "GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}" in source_gate
+    assert "github.ref == 'refs/heads/main'" in source_gate
+    assert "inputs.confirm == 'PROVISION'" in source_gate
     assert "continue-on-error" not in job
     gate = workflow.split("\n  ci-merge-gate:\n", 1)[1].split("\n  governance-audit:\n", 1)[0]
     assert "    if: always()" in gate
