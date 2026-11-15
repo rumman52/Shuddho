@@ -104,33 +104,43 @@ def _has_required_rules(rule: dict) -> bool:
     return any(valid_reviews(p) for p in reviews) and any(valid_checks(p) for p in checks)
 
 
-def audit_governance(branch: dict, rulesets: list[dict]) -> int:
-    """Return matching active ruleset ID; no implication of tested enforcement."""
+def audit_governance_result(branch: dict, rulesets: list[dict]) -> dict:
+    """Return the visible policy candidate without claiming bypass verification."""
     if not isinstance(branch, dict) or branch.get("name") != "main" or branch.get("protected") is not True:
         raise GovernanceAuditError("main branch protection is not confirmed")
     if not isinstance(rulesets, list):
         raise GovernanceAuditError("ruleset listing is not available")
-    redacted_bypass_actors = False
+
+    candidates = []
     for item in rulesets:
         if not _active_main_target(item):
             continue
         bypass_actors = item.get("bypass_actors")
-        if not isinstance(bypass_actors, list):
-            # GitHub omits this field for callers without write access to the
-            # ruleset. Do not infer that an invisible list is empty.
-            redacted_bypass_actors = True
+        if isinstance(bypass_actors, list) and bypass_actors:
+            # An explicitly configured bypass actor is not an acceptable
+            # candidate. A redacted field is different: it is unknown.
             continue
-        if not _active_main_ruleset(item) or not _has_required_rules(item):
+        if not _has_required_rules(item):
             continue
         ruleset_id = item.get("id")
-        if type(ruleset_id) is int and ruleset_id > 0:
-            return ruleset_id
-    if redacted_bypass_actors:
-        raise GovernanceAuditError(
-            "main ruleset bypass_actors are not visible to this token; "
-            "GitHub only returns bypass_actors to callers with write access to the ruleset"
-        )
-    raise GovernanceAuditError("no enforceable main ruleset matching the V-01 minimum policy")
+        if type(ruleset_id) is not int or ruleset_id < 1:
+            continue
+        visibility = "visible_empty" if _active_main_ruleset(item) else "redacted"
+        candidates.append({"ruleset_id": ruleset_id, "bypass_actors_visibility": visibility})
+
+    if not candidates:
+        raise GovernanceAuditError("no enforceable main ruleset matching the V-01 minimum policy")
+    # Prefer a ruleset whose empty bypass list is actually visible, but never
+    # mistake a redacted field for an empty list.
+    return next(
+        (candidate for candidate in candidates if candidate["bypass_actors_visibility"] == "visible_empty"),
+        candidates[0],
+    )
+
+
+def audit_governance(branch: dict, rulesets: list[dict]) -> int:
+    """Return matching active ruleset ID; no implication of tested enforcement."""
+    return audit_governance_result(branch, rulesets)["ruleset_id"]
 
 
 class _NoCredentialRedirect(HTTPRedirectHandler):
@@ -160,7 +170,7 @@ def _get_json(url: str, token: str):
         raise GovernanceAuditError(f"GitHub governance data unavailable (status={code})") from exc
 
 
-def inspect_repository(repository: str, token: str) -> int:
+def inspect_repository_result(repository: str, token: str) -> dict:
     if (
         not isinstance(repository, str)
         or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is None
@@ -185,7 +195,12 @@ def inspect_repository(repository: str, token: str) -> int:
         if type(rid) is not int or rid < 1:
             raise GovernanceAuditError("invalid active ruleset identifier")
         details.append(_get_json(root + f"/rulesets/{rid}", token))
-    return audit_governance(branch, details)
+    return audit_governance_result(branch, details)
+
+
+def inspect_repository(repository: str, token: str) -> int:
+    """Compatibility wrapper for source admission; the result is not release qualification."""
+    return inspect_repository_result(repository, token)["ruleset_id"]
 
 
 def main() -> None:
@@ -193,15 +208,18 @@ def main() -> None:
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", ""))
     args = parser.parse_args()
     try:
-        matching_rule = inspect_repository(args.repository, os.environ.get("GITHUB_TOKEN", ""))
+        result = inspect_repository_result(args.repository, os.environ.get("GITHUB_TOKEN", ""))
     except GovernanceAuditError as exc:
         print(json.dumps({"status": "failed", "reason": str(exc)}))
         parser.exit(1, "V-01 governance configuration audit failed; main is not release-qualified.\n")
     print(json.dumps({
         "status": "configuration_candidate",
-        "ruleset_id": matching_rule,
+        **result,
         "qualified": False,
-        "required_next": "Owner-admin negative-control and positive-control native merge tests",
+        "required_next": (
+            "Owner-admin verification of bypass actors plus negative-control "
+            "and positive-control native merge tests"
+        ),
     }))
 
 
