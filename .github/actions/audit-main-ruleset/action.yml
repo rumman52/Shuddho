@@ -1,0 +1,33 @@
+name: Audit native Shuddho main protection
+description: Verify the current main ruleset using a repository-scoped GitHub App installation token.
+inputs:
+  client-id:
+    description: Client ID of the Shuddho ruleset audit GitHub App.
+    required: true
+  private-key:
+    description: Private key of the Shuddho ruleset audit GitHub App.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Confirm the checked-out revision is still protected main
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        python3 -m scripts.pa10_main_head_guard --repository "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
+    - name: Mint installation token for Shuddho ruleset details
+      id: installation
+      uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: rumman52
+        repositories: Shuddho
+        permission-administration: write
+    - name: Inspect active V-01 main governance
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_RULESET_AUDIT_TOKEN: ${{ steps.installation.outputs.token }}
+      run: python3 -m scripts.main_protection_audit --repository "$GITHUB_REPOSITORY"

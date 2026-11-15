@@ -61,12 +61,11 @@ def require_qualified_source(branch: object, runs: object, jobs: object, sha: st
     return run_id
 
 
-def inspect_source(repository: str, sha: str, token: str) -> tuple[int, int]:
+def inspect_source(repository: str, sha: str, token: str, *, ci_only: bool = False) -> tuple[int | None, int]:
     if repository != REPOSITORY or re.fullmatch(r"[0-9a-f]{40}", sha) is None or not token:
         raise SourceGateError("invalid repository, source SHA, or missing GitHub token")
-    # This existing audit verifies a candidate *native ruleset configuration*;
-    # it intentionally does not assert a negative-control merge-button test.
-    rule_id = inspect_repository(repository, token)
+    # The CI-only workflow job is paired with a required live ruleset audit.
+    rule_id = None if ci_only else inspect_repository(repository, token)
     root = f"https://api.github.com/repos/{REPOSITORY}"
     branch = _get_json(root + "/branches/main", token)
     query = urlencode({"branch": "main", "event": "push", "head_sha": sha, "per_page": 100})
@@ -89,9 +88,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--sha", required=True)
+    parser.add_argument("--ci-only", action="store_true", help="Use only when a separate live ruleset audit is required.")
     args = parser.parse_args()
     try:
-        rule_id, run_id = inspect_source(args.repository, args.sha, os.getenv("GITHUB_TOKEN", ""))
+        rule_id, run_id = inspect_source(args.repository, args.sha, os.getenv("GITHUB_TOKEN", ""), ci_only=args.ci_only)
     except (SourceGateError, GovernanceAuditError) as exc:
         parser.exit(1, f"PA-10 source entry gate BLOCKED: {exc}\n")
     print(json.dumps({"status": "source_preflight_only", "ruleset_id": rule_id, "ci_run_id": run_id,

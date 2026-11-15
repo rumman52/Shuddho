@@ -37,7 +37,7 @@ class PA10SecretBoundaryTests(unittest.TestCase):
         for path, privileged, paid in WORKFLOWS:
             with self.subTest(workflow=path.name):
                 prefix, jobs = job_parts(path.read_text())
-                expected_jobs = {"source_gate", privileged}
+                expected_jobs = {"source_gate", "ruleset_audit", privileged}
                 if paid:
                     expected_jobs.add("verify_database")
                 self.assertEqual(set(jobs), expected_jobs)
@@ -61,14 +61,16 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                 self.assertIn("GITHUB_TOKEN: ${{ github.token }}", guard)
                 self.assertIn("python3 -m scripts.pa10_source_gate", guard)
                 self.assertIn('--sha "${GITHUB_SHA}"', guard)
+                self.assertIn("--ci-only", guard)
                 self.assertIn("github.ref == 'refs/heads/main'", guard)
                 self.assertIn("github.repository == 'rumman52/Shuddho'", guard)
                 self.assertNotIn("actions: read", target)
 
                 # Failures/skips must not schedule an environment-bearing job.
                 self.assertRegex(target, r"(?m)^    if:.*needs\.source_gate\.result == 'success'")
-                expected_needs = "[source_gate, verify_database]" if paid else "source_gate"
+                expected_needs = "[source_gate, ruleset_audit, verify_database]" if paid else "[source_gate, ruleset_audit]"
                 self.assertIn(f"\n    needs: {expected_needs}\n", target)
+                self.assertRegex(target, r"(?m)^    if:.*needs\.ruleset_audit\.result == 'success'")
                 self.assertRegex(target, r"(?m)^    environment: pa10-staging$")
                 self.assertIn("secrets.PA10_RENDER_API_KEY", target)
                 self.assertIn("github.repository == 'rumman52/Shuddho'", target)
@@ -84,8 +86,9 @@ class PA10SecretBoundaryTests(unittest.TestCase):
     def test_paid_provisioning_requires_a_separate_read_only_database_check(self):
         _, jobs = job_parts(WORKFLOWS[1][0].read_text())
         check = jobs["verify_database"]
-        self.assertIn("\n    needs: source_gate\n", check)
+        self.assertIn("\n    needs: [source_gate, ruleset_audit]\n", check)
         self.assertRegex(check, r"(?m)^    if:.*needs\.source_gate\.result == 'success'")
+        self.assertRegex(check, r"(?m)^    if:.*needs\.ruleset_audit\.result == 'success'")
         self.assertIn("\n    environment: pa10-staging\n", check)
         self.assertIn("persist-credentials: false", check)
         setup, readiness = check.split("- name: Verify live staging database before paid provisioning", 1)
@@ -96,6 +99,24 @@ class PA10SecretBoundaryTests(unittest.TestCase):
         self.assertIn("SHUDDHO_COWORKER_ENV: staging", readiness)
         self.assertLess(readiness.index("_validate_postgresql_url("), readiness.index("services.coworker.migrate --check"))
         self.assertRegex(jobs["provision"], r"(?m)^    if:.*needs\.verify_database\.result == 'success'")
+
+    def test_live_ruleset_audit_is_confined_to_the_main_only_audit_job(self):
+        for path, _, paid in WORKFLOWS:
+            with self.subTest(workflow=path.name):
+                prefix, jobs = job_parts(path.read_text())
+                audit = jobs.pop("ruleset_audit")
+                self.assertIn("\n    needs: source_gate\n", audit)
+                self.assertRegex(audit, r"(?m)^    if:.*needs\.source_gate\.result == 'success'")
+                self.assertIn("github.repository == 'rumman52/Shuddho'", audit)
+                self.assertIn("github.ref == 'refs/heads/main'", audit)
+                if paid:
+                    self.assertIn("inputs.confirm == 'PROVISION'", audit)
+                self.assertIn("environment: v01-governance", audit)
+                self.assertIn("persist-credentials: false", audit)
+                self.assertIn("uses: ./.github/actions/audit-main-ruleset", audit)
+                self.assertIn("secrets.V01_RULESET_APP_PRIVATE_KEY", audit)
+                self.assertNotIn("PA10_", audit)
+                self.assertNotIn("V01_RULESET_APP_", prefix + "".join(jobs.values()))
 
     def test_main_is_rechecked_after_approval_and_before_provider_side_effects(self):
         for path, privileged, paid in WORKFLOWS:

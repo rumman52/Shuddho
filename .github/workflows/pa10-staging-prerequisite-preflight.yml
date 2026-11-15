@@ -27,11 +27,25 @@ jobs:
           set -euo pipefail
           python3 -m scripts.pa10_source_gate \
             --repository "${GITHUB_REPOSITORY}" \
-            --sha "${GITHUB_SHA}"
-  preflight:
+            --sha "${GITHUB_SHA}" --ci-only
+  ruleset_audit:
+    needs: source_gate
     if: ${{ needs.source_gate.result == 'success' && github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    needs: source_gate
+    environment: v01-governance
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/audit-main-ruleset
+        with:
+          client-id: ${{ vars.V01_RULESET_APP_CLIENT_ID }}
+          private-key: ${{ secrets.V01_RULESET_APP_PRIVATE_KEY }}
+  preflight:
+    if: ${{ needs.source_gate.result == 'success' && needs.ruleset_audit.result == 'success' && github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    needs: [source_gate, ruleset_audit]
     environment: pa10-staging
     timeout-minutes: 10
     env:

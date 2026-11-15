@@ -1,3 +1,16 @@
+## PA-10 ruleset audit authorization — 16 November 2026 (Asia/Dhaka)
+
+Live preflight 43747359370 reached native protected `main` but failed the
+ruleset audit because GitHub withheld `bypass_actors` from the workflow's
+read-only identity. This change adds a `main`-only audit environment and a
+repository-scoped GitHub App token for ruleset detail requests. PA-10 still
+requires green exact-head push CI and a fresh full ruleset audit before any
+staging credentials are used. App setup, live worker provisioning and the
+recovery drill still require operator credentials. See the
+[audit setup in the infrastructure runbook](../../infra/README.md#authorize-the-github-ruleset-audit).
+
+---
+
 ## PA-10 live database check before worker provisioning — 16 November 2026 (Asia/Dhaka)
 
 The paid worker workflow now requires the live Supabase database to be reachable

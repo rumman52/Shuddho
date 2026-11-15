@@ -150,12 +150,15 @@ class WorkerProvisioningTests(unittest.TestCase):
                 for name in legacy_secret_names:
                     self.assertNotIn(f"secrets.{name}", workflow)
                 secret_refs = [
-                    line.split("secrets.", 1)[1].split("}", 1)[0]
+                    line.split("secrets.", 1)[1].split("}", 1)[0].strip()
                     for line in workflow.splitlines()
                     if "secrets." in line
                 ]
                 self.assertTrue(secret_refs)
-                self.assertTrue(all(name.startswith("PA10_") for name in secret_refs), secret_refs)
+                self.assertTrue(all(
+                    name.startswith("PA10_") or name == "V01_RULESET_APP_PRIVATE_KEY"
+                    for name in secret_refs
+                ), secret_refs)
 
     def test_pa10_secret_jobs_gate_repository_and_ref_at_job_level(self):
         cases = (

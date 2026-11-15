@@ -39,6 +39,24 @@ out-of-date database. The runtime role can read and write Coworker data but
 cannot change the schema or migration history. The `shuddho_coworker` schema is
 private and should stay outside the Supabase Data API.
 
+### Authorize the GitHub ruleset audit
+
+Install a dedicated GitHub App on `rumman52/Shuddho` only. Give it repository
+**Administration: Read and write** so GitHub returns the ruleset's bypass list.
+Keep the app off the ruleset's bypass list. The audit runs only for protected
+`main` in the GitHub Actions environment `v01-governance`. Restrict that
+environment to the `main` branch before configuring it:
+
+- Environment variable `V01_RULESET_APP_CLIENT_ID` holds the app's client ID.
+- Environment secret `V01_RULESET_APP_PRIVATE_KEY` holds the app's private key.
+
+Use the environment's settings for both values. The workflow mints a temporary
+token for this repository and uses it only for ruleset detail requests. It
+revokes the token after the job. The normal workflow token reads CI results.
+After merge and app setup, confirm `governance-audit` passes on the current
+`main` push, then run **PA-10 staging prerequisite preflight**. The PA-10
+jobs release staging credentials only after the live ruleset audit passes.
+
 ### Back up and verify the staging database
 
 Run from the repository root as a non-root operator with PostgreSQL 17 or

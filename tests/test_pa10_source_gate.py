@@ -74,6 +74,10 @@ class GateTests(unittest.TestCase):
         with patch("scripts.pa10_source_gate.inspect_repository",return_value=11),\
              patch("scripts.pa10_source_gate._get_json",side_effect=fake_get):
             self.assertEqual(inspect_source("rumman52/Shuddho",SHA,"test-token"),(11,RUN_ID))
+        with patch("scripts.pa10_source_gate.inspect_repository") as audit,\
+             patch("scripts.pa10_source_gate._get_json",side_effect=fake_get):
+            self.assertEqual(inspect_source("rumman52/Shuddho",SHA,"test-token",ci_only=True),(None,RUN_ID))
+            audit.assert_not_called()
 
     def test_invalid_repo_sha_token_fails_before_external_access(self):
         for repo,sha,token in (("other/repo",SHA,"x"),("rumman52/Shuddho","../xx","x"),
