@@ -42,20 +42,36 @@ private and should stay outside the Supabase Data API.
 ### Authorize the GitHub ruleset audit
 
 Install a dedicated GitHub App on `rumman52/Shuddho` only. Give it repository
-**Administration: Read and write** so GitHub returns the ruleset's bypass list.
-Keep the app off the ruleset's bypass list. The audit runs only for protected
-`main` in the GitHub Actions environment `v01-governance`. Restrict that
-environment to the `main` branch before configuring it:
+**Administration: Read and write** because GitHub only returns the ruleset's
+`bypass_actors` field to an identity with write access to that ruleset. Keep the
+app itself off the ruleset's bypass list.
 
-- Environment variable `V01_RULESET_APP_CLIENT_ID` holds the app's client ID.
-- Environment secret `V01_RULESET_APP_PRIVATE_KEY` holds the app's private key.
+The app is used in two protected GitHub Actions environments, both restricted
+to the `main` branch and protected by required reviewers:
 
-Use the environment's settings for both values. The workflow mints a temporary
-token for this repository and uses it only for ruleset detail requests. It
-revokes the token after the job. The normal workflow token reads CI results.
-After merge and app setup, confirm `governance-audit` passes on the current
-`main` push, then run **PA-10 staging prerequisite preflight**. The PA-10
-jobs release staging credentials only after the live ruleset audit passes.
+- `v01-governance`: main-push governance audit and the PA-10 preflight's
+  pre-credential ruleset audit.
+- `pa10-staging`: repeat the same audit after environment approval and
+  immediately before staging database access or Render/provider mutations.
+
+Configure the same app identity in **both** environments:
+
+- Environment variable `V01_RULESET_APP_CLIENT_ID`: the app's client ID.
+- Environment secret `V01_RULESET_APP_PRIVATE_KEY`: the app's private key.
+
+The composite audit action mints a temporary installation token scoped to the
+single `Shuddho` repository. It uses that token for the protected-branch
+revalidation and the sensitive ruleset detail (including bypass-actor) read,
+then revokes it after the job. The ordinary workflow token is used only for CI
+run/job reads. The unprivileged source-gate checks the exact `main` SHA and
+successful CI; the privileged audit is the authority for the native protection
+state. Post-approval audits prevent a stale approval from releasing staging
+credentials after the ruleset or branch state changes.
+
+After configuring both environments, confirm `governance-audit` passes on the
+current `main` push, then run **PA-10 staging prerequisite preflight**. Do not
+run the worker-provision workflow without separate explicit approval for its
+paid Render plan.
 
 ### Back up and verify the staging database
 
