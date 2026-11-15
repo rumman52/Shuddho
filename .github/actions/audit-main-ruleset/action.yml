@@ -20,6 +20,7 @@ runs:
         repositories: Shuddho
         permission-contents: read
         permission-administration: write
+        permission-contents: read
     - name: Confirm the checked-out revision is still protected main
       shell: bash
       env:
