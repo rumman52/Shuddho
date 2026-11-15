@@ -10,13 +10,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Confirm the checked-out revision is still protected main
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-      run: |
-        python3 -m scripts.pa10_main_head_guard --repository "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
-    - name: Mint installation token for Shuddho ruleset details
+    - name: Mint installation token for Shuddho ruleset audit
       id: installation
       uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
       with:
@@ -25,6 +19,12 @@ runs:
         owner: rumman52
         repositories: Shuddho
         permission-administration: write
+    - name: Confirm the checked-out revision is still protected main
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ steps.installation.outputs.token }}
+      run: |
+        python3 -m scripts.pa10_main_head_guard --repository "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
     - name: Inspect active V-01 main governance
       shell: bash
       env:
