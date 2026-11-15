@@ -21,7 +21,7 @@ class GovernanceAuditError(ValueError):
     """Governance configuration missing, inconsistent or not inspectable."""
 
 
-def _active_main_ruleset(rule: dict) -> bool:
+def _active_main_target(rule: dict) -> bool:
     if not isinstance(rule, dict):
         return False
     if rule.get("target") != "branch" or rule.get("enforcement") != "active":
@@ -41,12 +41,13 @@ def _active_main_ruleset(rule: dict) -> bool:
         return False
     # Even a non-literal exclusion can be a branch-matching glob. Only an
     # empty exclusion list proves main is not exempt from this ruleset.
-    if excludes:
-        return False
-    # Normal development accounts must not have a bypass on this rule.
-    if rule.get("bypass_actors") != []:
-        return False
-    return True
+    return not excludes
+
+
+def _active_main_ruleset(rule: dict) -> bool:
+    # GitHub redacts bypass_actors from GET responses unless the caller has
+    # write access to the ruleset. Missing is unknown, never equivalent to [].
+    return _active_main_target(rule) and rule.get("bypass_actors") == []
 
 
 def _has_required_rules(rule: dict) -> bool:
@@ -109,12 +110,26 @@ def audit_governance(branch: dict, rulesets: list[dict]) -> int:
         raise GovernanceAuditError("main branch protection is not confirmed")
     if not isinstance(rulesets, list):
         raise GovernanceAuditError("ruleset listing is not available")
+    redacted_bypass_actors = False
     for item in rulesets:
+        if not _active_main_target(item):
+            continue
+        bypass_actors = item.get("bypass_actors")
+        if not isinstance(bypass_actors, list):
+            # GitHub omits this field for callers without write access to the
+            # ruleset. Do not infer that an invisible list is empty.
+            redacted_bypass_actors = True
+            continue
         if not _active_main_ruleset(item) or not _has_required_rules(item):
             continue
         ruleset_id = item.get("id")
         if type(ruleset_id) is int and ruleset_id > 0:
             return ruleset_id
+    if redacted_bypass_actors:
+        raise GovernanceAuditError(
+            "main ruleset bypass_actors are not visible to this token; "
+            "GitHub only returns bypass_actors to callers with write access to the ruleset"
+        )
     raise GovernanceAuditError("no enforceable main ruleset matching the V-01 minimum policy")
 
 
