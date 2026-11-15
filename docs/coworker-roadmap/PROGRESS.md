@@ -11,26 +11,22 @@ unprotected main branch.
 the ordinary workflow token for protection-state checks. The ruleset detail
 endpoint also withholds `bypass_actors` unless the caller has ruleset write
 access. PR [#714](https://github.com/rumman52/Shuddho/pull/714) now mints a
-repository-only GitHub App token with Administration write for those reads.
+repository-only GitHub App token with Contents read (branch endpoint) and Administration write (bypass-actor visibility) for those reads.
 The CI-only source gate checks exact main SHA and all required CI jobs; the
 separate privileged audit verifies native protection before any staging
 credentials are released. The same audit action is repeated after `pa10-staging`
 environment approval, immediately before DB access and each provider/Render
 mutation.
 
-**RED evidence:** test-only commit `0ed85a1d78d69946eb0a7c68a5ddc70f0ea90378`,
-[run #43751851225](https://github.com/rumman52/Shuddho/actions/runs/43751851225):
-**5 targeted governance/source/secret-boundary failures**, 1,970 Python tests
-passed, 84 skipped. These failures exposed the unprivileged branch lookup,
-the source-gate protection assumption, and missing post-approval privileged
-rechecks. Corrected-head CI is pending.
+**RED evidence:** test-only [run #43751851225](https://github.com/rumman52/Shuddho/actions/runs/43751851225) exposed **5** governance/source/secret-boundary failures (1,970 passed, 84 skipped). A follow-up test-only [run #43753830007](https://github.com/rumman52/Shuddho/actions/runs/43753830007) exposed the missing `Contents: read` permission (**1 failed, 1,974 passed, 84 skipped**). The fixes now cover branch lookup, ruleset bypass visibility, source-gate separation and post-approval rechecks. Final corrected-head CI is pending.
 
 **Owner configuration still required:** install the dedicated App on this
-repository only; keep it off the bypass list; configure
-`V01_RULESET_APP_CLIENT_ID` and `V01_RULESET_APP_PRIVATE_KEY` in both
-`v01-governance` and `pa10-staging`, with each environment restricted to
-`main` and required reviewers. No app credentials were created or copied by
-this session. The paid Render worker, live private archive/restore, operated
+repository only with **Contents: read** and **Administration: write**; keep it
+off the bypass list. Configure `V01_RULESET_APP_CLIENT_ID` and
+`V01_RULESET_APP_PRIVATE_KEY` in both `v01-governance` and `pa10-staging`.
+Restrict both environments to `main`; do not require a reviewer for
+`v01-governance` (main CI must run unattended), but require reviewer approval
+for `pa10-staging`. No app credentials were created or copied by this session. The paid Render worker, live private archive/restore, operated
 Temporal/S3 checks, model checkpoints, independent 40-case holdout and 20
 recovery scenarios remain separate blockers. No paid provisioning, migration,
 external send, merge or production deployment was performed.
