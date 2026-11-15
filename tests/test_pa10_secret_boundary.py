@@ -37,7 +37,10 @@ class PA10SecretBoundaryTests(unittest.TestCase):
         for path, privileged, paid in WORKFLOWS:
             with self.subTest(workflow=path.name):
                 prefix, jobs = job_parts(path.read_text())
-                self.assertEqual(set(jobs), {"source_gate", privileged})
+                expected_jobs = {"source_gate", privileged}
+                if paid:
+                    expected_jobs.add("verify_database")
+                self.assertEqual(set(jobs), expected_jobs)
                 guard = jobs["source_gate"]
                 target = jobs[privileged]
 
@@ -64,7 +67,8 @@ class PA10SecretBoundaryTests(unittest.TestCase):
 
                 # Failures/skips must not schedule an environment-bearing job.
                 self.assertRegex(target, r"(?m)^    if:.*needs\.source_gate\.result == 'success'")
-                self.assertRegex(target, r"(?m)^    needs: source_gate$")
+                expected_needs = "[source_gate, verify_database]" if paid else "source_gate"
+                self.assertIn(f"\n    needs: {expected_needs}\n", target)
                 self.assertRegex(target, r"(?m)^    environment: pa10-staging$")
                 self.assertIn("secrets.PA10_RENDER_API_KEY", target)
                 self.assertIn("github.repository == 'rumman52/Shuddho'", target)
@@ -76,6 +80,22 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                     self.assertIn("Create or repair shuddho-worker-staging", target)
                 else:
                     self.assertNotIn("render services create", target)
+
+    def test_paid_provisioning_requires_a_separate_read_only_database_check(self):
+        _, jobs = job_parts(WORKFLOWS[1][0].read_text())
+        check = jobs["verify_database"]
+        self.assertIn("\n    needs: source_gate\n", check)
+        self.assertRegex(check, r"(?m)^    if:.*needs\.source_gate\.result == 'success'")
+        self.assertIn("\n    environment: pa10-staging\n", check)
+        self.assertIn("persist-credentials: false", check)
+        setup, readiness = check.split("- name: Verify live staging database before paid provisioning", 1)
+        self.assertIn("python3 -m scripts.pa10_main_head_guard", setup)
+        self.assertNotIn("secrets.", setup)
+        self.assertEqual(readiness.count("secrets."), 1)
+        self.assertIn("secrets.PA10_STAGING_DATABASE_URL", readiness)
+        self.assertIn("SHUDDHO_COWORKER_ENV: staging", readiness)
+        self.assertLess(readiness.index("_validate_postgresql_url("), readiness.index("services.coworker.migrate --check"))
+        self.assertRegex(jobs["provision"], r"(?m)^    if:.*needs\.verify_database\.result == 'success'")
 
     def test_main_is_rechecked_after_approval_and_before_provider_side_effects(self):
         for path, privileged, paid in WORKFLOWS:

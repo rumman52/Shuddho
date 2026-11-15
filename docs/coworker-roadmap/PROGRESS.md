@@ -1,3 +1,19 @@
+## PA-10 live database check before worker provisioning — 16 November 2026 (Asia/Dhaka)
+
+The paid worker workflow now requires the live Supabase database to be reachable
+at the candidate's Alembic revision before any worker creation or repair. The
+workflow revalidates protected `main` before using the staging DSN. The check's
+runner receives the staging DSN only in the read-only migration check, without
+the Render, Temporal or storage credentials used by the provisioning job.
+
+Focused tests passed locally (40 passed, one archive process test skipped because
+the runner lacks PostgreSQL binaries). The archive process test passed on merged
+[PR #712](https://github.com/rumman52/Shuddho/pull/712) before this change.
+Native main protection still requires GitHub owner verification. Live backup,
+worker provisioning and the managed recovery drill remain pending.
+
+---
+
 ## Supabase staging database backup verification — 15 November 2026 (Asia/Dhaka)
 
 The staging backup command exports only `shuddho_coworker` over the verified
