@@ -30,7 +30,7 @@ jobs:
       - name: Verify protected exact-head CI before staging credentials
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}
         run: |
           set -euo pipefail
           python3 -m scripts.pa10_source_gate \
