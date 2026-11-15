@@ -62,6 +62,22 @@ class GateTests(unittest.TestCase):
         r["workflow_runs"].append(bad);r["total_count"]=2
         with self.assertRaises(SourceGateError): require_qualified_source(b,r,j,SHA)
 
+    def test_ci_only_source_gate_defers_protection_to_separate_privileged_audit(self):
+        b,r,j=fixture()
+        b["protected"] = False
+
+        def fake_get(url,token):
+            self.assertEqual(token,"test-token")
+            if url == ROOT+"/branches/main": return b
+            if "/workflows/ci.yml/runs?" in url: return r
+            if url == ROOT+f"/actions/runs/{RUN_ID}/jobs?per_page=100&filter=latest": return j
+            raise AssertionError(url)
+
+        with patch("scripts.pa10_source_gate.inspect_repository") as audit,\
+             patch("scripts.pa10_source_gate._get_json",side_effect=fake_get):
+            self.assertEqual(inspect_source("rumman52/Shuddho",SHA,"test-token",ci_only=True),(None,RUN_ID))
+            audit.assert_not_called()
+
     def test_network_fetch_is_pinned_and_matches_selected_run(self):
         b,r,j=fixture()
         def fake_get(url,token):
