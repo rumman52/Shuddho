@@ -39,7 +39,8 @@ No customer content is used.
 
 Use the actual managed-service backup mechanisms selected for Shuddho:
 
-1. take a PostgreSQL backup/snapshot;
+1. take a PostgreSQL backup/snapshot. For Supabase staging, use the
+   [private schema archive and isolated database verification](../infra/README.md#back-up-and-verify-the-staging-database);
 2. take or confirm the private object-storage backup/versioned copy;
 3. record durable backup references.
 
