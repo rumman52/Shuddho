@@ -42,17 +42,21 @@ private and should stay outside the Supabase Data API.
 ### Authorize the GitHub ruleset audit
 
 Install a dedicated GitHub App on `rumman52/Shuddho` only. Give it repository
-**Administration: Read and write** because GitHub only returns the ruleset's
-`bypass_actors` field to an identity with write access to that ruleset. Keep the
-app itself off the ruleset's bypass list.
+**Contents: Read** and **Administration: Read and write**. Contents read is
+required by the `GET /branches/main` guard; Administration write is required
+for GitHub to return the ruleset's `bypass_actors` field to an identity with
+write access to that ruleset. Keep the app itself off the ruleset's bypass list.
 
-The app is used in two protected GitHub Actions environments, both restricted
-to the `main` branch and protected by required reviewers:
+The app is used in two GitHub Actions environments, both restricted to the
+`main` branch:
 
 - `v01-governance`: main-push governance audit and the PA-10 preflight's
-  pre-credential ruleset audit.
+  pre-credential ruleset audit. Do not add a manual reviewer gate here; the
+  audit must run automatically on each protected-main push.
 - `pa10-staging`: repeat the same audit after environment approval and
   immediately before staging database access or Render/provider mutations.
+  This environment must require reviewer approval before releasing staging
+  credentials.
 
 Configure the same app identity in **both** environments:
 
