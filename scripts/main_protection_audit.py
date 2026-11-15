@@ -154,12 +154,15 @@ def inspect_repository(repository: str, token: str, *, ruleset_token: str | None
         or not token
     ):
         raise GovernanceAuditError("invalid repository or missing GitHub token")
-    detail_token = token if ruleset_token is None else ruleset_token
-    if not detail_token:
+    audit_token = token if ruleset_token is None else ruleset_token
+    if not audit_token:
         raise GovernanceAuditError("GitHub ruleset audit token is missing")
 
     root = f"https://api.github.com/repos/{repository}"
-    branch = _get_json(root + "/branches/main", token)
+    # The workflow token can list CI and ruleset IDs, but cannot reliably
+    # observe the effective protected-branch state. Use the repository-scoped
+    # audit identity for both protection state and sensitive bypass details.
+    branch = _get_json(root + "/branches/main", audit_token)
     items = _get_json(root + "/rulesets?includes_parents=true&per_page=100", token)
     if not isinstance(items, list) or len(items) >= 100:
         raise GovernanceAuditError("ruleset listing invalid or possibly truncated")
@@ -172,7 +175,7 @@ def inspect_repository(repository: str, token: str, *, ruleset_token: str | None
         rid = item.get("id")
         if type(rid) is not int or rid < 1:
             raise GovernanceAuditError("invalid active ruleset identifier")
-        details.append(_get_json(root + f"/rulesets/{rid}", detail_token))
+        details.append(_get_json(root + f"/rulesets/{rid}", audit_token))
     return audit_governance(branch, details)
 
 
