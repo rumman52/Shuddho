@@ -10,6 +10,7 @@ from hashlib import file_digest, sha256
 import os
 from pathlib import Path
 import shlex
+import signal
 import subprocess
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from urllib.parse import unquote, urlsplit
@@ -205,6 +206,8 @@ def main() -> None:
     args = parser.parse_args()
     try:
         receipt = run_backup(os.environ.get(SOURCE_ENV, ""), args.directory, args.pg_bin)
+    except KeyboardInterrupt:
+        parser.exit(130, "Database backup interrupted.\n")
     except BackupError as error:
         parser.exit(1, f"{error}\n")
     except Exception as error:
@@ -213,4 +216,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     main()
