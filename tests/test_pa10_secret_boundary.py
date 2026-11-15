@@ -143,7 +143,8 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                     self.assertLess(positions[1], target.index("- name: Create or repair shuddho-worker-staging"))
                     self.assertLess(positions[2], target.index("- name: Deploy exact main revision and require database readiness"))
                 else:
-                    self.assertLess(positions[0], target.index("- name: Set up Python"))
+                    self.assertLess(target.index("- name: Set up Python"), positions[0])
+                    self.assertLess(positions[0], target.index("- name: Require Render access before"))
 
     def test_staging_database_secret_is_confined_to_steps_using_it(self):
         connection = "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.PA10_STAGING_DATABASE_URL }}"
