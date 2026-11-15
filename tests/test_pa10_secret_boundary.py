@@ -91,20 +91,22 @@ class PA10SecretBoundaryTests(unittest.TestCase):
         self.assertRegex(check, r"(?m)^    if:.*needs\.ruleset_audit\.result == 'success'")
         self.assertIn("\n    environment: pa10-staging\n", check)
         self.assertIn("persist-credentials: false", check)
+        audit = "uses: ./.github/actions/audit-main-ruleset"
         setup, readiness = check.split("- name: Verify live staging database before paid provisioning", 1)
-        self.assertIn("python3 -m scripts.pa10_main_head_guard", setup)
-        self.assertNotIn("secrets.", setup)
+        self.assertIn(audit, setup)
+        self.assertIn("secrets.V01_RULESET_APP_PRIVATE_KEY", setup)
+        self.assertNotIn("PA10_STAGING_DATABASE_URL", setup)
         self.assertEqual(readiness.count("secrets."), 1)
         self.assertIn("secrets.PA10_STAGING_DATABASE_URL", readiness)
         self.assertIn("SHUDDHO_COWORKER_ENV: staging", readiness)
         self.assertLess(readiness.index("_validate_postgresql_url("), readiness.index("services.coworker.migrate --check"))
         self.assertRegex(jobs["provision"], r"(?m)^    if:.*needs\.verify_database\.result == 'success'")
 
-    def test_live_ruleset_audit_is_confined_to_the_main_only_audit_job(self):
-        for path, _, paid in WORKFLOWS:
+    def test_live_ruleset_audit_is_confined_to_main_and_staging_environments(self):
+        for path, privileged, paid in WORKFLOWS:
             with self.subTest(workflow=path.name):
                 prefix, jobs = job_parts(path.read_text())
-                audit = jobs.pop("ruleset_audit")
+                audit = jobs["ruleset_audit"]
                 self.assertIn("\n    needs: source_gate\n", audit)
                 self.assertRegex(audit, r"(?m)^    if:.*needs\.source_gate\.result == 'success'")
                 self.assertIn("github.repository == 'rumman52/Shuddho'", audit)
@@ -116,9 +118,13 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                 self.assertIn("uses: ./.github/actions/audit-main-ruleset", audit)
                 self.assertIn("secrets.V01_RULESET_APP_PRIVATE_KEY", audit)
                 self.assertNotIn("PA10_", audit)
-                self.assertNotIn("V01_RULESET_APP_", prefix + "".join(jobs.values()))
+                self.assertNotIn("V01_RULESET_APP_", prefix + jobs["source_gate"])
+                self.assertIn("secrets.V01_RULESET_APP_PRIVATE_KEY", jobs[privileged])
+                if paid:
+                    self.assertIn("secrets.V01_RULESET_APP_PRIVATE_KEY", jobs["verify_database"])
 
     def test_main_is_rechecked_after_approval_and_before_provider_side_effects(self):
+        audit = "uses: ./.github/actions/audit-main-ruleset"
         for path, privileged, paid in WORKFLOWS:
             with self.subTest(workflow=path.name):
                 _, jobs = job_parts(path.read_text())
@@ -126,39 +132,18 @@ class PA10SecretBoundaryTests(unittest.TestCase):
                 target = jobs[privileged]
                 self.assertNotIn("pa10_main_head_guard", source)
                 self.assertIn("persist-credentials: false", target)
-                self.assertEqual(
-                    target.count("python3 -m scripts.pa10_main_head_guard"),
-                    3 if paid else 1,
-                )
-                self.assertLess(
-                    target.index("- name: Guard staging-only execution"),
-                    target.index("- name: Revalidate current protected main before provider access"),
-                )
-                self.assertLess(
-                    target.index("- name: Revalidate current protected main before provider access"),
-                    target.index("- name: Require Render access before"),
-                )
-                self.assertIn(
-                    "- name: Revalidate current protected main before provider access",
-                    target,
-                )
+                positions = [match.start() for match in re.finditer(re.escape(audit), target)]
+                self.assertEqual(len(positions), 3 if paid else 1)
+                self.assertLess(target.index("- name: Guard staging-only execution"), positions[0])
                 if paid:
-                    self.assertIn(
-                        "- name: Revalidate current main immediately before paid worker mutation",
-                        target,
-                    )
-                    self.assertIn(
-                        "- name: Revalidate current main immediately before worker deployment",
-                        target,
-                    )
-                    self.assertLess(
-                        target.index("- name: Revalidate current main immediately before paid worker mutation"),
-                        target.index("- name: Create or repair shuddho-worker-staging"),
-                    )
-                    self.assertLess(
-                        target.index("- name: Revalidate current main immediately before worker deployment"),
-                        target.index("- name: Deploy exact main revision and require database readiness"),
-                    )
+                    check = jobs["verify_database"]
+                    self.assertEqual(check.count(audit), 1)
+                    self.assertLess(check.index(audit), check.index("- name: Verify live staging database before paid provisioning"))
+                    self.assertLess(positions[0], target.index("- name: Require Render access before"))
+                    self.assertLess(positions[1], target.index("- name: Create or repair shuddho-worker-staging"))
+                    self.assertLess(positions[2], target.index("- name: Deploy exact main revision and require database readiness"))
+                else:
+                    self.assertLess(positions[0], target.index("- name: Set up Python"))
 
     def test_staging_database_secret_is_confined_to_steps_using_it(self):
         connection = "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.PA10_STAGING_DATABASE_URL }}"
