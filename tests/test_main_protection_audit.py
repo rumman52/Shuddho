@@ -223,6 +223,7 @@ def test_ruleset_audit_action_scopes_credential_to_one_repo_and_rechecks_protect
     assert "owner: rumman52" in mint and "repositories: Shuddho" in mint
     assert "permission-administration: write" in mint
     assert "permission-contents: read" in mint
+    assert mint.count("permission-contents: read") == 1
     assert "skip-token-revoke" not in mint
     assert "inputs.private-key" not in guard + audit
     assert "scripts.pa10_main_head_guard" in guard
