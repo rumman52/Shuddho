@@ -13,7 +13,8 @@ import re
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from scripts.pr_ci_reuse import CI_PATH, TEST_JOBS, ci_title
+from scripts.pr_ci_reuse import CI_PATH, ci_title
+from scripts.pr_ci_scope import required_test_jobs
 
 
 REQUIRED_JOBS = ("test-and-build", "coworker", "ci-merge-gate")
@@ -105,8 +106,18 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list, *,
         ):
             raise EvidenceError("PR test and review runs do not match")
         gate_jobs = [job for job in jobs if isinstance(job, dict) and job.get("name") == "ci-merge-gate"]
-        jobs = gate_jobs + [job for job in test_jobs if isinstance(job, dict) and job.get("name") in TEST_JOBS]
-        required_jobs = (*TEST_JOBS, "ci-merge-gate")
+        try:
+            test_names = required_test_jobs(test_jobs)
+        except ValueError as exc:
+            raise EvidenceError("Invalid PR CI scope evidence") from exc
+        jobs = gate_jobs + [job for job in test_jobs if isinstance(job, dict) and job.get("name") in test_names]
+        required_jobs = (*test_names, "ci-merge-gate")
+    else:
+        try:
+            test_names = required_test_jobs(jobs, legacy_jobs=REQUIRED_JOBS[:-1])
+            required_jobs = (*test_names, "ci-merge-gate")
+        except ValueError as exc:
+            raise EvidenceError("Invalid PR CI scope evidence") from exc
 
     job_by_name = {}
     for job in jobs:
@@ -132,7 +143,7 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list, *,
             findings.append(f"{name}:completed_after_merge")
     if run["conclusion"] != "success":
         findings.append(f"workflow:{run['conclusion']}")
-    if split_review and any(job_finished[name] > job_finished["ci-merge-gate"] for name in TEST_JOBS):
+    if split_review and any(job_finished[name] > job_finished["ci-merge-gate"] for name in required_jobs[:-1]):
         findings.append("ci-merge-gate:completed_before_pr_tests")
 
     author = pr.get("user") or {}

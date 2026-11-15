@@ -22,7 +22,10 @@ permissions:
 jobs:
   test-and-build:
     name: ${{ github.event_name == 'pull_request_review' && 'Omitted test-and-build on review' || 'test-and-build' }}
-    if: github.event_name != 'pull_request_review'
+    needs: pr-base-ancestry
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.pr-base-ancestry.result == 'success'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,39 +33,61 @@ jobs:
           # Frozen pilot sources are compared with their historical Git blobs.
           # A depth-one checkout omits that revision on subsequent PR heads.
           fetch-depth: 0
+      - name: PR CI scope (${{ needs.pr-base-ancestry.outputs.scope }})
+        if: github.event_name == 'pull_request'
+        env:
+          PR_CI_SCOPE: ${{ needs.pr-base-ancestry.outputs.scope }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$PR_CI_SCOPE" in
+            docs) git diff --check "$PR_BASE_SHA" "$PR_HEAD_SHA" ;;
+            frontend|full) echo "PR CI scope: $PR_CI_SCOPE" ;;
+            *) echo "Unrecognized PR CI scope"; exit 1 ;;
+          esac
       - uses: astral-sh/setup-uv@v6
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         with:
           version: "0.7.22"
           enable-cache: true
       - uses: actions/setup-python@v5
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         with:
           python-version: "3.11"
       - uses: actions/setup-node@v4
+        if: needs.pr-base-ancestry.outputs.scope != 'docs'
         with:
           node-version: "22"
           cache: npm
 
       - name: Validate Python lockfile
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: uv lock --check
       - name: Install lightweight Python dependencies
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         # Optional extras are excluded unless explicitly requested with
         # --extra/--all-extras. Passing --no-extra without --all-extras makes
         # uv reject the command instead of installing the lightweight set.
         run: uv sync --frozen --group dev
       - name: Check Python syntax
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: >-
           uv run python -m py_compile
           services/api/shuddho_api/app.py
           services/api/shuddho_api/llm_provider.py
           services/api/shuddho_api/llm_gemma.py
       - name: Run Python tests
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: uv run pytest -q
       - name: Verify controlled-release contract
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: uv run python -m scripts.release_contract_check
 
       - name: Install JavaScript dependencies
+        if: needs.pr-base-ancestry.outputs.scope != 'docs'
         run: npm ci
       - name: Test standalone Rukh app shells
+        if: needs.pr-base-ancestry.outputs.scope != 'docs'
         run: |
           set +e
           npm run test --workspace @rukh/coworker
@@ -72,15 +97,19 @@ jobs:
           if [ "$coworker_status" -ne 0 ] || [ "$editor_status" -ne 0 ]; then exit 1; fi
 
       - name: Run JavaScript tests
+        if: needs.pr-base-ancestry.outputs.scope != 'docs'
         run: npm test
       # Keep the real proxy safety regressions in the fast job as well as the
       # mandatory coworker integration job: superseded long jobs must not hide
       # a private-network CONNECT regression behind a green build.
       - name: Test browser worker and public-IP CONNECT isolation
+        if: needs.pr-base-ancestry.outputs.scope != 'docs'
         run: node --test scripts/browser_worker_policy.test.mjs scripts/browser_pinned_proxy.test.mjs
       - name: Build workspaces
+        if: needs.pr-base-ancestry.outputs.scope != 'docs'
         run: npm run build
       - name: Verify frontend rollout manifest
+        if: needs.pr-base-ancestry.outputs.scope != 'docs'
         run: |
           node - <<'NODE'
           const fs = require("fs");
@@ -95,7 +124,11 @@ jobs:
           NODE
 
   frontend:
-    if: github.event_name != 'pull_request_review'
+    needs: pr-base-ancestry
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.pr-base-ancestry.result == 'success' &&
+      needs.pr-base-ancestry.outputs.scope != 'docs'))
     name: Frontend tests and builds
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -122,7 +155,11 @@ jobs:
 
   coworker:
     name: ${{ github.event_name == 'pull_request_review' && 'Omitted coworker on review' || 'coworker' }}
-    if: github.event_name != 'pull_request_review'
+    needs: pr-base-ancestry
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.pr-base-ancestry.result == 'success' &&
+      needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'))
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -513,7 +550,11 @@ jobs:
           path: /tmp/shuddho-coworker-browser/screenshots/
 
   browser-qualification:
-    if: github.event_name != 'pull_request_review'
+    needs: pr-base-ancestry
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.pr-base-ancestry.result == 'success' &&
+      needs.pr-base-ancestry.outputs.scope != 'docs'))
     name: browser-qualification
     permissions:
       contents: read
@@ -554,7 +595,11 @@ jobs:
           path: /tmp/browser-source-qualification.xml
 
   postgres-18-qualification:
-    if: github.event_name != 'pull_request_review'
+    needs: pr-base-ancestry
+    if: >-
+      !cancelled() && (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.pr-base-ancestry.result == 'success' &&
+      needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'))
     name: PostgreSQL 18 staging compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -624,6 +669,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -634,6 +681,12 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python -m scripts.pr_base_ancestry --base-sha "$PR_BASE_SHA" --head-sha "$PR_HEAD_SHA"
+      - name: Classify all changed paths
+        id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python -m scripts.pr_ci_scope --base-sha "$PR_BASE_SHA" --head-sha "$PR_HEAD_SHA"
 
   ci-merge-gate:
     name: ci-merge-gate
@@ -667,6 +720,7 @@ jobs:
           GOVERNANCE_AUDIT_RESULT: ${{ needs.governance-audit.result }}
           CI_EVENT_NAME: ${{ github.event_name }}
           PR_ANCESTRY_RESULT: ${{ needs['pr-base-ancestry'].result }}
+          PR_CI_SCOPE: ${{ needs['pr-base-ancestry'].outputs.scope }}
         run: |
           echo "test-and-build=$TEST_AND_BUILD_RESULT"
           echo "frontend=$FRONTEND_RESULT"
@@ -674,18 +728,16 @@ jobs:
           echo "browser-qualification=$BROWSER_QUALIFICATION_RESULT"
           echo "postgres-18-qualification=$POSTGRES18_RESULT"
           echo "governance-audit=$GOVERNANCE_AUDIT_RESULT"
-          if [ "$TEST_AND_BUILD_RESULT" != "success" ] || [ "$FRONTEND_RESULT" != "success" ] || [ "$COWORKER_RESULT" != "success" ] || [ "$BROWSER_QUALIFICATION_RESULT" != "success" ] || [ "$POSTGRES18_RESULT" != "success" ]; then
-            echo "CI merge gate failed: every required upstream job must succeed."
-            exit 1
-          fi
           case "$CI_EVENT_NAME" in
             push)
+              scope=full
               if [ "$GOVERNANCE_AUDIT_RESULT" != "success" ]; then
                 echo "CI merge gate failed: main governance must be confirmed on push."
                 exit 1
               fi
               ;;
             pull_request|pull_request_review)
+              scope=${PR_CI_SCOPE:-full}
               if [ "$PR_ANCESTRY_RESULT" != "success" ]; then
                 echo "CI merge gate failed: PR head does not include the target branch commit."
                 exit 1
@@ -702,6 +754,25 @@ jobs:
               exit 1
               ;;
           esac
+          check_result() {
+            local job=$1 result=$2 policy=$3
+            if [ "$result" = "success" ] || { [ "$policy" = "optional" ] && [ "$result" = "skipped" ]; }; then
+              return 0
+            fi
+            echo "CI merge gate failed: $job returned ${result:-no result} ($policy in $scope)."
+            exit 1
+          }
+          case "$scope" in
+            docs) frontend_policy=optional; backend_policy=optional ;;
+            frontend) frontend_policy=required; backend_policy=optional ;;
+            full) frontend_policy=required; backend_policy=required ;;
+            *) echo "CI merge gate failed: unrecognized PR CI scope."; exit 1 ;;
+          esac
+          check_result test-and-build "$TEST_AND_BUILD_RESULT" required
+          check_result frontend "$FRONTEND_RESULT" "$frontend_policy"
+          check_result browser-qualification "$BROWSER_QUALIFICATION_RESULT" "$frontend_policy"
+          check_result coworker "$COWORKER_RESULT" "$backend_policy"
+          check_result postgres-18-qualification "$POSTGRES18_RESULT" "$backend_policy"
           echo "Required upstream checks passed; PR review is checked separately."
       - name: Reuse exact PR test results on a review
         if: github.event_name == 'pull_request_review'

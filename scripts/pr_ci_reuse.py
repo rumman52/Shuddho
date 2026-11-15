@@ -8,13 +8,10 @@ import time
 from urllib.parse import urlencode
 
 from scripts.independent_review_gate import ReviewGateError, _get_json
+from scripts.pr_ci_scope import TEST_JOBS, required_test_jobs
 
 
 CI_PATH = ".github/workflows/ci.yml"
-TEST_JOBS = (
-    "test-and-build", "Frontend tests and builds", "coworker",
-    "browser-qualification", "PostgreSQL 18 staging compatibility", "PR head ancestry",
-)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -50,15 +47,29 @@ def select_ci_run(response: object, number: int, head_sha: str, merge_sha: str) 
 def tested_jobs(response: object, *, complete: bool) -> bool:
     """Wait for pending jobs and reject missing, failed or skipped evidence."""
     jobs = response_items(response, "jobs")
+    # A queued build may not list its steps yet. Wait for its scope marker.
+    builds = [job for job in jobs if job.get("name") == "test-and-build"]
+    if not complete and (not builds or (len(builds) == 1 and builds[0].get("status") != "completed")):
+        return False
+    try:
+        required = required_test_jobs(jobs)
+    except ValueError as exc:
+        raise ReviewGateError(str(exc)) from exc
     ready = True
     for name in TEST_JOBS:
+        is_required = name in required
         found = [job for job in jobs if job.get("name") == name]
-        if len(found) > 1 or (complete and (not found or found[0].get("status") != "completed")):
+        if len(found) > 1 or (complete and is_required and not found):
             raise ReviewGateError(f"Missing or duplicate PR CI job: {name}")
+        if not found and not is_required:
+            continue
         if not found or found[0].get("status") != "completed":
+            if complete:
+                raise ReviewGateError(f"Incomplete PR CI job: {name}")
             ready = False
             continue
-        if found[0].get("conclusion") != "success":
+        allowed = {"success"} if is_required else {"success", "skipped"}
+        if found[0].get("conclusion") not in allowed:
             raise ReviewGateError(f"PR CI job did not pass: {name}")
     return ready
 

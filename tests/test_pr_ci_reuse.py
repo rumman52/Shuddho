@@ -4,6 +4,7 @@ import pytest
 
 from scripts import pr_ci_reuse as reuse
 from scripts.independent_review_gate import ReviewGateError
+from scripts.pr_ci_scope import FRONTEND_JOBS, QUICK_JOBS, TEST_JOBS
 
 
 HEAD = "a" * 40
@@ -23,7 +24,7 @@ def response(key, items):
 
 
 def jobs():
-    return [{"name": name, "status": "completed", "conclusion": "success"} for name in reuse.TEST_JOBS]
+    return [{"name": name, "status": "completed", "conclusion": "success"} for name in TEST_JOBS]
 
 
 @pytest.mark.parametrize("changes", [
@@ -76,12 +77,35 @@ def test_reuse_fails_closed_without_all_passing_jobs(mode):
         reuse.tested_jobs(payload, complete=True)
 
 
+@pytest.mark.parametrize(("scope", "needed"), [("docs", QUICK_JOBS), ("frontend", FRONTEND_JOBS)])
+def test_reuse_validates_scope_and_requires_only_relevant_jobs(scope, needed):
+    values = jobs()
+    values[0]["steps"] = [{"name": f"PR CI scope ({scope})", "conclusion": "success"}]
+    for job in values:
+        if job["name"] not in needed:
+            job["conclusion"] = "skipped"
+    assert reuse.tested_jobs(response("jobs", values), complete=True)
+    next(job for job in values if job["name"] == needed[-1])["conclusion"] = "skipped"
+    with pytest.raises(ReviewGateError, match="did not pass"):
+        reuse.tested_jobs(response("jobs", values), complete=True)
+
+
+@pytest.mark.parametrize(("name", "conclusion"), [("docs", "skipped"), ("invalid", "success")])
+def test_reuse_rejects_untrusted_scope_evidence(name, conclusion):
+    values = jobs()
+    values[0]["steps"] = [{"name": f"PR CI scope ({name})", "conclusion": conclusion}]
+    with pytest.raises(ReviewGateError, match="Invalid PR CI scope evidence"):
+        reuse.tested_jobs(response("jobs", values), complete=True)
+
+
 def test_review_run_keeps_required_check_names_and_polls_without_running_suites():
     workflow = Path(".github/workflows/ci.yml").read_text()
     assert "github.event_name == 'pull_request_review' && 'review' || 'checks'" in workflow
     for name in ("test-and-build", "frontend", "coworker", "browser-qualification", "postgres-18-qualification"):
         job = workflow.split(f"\n  {name}:\n", 1)[1].split("    steps:\n", 1)[0]
-        assert "if: github.event_name != 'pull_request_review'" in job
+        assert "needs: pr-base-ancestry" in job
+        assert "github.event_name == 'pull_request'" in job
+        assert "github.event_name == 'push'" in job
     for name in ("test-and-build", "coworker"):
         assert f"'Omitted {name} on review' || '{name}'" in workflow
     reuse_step, review_step = workflow.split("      - name: Reuse exact PR test results on a review", 1)[1].split("      - name: Require independent current-head review", 1)
