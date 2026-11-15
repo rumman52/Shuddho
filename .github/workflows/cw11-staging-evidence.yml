@@ -188,10 +188,10 @@ jobs:
               verified: true
             }' > /tmp/cw11-render-evidence.json
 
-      - name: Apply pending staging migrations
+      - name: Verify staging database readiness
         env:
           SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}
-        run: uv run --extra coworker python -m services.coworker.migrate
+        run: uv run --extra coworker python -m services.coworker.migrate --check
 
       - name: Collect CW-11 staging evidence
         env:

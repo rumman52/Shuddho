@@ -64,7 +64,10 @@ class WorkerProvisioningTests(unittest.TestCase):
             "SHUDDHO_COWORKER_BUCKET": "shuddho-coworker-staging",
             "SHUDDHO_COWORKER_S3_ENDPOINT": "https://storage.example.test/storage/v1/s3",
             "AWS_DEFAULT_REGION": "us-west-1",
-            "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://test-only-host:5432/shuddho_staging",
+            "SHUDDHO_COWORKER_DATABASE_URL": (
+                "postgresql://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-secret"
+                "@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&sslrootcert=infra/supabase-root-2021.pem"
+            ),
             "WORKER_ID": "srv-test123",
             "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
@@ -278,7 +281,7 @@ class WorkerProvisioningTests(unittest.TestCase):
                 "envSpecificDetails": {
                     "buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker",
                     "startCommand": "uv run --extra coworker python -m services.coworker.worker",
-                    "preDeployCommand": "uv run --extra coworker python -m services.coworker.migrate",
+                    "preDeployCommand": "uv run --extra coworker python -m services.coworker.migrate --check",
                 },
             },
         )
@@ -326,11 +329,11 @@ class WorkerProvisioningTests(unittest.TestCase):
         )
         self.assertLess(
             workflow.index("      - name: Verify reconciled staging worker configuration"),
-            workflow.index("      - name: Deploy exact main revision and require migration success"),
+            workflow.index("      - name: Deploy exact main revision and require database readiness"),
         )
 
     def test_exact_live_deploy_passes(self):
-        result = self.run_step("Deploy exact main revision and require migration success")
+        result = self.run_step("Deploy exact main revision and require database readiness")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["commit"], SHA)
 
@@ -340,9 +343,9 @@ class WorkerProvisioningTests(unittest.TestCase):
             {"id": "dep-test123", "status": "build_failed", "commit": {"id": SHA}},
             {"id": "dep-test123", "status": "live"}, {},
         ):
-            result = self.run_step("Deploy exact main revision and require migration success", FAKE_DEPLOY=json.dumps(value))
+            result = self.run_step("Deploy exact main revision and require database readiness", FAKE_DEPLOY=json.dumps(value))
             self.assertNotEqual(result.returncode, 0)
-        self.assertNotEqual(self.run_step("Deploy exact main revision and require migration success", FAKE_DEPLOY_EXIT="1").returncode, 0)
+        self.assertNotEqual(self.run_step("Deploy exact main revision and require database readiness", FAKE_DEPLOY_EXIT="1").returncode, 0)
 
     def test_summary_preserves_identifiers_without_running_commands(self):
         result = self.run_step("Emit non-secret worker reference")
@@ -353,15 +356,6 @@ class WorkerProvisioningTests(unittest.TestCase):
             self.assertIn(value, summary)
 
 
-    def test_provisioning_preflight_runs_after_database_resolution(self):
-        workflow = WORKFLOW.read_text()
-        self.assertLess(
-            workflow.index("      - name: Resolve private Render Postgres URL"),
-            workflow.index("      - name: Validate staging prerequisites"),
-        )
-        preflight_step = workflow.split("      - name: Validate staging prerequisites\n", 1)[1].split("\n      - name:", 1)[0]
-        self.assertIn("SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}", preflight_step)
-
     def test_read_only_preflight_is_restricted_to_main(self):
         workflow = PREFLIGHT_WORKFLOW.read_text()
         self.assertIn('GITHUB_REPOSITORY}" != "rumman52/Shuddho"', workflow)
@@ -369,13 +363,7 @@ class WorkerProvisioningTests(unittest.TestCase):
 
     def test_read_only_preflight_checks_database_without_provisioning(self):
         workflow = PREFLIGHT_WORKFLOW.read_text()
-        self.assertLess(
-            workflow.index("      - name: Resolve private Render Postgres URL"),
-            workflow.index("      - name: Validate staging prerequisites without provisioning"),
-        )
-        preflight_step = workflow.split("      - name: Validate staging prerequisites without provisioning\n", 1)[1].split("\n      - name:", 1)[0]
-        self.assertIn("SHUDDHO_COWORKER_DATABASE_URL: ${{ steps.postgres.outputs.database_url }}", preflight_step)
-        self.assertIn("render pg get shuddho-staging-db", workflow)
+        self.assertIn("      - name: Validate staging prerequisites without provisioning", workflow)
         self.assertNotIn("render services create", workflow)
         self.assertNotIn("render services update", workflow)
 

@@ -13,15 +13,14 @@ services:
     plan: free
     autoDeployTrigger: off
     buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
-    startCommand: uv run --extra coworker uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
+    startCommand: uv run --extra coworker python -m services.coworker.migrate --check && uv run --extra coworker uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: SHUDDHO_COWORKER_ENV
         value: staging
+      # Supabase session-pooler URL for the staging runtime role.
       - key: SHUDDHO_COWORKER_DATABASE_URL
-        fromDatabase:
-          name: shuddho-staging-db
-          property: connectionString
+        sync: false
       - key: SHUDDHO_AUTH_ISSUER
         sync: false
       - key: SHUDDHO_AUTH_AUDIENCE
@@ -156,16 +155,15 @@ services:
     plan: 0.5c-512mb
     autoDeployTrigger: off
     buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
-    preDeployCommand: uv run --extra coworker python -m services.coworker.migrate
+    preDeployCommand: uv run --extra coworker python -m services.coworker.migrate --check
     startCommand: uv run --extra coworker python -m services.coworker.worker
     maxShutdownDelaySeconds: 120
     envVars:
       - key: SHUDDHO_COWORKER_ENV
         value: staging
+      # Supabase session-pooler URL for the staging runtime role.
       - key: SHUDDHO_COWORKER_DATABASE_URL
-        fromDatabase:
-          name: shuddho-staging-db
-          property: connectionString
+        sync: false
       - key: SHUDDHO_AUTH_ISSUER
         sync: false
       - key: SHUDDHO_AUTH_AUDIENCE
@@ -288,11 +286,3 @@ services:
         value: "false"
       - key: SHUDDHO_LOG_RAW_TEXT
         value: "false"
-
-databases:
-  - name: shuddho-staging-db
-    databaseName: shuddho_staging_db
-    plan: free
-    region: oregon
-    postgresMajorVersion: "18"
-    ipAllowList: []

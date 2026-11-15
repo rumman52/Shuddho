@@ -9,7 +9,10 @@ def valid_env() -> dict[str, str]:
     return {
         "RENDER_API_KEY": "render-secret",
         "SHUDDHO_COWORKER_ENV": "staging",
-        "SHUDDHO_COWORKER_DATABASE_URL": "postgresql://db.example.test:5432/shuddho_staging",
+        "SHUDDHO_COWORKER_DATABASE_URL": (
+            "postgresql://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-secret"
+            "@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&sslrootcert=infra/supabase-root-2021.pem"
+        ),
         "SHUDDHO_AUTH_ISSUER": "https://auth.example.test/auth/v1",
         "SHUDDHO_AUTH_AUDIENCE": "authenticated",
         "SHUDDHO_TEMPORAL_ADDRESS": "example.tmprl.cloud:7233",

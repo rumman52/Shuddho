@@ -5,13 +5,15 @@ import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 EXPECTED_BUCKET = "shuddho-coworker-staging"
 EXPECTED_TASK_QUEUE = "shuddho-documents-v1"
 EXPECTED_ENVIRONMENT = "staging"
 EXPECTED_AUTH_AUDIENCE = "authenticated"
 POSTGRES_SCHEMES = {"postgres", "postgresql", "postgresql+psycopg"}
+STAGING_DB_HOST = "aws-0-us-west-1.pooler.supabase.com"
+STAGING_DB_USER = "shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax"
 REQUIRED_SECRETS = (
     "RENDER_API_KEY",
     "SHUDDHO_TEMPORAL_ADDRESS",
@@ -96,22 +98,32 @@ def _validate_https_endpoint(value: str, name: str) -> None:
 
 
 def _validate_postgresql_url(value: str) -> None:
+    message = (
+        "SHUDDHO_COWORKER_DATABASE_URL must use the Shuddho staging Supabase session pooler "
+        "with the runtime role, port 5432, and sslmode=verify-full."
+    )
+    if value != value.strip() or any(char.isspace() for char in value):
+        raise PreflightFailure(message)
     try:
-        parsed = urlparse(value.strip())
+        parsed = urlparse(value)
         port = parsed.port
     except ValueError:
-        raise PreflightFailure(
-            "SHUDDHO_COWORKER_DATABASE_URL must be a valid PostgreSQL connection URL."
-        ) from None
+        raise PreflightFailure(message) from None
+    tls = parse_qs(parsed.query, keep_blank_values=True)
     if (
         parsed.scheme not in POSTGRES_SCHEMES
-        or not parsed.hostname
-        or not parsed.path.strip("/")
-        or (port is not None and not 1 <= port <= 65535)
+        or parsed.hostname != STAGING_DB_HOST
+        or parsed.username != STAGING_DB_USER
+        or not parsed.password
+        or port != 5432
+        or parsed.path != "/postgres"
+        or parsed.fragment
+        or parsed.params
+        or set(tls) != {"sslmode", "sslrootcert"}
+        or tls["sslmode"] != ["verify-full"]
+        or tls["sslrootcert"] != ["infra/supabase-root-2021.pem"]
     ):
-        raise PreflightFailure(
-            "SHUDDHO_COWORKER_DATABASE_URL must be a PostgreSQL URL with a host and database."
-        )
+        raise PreflightFailure(message)
 
 
 def validate(env: dict[str, str]) -> dict:

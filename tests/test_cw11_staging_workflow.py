@@ -46,9 +46,9 @@ def test_staging_secrets_are_scoped_to_the_steps_that_need_them():
     evidence_header = evidence.split("    steps:", maxsplit=1)[0]
     render_check = evidence.split(
         "- name: Verify live Render mixed-version drain state", maxsplit=1
-    )[1].split("- name: Apply pending staging migrations", maxsplit=1)[0]
-    migration = evidence.split(
-        "- name: Apply pending staging migrations", maxsplit=1
+    )[1].split("- name: Verify staging database readiness", maxsplit=1)[0]
+    database_check = evidence.split(
+        "- name: Verify staging database readiness", maxsplit=1
     )[1].split("- name: Collect CW-11 staging evidence", maxsplit=1)[0]
     collector = evidence.split("- name: Collect CW-11 staging evidence", maxsplit=1)[1]
 
@@ -56,17 +56,18 @@ def test_staging_secrets_are_scoped_to_the_steps_that_need_them():
     # unrelated steps in the protected environment job.
     assert "secrets." not in evidence_header
     assert "RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}" in render_check
-    assert "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}" in migration
+    assert "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}" in database_check
     assert "SHUDDHO_COWORKER_DATABASE_URL: ${{ secrets.SHUDDHO_STAGING_DATABASE_URL }}" in collector
     assert "SHUDDHO_AUTH_ISSUER: ${{ secrets.SHUDDHO_STAGING_AUTH_ISSUER }}" in collector
-    assert "SHUDDHO_AUTH_ISSUER" not in migration
+    assert "SHUDDHO_AUTH_ISSUER" not in database_check
+    assert "python -m services.coworker.migrate --check" in database_check
 
 
 def test_dispatch_inputs_are_passed_through_environment_not_shell_interpolation():
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
     render_check = source.split(
         "- name: Verify live Render mixed-version drain state", maxsplit=1
-    )[1].split("- name: Apply pending staging migrations", maxsplit=1)[0]
+    )[1].split("- name: Verify staging database readiness", maxsplit=1)[0]
     collector = source.split("- name: Collect CW-11 staging evidence", maxsplit=1)[1]
     render_script = render_check.split("        run: |", maxsplit=1)[1]
     collector_script = collector.split("        run: |", maxsplit=1)[1]
@@ -83,7 +84,7 @@ def test_staging_render_identity_and_revision_are_strictly_bound():
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
     render_check = source.split(
         "- name: Verify live Render mixed-version drain state", maxsplit=1
-    )[1].split("- name: Apply pending staging migrations", maxsplit=1)[0]
+    )[1].split("- name: Verify staging database readiness", maxsplit=1)[0]
     render_script = render_check.split("        run: |", maxsplit=1)[1]
 
     assert '[[ ! "${OLD_SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]' in render_script
@@ -92,13 +93,13 @@ def test_staging_render_identity_and_revision_are_strictly_bound():
     assert '--arg id "${CANDIDATE_WORKER_SERVICE_ID}"' in render_script
 
 
-def test_live_worker_drain_gate_precedes_schema_mutation_and_evidence():
+def test_live_worker_drain_gate_precedes_database_check_and_evidence():
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
     evidence = _job_section(source, "evidence")
 
     live_gate = evidence.index("- name: Verify live Render mixed-version drain state")
-    migration = evidence.index("- name: Apply pending staging migrations")
+    database_check = evidence.index("- name: Verify staging database readiness")
     collector = evidence.index("- name: Collect CW-11 staging evidence")
     artifact = evidence.index("- name: Upload evidence artifact")
 
-    assert live_gate < migration < collector < artifact
+    assert live_gate < database_check < collector < artifact
