@@ -39,8 +39,27 @@ out-of-date database. The runtime role can read and write Coworker data but
 cannot change the schema or migration history. The `shuddho_coworker` schema is
 private and should stay outside the Supabase Data API.
 
-For staging continuity, take a regular private logical dump of
-`shuddho_coworker` with PostgreSQL 17+ tooling. Record the archive checksum
-and migration revision, and verify a restore into an isolated database
-before relying on it. Store the archive in your existing private backup
-location. The free Supabase plan does not include daily managed backups.
+### Back up and verify the staging database
+
+Run from the repository root as a non-root operator with PostgreSQL 17 or
+newer client and server tools. Load the staging runtime DSN from your secret
+store into `SHUDDHO_COWORKER_DATABASE_URL`.
+
+```bash
+uv run --extra coworker python -m scripts.staging_postgres_backup \
+  --pg-bin /usr/lib/postgresql/17/bin \
+  --directory /secure/private-backups/shuddho-staging-2026-11-15
+```
+
+The command takes a read-only, consistent snapshot of `shuddho_coworker`,
+writes `coworker.dump`, and restores it into a disposable local cluster with
+no TCP listener. It writes `verification.json` after checking the migration
+revision, row counts and row hashes against that same snapshot. The archive
+and receipt stay in the new private directory. If the restore fails, the
+completed archive is retained for diagnosis.
+
+This verifies the database archive only. Use the
+[controlled staging recovery drill](../docs/CONTROLLED_STAGING_BACKUP_RESTORE.md)
+to verify private object bytes and release-bound recovery. A new hosted
+restore also requires provisioning its staging runtime role and grants.
+The free Supabase plan does not include daily managed backups.

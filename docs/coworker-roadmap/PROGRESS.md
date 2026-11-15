@@ -1,3 +1,19 @@
+## Supabase staging database backup verification — 15 November 2026 (Asia/Dhaka)
+
+The staging backup command exports only `shuddho_coworker` over the verified
+Supabase session pooler. It restores to a disposable local PostgreSQL cluster
+and compares the Alembic revision, per-table row counts and row hashes from
+the exported snapshot. The archive and receipt are private. GitHub CI
+exercises real PostgreSQL utilities and a concurrent source write.
+
+The live runtime role can read all 84 private tables and export a PostgreSQL
+snapshot. A live archive and durable backup receipt still require a trusted
+operator with the staging DSN and a private backup destination. This database
+check is separate from the release-bound recovery drill for PostgreSQL and
+private object storage. See [operator steps](../../infra/README.md#back-up-and-verify-the-staging-database).
+
+---
+
 ## Replacement staging PostgreSQL — 15 November 2026 (Asia/Dhaka)
 
 The expired Render database returned 404. A clean PostgreSQL 17 database in

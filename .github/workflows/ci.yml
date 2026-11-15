@@ -572,6 +572,11 @@ jobs:
         with: { python-version: "3.11" }
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      - name: Verify a staging PostgreSQL archive on an isolated local cluster
+        run: |
+          export SHUDDHO_TEST_PG_BIN="$(pg_config --bindir)"
+          uv run --extra coworker pytest tests/test_staging_postgres_backup.py -q -rs --junitxml=/tmp/staging-postgres-backup.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/staging-postgres-backup.xml --required-module tests.test_staging_postgres_backup
       - name: Qualify PostgreSQL 18 migrations, worker safety, transactions and rollback without skips
         run: |
           uv run --extra coworker pytest \

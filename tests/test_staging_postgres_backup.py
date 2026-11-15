@@ -1,0 +1,115 @@
+import os
+import subprocess
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from scripts import staging_postgres_backup as backup
+
+
+SOURCE = (
+    "postgresql+psycopg://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-password"
+    "@aws-0-us-west-1.pooler.supabase.com:5432/postgres"
+    "?sslmode=verify-full&sslrootcert=infra/supabase-root-2021.pem"
+)
+
+
+def test_invalid_host_or_existing_archive_directory_stops_before_postgres(tmp_path):
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    with patch.object(backup, "dump_source") as dump:
+        with pytest.raises(backup.BackupError, match="staging Supabase"):
+            backup.run_backup(SOURCE.replace("bsmbvjenpvcyfjzwtuax", "other"), tmp_path / "output")
+        with pytest.raises(backup.BackupError, match="output directory"):
+            backup.run_backup(SOURCE, existing)
+        dump.assert_not_called()
+    assert not (tmp_path / "output").exists()
+
+
+def test_verification_receipt_requires_identical_row_inventory(tmp_path):
+    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "first"}}}
+    restored = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "different"}}}
+
+    def dump(_url, path, _pg_bin):
+        path.write_bytes(b"PGDMP-test")
+        return source
+
+    destination = tmp_path / "mismatch"
+    with patch.object(backup, "dump_source", side_effect=dump):
+        with patch.object(backup, "restore_inventory", return_value=restored):
+            with pytest.raises(backup.BackupError, match="differ"):
+                backup.run_backup(SOURCE, destination)
+    assert (destination / "coworker.dump").is_file()
+    assert not (destination / "verification.json").exists()
+
+    destination = tmp_path / "passed"
+    with patch.object(backup, "dump_source", side_effect=dump):
+        with patch.object(backup, "restore_inventory", return_value=source):
+            receipt = backup.run_backup(SOURCE, destination)
+    assert receipt["status"] == "verified"
+    assert receipt["source"] == source
+    assert receipt["archive_sha256"] == backup.file_hash(destination / "coworker.dump")
+    assert (destination / "verification.json").stat().st_mode & 0o777 == 0o600
+    assert (destination / "coworker.dump").stat().st_mode & 0o777 == 0o600
+    assert destination.stat().st_mode & 0o777 == 0o700
+
+
+def test_postgres_subprocess_hides_connection_secrets_and_output(monkeypatch, tmp_path):
+    monkeypatch.setenv("PGHOST", "unrelated.example")
+    monkeypatch.setenv("PGPASSWORD", "unrelated-password")
+    monkeypatch.setenv("SHUDDHO_COWORKER_DATABASE_URL", SOURCE)
+    with patch.object(backup.subprocess, "run") as run:
+        run.return_value.returncode = 1
+        run.return_value.stderr = SOURCE
+        with pytest.raises(backup.BackupError, match="pg_dump failed") as error:
+            backup.run_pg(None, "pg_dump", "--file", str(tmp_path / "backup.dump"), db_env={"PGHOST": "staging"})
+    argv = run.call_args.args[0]
+    env = run.call_args.kwargs["env"]
+    assert "fixture-password" not in " ".join(argv)
+    assert "fixture-password" not in str(error.value)
+    assert env["PGHOST"] == "staging"
+    assert "PGPASSWORD" not in env and "SHUDDHO_COWORKER_DATABASE_URL" not in env
+
+
+def test_custom_archive_restores_the_same_rows_on_a_disposable_postgres(tmp_path):
+    pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
+    if not pg_bin:
+        pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
+    import psycopg
+
+    archive = tmp_path / "sample.dump"
+    with backup.isolated_postgres(Path(pg_bin)) as db_env:
+        connect = dict(
+            host=db_env["PGHOST"], port=db_env["PGPORT"], user=db_env["PGUSER"],
+            dbname=db_env["PGDATABASE"], sslmode="disable",
+        )
+        with psycopg.connect(**connect) as fixture:
+            fixture.execute("CREATE SCHEMA shuddho_coworker")
+            fixture.execute("CREATE SCHEMA unrelated")
+            fixture.execute("CREATE TABLE unrelated.other_account (id integer)")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_alembic_version (version_num text)")
+            fixture.execute("INSERT INTO shuddho_coworker.cw_alembic_version VALUES ('0070')")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_accounts (id int primary key, label text)")
+            fixture.execute("INSERT INTO shuddho_coworker.cw_accounts VALUES (2, 'বাংলা'), (1, E'with\\nnew line')")
+            fixture.execute(
+                "CREATE TABLE shuddho_coworker.cw_conversations "
+                "(id int PRIMARY KEY, owner_id int REFERENCES shuddho_coworker.cw_accounts)"
+            )
+            fixture.execute("INSERT INTO shuddho_coworker.cw_conversations VALUES (1, 2)")
+        run_pg = backup.run_pg
+
+        def update_before_dump(pg_tools, command, *args, **kwargs):
+            if command == "pg_dump":
+                with psycopg.connect(**connect) as concurrent:
+                    concurrent.execute("UPDATE shuddho_coworker.cw_accounts SET label = 'replacement'")
+            return run_pg(pg_tools, command, *args, **kwargs)
+
+        with psycopg.connect(**connect) as source, patch.object(backup, "run_pg", side_effect=update_before_dump):
+            expected = backup.dump_snapshot(source, db_env, archive, Path(pg_bin), expected_user=db_env["PGUSER"])
+        assert backup.restore_inventory(archive, Path(pg_bin)) == expected
+    archive_objects = subprocess.check_output([str(Path(pg_bin) / "pg_restore"), "--list", str(archive)], text=True)
+    assert "other_account" not in archive_objects and "unrelated" not in archive_objects
+    assert "TABLE shuddho_coworker cw_accounts" in archive_objects
+    assert expected["tables"]["cw_accounts"]["rows"] == 2
+    assert expected["tables"]["cw_conversations"]["rows"] == 1
