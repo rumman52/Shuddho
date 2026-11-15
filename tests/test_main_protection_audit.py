@@ -112,6 +112,37 @@ def test_duplicate_required_check_with_untrusted_source_must_fail():
         audit_governance(protected_branch(), [rule])
 
 
+def test_redacted_bypass_actors_fails_closed_with_actionable_reason():
+    # GitHub's documented GET response withholds bypass_actors when the
+    # caller lacks ruleset write access; missing does not prove an empty list.
+    rule = approved_ruleset()
+    del rule["bypass_actors"]
+    with pytest.raises(GovernanceAuditError, match="redacted bypass_actors"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_null_bypass_actors_is_not_trusted_as_empty():
+    rule = approved_ruleset()
+    rule["bypass_actors"] = None
+    with pytest.raises(GovernanceAuditError, match="redacted bypass_actors"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_a_separate_fully_inspectable_ruleset_can_qualify_even_if_another_is_redacted():
+    redacted = approved_ruleset()
+    del redacted["bypass_actors"]
+    assert audit_governance(protected_branch(), [redacted, approved_ruleset()]) == 123
+
+
+def test_visible_bypass_actor_is_never_accepted_as_no_bypass():
+    rule = approved_ruleset()
+    rule["bypass_actors"] = [
+        {"actor_id": 1, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+    ]
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
 def test_irrelevant_inactive_ruleset_does_not_override_valid_protection():
     inactive = deepcopy(approved_ruleset())
     inactive["enforcement"] = "disabled"
