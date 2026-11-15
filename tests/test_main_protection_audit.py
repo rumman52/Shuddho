@@ -327,3 +327,24 @@ def test_read_only_candidate_never_claims_release_qualification(monkeypatch, cap
     assert result["bypass_actors_visibility"] == "redacted"
     assert result["qualified"] is False
     assert "Owner-admin verification" in result["required_next"]
+
+
+def test_repository_inspection_reports_redacted_bypass_visibility(monkeypatch):
+    from scripts import main_protection_audit as mod
+
+    def fake_get_json(url, token):
+        assert token == "ci-token"
+        if url.endswith("/branches/main"):
+            return protected_branch()
+        if url.endswith("/rulesets?includes_parents=true&per_page=100"):
+            return [{"id": 123, "target": "branch", "enforcement": "active"}]
+        if url.endswith("/rulesets/123"):
+            rule = approved_ruleset()
+            rule.pop("bypass_actors")
+            return rule
+        raise AssertionError(f"unexpected API request: {url}")
+
+    monkeypatch.setattr(mod, "_get_json", fake_get_json)
+    assert mod.inspect_repository_result("owner/repo", "ci-token") == {
+        "ruleset_id": 123, "bypass_actors_visibility": "redacted",
+    }
