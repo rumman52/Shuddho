@@ -165,9 +165,12 @@ class ConversationDispatchService:
                 if reviewed_brief is not None:
                     if output_language not in {"auto", reviewed_brief.output_language}:
                         raise CoworkerError("idempotency_conflict", "Output language changed.", 409)
+                    # A later turn cannot invalidate an already committed admission.
+                    # Revalidate the original turn and its current source pins.
                     preview = ConversationTaskBriefService.validate_in_session(
                         db, self.settings, owner, conversation_id, message_id,
-                        expected_sequence, reviewed_brief, project_id)
+                        expected_sequence, reviewed_brief, project_id,
+                        allow_historical_replay=True)
                     if (preview["canonical_digest"] != expected_digest
                             or reviewed_snapshot.get("canonical_digest") != expected_digest):
                         raise CoworkerError("idempotency_conflict", "Reviewed brief or sources changed.", 409)

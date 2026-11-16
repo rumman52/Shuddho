@@ -22,7 +22,8 @@ class ConversationTaskBriefService:
         self.model = planner if planner is not None else DeepSeekAgentPlanner(settings)
 
     @staticmethod
-    def _checked(db, owner, conversation_id, message_id, expected_sequence):
+    def _checked(db, owner, conversation_id, message_id, expected_sequence, *,
+                 allow_historical_replay: bool = False):
         conversation = db.scalar(select(Conversation).where(
             Conversation.id == conversation_id, Conversation.owner_id == owner,
             Conversation.deleted.is_(False)))
@@ -32,7 +33,9 @@ class ConversationTaskBriefService:
             ConversationMessage.owner_id == owner))
         if conversation is None or message is None:
             raise not_found()
-        if conversation.message_sequence != expected_sequence or message.sequence != expected_sequence:
+        head_sequence = conversation.message_sequence
+        if (message.sequence != expected_sequence or head_sequence < expected_sequence
+                or (head_sequence != expected_sequence and not allow_historical_replay)):
             raise CoworkerError("conversation_revision_conflict",
                                 "Conversation changed; review its latest messages.", 409)
         return message
@@ -73,10 +76,12 @@ class ConversationTaskBriefService:
 
     @classmethod
     def validate_in_session(cls, db, settings, owner, conversation_id, message_id,
-                            expected_sequence, brief: TaskBrief, project_id=None):
+                            expected_sequence, brief: TaskBrief, project_id=None, *,
+                            allow_historical_replay: bool = False):
         if not settings.conversations_enabled:
             raise CoworkerError("conversations_unavailable", "Conversations not enabled.", 409)
-        cls._checked(db, owner, conversation_id, message_id, expected_sequence)
+        cls._checked(db, owner, conversation_id, message_id, expected_sequence,
+                     allow_historical_replay=allow_historical_replay)
         _, known = cls._history(db, owner, conversation_id, expected_sequence)
         source_ids = [str(value) for value in brief.source_ids]
         if any(identifier not in known for identifier in source_ids):
