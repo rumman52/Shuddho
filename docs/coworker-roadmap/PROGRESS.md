@@ -26,6 +26,22 @@ worker provisioning and the managed recovery drill remain pending.
 
 ---
 
+## Day 2 recovery receipts bound to the frozen rollout — 16 November 2026 (Asia/Dhaka)
+
+Base `2cbcae390865585f52cbe5299d52d8add1862db2`. The Day 2 acceptance
+command previously accepted a set of recovery and restore receipts that agreed
+with each other but referenced a different rollout from the release freeze.
+Every recovery and restore receipt must now match the rollout SHA-256 carried
+by the existing freeze. Missing, invalid and mismatched freeze digests fail
+closed. An older receipt without that field requires a fresh release freeze.
+
+Local verification: 175 focused tests passed. The PostgreSQL archive process
+test needs PostgreSQL binaries. The canonical release-contract check passed.
+Live Temporal recovery, PostgreSQL and private storage restore, and pilot
+qualification remain pending.
+
+---
+
 ## Supabase staging database backup verification — 15 November 2026 (Asia/Dhaka)
 
 The staging backup command exports only `shuddho_coworker` over the verified

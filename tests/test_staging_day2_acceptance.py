@@ -12,7 +12,11 @@ DIGEST = 'c' * 64
 
 
 def proofs():
-    freeze = {'status': 'frozen', 'release': {'release_id': 'day2-001', 'source_revision': SHA, 'environment': 'staging'}, 'runtime_manifest_sha256': DIGEST}
+    freeze = {
+        'status': 'frozen', 'runtime_manifest_sha256': DIGEST,
+        'release': {'release_id': 'day2-001', 'source_revision': SHA,
+                    'environment': 'staging', 'rollout_manifest_sha256': '3' * 64},
+    }
     run = {
         'status': 'passed', 'release_id': 'day2-001', 'source_revision': SHA,
         'runtime_manifest_sha256': DIGEST,
@@ -51,6 +55,7 @@ def test_valid_proofs_are_consistent_without_claiming_platform_verification():
     result = check(*proof_set)
     assert result['status'] == 'evidence_consistent'
     assert result['source_revision'] == SHA
+    assert result['rollout_manifest_sha256'] == proof_set[0]['release']['rollout_manifest_sha256']
     assert result['task_id'] == 'task-a'
     assert result['artifact_sha256'] == '2' * 64
     assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'backup_restore']
@@ -111,6 +116,18 @@ def test_rejects_swapped_rollout_and_time_reversal():
     proof_set = list(proofs())
     proof_set[1]['worker']['heartbeat_after'] = '2026-11-12T10:59:00+00:00'
     with pytest.raises(gate.Day2AcceptanceFailure):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize('change', ['missing', 'invalid', 'different'])
+def test_rejects_recovery_and_restore_that_only_match_each_other(change):
+    proof_set = proofs()
+    release = proof_set[0]['release']
+    if change == 'missing':
+        del release['rollout_manifest_sha256']
+    else:
+        release['rollout_manifest_sha256'] = 'not-a-digest' if change == 'invalid' else '4' * 64
+    with pytest.raises(gate.Day2AcceptanceFailure, match='rollout'):
         check(*proof_set)
 
 

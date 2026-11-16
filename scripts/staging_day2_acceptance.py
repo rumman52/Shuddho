@@ -99,6 +99,7 @@ def validate_evidence(
         raise Day2AcceptanceFailure("The expected source SHA must have a frozen staging release.")
     release_id = _nonempty(release.get("release_id"), "freeze.release.release_id")
     runtime_digest = _digest(frozen.get("runtime_manifest_sha256"), "freeze.runtime_manifest_sha256")
+    rollout_digest = _digest(release.get("rollout_manifest_sha256"), "freeze.release.rollout_manifest_sha256")
 
     run = _object(execution, "execution")
     rec = _object(recovery, "recovery")
@@ -131,21 +132,19 @@ def validate_evidence(
             if proof.get(key) != run.get(key):
                 raise Day2AcceptanceFailure(f"{label} changed document execution identity: {key}.")
 
-    rollout_digest = None
     recovery_times = []
     for stage in _RECOVERY:
         digest, verified = _stage(rec.get(stage), "recovery." + stage,
                                   release_id=release_id, revision=expected_revision)
         if restore.get(stage) != rec[stage]:
             raise Day2AcceptanceFailure(f"Restore did not carry forward the same {stage} evidence.")
-        if rollout_digest is not None and digest != rollout_digest:
-            raise Day2AcceptanceFailure("Recovery checks refer to different rollout manifests.")
-        rollout_digest = digest
+        if digest != rollout_digest:
+            raise Day2AcceptanceFailure(f"Recovery {stage} does not match the frozen rollout manifest.")
         recovery_times.append(verified)
     digest, restored_at = _stage(restore.get("backup_restore"), "restored.backup_restore",
                                  release_id=release_id, revision=expected_revision)
     if digest != rollout_digest:
-        raise Day2AcceptanceFailure("Restore and recovery are for different rollout manifests.")
+        raise Day2AcceptanceFailure("Backup/restore does not match the frozen rollout manifest.")
     if restored_at < max(recovery_times):
         raise Day2AcceptanceFailure("Isolated backup/restore verification predates worker recovery.")
     return {
