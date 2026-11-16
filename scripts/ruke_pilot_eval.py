@@ -136,7 +136,10 @@ def validate_candidate_identity(manifest: dict) -> dict:
             or identity["api_source_revision"] != revision
             or identity["worker_source_revision"] != revision):
         raise EvidenceError("API/worker source revisions do not match the exact candidate SHA")
-    if not BUILD_DIGEST.fullmatch(identity.get("api_build_digest", "")) or not BUILD_DIGEST.fullmatch(identity.get("worker_build_digest", "")):
+    if (not isinstance(identity.get("api_build_digest"), str)
+            or not BUILD_DIGEST.fullmatch(identity["api_build_digest"])
+            or not isinstance(identity.get("worker_build_digest"), str)
+            or not BUILD_DIGEST.fullmatch(identity["worker_build_digest"])):
         raise EvidenceError("API/worker image build digest is invalid")
     schema_revision = identity.get("alembic_revision")
     if (not isinstance(schema_revision, str) or not schema_revision.strip()
@@ -150,7 +153,7 @@ def validate_candidate_identity(manifest: dict) -> dict:
         raise EvidenceError("candidate model does not match the frozen runtime identity")
     for field in ("prompt_registry_sha256", "tool_registry_sha256",
                   "api_readback_sha256", "worker_readback_sha256", "schema_readback_sha256"):
-        if not SHA.fullmatch(identity.get(field, "")):
+        if not isinstance(identity.get(field), str) or not SHA.fullmatch(identity[field]):
             raise EvidenceError("candidate identity digest is invalid: " + field)
     budget = identity.get("context_budget_bytes")
     if type(budget) is not int or not 1 <= budget <= 1_048_576:
@@ -302,31 +305,34 @@ def validate_manifest(manifest: dict, corpus: Path, *, allow_legacy: bool = Fals
     if not isinstance(manifest, dict) or manifest.get("split") != "holdout":
         raise EvidenceError("invalid run manifest")
     version = manifest.get("schema_version")
+    if type(version) is not int:
+        raise EvidenceError("invalid run manifest schema_version")
     if version == 1:
         if not allow_legacy:
             raise EvidenceError("legacy manifest cannot qualify a new independent holdout")
-        if not REV.fullmatch(manifest.get("candidate_revision", "")):
+        if not isinstance(manifest.get("candidate_revision"), str) or not REV.fullmatch(manifest["candidate_revision"]):
             raise EvidenceError("unbound candidate revision")
-        if not SHA.fullmatch(manifest.get("corpus_sha256", "")):
+        if not isinstance(manifest.get("corpus_sha256"), str) or not SHA.fullmatch(manifest["corpus_sha256"]):
             raise EvidenceError("missing frozen corpus digest")
         for key in ("candidate_product_version", "candidate_model", "prompt_version", "tool_version",
                     "source_set_sha256", "run_started_at"):
             if not isinstance(manifest.get(key), str) or not manifest[key].strip():
                 raise EvidenceError("missing frozen generation identity: " + key)
-        if not SHA.fullmatch(manifest["source_set_sha256"]):
+        if not isinstance(manifest["source_set_sha256"], str) or not SHA.fullmatch(manifest["source_set_sha256"]):
             raise EvidenceError("invalid source-set digest")
     elif version == 2:
-        if not REV.fullmatch(manifest.get("candidate_revision", "")):
+        if not isinstance(manifest.get("candidate_revision"), str) or not REV.fullmatch(manifest["candidate_revision"]):
             raise EvidenceError("unbound candidate revision")
-        if not SHA.fullmatch(manifest.get("corpus_sha256", "")):
+        if not isinstance(manifest.get("corpus_sha256"), str) or not SHA.fullmatch(manifest["corpus_sha256"]):
             raise EvidenceError("missing frozen corpus digest")
         for key in ("release_id", "run_id", "candidate_product_version", "candidate_model",
                     "prompt_version", "tool_version", "source_set_sha256", "run_started_at"):
             if not isinstance(manifest.get(key), str) or not manifest[key].strip():
                 raise EvidenceError("missing frozen generation identity: " + key)
-        if not SHA.fullmatch(manifest["source_set_sha256"]):
+        if not isinstance(manifest["source_set_sha256"], str) or not SHA.fullmatch(manifest["source_set_sha256"]):
             raise EvidenceError("invalid source-set digest")
-        if not SHA.fullmatch(manifest.get("rollout_manifest_sha256", "")):
+        if (not isinstance(manifest.get("rollout_manifest_sha256"), str)
+                or not SHA.fullmatch(manifest["rollout_manifest_sha256"])):
             raise EvidenceError("missing frozen rollout-manifest digest")
         validate_candidate_identity(manifest)
     else:
@@ -723,6 +729,8 @@ def main(argv=None) -> int:
                 if not args.evidence or not args.candidate:
                     raise EvidenceError("external independently scored evidence and candidate outputs required")
                 evidence = read_json(args.evidence)
+                if not isinstance(evidence, dict):
+                    raise EvidenceError("evidence.json must be an object")
                 if evidence.get("manifest_sha256") != manifest_digest:
                     raise EvidenceError("evidence.json is not bound to the exact candidate manifest digest")
                 readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
@@ -743,6 +751,8 @@ def main(argv=None) -> int:
                     manifest_sha256=manifest_digest,
                 )
                 custody = evidence.get("custody", {})
+                if not isinstance(custody, dict):
+                    raise EvidenceError("custody receipt must be an object")
                 isolated = (custody.get("independent_operator_review") == "verified"
                             and custody.get("developer_negative_read_test") == "denied"
                             and custody.get("replacement_of_exposed_cases") is True
