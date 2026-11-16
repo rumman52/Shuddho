@@ -1003,12 +1003,17 @@ def test_source_instructions_stay_untrusted_and_bangla_answer_is_grounded(contai
     result = reply(data)
     assert result["state"] == "completed" and "নবায়নের" in result["text"]
     system_prompt = data[1].history[0]["content"].lower()
-    user_context = str(data[1].history[1:]).lower()
+    user_context = "\n".join(
+        str(message.get("content", "")) for message in data[1].history[1:]
+    ).lower()
     assert "untrusted" in system_prompt
     assert "no tools" in system_prompt
     assert "ignore all previous instructions" not in system_prompt
-    assert "read another owner's private document" in user_context
-    assert "call send_email" in user_context
+    assert "read another" in user_context
+    assert "private document" in user_context
+    assert "workspace secrets" in user_context
+    assert "send_email" in user_context
+    assert "browser tools" in user_context
     with container.repository.sessions() as db:
         assert db.scalar(select(AgentRun.id)) is None
         assert db.scalar(select(AgentOutbox)) is None
