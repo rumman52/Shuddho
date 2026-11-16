@@ -11,9 +11,10 @@ import pytest
 
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, external_heldout,
-    candidate_ledger, immutable_write, main, position_map, prepare_blind, registry_cases,
-    read_blinding_key,
-    score_reviews, validate_manifest, verify_operations,
+    candidate_ledger, canonical_sha256, day10_first_run_scores, immutable_write, main,
+    position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews,
+    validate_candidate_identity, validate_candidate_readbacks, validate_manifest,
+    verify_operations,
 )
 
 
@@ -32,19 +33,86 @@ def tasks():
     ]
 
 
-def manifest():
+def _candidate_identity_base():
     return {
-        "schema_version": 1,
+        "api_source_revision": "a" * 40,
+        "worker_source_revision": "a" * 40,
+        "api_build_digest": "sha256:" + "1" * 64,
+        "worker_build_digest": "sha256:" + "2" * 64,
+        "alembic_revision": "0070",
+        "provider_id": "deepseek",
+        "model_id": "synthetic",
+        "prompt_registry_sha256": "3" * 64,
+        "tool_registry_sha256": "4" * 64,
+        "context_budget_bytes": 12_288,
+        "runtime_capabilities": {key: False for key in RUNTIME_CAPABILITY_KEYS},
+    }
+
+
+def _readback_payloads(value):
+    identity = value["candidate_identity"]
+    common = {
+        "release_id": value["release_id"],
+        "alembic_revision": identity["alembic_revision"],
+        "provider_id": identity["provider_id"],
+        "model_id": identity["model_id"],
+        "prompt_registry_sha256": identity["prompt_registry_sha256"],
+        "tool_registry_sha256": identity["tool_registry_sha256"],
+        "context_budget_bytes": identity["context_budget_bytes"],
+        "rollout_manifest_sha256": value["rollout_manifest_sha256"],
+        "runtime_capabilities": identity["runtime_capabilities"],
+    }
+    api = {
+        **common, "source_revision": identity["api_source_revision"],
+        "build_digest": identity["api_build_digest"],
+    }
+    worker = {
+        **common, "source_revision": identity["worker_source_revision"],
+        "build_digest": identity["worker_build_digest"],
+    }
+    schema = {
+        "release_id": value["release_id"],
+        "source_revision": value["candidate_revision"],
+        "migration_revision": identity["alembic_revision"],
+        "api_revision": identity["alembic_revision"],
+        "worker_revision": identity["alembic_revision"],
+        "rollout_manifest_sha256": value["rollout_manifest_sha256"],
+    }
+    return {"api": api, "worker": worker, "schema": schema}
+
+
+def manifest():
+    value = {
+        "schema_version": 2,
         "split": "holdout",
+        "release_id": "day9-test-release-001",
+        "run_id": "day9-first-run-test-001",
         "candidate_revision": "a" * 40,
         "corpus_sha256": "b" * 64,
         "source_set_sha256": "c" * 64,
+        "rollout_manifest_sha256": "d" * 64,
         "candidate_product_version": "test-1",
         "candidate_model": "synthetic",
         "prompt_version": "synthetic-v1",
         "tool_version": "test-v1",
         "run_started_at": "2026-11-12T00:00:00Z",
         "time_limit_seconds": 60,
+        "candidate_identity": _candidate_identity_base(),
+    }
+    payloads = _readback_payloads(value)
+    value["candidate_identity"].update({
+        "api_readback_sha256": canonical_sha256(payloads["api"]),
+        "worker_readback_sha256": canonical_sha256(payloads["worker"]),
+        "schema_readback_sha256": canonical_sha256(payloads["schema"]),
+    })
+    return value
+
+
+def candidate_readbacks(value=None):
+    value = value or manifest()
+    return {
+        role: {**payload, "readback_sha256": canonical_sha256(payload)}
+        for role, payload in _readback_payloads(value).items()
     }
 
 
@@ -104,6 +172,99 @@ def external_dir():
     with tempfile.TemporaryDirectory(prefix="ruke-day9-test-", dir="/tmp") as folder:
         yield Path(folder)
 
+
+
+
+def test_candidate_manifest_requires_exact_43_boolean_runtime_flags_and_identity():
+    value = manifest()
+    identity = validate_candidate_identity(value)
+    assert len(identity["runtime_capabilities"]) == 43
+    bad = deepcopy(value)
+    bad["candidate_identity"]["runtime_capabilities"].pop(next(iter(bad["candidate_identity"]["runtime_capabilities"])))
+    with pytest.raises(EvidenceError, match="exactly 43"):
+        validate_candidate_identity(bad)
+    bad = deepcopy(value)
+    bad["candidate_identity"]["runtime_capabilities"][next(iter(bad["candidate_identity"]["runtime_capabilities"]))] = 1
+    with pytest.raises(EvidenceError, match="exactly 43"):
+        validate_candidate_identity(bad)
+    bad = deepcopy(value)
+    bad["candidate_identity"]["worker_source_revision"] = "b" * 40
+    with pytest.raises(EvidenceError, match="source revisions"):
+        validate_candidate_identity(bad)
+
+
+def test_candidate_api_worker_and_schema_readbacks_match_and_hash_exactly():
+    value = manifest()
+    readbacks = candidate_readbacks(value)
+    assert validate_candidate_readbacks(value, readbacks)["consistent"] is True
+    bad = deepcopy(readbacks)
+    bad["api"]["provider_id"] = "gemma"
+    with pytest.raises(EvidenceError, match="readback digest"):
+        validate_candidate_readbacks(value, bad)
+    bad = candidate_readbacks(value)
+    bad["worker"]["runtime_capabilities"]["browser"] = True
+    bad["worker"]["readback_sha256"] = canonical_sha256({
+        key: item for key, item in bad["worker"].items() if key != "readback_sha256"
+    })
+    with pytest.raises(EvidenceError, match="does not match candidate manifest"):
+        validate_candidate_readbacks(value, bad)
+
+
+def test_legacy_manifest_is_readable_only_in_explicit_legacy_mode(external_dir):
+    held = external_dir / "legacy-heldout.jsonl"
+    held.write_text("\n".join(json.dumps(row) for row in tasks()) + "\n")
+    held.chmod(0o444)
+    legacy = manifest()
+    legacy["schema_version"] = 1
+    for key in ("release_id", "run_id", "rollout_manifest_sha256", "candidate_identity"):
+        legacy.pop(key)
+    with pytest.raises(EvidenceError, match="legacy manifest"):
+        validate_manifest(legacy, held)
+    assert len(validate_manifest(legacy, held, allow_legacy=True)) == 40
+
+
+def test_candidate_outputs_require_exact_manifest_digest_when_bound():
+    from scripts.pilot_workflow_eval import load_suite
+    suite = load_suite()
+    reference = {row["case_id"]: row["draft"] for row in suite["reference_outputs"]}
+    per_cell = {}
+    for task in suite["cases"]:
+        if task["split"] == "development":
+            per_cell.setdefault((task["workflow"], task["language"]), reference[task["id"]])
+    rows = [{"case_id": task["case_id"],
+             "output": deepcopy(per_cell[(task["workflow"], task["language"])]),
+             "manifest_sha256": "a" * 64}
+            for task in tasks()]
+    hashes, _ = candidate_ledger(tasks(), rows, manifest_sha256="a" * 64)
+    assert len(hashes) == 40
+    rows[0]["manifest_sha256"] = "b" * 64
+    with pytest.raises(EvidenceError, match="not bound"):
+        candidate_ledger(tasks(), rows, manifest_sha256="a" * 64)
+
+
+def test_operated_rows_require_exact_release_and_manifest_binding():
+    rows = operations()
+    for row in rows:
+        row.update(manifest_sha256="a" * 64, release_id="release-1",
+                   rollout_manifest_sha256="b" * 64)
+    assert verify_operations(
+        rows, "a" * 40, manifest_sha256="a" * 64,
+        release_id="release-1", rollout_manifest_sha256="b" * 64,
+    )["fault_gate_pass"]
+    rows[0]["manifest_sha256"] = "c" * 64
+    with pytest.raises(EvidenceError, match="not bound"):
+        verify_operations(rows, "a" * 40, manifest_sha256="a" * 64)
+
+
+def test_day10_first_run_scores_include_per_case_security_and_two_reviewer_scores():
+    reviews, checks = reviews_and_checks()
+    scores = score_reviews(tasks(), reviews, [], checks)
+    receipt = day10_first_run_scores(scores)
+    assert receipt["accepted"] == 40 and receipt["total"] == 40
+    assert len(receipt["cases"]) == 40
+    assert all(row["security_passed"] is True and row["reviewer_scores"] == [8, 8]
+               for row in receipt["cases"])
+    assert scores["reviewers"] == ["d1", "d2"]
 
 def test_development_registry_balanced_bound_to_real_existing_suite():
     cases = registry_cases()
