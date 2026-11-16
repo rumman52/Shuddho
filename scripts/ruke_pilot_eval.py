@@ -654,6 +654,8 @@ def verify_operations(rows: list[dict], candidate_revision: str, *,
                       manifest_sha256: str | None = None,
                       release_id: str | None = None,
                       rollout_manifest_sha256: str | None = None) -> dict:
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise EvidenceError("operated scenario receipts must be a list of objects")
     ids = {str(i) for i in OPERATED}
     normalized = [{**r, "row": str(r.get("row"))} for r in rows]
     indexed = _unique_rows(normalized, "row", ids, 20)
@@ -949,6 +951,8 @@ def main(argv=None) -> int:
             if args.competitor_outputs:
                 outside_repo(args.competitor_outputs)
             manifest = read_json(args.manifest)
+            if not isinstance(manifest, dict):
+                raise EvidenceError("frozen candidate manifest must be an object")
             manifest_digest = sha256(args.manifest)
             if not args.evidence:
                 raise EvidenceError("D custody and candidate readback evidence is required before reading heldout bytes")
