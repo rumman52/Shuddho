@@ -10,6 +10,7 @@ import tempfile
 import pytest
 
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+from scripts.day10_release_decision import recovery_ok
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, comparison_evidence_recorded, external_heldout,
     candidate_ledger, canonical_sha256, custody_receipt_ok, day10_first_run_scores, immutable_write, main,
@@ -320,7 +321,8 @@ def test_operated_receipts_fail_without_unique_trace_reference_and_later_verific
     rows[1]["verified_at"] = "not-a-timestamp"
     rows[2]["evidence_ref"] = rows[3]["evidence_ref"]
     result = verify_operations(rows, "a" * 40)
-    assert {1, 2, 3} <= set(result["failed_rows"])
+    assert {1, 2} <= set(result["failed_rows"])
+    assert len(result["failed_rows"]) == 3
     assert result["day10_recovery"]["scenarios"][0]["status"] == "failed"
 
 def test_candidate_outputs_require_exact_manifest_digest_when_bound():
@@ -357,6 +359,7 @@ def test_operated_rows_require_exact_release_and_manifest_binding():
     assert len(recovery["scenarios"]) == 20
     assert all(row["status"] == "passed" and row["evidence_ref"].startswith("sha256:")
                for row in recovery["scenarios"])
+    assert recovery_ok(recovery, "release-1", "a" * 40, "b" * 64)
     rows[0]["manifest_sha256"] = "c" * 64
     with pytest.raises(EvidenceError, match="not bound"):
         verify_operations(rows, "a" * 40, manifest_sha256="a" * 64)
