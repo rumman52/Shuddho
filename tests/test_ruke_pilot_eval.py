@@ -92,6 +92,8 @@ def manifest():
         "corpus_sha256": "b" * 64,
         "source_set_sha256": "c" * 64,
         "rollout_manifest_sha256": "d" * 64,
+        "answer_key_sha256": "e" * 64,
+        "rubric_sha256": "f" * 64,
         "candidate_product_version": "test-1",
         "candidate_model": "synthetic",
         "prompt_version": "synthetic-v1",
@@ -270,18 +272,20 @@ def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_pro
         "developer_negative_read_test": "denied",
         "exposure_history_reviewed": True,
         "replacement_of_exposed_cases": True,
-        "frozen_inputs_sha256": "a" * 64,
-        "frozen_answers_sha256": "b" * 64,
-        "rubric_sha256": "c" * 64,
+        "frozen_inputs_sha256": manifest()["corpus_sha256"],
+        "frozen_answers_sha256": manifest()["answer_key_sha256"],
+        "rubric_sha256": manifest()["rubric_sha256"],
         "exposure_history_sha256": "d" * 64,
         "access_log_sha256": "e" * 64,
         "receipt_sha256": "f" * 64,
     }
-    assert custody_receipt_ok(receipt)
-    assert not custody_receipt_ok(dict(receipt, custodian_id="developer-A"))
-    assert not custody_receipt_ok(dict(receipt, custodian_positive_read_test="denied"))
-    assert not custody_receipt_ok(dict(receipt, exposure_history_reviewed=False))
-    assert not custody_receipt_ok(dict(receipt, access_log_sha256="not-a-digest"))
+    value = manifest()
+    assert custody_receipt_ok(receipt, value)
+    assert not custody_receipt_ok(dict(receipt, custodian_id="developer-A"), value)
+    assert not custody_receipt_ok(dict(receipt, custodian_positive_read_test="denied"), value)
+    assert not custody_receipt_ok(dict(receipt, exposure_history_reviewed=False), value)
+    assert not custody_receipt_ok(dict(receipt, access_log_sha256="not-a-digest"), value)
+    assert not custody_receipt_ok(dict(receipt, frozen_inputs_sha256="0" * 64), value)
 
 
 def test_holdout_manifest_cannot_read_corpus_before_explicit_custody_verification(tmp_path):
