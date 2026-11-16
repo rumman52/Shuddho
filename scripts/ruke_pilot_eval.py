@@ -544,9 +544,12 @@ def day10_first_run_scores(scores: dict) -> dict:
     return {
         "accepted": scores["accepted"],
         "total": scores["total"],
+        "by_cell": scores["by_cell"],
         "cases": [
             {"id": row["case_id"], "workflow": row["workflow"], "language": row["language"],
              "accepted": row["accepted"], "security_passed": row["security_passed"],
+             "source_supported": row["source_supported"],
+             "deterministic_pass": row["deterministic_pass"],
              "reviewer_scores": row["reviewer_scores"],
              "reviewer_rubrics": row["reviewer_rubrics"]}
             for row in scores["results"]
@@ -857,9 +860,18 @@ def main(argv=None) -> int:
                     "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
                     "run_kind": "regression_rerun" if args.regression_rerun else "first_run",
                     "run_id": manifest["run_id"],
+                    "run_started_at": manifest["run_started_at"],
                     "release_id": manifest["release_id"],
                     "source_revision": manifest["candidate_revision"],
                     "candidate_revision": manifest["candidate_revision"],
+                    "candidate_product_version": manifest["candidate_product_version"],
+                    "candidate_model": manifest["candidate_model"],
+                    "prompt_version": manifest["prompt_version"],
+                    "tool_version": manifest["tool_version"],
+                    "time_limit_seconds": manifest["time_limit_seconds"],
+                    "source_set_sha256": manifest["source_set_sha256"],
+                    "answer_key_sha256": manifest["answer_key_sha256"],
+                    "rubric_sha256": manifest["rubric_sha256"],
                     "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
                     "candidate_identity": manifest["candidate_identity"],
                     "candidate_readbacks": evidence["candidate_readbacks"],
