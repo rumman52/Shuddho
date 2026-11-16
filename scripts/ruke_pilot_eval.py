@@ -416,6 +416,8 @@ def validate_manifest(manifest: dict, corpus: Path, *, allow_legacy: bool = Fals
         validate_candidate_identity(manifest)
     else:
         raise EvidenceError("unsupported run manifest schema_version")
+    if not timestamp_ok(manifest.get("run_started_at")):
+        raise EvidenceError("manifest run_started_at must be a timezone-aware, non-future timestamp")
     limit = manifest.get("time_limit_seconds")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 3600:
         raise EvidenceError("invalid comparable time limit")
