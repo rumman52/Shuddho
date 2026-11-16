@@ -18,7 +18,7 @@ from services.coworker.agent_schemas import AgentRunCreate
 from services.coworker.conversation_task_briefs import ConversationTaskBriefService
 from services.coworker.errors import CoworkerError
 from services.coworker.memory_schemas import MemoryFactCreate, MemoryFactUpdate
-from services.coworker.models import AgentOutbox, AgentRun, MemoryFact, utcnow
+from services.coworker.models import AgentOutbox, AgentRun, MemoryFact, Workspace, utcnow
 from services.coworker.task_brief_schemas import MemoryPin, TaskBrief, TaskBriefMemorySelection
 
 
@@ -177,6 +177,41 @@ def test_foreign_pin_is_rejected_before_creating_a_run(container):
     assert denial.value.status_code in (403, 404, 409)
     with dispatch.sessions() as db:
         assert db.scalars(select(AgentRun).where(AgentRun.owner_id == alice)).all() == []
+
+
+def test_selected_memory_rejects_a_workspace_not_owned_by_the_run_owner(container):
+    alice, bob, conv, conversations, dispatch, keep, _, _ = seeded(container)
+    msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+    accepted, _ = dispatch.dispatch(
+        alice, conv["id"], msg["id"], expected_sequence=1, memory_pins=[pin(keep)],
+    )
+
+    # Simulate inconsistent persisted scope: both the run and the owner's fact
+    # point at Bob's workspace. A fact owner check alone would not catch this.
+    with dispatch.sessions.begin() as db:
+        foreign_workspace_id = db.scalar(
+            select(Workspace.id).where(Workspace.owner_id == bob)
+        )
+        assert foreign_workspace_id is not None
+        db.get(MemoryFact, keep["id"]).workspace_id = foreign_workspace_id
+        db.get(AgentRun, accepted["run_id"]).workspace_id = foreign_workspace_id
+
+    with pytest.raises(CoworkerError) as denied:
+        container.memory.context_for_run(alice, accepted["run_id"])
+    assert denied.value.code == "memory_pins_changed"
+
+
+def test_explicit_empty_selection_stays_empty_when_memory_is_disabled(container):
+    alice, _, conv, conversations, dispatch, _, _, _ = seeded(container)
+    msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+    accepted, _ = dispatch.dispatch(
+        alice, conv["id"], msg["id"], expected_sequence=1, memory_pins=[],
+    )
+
+    container.memory.settings = replace(
+        container.memory.settings, agent_memory_enabled=False,
+    )
+    assert container.memory.context_for_run(alice, accepted["run_id"])["facts"] == []
 
 
 @pytest.mark.parametrize("change", ["updated", "deleted", "expired", "stale"])
