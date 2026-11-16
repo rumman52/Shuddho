@@ -227,6 +227,13 @@ def automation_payload(goal):
     }
 
 
+def briefing_automation_payload(goal):
+    payload = automation_payload(goal)
+    payload["run_profile"] = "briefing"
+    payload["expires_at"] = (utcnow() + timedelta(days=3)).isoformat()
+    return payload
+
+
 def create_project_document_goal(client, auth, container, *, key="day7-project-goal"):
     """Create a real owner/project/document scope for controlled briefing tests."""
     assert client.get("/api/v1/goals", headers=auth).status_code == 200
@@ -1408,14 +1415,30 @@ def test_briefing_requires_an_owned_project_and_one_to_five_current_documents(
         "/api/v1/goals", headers=auth | {"Idempotency-Key": "unprojected-briefing-goal"},
         json=goal_payload(),
     ).json()
-    body = automation_payload(goal)
-    body["run_profile"] = "briefing"
+    body = briefing_automation_payload(goal)
     response = client.post(
         "/api/v1/automations", headers=auth | {"Idempotency-Key": "unprojected-briefing"},
         json=body,
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "briefing_project_required"
+
+
+def test_briefing_requires_explicit_future_expiry(automation_client, automation_container):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    goal, _project_id, _document_id, _version_id = create_project_document_goal(
+        client, auth, automation_container, key="briefing-expiry-goal",
+    )
+    body = automation_payload(goal)
+    body["run_profile"] = "briefing"
+    response = client.post(
+        "/api/v1/automations", headers=auth | {"Idempotency-Key": "briefing-no-expiry"},
+        json=body,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "briefing_expiry_required"
 
 
 def test_daily_briefing_requires_runtime_v3_planner_and_work_services(
@@ -1450,8 +1473,7 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         client, auth, automation_container, key="briefing-goal",
     )
     assert goal["project_id"] == project_id
-    body = automation_payload(goal)
-    body["run_profile"] = "briefing"
+    body = briefing_automation_payload(goal)
     response = client.post(
         "/api/v1/automations",
         headers=auth | {"Idempotency-Key": "briefing-automation"},
@@ -1513,8 +1535,7 @@ def test_day7_occurrence_blocks_when_a_selected_document_is_unlinked_from_its_pr
     goal, project_id, document_id, _version_id = create_project_document_goal(
         client, auth, automation_container, key="revoked-project-goal",
     )
-    body = automation_payload(goal)
-    body["run_profile"] = "briefing"
+    body = briefing_automation_payload(goal)
     response = client.post(
         "/api/v1/automations", headers=auth | {"Idempotency-Key": "revoked-project-automation"},
         json=body,
@@ -1550,8 +1571,7 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
     v2 = str(uuid4())
     with automation_container.repository.sessions() as db:
         owner_id = db.scalar(select(Account.id).where(Account.subject == "alice"))
-    body = automation_payload(goal)
-    body["run_profile"] = "briefing"
+    body = briefing_automation_payload(goal)
     body["schedule"] = {"kind": "daily", "hour": 23, "minute": 10, "weekdays": []}
     body["quiet_hours"] = {"start": "22:00", "end": "07:00"}
     response = client.post("/api/v1/automations", headers=auth | {"Idempotency-Key": "day7-briefing"}, json=body)
