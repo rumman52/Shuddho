@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_release_gate import evaluate_release
+from scripts.ruke_pilot_eval import OPERATED, reviewer_identity
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -71,7 +72,10 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if value.get("mode") != "independent_human_holdout" or value.get("generation_identity_verified") is not True:
         return False
     reviewers = value.get("reviewers")
-    if not isinstance(reviewers, list) or len(reviewers) != 2 or any(not isinstance(r, str) or not r.strip() for r in reviewers) or reviewers[0] == reviewers[1]:
+    if not isinstance(reviewers, list) or len(reviewers) != 2:
+        return False
+    identities = {reviewer_identity(reviewer) for reviewer in reviewers}
+    if None in identities or len(identities) != 2:
         return False
     rows = value.get("cases")
     if not isinstance(rows, list) or len(rows) != 40:
@@ -128,7 +132,8 @@ def recovery_ok(value: object, release: str, revision: str, digest: str) -> bool
     if not bound(value, release, revision, digest):
         return False
     rows = value.get("scenarios")
-    if not isinstance(rows, list) or len(rows) != 20:
+    remaining = {name for name, _ in OPERATED.values()}
+    if not isinstance(rows, list) or len(rows) != len(remaining):
         return False
     ids, refs = set(), set()
     for row in rows:
@@ -138,7 +143,11 @@ def recovery_ok(value: object, release: str, revision: str, digest: str) -> bool
         if not proof_ok(row, release, revision, digest) or row["evidence_ref"] in refs:
             return False
         refs.add(row["evidence_ref"])
-    return True
+        scenario = row.get("scenario")
+        if not isinstance(scenario, str) or scenario not in remaining:
+            return False
+        remaining.remove(scenario)
+    return not remaining
 
 
 def golden_ok(value: object, release: str, revision: str, digest: str) -> bool:

@@ -22,6 +22,11 @@ Existing `scripts/cohort_release_gate.py` remains the **canonical** `GO_CONTROLL
 
 Create the rollout from `docs/cohort-rollout.template.json` in a secure location, **adjust `cohort.max_users` from its generic 25-user example to 5–10 and fill every capability named in `RUNTIME_CAPABILITY_KEYS`**; the generic template is not a ready-to-run Day 10 rollout. Then collect real JSON receipts in an access-controlled release directory. Every operated receipt for `--rollback`, `--cancellation`, `--paused-schedule`, `--owner-isolation`, `--worker`, and `--schema` must contain the actual `release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`, `evidence_ref` and timezone-aware `verified_at` for that release; the schema receipt additionally binds `migration_revision=api_revision=worker_revision`. Do not put credentials or sensitive data into receipts. Additional facts: rollback must list actual verified global/agent kill switches plus observed worker stop and restoration; cancellation requires a run ID and zero late side effects; paused schedule requires a schedule ID and zero executions while paused; owner isolation requires distinct synthetic owner references and an observed cross-owner denial. Each of the 20 recovery cases must have its *own* evidence reference. Final golden must identify the same provider model as the live planner. The independent D holdout must contain a release-bound `custody_receipt` with independently controlled access and a negative developer-read check (the CLI cannot itself authenticate that claim).
 
+For `--recovery`, each receipt must include its unique `id` and exact `scenario`
+name from the [Day 9 operated inventory](coworker-roadmap/DAY9_PILOT_QUALIFICATION_2026-11-12.md#c--operated-scenario-inventory).
+Include each of the 20 names once. The `--holdout` reviewer IDs must identify
+two distinct reviewers under the same case and Unicode normalization as Day 9.
+
 ```bash
 uv run --extra coworker python scripts/day10_release_decision.py \
   --rollout /secure/release/cohort-rollout.json \
