@@ -113,7 +113,16 @@ def private_schema_access(connection) -> dict:
                   AND d.defaclobjtype = 'r'
                   AND (
                     acl.grantee = 0
-                    OR acl.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'anon')
+                    OR EXISTS (
+                      SELECT 1
+                      FROM pg_roles AS api_role
+                      WHERE api_role.rolname = 'anon'
+                        AND CASE
+                          WHEN acl.grantee = 0 THEN false
+                          ELSE pg_has_role(api_role.oid, acl.grantee, 'USAGE')
+                            OR pg_has_role(api_role.oid, acl.grantee, 'SET')
+                        END
+                    )
                   )
                   AND acl.privilege_type IN (
                     'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
@@ -127,7 +136,16 @@ def private_schema_access(connection) -> dict:
                   AND d.defaclobjtype = 'r'
                   AND (
                     acl.grantee = 0
-                    OR acl.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'authenticated')
+                    OR EXISTS (
+                      SELECT 1
+                      FROM pg_roles AS api_role
+                      WHERE api_role.rolname = 'authenticated'
+                        AND CASE
+                          WHEN acl.grantee = 0 THEN false
+                          ELSE pg_has_role(api_role.oid, acl.grantee, 'USAGE')
+                            OR pg_has_role(api_role.oid, acl.grantee, 'SET')
+                        END
+                    )
                   )
                   AND acl.privilege_type IN (
                     'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
