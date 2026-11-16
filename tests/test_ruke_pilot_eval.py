@@ -382,6 +382,7 @@ def test_operated_receipts_fail_without_unique_trace_reference_and_later_verific
     rows = operations()
     rows[0]["evidence_ref"] = "sha256:" + "0" * 64
     rows[1]["verified_at"] = "not-a-timestamp"
+    rows[2]["trace_sha256"] = rows[3]["trace_sha256"]
     rows[2]["evidence_ref"] = rows[3]["evidence_ref"]
     result = verify_operations(rows, "a" * 40)
     assert {1, 2} <= set(result["failed_rows"])
@@ -393,9 +394,13 @@ def candidate_outputs_for_manifest(value, manifest_digest="a" * 64):
     from scripts.pilot_workflow_eval import load_suite
     suite = load_suite()
     reference = {row["case_id"]: row["draft"] for row in suite["reference_outputs"]}
+    per_cell = {}
+    for task in suite["cases"]:
+        if task["split"] == "development":
+            per_cell.setdefault((task["workflow"], task["language"]), reference[task["id"]])
     result = []
     for task in tasks():
-        output = deepcopy(reference[task["case_id"]])
+        output = deepcopy(per_cell[(task["workflow"], task["language"])])
         refs = sorted({task["citation_id"]})
         identity = value["candidate_identity"]
         result.append({
