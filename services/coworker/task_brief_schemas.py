@@ -15,6 +15,12 @@ from .goal_schemas import _safe_text
 
 
 MEMORY_BOUND_BRIEF_VERSION = 2
+MAX_REVIEWED_TASK_BRIEF_BYTES = 16_000
+
+
+class TaskBriefSnapshotTooLarge(ValueError):
+    """The canonical review payload exceeds its UTF-8 byte budget."""
+
 
 
 class MemoryPin(BaseModel):
@@ -94,7 +100,8 @@ class TaskBriefPreviewRequest(TaskBriefProposeRequest, TaskBriefMemorySelection)
 
 def canonical_brief_digest(brief: TaskBrief, pins: list[dict], project: dict, *,
                            owner_id: str, conversation_id: str, message_id: str, sequence: int,
-                           memory_pins: list[dict] | None = None) -> str:
+                           memory_pins: list[dict] | None = None,
+                           max_bytes: int | None = None) -> str:
     bounded_pins = [{"resource_type": p["resource_type"], "resource_id": p["resource_id"],
                      "sha256": p["sha256"], "document_id": p.get("document_id"),
                      "version": p.get("version")} for p in pins]
@@ -103,5 +110,8 @@ def canonical_brief_digest(brief: TaskBrief, pins: list[dict], project: dict, *,
             "message": message_id, "sequence": sequence}
     if memory_pins:
         data.update(schema_version=MEMORY_BOUND_BRIEF_VERSION, memory_pins=memory_pins)
-    return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False,
-                                      separators=(",", ":")).encode("utf-8")).hexdigest()
+    encoded = json.dumps(data, sort_keys=True, ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    if max_bytes is not None and len(encoded) > max_bytes:
+        raise TaskBriefSnapshotTooLarge
+    return hashlib.sha256(encoded).hexdigest()
