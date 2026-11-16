@@ -443,7 +443,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             setBriefing(event.target.checked); createKey.current = "";
           }} /> Create a private daily/weekly briefing</label>}
           {kind !== "reminder" && kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && briefing && <fieldset><legend>Optional connected sources</legend>
-            <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes.</p>
+            <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes. Day 7 staging qualification is document-only, so leave this list empty for that pilot.</p>
             <div className="cw-agent-meta">{activeConnectorGrants.length === 0
               ? <span>No active connected read grants</span>
               : activeConnectorGrants.map(grant => <label key={grant.id}><input type="checkbox"
