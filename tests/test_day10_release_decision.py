@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from scripts import day10_release_decision as day10
+from scripts.ruke_pilot_eval import OPERATED
 
 REV = "a" * 40
 HASH = "b" * 64
@@ -50,7 +51,10 @@ def evidence():
                           "accepted": True, "reviewer_scores": [7, 8],
                           "security_passed": True}
                          for w, l in cells for i in range(10)]}
-    recovery = {**proof(), "scenarios": [dict(proof(), id=f"recovery-{i}", evidence_ref=f"https://evidence.example.test/recovery-{i}") for i in range(20)]}
+    recovery = {**proof(), "scenarios": [dict(
+        proof(), id=f"recovery-{i}", scenario=name,
+        evidence_ref=f"https://evidence.example.test/recovery-{i}",
+    ) for i, (name, _) in OPERATED.items()]}
     approval = {**proof(), "explicit_separate_authorization": True,
                 "reference": "founder-C-approved-change", "founder": "founder-signoff",
                 "owner_c": "C-signoff", "max_users": 5}
@@ -127,7 +131,7 @@ def test_missing_evidence_fails_closed(monkeypatch):
     (lambda a: a["owner_isolation"].update(cross_owner_denied=False), "operated_owner_isolation"),
     (lambda a: a["golden"].update(provider_model="other"), "final_golden_provider_matches_live_gates"),
     (lambda a: a["holdout"]["custody_receipt"].update(developer_negative_read_denied=False), "independent_day9_holdout_36_of_40"),
-    (lambda a: a["recovery"]["scenarios"][1].update(evidence_ref="https://evidence.example.test/recovery-0"), "twenty_operated_recovery_scenarios"),
+    (lambda a: a["recovery"]["scenarios"][1].update(evidence_ref="https://evidence.example.test/recovery-1"), "twenty_operated_recovery_scenarios"),
     (lambda a: a["golden"].update(turns=1), "final_sha_integrated_golden"),
     (lambda a: a["day9_first_run"].update(run_id="golden-final"), "separate_final_rerun"),
     (lambda a: a["day9_first_run"].pop("scores"), "preserved_day9_first_run"),
@@ -152,6 +156,28 @@ def test_cell_specific_threshold_is_not_only_global(monkeypatch):
         case["accepted"] = False
     # 38/40 accepted globally but only 8/10 in a cell.
     assert "independent_day9_holdout_36_of_40" in decision(monkeypatch, rollout, artifacts)["blockers"]
+
+
+@pytest.mark.parametrize("second_identity", ["human-d1", "ｈｕｍａｎ-Ｄ１", " human-D2 "])
+def test_release_holdout_rejects_reviewer_aliases_and_malformed_identity(monkeypatch, second_identity):
+    rollout, artifacts = evidence()
+    artifacts["holdout"]["reviewers"][1] = second_identity
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+@pytest.mark.parametrize("scenario", ["unrelated_smoke_test", "private_upload_retrieval", None])
+def test_release_requires_every_named_recovery_scenario(monkeypatch, scenario):
+    rollout, artifacts = evidence()
+    last = artifacts["recovery"]["scenarios"][-1]
+    if scenario is None:
+        last.pop("scenario")
+    else:
+        last["scenario"] = scenario
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
 
 
 def test_canonical_decision_is_not_overridable(monkeypatch):

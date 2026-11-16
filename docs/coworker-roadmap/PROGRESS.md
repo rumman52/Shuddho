@@ -59,6 +59,19 @@ API/worker and external-provider qualification require separate live evidence.
 
 ---
 
+## Day 10 reviewer and recovery evidence identity — 16 November 2026 (Asia/Dhaka)
+
+The release decision now applies Day 9 reviewer identity normalization and
+checks the exact 20 named Day 9 operated scenarios. A case or Unicode spelling
+variant cannot count as a second reviewer. A duplicate, unknown or missing
+scenario leaves the release source-only. Actual operator evidence and
+independent human review remain required.
+
+Local verification: 145 tests passed across the release and evidence suites.
+Exact-head CI and the live release evidence remain pending.
+
+---
+
 ## Day 10 holdout security absolute NO-GO — 13 November 2026 (Asia/Dhaka)
 
 **Root cause:** `scripts/day10_release_decision.py::holdout_ok` previously allowed a 39/40 accepted independent holdout with `security_passed=false` or a missing security verdict to reach `READY_FOR_OWNER_CONTROLLED_PILOT` when other submitted gates passed. This contradicts Day 9's absolute security NO-GO rule. No existing release approval or operated evidence was changed.
