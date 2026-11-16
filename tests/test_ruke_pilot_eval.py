@@ -308,18 +308,24 @@ def test_blind_packet_and_competitor_are_bound_to_same_release_manifest():
 
 
 def test_exact_head_ci_and_release_contract_must_be_reported_passed_before_holdout():
-    assert source_checks_ok({
-        "required_repository_checks": "passed",
+    value = manifest()
+    evidence = {
+        "required_repository_checks": {name: "success" for name in {
+            "test-and-build", "frontend", "coworker", "browser-qualification",
+            "postgres-18-qualification", "governance-audit", "ci-merge-gate",
+        }},
+        "ci_source_revision": value["candidate_revision"],
+        "ci_evidence_sha256": "a" * 64,
         "canonical_release_contract": "passed",
-    })
-    assert not source_checks_ok({
-        "required_repository_checks": "failed",
-        "canonical_release_contract": "passed",
-    })
-    assert not source_checks_ok({
-        "required_repository_checks": "passed",
-        "canonical_release_contract": "missing",
-    })
+        "release_contract_source_revision": value["candidate_revision"],
+        "release_contract_evidence_sha256": "b" * 64,
+    }
+    assert source_checks_ok(evidence, value)
+    assert not source_checks_ok(dict(evidence, ci_source_revision="c" * 40), value)
+    assert not source_checks_ok(dict(evidence, canonical_release_contract="failed"), value)
+    failed_job = dict(evidence)
+    failed_job["required_repository_checks"] = dict(evidence["required_repository_checks"], coworker="failure")
+    assert not source_checks_ok(failed_job, value)
 
 def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_proofs():
     receipt = {
