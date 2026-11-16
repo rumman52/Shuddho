@@ -598,6 +598,18 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             "previous_revision": revision,
             "operator_case_reference": case_ref,
         }
+        # This temporary object is only a preflight placeholder and is never
+        # written as evidence. Actual pause time/revision are read back below.
+        evidence["paused_revision"] = revision + 1
+        evidence["paused_at"] = utcnow_iso()
+        evidence["schedule_applied_revision"] = revision + 1
+        evidence["schedule_applied_enabled"] = False
+        try:
+            verify_two_day(first, second, evidence)
+        except GateFailure as error:
+            raise ScheduledProfileProbeFailure(
+                f"Two-day evidence rejected before pause: {error}"
+            ) from None
         paused = json_object(
             client.post(
                 f'/api/v1/automations/{state["automation_id"]}/pause',
