@@ -129,6 +129,7 @@ def test_private_schema_access_rejects_supabase_api_role_grants():
 
         def execute(self, statement, params):
             assert "pg_default_acl" in statement
+            assert "pg_has_role" in statement
             assert params == (backup.SCHEMA,)
             return Result(self.row)
 
@@ -194,6 +195,44 @@ def test_inventory_detects_real_schema_table_and_default_grants():
             )
             fixture.execute(
                 "ALTER DEFAULT PRIVILEGES GRANT INSERT ON TABLES TO authenticated"
+            )
+            with pytest.raises(backup.BackupError, match="Supabase API roles"):
+                backup.inventory(fixture)
+
+@pytest.mark.parametrize(
+    ("api_role", "membership_options"),
+    [
+        ("anon", "INHERIT TRUE, SET TRUE"),
+        ("authenticated", "INHERIT FALSE, SET TRUE"),
+    ],
+)
+def test_inventory_detects_inherited_default_privileges(api_role, membership_options):
+    pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
+    if not pg_bin:
+        pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
+    import psycopg
+
+    grant_role = f"{api_role}_table_reader"
+    with backup.isolated_postgres(Path(pg_bin)) as db_env:
+        connect = dict(
+            host=db_env["PGHOST"], port=db_env["PGPORT"], user=db_env["PGUSER"],
+            dbname=db_env["PGDATABASE"], sslmode="disable",
+        )
+        with psycopg.connect(**connect) as fixture:
+            fixture.execute("CREATE ROLE anon NOLOGIN")
+            fixture.execute("CREATE ROLE authenticated NOLOGIN")
+            fixture.execute(f"CREATE ROLE {grant_role} NOLOGIN")
+            fixture.execute(
+                f"GRANT {grant_role} TO {api_role} WITH {membership_options}"
+            )
+            fixture.execute("CREATE SCHEMA shuddho_coworker")
+            fixture.execute(
+                "CREATE TABLE shuddho_coworker.cw_alembic_version (version_num text)"
+            )
+            fixture.execute("INSERT INTO shuddho_coworker.cw_alembic_version VALUES ('0070')")
+            fixture.execute(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA shuddho_coworker "
+                f"GRANT SELECT ON TABLES TO {grant_role}"
             )
             with pytest.raises(backup.BackupError, match="Supabase API roles"):
                 backup.inventory(fixture)
