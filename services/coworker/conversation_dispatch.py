@@ -213,6 +213,12 @@ class ConversationDispatchService:
                     "conversation_revision_conflict", "The conversation changed. Review the latest message.", 409,
                 )
             if reviewed_brief is not None:
+                if not self.settings.agent_runtime_v3_enabled:
+                    raise CoworkerError(
+                        "task_brief_runtime_unavailable",
+                        "Starting a new reviewed task requires Agent Runtime v3.",
+                        409,
+                    )
                 preview = ConversationTaskBriefService.validate_in_session(
                     db, self.settings, owner, conversation_id, message_id,
                     expected_sequence, reviewed_brief, project_id, memory_pins=selection)

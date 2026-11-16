@@ -61,6 +61,50 @@ def test_canonical_preview_digest_changes_on_edit(container):
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=changed)["canonical_digest"] != first["canonical_digest"]
 
 
+@pytest.mark.parametrize("legacy_graph_enabled", [False, True])
+def test_only_runtime_v3_admits_new_reviewed_briefs(container, legacy_graph_enabled):
+    owner, conversation, messages, service, dispatch = setup(container, "runtime-v3")
+    item = append(messages, owner, conversation, "Create a quarterly sales report.", "runtime-v3")
+    reviewed = brief()
+    preview = service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=reviewed)
+    dispatch.settings = replace(
+        dispatch.settings, agent_runtime_v3_enabled=False,
+        agent_dependency_graph_enabled=legacy_graph_enabled,
+        agent_parallel_execution_enabled=legacy_graph_enabled,
+    )
+
+    with pytest.raises(CoworkerError) as denied:
+        dispatch.dispatch(owner, conversation["id"], item["id"], expected_sequence=1,
+                          reviewed_brief=reviewed, expected_digest=preview["canonical_digest"])
+    assert denied.value.code == "task_brief_runtime_unavailable"
+    assert denied.value.status_code == 409
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
+
+    legacy, created = dispatch.dispatch(owner, conversation["id"], item["id"], expected_sequence=1)
+    assert created
+    with dispatch.sessions() as db:
+        assert db.get(AgentRun, legacy["run_id"]).runtime_version == (2 if legacy_graph_enabled else 1)
+
+
+def test_existing_reviewed_brief_replays_when_runtime_v3_disabled(container):
+    owner, conversation, messages, service, dispatch = setup(container, "runtime-replay")
+    item = append(messages, owner, conversation, "Create a quarterly sales report.", "runtime-replay")
+    reviewed = brief()
+    preview = service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=reviewed)
+    options = dict(expected_sequence=1, reviewed_brief=reviewed, expected_digest=preview["canonical_digest"])
+    run, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
+    assert created
+
+    dispatch.settings = replace(dispatch.settings, agent_runtime_v3_enabled=False)
+    replay, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
+    assert not created and replay["run_id"] == run["run_id"]
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 1
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 1
+
+
 def test_review_and_repreview_never_dispatch_before_explicit_confirmation(container):
     """An editable task brief and even a valid digest do not authorize an AgentRun."""
     owner, conversation, messages, service, dispatch = setup(container, "review-not-admission")
