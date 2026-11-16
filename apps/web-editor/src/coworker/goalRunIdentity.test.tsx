@@ -78,6 +78,76 @@ async function runNow(tree: ReactTestRenderer) {
   await act(async () => { await button(tree.root, "Run bounded work now").props.onClick(); });
 }
 
+
+test("new goals persist the selected project and explicitly approved document IDs", async () => {
+  let submitted: Record<string, unknown> | null = null;
+  const createdGoal = {
+    id: "goal-project", objective: "Prepare the project briefing", success_criteria: [],
+    constraints: [], deadline_at: null, timezone: "Asia/Dhaka", project_id: "project-1",
+    revision: 1, state: "active" as const, milestones: [],
+    budget: { max_runs: 20, max_planner_tokens: null },
+    authorized_resources: [{ kind: "document" as const, reference: "doc-1" }],
+    next_review_at: null, created_at: timestamp, updated_at: timestamp, run_links: [],
+  };
+  const client = {
+    goals: async () => ({ enabled: true, goals: [] }),
+    personalSuggestionPreferences: async () => ({
+      available: false, enabled: false, delivery_available: false, delivery_enabled: false,
+      event_delivery_available: false, event_delivery_enabled: false, event_timezone: "UTC",
+      model_relevance_available: false, dismissed_count: 0,
+    }),
+    personalSuggestions: async () => ({ suggestions: [] }),
+    projects: async () => ({ items: [{ id: "project-1", name: "Pilot project" }] }),
+    documents: async () => ({ documents: [{ id: "doc-1", filename: "briefing.txt", state: "uploaded" }] }),
+    project: async () => ({
+      id: "project-1",
+      resources: [{ resource_type: "document", resource_id: "doc-1", title: "Briefing source" }],
+    }),
+    createGoal: async (input: Record<string, unknown>) => {
+      submitted = input;
+      return createdGoal;
+    },
+  };
+  let tree!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      tree = create(<GoalWorkspace client={client as unknown as CoworkerClient}
+        openAgent={() => undefined} openAutomations={() => undefined} />);
+    });
+    const projectSelect = tree.root.findByType("select");
+    await act(async () => {
+      projectSelect.props.onChange({ target: { value: "project-1" } });
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+    const documentCheckbox = tree.root.findAllByType("input")
+      .find(item => item.props.type === "checkbox" && item.props.checked === false);
+    assert.ok(documentCheckbox, "project document checkbox should be available");
+    await act(async () => {
+      documentCheckbox.props.onChange({ target: { checked: true } });
+    });
+    const approvalCheckbox = tree.root.findAllByType("input")
+      .filter(item => item.props.type === "checkbox")
+      .find(item => item.props.checked === false);
+    assert.ok(approvalCheckbox, "explicit source-scope approval checkbox should be available");
+    await act(async () => {
+      approvalCheckbox.props.onChange({ target: { checked: true } });
+    });
+    const objective = tree.root.findAllByType("textarea")[0];
+    await act(async () => {
+      objective.props.onChange({ target: { value: "Prepare the daily project briefing" } });
+    });
+    await act(async () => {
+      await tree.root.findByType("form").props.onSubmit({ preventDefault: () => undefined });
+    });
+    assert.ok(submitted);
+    assert.equal(submitted.project_id, "project-1");
+    assert.deepEqual(submitted.authorized_resources, [{ kind: "document", reference: "doc-1" }]);
+  } finally {
+    if (tree) await act(async () => { tree.unmount(); });
+  }
+});
+
 test("two separately confirmed starts of one goal admit two distinct Agent runs", async () => {
   await mounted(async (tree, data) => {
     await runNow(tree);
