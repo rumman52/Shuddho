@@ -13,7 +13,7 @@ from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, comparison_evidence_recorded, external_heldout,
     candidate_ledger, canonical_sha256, custody_receipt_ok, day10_first_run_scores, immutable_write, main,
-    position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews,
+    position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews, source_checks_ok,
     validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
     validate_manifest, external_heldout, verify_operations,
 )
@@ -244,6 +244,21 @@ def test_blind_packet_and_competitor_are_bound_to_same_release_manifest():
         prepare_blind(tasks(), value, candidate, competitor_outputs,
                       blinding_key=BLIND_KEY, manifest_sha256=digest)
 
+
+
+def test_exact_head_ci_and_release_contract_must_be_reported_passed_before_holdout():
+    assert source_checks_ok({
+        "required_repository_checks": "passed",
+        "canonical_release_contract": "passed",
+    })
+    assert not source_checks_ok({
+        "required_repository_checks": "failed",
+        "canonical_release_contract": "passed",
+    })
+    assert not source_checks_ok({
+        "required_repository_checks": "passed",
+        "canonical_release_contract": "missing",
+    })
 
 def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_proofs():
     receipt = {
