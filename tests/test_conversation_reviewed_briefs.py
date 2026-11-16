@@ -26,7 +26,7 @@ from services.coworker.conversation_repository import ConversationRepository
 from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
 from services.coworker.conversation_task_briefs import ConversationTaskBriefService
 from services.coworker.task_brief_schemas import (
-    MemoryPin, TaskBrief, TaskBriefMemorySelection, TaskBriefSuggestion, canonical_brief_digest,
+    TaskBrief, TaskBriefMemorySelection, TaskBriefSuggestion, canonical_brief_digest,
 )
 from services.coworker.errors import CoworkerError
 from services.coworker.models import AgentRun, AgentOutbox, Artifact, utcnow
@@ -62,7 +62,6 @@ def test_canonical_preview_digest_changes_on_edit(container):
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=brief())["canonical_digest"] == first["canonical_digest"]
     changed = brief().model_copy(update={"constraints": ["One page"]})
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=changed)["canonical_digest"] != first["canonical_digest"]
-
 
 
 def test_reviewed_task_brief_schema_enforces_documented_bounds_and_rejects_authority_fields():
