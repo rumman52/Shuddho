@@ -778,6 +778,7 @@ class PersonalGoal(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(128))
     fingerprint: Mapped[str] = mapped_column(String(64))
     objective: Mapped[str] = mapped_column(Text)
@@ -795,8 +796,14 @@ class PersonalGoal(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
         UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_personal_goals_owner_idempotency"),
+        ForeignKeyConstraint(
+            ["project_id", "owner_id"],
+            ["cw_projects.id", "cw_projects.owner_id"],
+            name="fk_cw_personal_goals_project_owner",
+        ),
         Index("cw_personal_goals_owner_created", "owner_id", "created_at"),
         Index("cw_personal_goals_workspace_state", "workspace_id", "state"),
+        Index("cw_personal_goals_owner_project_state", "owner_id", "project_id", "state"),
     )
 
 
