@@ -28,6 +28,20 @@ check passed. Hosted qualification and owner approval remain open.
 
 ---
 
+## Day 3 source citation validation — 17 November 2026 (Asia/Dhaka)
+
+A valid citation could previously mask an incomplete source marker with
+altered case or whitespace. The grounding validator now rejects those markers
+and accepts repeated citations to the same authorized source. The adversarial
+PDF and text fixtures confirm that source instructions stay in untrusted
+context and create no AgentRun or outbox entry.
+
+Three malformed citation cases reproduced on `d3866064`. The workbook still
+requires hosted bilingual, two-owner qualification.
+[Day 3 tracker](https://github.com/rumman52/Shuddho/issues/729)
+
+---
+
 ## Day 5 memory pins bound to reviewed tasks — 16 November 2026 (Asia/Dhaka)
 
 Based on merged `main` at `6316689c`. A reviewed brief preview now binds the
