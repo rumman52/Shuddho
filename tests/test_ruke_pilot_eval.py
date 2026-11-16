@@ -9,6 +9,7 @@ import tempfile
 
 import pytest
 
+from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, external_heldout,
     candidate_ledger, canonical_sha256, day10_first_run_scores, immutable_write, main,
