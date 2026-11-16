@@ -311,8 +311,8 @@ def test_exact_head_ci_and_release_contract_must_be_reported_passed_before_holdo
     value = manifest()
     evidence = {
         "required_repository_checks": {name: "success" for name in {
-            "test-and-build", "frontend", "coworker", "browser-qualification",
-            "postgres-18-qualification", "governance-audit", "ci-merge-gate",
+            "test-and-build", "Frontend tests and builds", "coworker", "browser-qualification",
+            "PostgreSQL 18 staging compatibility", "governance-audit", "ci-merge-gate",
         }},
         "ci_source_revision": value["candidate_revision"],
         "ci_evidence_sha256": "a" * 64,
