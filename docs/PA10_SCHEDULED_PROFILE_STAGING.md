@@ -50,9 +50,16 @@ pausing. The goal must be active, its revision must match the automation's pinne
 `goal_revision`, its explicit `project_id` must resolve to a live project owned
 by the same account, and every selected document must remain linked to that
 project. Its approved resources must consist of **one to five distinct documents
-only**, with no connected read grants or memory namespaces. The `goal_id`,
-`goal_revision`, `project_id`, and `authorized_document_ids` are captured in
-the evidence and checked against the Agent run's actual `document_ids` on both days. Any change of goal revision,
+only**, with no connected read grants or memory namespaces. The automation must
+have an explicit future `expires_at`, and the API must report
+`schedule_applied_revision == revision`, `schedule_applied_enabled == true`,
+and no schedule error before the probe proceeds. The `goal_id`,
+`goal_revision`, `project_id`, `authorized_document_ids`, expiry, and applied
+schedule revision are captured in the evidence and checked against the Agent
+run's actual `document_ids` on both days. The pause gate then requires the
+Temporal worker to apply the new paused revision with
+`schedule_applied_enabled == false`; the approved expiry must remain after the
+Day 8 pause. Any change of goal revision,
 approved read scope, or run document set fails closed; uploading a new version
 of the **same** approved document does not change that scope. The offline gate
 checks evidence consistency, but the operator must still authenticate the live
