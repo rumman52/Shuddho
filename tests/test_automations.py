@@ -1362,7 +1362,9 @@ def test_project_goal_persists_owner_project_and_revision_scope(automation_clien
     assert revisions.json()["revisions"][0]["snapshot"]["project_id"] == project_id
 
 
-def test_project_goal_rejects_documents_not_linked_to_the_selected_project(automation_client, automation_container):
+def test_project_goal_rejects_documents_not_linked_to_the_selected_project(
+    automation_client, automation_container,
+):
     client, headers = automation_client
     auth = headers()
     assert client.get("/api/v1/goals", headers=auth).status_code == 200
@@ -1396,7 +1398,9 @@ def test_project_goal_rejects_documents_not_linked_to_the_selected_project(autom
     assert response.json()["error"]["code"] == "project_document_unlinked"
 
 
-def test_briefing_requires_an_owned_project_and_one_to_five_current_documents(automation_client, automation_container):
+def test_briefing_requires_an_owned_project_and_one_to_five_current_documents(
+    automation_client, automation_container,
+):
     client, headers = automation_client
     auth = headers()
     _enable_briefings(automation_container)
