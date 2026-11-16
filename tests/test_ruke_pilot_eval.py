@@ -312,6 +312,17 @@ def test_legacy_manifest_is_readable_only_in_explicit_legacy_mode(external_dir):
     assert len(validate_manifest(legacy, held, allow_legacy=True, custody_verified=True)) == 40
 
 
+
+
+def test_operated_receipts_fail_without_unique_trace_reference_and_later_verification():
+    rows = operations()
+    rows[0]["evidence_ref"] = "sha256:" + "0" * 64
+    rows[1]["verified_at"] = "not-a-timestamp"
+    rows[2]["evidence_ref"] = rows[3]["evidence_ref"]
+    result = verify_operations(rows, "a" * 40)
+    assert {1, 2, 3} <= set(result["failed_rows"])
+    assert result["day10_recovery"]["scenarios"][0]["status"] == "failed"
+
 def test_candidate_outputs_require_exact_manifest_digest_when_bound():
     from scripts.pilot_workflow_eval import load_suite
     suite = load_suite()
@@ -336,10 +347,16 @@ def test_operated_rows_require_exact_release_and_manifest_binding():
     for row in rows:
         row.update(manifest_sha256="a" * 64, release_id="release-1",
                    rollout_manifest_sha256="b" * 64)
-    assert verify_operations(
+    result = verify_operations(
         rows, "a" * 40, manifest_sha256="a" * 64,
         release_id="release-1", rollout_manifest_sha256="b" * 64,
-    )["fault_gate_pass"]
+    )
+    assert result["fault_gate_pass"]
+    recovery = result["day10_recovery"]
+    assert recovery["release_id"] == "release-1"
+    assert len(recovery["scenarios"]) == 20
+    assert all(row["status"] == "passed" and row["evidence_ref"].startswith("sha256:")
+               for row in recovery["scenarios"])
     rows[0]["manifest_sha256"] = "c" * 64
     with pytest.raises(EvidenceError, match="not bound"):
         verify_operations(rows, "a" * 40, manifest_sha256="a" * 64)
