@@ -72,7 +72,7 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if (value.get("mode") != "independent_human_holdout"
             or value.get("generation_identity_verified") is not True
             or not isinstance(value.get("generation_identity_receipt_sha256"), str)
-            or not SHA.fullmatch(value["generation_identity_receipt_sha256"])):
+            or not DIGEST.fullmatch(value["generation_identity_receipt_sha256"])):
         return False
     reviewers = value.get("reviewers")
     if not isinstance(reviewers, list) or len(reviewers) != 2:
