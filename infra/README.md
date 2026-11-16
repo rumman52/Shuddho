@@ -39,6 +39,44 @@ out-of-date database. The runtime role can read and write Coworker data but
 cannot change the schema or migration history. The `shuddho_coworker` schema is
 private and should stay outside the Supabase Data API.
 
+### Authorize the GitHub ruleset audit
+
+Install a dedicated GitHub App on `rumman52/Shuddho` only. Give it repository
+**Contents: Read** and **Administration: Read and write**. Contents read is
+required by the `GET /branches/main` guard; Administration write is required
+for GitHub to return the ruleset's `bypass_actors` field to an identity with
+write access to that ruleset. Keep the app itself off the ruleset's bypass list.
+
+The app is used in two GitHub Actions environments, both restricted to the
+`main` branch:
+
+- `v01-governance`: main-push governance audit and the PA-10 preflight's
+  pre-credential ruleset audit. Do not add a manual reviewer gate here; the
+  audit must run automatically on each protected-main push.
+- `pa10-staging`: repeat the same audit after environment approval and
+  immediately before staging database access or Render/provider mutations.
+  This environment must require reviewer approval before releasing staging
+  credentials.
+
+Configure the same app identity in **both** environments:
+
+- Environment variable `V01_RULESET_APP_CLIENT_ID`: the app's client ID.
+- Environment secret `V01_RULESET_APP_PRIVATE_KEY`: the app's private key.
+
+The composite audit action mints a temporary installation token scoped to the
+single `Shuddho` repository. It uses that token for the protected-branch
+revalidation and the sensitive ruleset detail (including bypass-actor) read,
+then revokes it after the job. The ordinary workflow token lists active
+rulesets and reads CI runs and jobs. The unprivileged source gate checks the
+exact `main` SHA and successful CI. The privileged audit verifies native
+protection. The post-approval audit rechecks that protection before the worker
+workflow uses staging credentials to access the database or mutate Render.
+
+After configuring both environments, confirm `governance-audit` passes on the
+current `main` push, then run **PA-10 staging prerequisite preflight**. Do not
+run the worker-provision workflow without separate explicit approval for its
+paid Render plan.
+
 ### Back up and verify the staging database
 
 Run from the repository root as a non-root operator with PostgreSQL 17 or

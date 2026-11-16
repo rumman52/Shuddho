@@ -14,29 +14,14 @@ Official documentation: https://docs.github.com/en/rest/repos/rules#get-a-reposi
 
 ## Operator-controlled credential prerequisite
 
-For the protected **main-push audit job** only:
-
-1. Create a dedicated, short-lived GitHub App installation credential
-   or fine-grained token restricted to the **Shuddho repository**, with
-   effective **ruleset write** access needed to reveal `bypass_actors`.
-   Prefer short-lived installation credentials over broadly privileged
-   personal tokens.
-2. Store it in GitHub Actions secrets as
-   `V01_GOVERNANCE_RULESET_TOKEN`. Do **not** put tokens in repository
-   files, PR comments, logs, issue bodies, browser code or model prompts.
-3. The `governance-audit` job runs **only on a push to main**, uses
-   this optional credential for GET inspection, and falls back to the
-   restricted `github.token` if it is absent. The fallback remains
-   **fail-closed** if GitHub redacts bypass actors. No rule is weakened.
-
-The PA-10 `source_gate` runs **before protected-environment approval**.
-Its first job MUST use only `github.token` and **MUST NOT read any
-`secrets.*`**. The current staging source gate separately requires a
-fully inspectable main ruleset; with a redacted default token it stays
-**BLOCKED** until a separately reviewed design can establish exact-head
-governance trust **without crossing this pre-secret boundary**. A
-working main audit is necessary but not sufficient to provision a
-worker. Never inject privileged tokens into `source_gate`.
+1. Install the dedicated GitHub App and configure the two GitHub Actions
+   environments using the [infrastructure runbook](../infra/README.md#authorize-the-github-ruleset-audit).
+2. The main-push audit mints a short-lived installation token restricted to
+   Shuddho. The audit uses it to read the protected branch and ruleset details.
+3. PA-10 `source_gate` uses `github.token` to check exact-head CI. A separate
+   live ruleset audit in `v01-governance` must pass before the workflow enters
+   `pa10-staging`. After staging approval, the workflow repeats the audit
+   before accessing the database or invoking Render and other providers.
 4. Verify the audit result on the exact protected `main` SHA, then
    verify `test-and-build`, `coworker`, `governance-audit` and
    `ci-merge-gate` conclusions are successful on that same run.

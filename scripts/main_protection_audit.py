@@ -160,7 +160,7 @@ def _get_json(url: str, token: str):
         raise GovernanceAuditError(f"GitHub governance data unavailable (status={code})") from exc
 
 
-def inspect_repository(repository: str, token: str) -> int:
+def inspect_repository(repository: str, token: str, *, ruleset_token: str | None = None) -> int:
     if (
         not isinstance(repository, str)
         or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is None
@@ -169,9 +169,15 @@ def inspect_repository(repository: str, token: str) -> int:
         or not token
     ):
         raise GovernanceAuditError("invalid repository or missing GitHub token")
+    audit_token = token if ruleset_token is None else ruleset_token
+    if not audit_token:
+        raise GovernanceAuditError("GitHub ruleset audit token is missing")
 
     root = f"https://api.github.com/repos/{repository}"
-    branch = _get_json(root + "/branches/main", token)
+    # The workflow token can list CI and ruleset IDs, but cannot reliably
+    # observe the effective protected-branch state. Use the repository-scoped
+    # audit identity for both protection state and sensitive bypass details.
+    branch = _get_json(root + "/branches/main", audit_token)
     items = _get_json(root + "/rulesets?includes_parents=true&per_page=100", token)
     if not isinstance(items, list) or len(items) >= 100:
         raise GovernanceAuditError("ruleset listing invalid or possibly truncated")
@@ -184,7 +190,7 @@ def inspect_repository(repository: str, token: str) -> int:
         rid = item.get("id")
         if type(rid) is not int or rid < 1:
             raise GovernanceAuditError("invalid active ruleset identifier")
-        details.append(_get_json(root + f"/rulesets/{rid}", token))
+        details.append(_get_json(root + f"/rulesets/{rid}", audit_token))
     return audit_governance(branch, details)
 
 
@@ -193,7 +199,11 @@ def main() -> None:
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", ""))
     args = parser.parse_args()
     try:
-        matching_rule = inspect_repository(args.repository, os.environ.get("GITHUB_TOKEN", ""))
+        matching_rule = inspect_repository(
+            args.repository,
+            os.environ.get("GITHUB_TOKEN", ""),
+            ruleset_token=os.environ.get("GITHUB_RULESET_AUDIT_TOKEN"),
+        )
     except GovernanceAuditError as exc:
         print(json.dumps({"status": "failed", "reason": str(exc)}))
         parser.exit(1, "V-01 governance configuration audit failed; main is not release-qualified.\n")

@@ -26,6 +26,25 @@ with the original test run ID printed in the successful reuse step.
 
 ---
 
+## PA-10 ruleset audit integrated with scoped CI — 16 November 2026 (Asia/Dhaka)
+
+PR [#714](https://github.com/rumman52/Shuddho/pull/714) now includes
+`main` at `2cbcae390865585f52cbe5299d52d8add1862db2`. Routine PR CI retains its
+scope selection and exact-revision review reuse. Native governance on `main`
+uses the repository-scoped GitHub App audit. The PA-10 source entry job remains
+secret-free. A separate audit guards staging access and runs again after approval.
+
+Local verification: 283 governance, PA-10 and scoped-CI tests passed. The
+canonical release-contract check and duplicate-key YAML validation passed.
+
+The live rules endpoint currently lists deletion, non-fast-forward protection,
+and PR reviews. Main CI [#43804910236](https://github.com/rumman52/Shuddho/actions/runs/43804910236)
+failed the native governance audit. App and environment setup, a successful
+live audit and worker qualification are pending. See the
+[infrastructure runbook](../../infra/README.md#authorize-the-github-ruleset-audit).
+
+---
+
 ## PA-10 live database check before worker provisioning — 16 November 2026 (Asia/Dhaka)
 
 The paid worker workflow now requires the live Supabase database to be reachable

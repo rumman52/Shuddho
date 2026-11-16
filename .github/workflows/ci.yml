@@ -800,14 +800,17 @@ jobs:
   # Native rulesets must prevent unsafe merges; this audit cannot undo a merge.
   governance-audit:
     name: governance-audit
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'rumman52/Shuddho' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: v01-governance
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect active V-01 main governance
-        env:
-          GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}
-        run: |
-          python -m scripts.main_protection_audit --repository "${{ github.repository }}"
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/audit-main-ruleset
+        with:
+          client-id: ${{ vars.V01_RULESET_APP_CLIENT_ID }}
+          private-key: ${{ secrets.V01_RULESET_APP_PRIVATE_KEY }}

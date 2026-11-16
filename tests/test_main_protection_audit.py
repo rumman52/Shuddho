@@ -177,6 +177,31 @@ def test_repository_inspection_reads_actual_ruleset_detail_and_branch(monkeypatc
     assert len(calls) == 3
 
 
+def test_installation_token_reads_branch_and_ruleset_details(monkeypatch):
+    from scripts import main_protection_audit as mod
+
+    rule = approved_ruleset()
+
+    def fake_get_json(url, token):
+        if url.endswith("/branches/main"):
+            assert token == "installation-token"
+            return protected_branch()
+        if url.endswith("/rulesets/123"):
+            assert token == "installation-token"
+            return rule
+        assert token == "workflow-token"
+        assert url.endswith("/rulesets?includes_parents=true&per_page=100")
+        return [{"id": 123, "target": "branch", "enforcement": "active"}]
+
+    monkeypatch.setattr(mod, "_get_json", fake_get_json)
+    assert inspect_repository("owner/repo", "workflow-token", ruleset_token="installation-token") == 123
+    del rule["bypass_actors"]
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        inspect_repository("owner/repo", "workflow-token", ruleset_token="installation-token")
+    with pytest.raises(GovernanceAuditError, match="token"):
+        inspect_repository("owner/repo", "workflow-token", ruleset_token="")
+
+
 def test_bad_repo_identifiers_are_rejected_before_fetch(monkeypatch):
     from scripts import main_protection_audit as mod
 
@@ -193,12 +218,15 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  governance-audit:\n", 1)[1]
     assert "github.event_name == 'push'" in job
-    assert "python -m scripts.main_protection_audit" in job
-    # Only a push to protected main receives the optional privileged audit
-    # credential. The ordinary GitHub token remains the safe fail-closed fallback.
-    assert "GITHUB_TOKEN: ${{ secrets.V01_GOVERNANCE_RULESET_TOKEN || github.token }}" in job
+    assert "github.repository == 'rumman52/Shuddho'" in job
+    assert "github.ref == 'refs/heads/main'" in job
+    assert "environment: v01-governance" in job
+    assert "persist-credentials: false" in job
+    assert "uses: ./.github/actions/audit-main-ruleset" in job
+    assert "secrets.V01_RULESET_APP_PRIVATE_KEY" in job
+    assert "V01_RULESET_APP_" not in workflow.split("\n  governance-audit:\n", 1)[0]
     provision = Path(".github/workflows/provision-pa10-staging-worker.yml").read_text(encoding="utf-8")
-    source_gate = provision.split("\n  source_gate:\n", 1)[1].split("\n  verify_database:\n", 1)[0]
+    source_gate = provision.split("\n  source_gate:\n", 1)[1].split("\n  ruleset_audit:\n", 1)[0]
     # The PA-10 source gate runs BEFORE any protected-environment approval.
     # Keep it secret-free; a successful privileged main CI audit must be
     # established separately before staging credential access can be unlocked.
@@ -222,6 +250,26 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     assert "PR_ANCESTRY_RESULT: ${{ needs[\'pr-base-ancestry\'].result }}" in gate
     assert "continue-on-error" not in gate
     assert "python -m scripts.independent_review_gate" in gate
+
+
+def test_ruleset_audit_action_scopes_credential_to_one_repo_and_rechecks_protection():
+    action = Path(".github/actions/audit-main-ruleset/action.yml").read_text(encoding="utf-8")
+    _, after_mint = action.split("    - name: Mint installation token", 1)
+    mint, after_guard = after_mint.split("    - name: Confirm the checked-out revision is still protected main", 1)
+    guard, audit = after_guard.split("    - name: Inspect active V-01 main governance", 1)
+    mint = "    - name: Mint installation token" + mint
+    guard = "    - name: Confirm the checked-out revision is still protected main" + guard
+    assert "actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3" in mint
+    assert "owner: rumman52" in mint and "repositories: Shuddho" in mint
+    assert "permission-administration: write" in mint
+    assert "permission-contents: read" in mint
+    assert mint.count("permission-contents: read") == 1
+    assert "skip-token-revoke" not in mint
+    assert "inputs.private-key" not in guard + audit
+    assert "scripts.pa10_main_head_guard" in guard
+    assert "GITHUB_TOKEN: ${{ steps.installation.outputs.token }}" in guard
+    assert "GITHUB_RULESET_AUDIT_TOKEN: ${{ steps.installation.outputs.token }}" in audit
+    assert "python3 -m scripts.main_protection_audit" in audit
 
 
 def _run_ci_result_gate(results: dict[str, str]) -> subprocess.CompletedProcess:
