@@ -169,11 +169,31 @@ def validate_candidate_identity(manifest: dict) -> dict:
 
 
 
-def source_checks_ok(evidence: object) -> bool:
-    """Require exact-head mandatory CI and canonical release-contract evidence."""
-    return (isinstance(evidence, dict)
-            and evidence.get("required_repository_checks") == "passed"
-            and evidence.get("canonical_release_contract") == "passed")
+REQUIRED_DAY9_CI = {
+    "test-and-build", "frontend", "coworker", "browser-qualification",
+    "postgres-18-qualification", "governance-audit", "ci-merge-gate",
+}
+
+
+def source_checks_ok(evidence: object, manifest: dict | None = None) -> bool:
+    """Require every mandatory check and contract receipt on this exact candidate SHA."""
+    if not isinstance(evidence, dict) or not isinstance(manifest, dict):
+        return False
+    checks = evidence.get("required_repository_checks")
+    if not isinstance(checks, dict) or set(checks) != REQUIRED_DAY9_CI:
+        return False
+    if any(checks[name] != "success" for name in REQUIRED_DAY9_CI):
+        return False
+    revision = manifest.get("candidate_revision")
+    return (
+        evidence.get("ci_source_revision") == revision
+        and evidence.get("canonical_release_contract") == "passed"
+        and evidence.get("release_contract_source_revision") == revision
+        and isinstance(evidence.get("ci_evidence_sha256"), str)
+        and SHA.fullmatch(evidence["ci_evidence_sha256"]) is not None
+        and isinstance(evidence.get("release_contract_evidence_sha256"), str)
+        and SHA.fullmatch(evidence["release_contract_evidence_sha256"]) is not None
+    )
 
 def custody_receipt_ok(custody: object, manifest: dict | None = None) -> bool:
     """Fail closed unless D's independent access boundary binds the frozen corpus/answers/rubric."""
@@ -960,7 +980,7 @@ def main(argv=None) -> int:
             if not custody_receipt_ok(evidence.get("custody"), manifest):
                 raise EvidenceError("independent D custody receipt is incomplete; heldout corpus was not read")
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
-            if not source_checks_ok(evidence):
+            if not source_checks_ok(evidence, manifest):
                 raise EvidenceError("exact-head required CI and canonical release contract must pass before reading heldout bytes")
             head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                   text=True, capture_output=True, check=True).stdout.strip()
@@ -1006,7 +1026,7 @@ def main(argv=None) -> int:
                 )
                 custody = evidence.get("custody", {})
                 isolated = custody_receipt_ok(custody, manifest)
-                source_gate = source_checks_ok(evidence)
+                source_gate = source_checks_ok(evidence, manifest)
                 high_severity = evidence.get("unresolved_high_severity_failures", None)
                 if not isinstance(high_severity, list):
                     raise EvidenceError("high-severity findings inventory required")
