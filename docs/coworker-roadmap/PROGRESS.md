@@ -1,3 +1,18 @@
+## Day 4 reviewed task brief snapshot budget — 16 November 2026 (Asia/Dhaka)
+
+Review and first admission now bound the complete canonical snapshot to
+16,000 UTF-8 bytes or the configured Agent context budget, whichever is lower.
+The calculation includes the brief, source and memory pins, project context
+and identity binding. Oversized previews and dispatches return a validation
+error before admitting a run or outbox entry. Existing digest and historical
+replay behavior are preserved.
+
+Four regressions reproduced oversized Bangla preview and admission on main at
+`d3866064`. The corrected cases cover both limits and a historical retry after
+a budget decrease. Hosted qualification remains open.
+
+---
+
 ## Day 10 operated recovery traces — 16 November 2026 (Asia/Dhaka)
 
 The release decision now requires the Day 9 trace evidence for each of the
