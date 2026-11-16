@@ -24,7 +24,7 @@ from services.coworker.conversation_dispatch import ConversationDispatchService
 from services.coworker.conversation_repository import ConversationRepository
 from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
 from services.coworker.conversation_task_briefs import ConversationTaskBriefService
-from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion
+from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion, canonical_brief_digest
 from services.coworker.errors import CoworkerError
 from services.coworker.models import AgentRun, AgentOutbox, Artifact, utcnow
 
@@ -59,6 +59,67 @@ def test_canonical_preview_digest_changes_on_edit(container):
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=brief())["canonical_digest"] == first["canonical_digest"]
     changed = brief().model_copy(update={"constraints": ["One page"]})
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=changed)["canonical_digest"] != first["canonical_digest"]
+
+
+
+@pytest.mark.parametrize("entry_point", ["preview", "dispatch"])
+@pytest.mark.parametrize(("context_bytes", "characters", "constraints"), [
+    (4096, 1800, []),
+    (24_000, 3900, ["ক" * 495 + str(i) for i in range(4)]),
+])
+def test_reviewed_brief_rejects_oversized_canonical_utf8_snapshot(
+    container, entry_point, context_bytes, characters, constraints,
+):
+    owner, conversation, messages, service, dispatch = setup(container, "byte-budget-" + entry_point)
+    item = append(messages, owner, conversation, "Create a project report.", "byte-budget")
+    service.settings = dispatch.settings = replace(service.settings, max_agent_context_bytes=context_bytes)
+    oversized = TaskBrief(
+        objective="Create a project report. " + "ক" * characters,
+        constraints=constraints,
+        deliverables=["A report"],
+    )
+    digest = canonical_brief_digest(
+        oversized, [], {}, owner_id=owner, conversation_id=conversation["id"],
+        message_id=item["id"], sequence=1,
+    )
+
+    with pytest.raises(CoworkerError) as denied:
+        if entry_point == "preview":
+            service.validate(owner, conversation["id"], item["id"],
+                             expected_sequence=1, brief=oversized)
+        else:
+            dispatch.dispatch(owner, conversation["id"], item["id"],
+                              expected_sequence=1, reviewed_brief=oversized,
+                              expected_digest=digest)
+    assert denied.value.code == "task_brief_snapshot_too_large"
+    assert denied.value.status_code == 422
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
+
+
+def test_admitted_reviewed_brief_replays_after_context_budget_is_lowered(container):
+    owner, conversation, messages, service, dispatch = setup(container, "budget-replay")
+    item = append(messages, owner, conversation, "Create a project report.", "budget-replay")
+    reviewed = TaskBrief(
+        objective="Create a project report. " + "ক" * 1100,
+        deliverables=["A report"],
+    )
+    preview = service.validate(owner, conversation["id"], item["id"],
+                               expected_sequence=1, brief=reviewed)
+    options = {
+        "expected_sequence": 1,
+        "reviewed_brief": reviewed,
+        "expected_digest": preview["canonical_digest"],
+    }
+    run, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
+    assert created
+
+    dispatch.settings = replace(dispatch.settings, max_agent_context_bytes=1024)
+    replay, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
+    assert not created
+    assert replay["run_id"] == run["run_id"]
+    assert container.agent.worker_run(run["run_id"])["id"] == run["run_id"]
 
 
 @pytest.mark.parametrize("legacy_graph_enabled", [False, True])
