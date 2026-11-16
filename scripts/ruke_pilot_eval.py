@@ -454,10 +454,8 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
         chosen = resolved.get(cid) or next(iter(by_id[cid].values()))
         ratings = chosen["scores"]
         deterministic_ok = checks[cid]["passed"] and checks[cid]["security_passed"]
-        accepted = deterministic_ok and chosen["source_supported"] and sum(ratings.values()) >= 7 and min(ratings.values()) > 0
         cell = case["workflow"] + "/" + case["language"]
         per_cell[cell]["total"] += 1
-        per_cell[cell]["accepted"] += int(accepted)
         reviewer_scores = [sum(by_id[cid][reviewer]["scores"][dimension] for dimension in RUBRIC)
                            for reviewer in reviewers]
         reviewer_rubrics = [
@@ -471,6 +469,7 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
         accepted = (deterministic_ok and chosen["source_supported"]
                     and both_reviewers_meet_floor and sum(ratings.values()) >= 7
                     and min(ratings.values()) > 0)
+        per_cell[cell]["accepted"] += int(accepted)
         results.append({"case_id": cid, "cell": cell, "workflow": case["workflow"],
                         "language": case["language"], "score": sum(ratings.values()),
                         "accepted": accepted, "deterministic_pass": deterministic_ok,
@@ -557,6 +556,14 @@ def verify_operations(rows: list[dict], candidate_revision: str, *,
     failed.sort()
     return {"total": 20, "passed": 20 - len(failed), "failed_rows": failed, "fault_gate_pass": not failed,
             "evidence_level": "operator_submitted_operated_traces_not_independently_attested"}
+
+
+def comparison_evidence_recorded(value: object) -> bool:
+    """A reproducible comparison or an explicit access gap is a valid report state."""
+    return (isinstance(value, dict) and (
+        value.get("complete") is True
+        or (isinstance(value.get("comparison_gap"), str) and bool(value["comparison_gap"].strip()))
+    ))
 
 def read_blinding_key(path: Path) -> bytes:
     """External secret custody, separate from reviewer packets and the repo."""
@@ -783,13 +790,8 @@ def main(argv=None) -> int:
                 high_severity = evidence.get("unresolved_high_severity_failures", None)
                 if not isinstance(high_severity, list):
                     raise EvidenceError("high-severity findings inventory required")
-                comparison_recorded = (
-                    comparative.get("complete") is True
-                    or (isinstance(comparative.get("comparison_gap"), str)
-                        and bool(comparative["comparison_gap"].strip()))
-                )
                 eligible = bool(readback_status["consistent"] and scores["outcome_gate_pass"]
-                                and faults["fault_gate_pass"] and comparison_recorded
+                                and faults["fault_gate_pass"] and comparison_evidence_recorded(comparative)
                                 and isolated and source_gate and not high_severity)
                 first_run_scores = day10_first_run_scores(scores)
                 obj = {
