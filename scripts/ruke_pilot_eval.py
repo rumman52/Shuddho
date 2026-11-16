@@ -828,7 +828,9 @@ def main(argv=None) -> int:
     parser.add_argument("--blinding-key", type=Path,
                         help="D-only secret 32-byte file outside checkout; never share with judges")
     parser.add_argument("--evidence", type=Path, help="D custody/readbacks plus, for evaluate, reviews, deterministic, operations and comparison")
-    parser.add_argument("--report", type=Path, help="New output file; overwrite is forbidden")
+    parser.add_argument("--report", type=Path, help="New main output file; overwrite is forbidden")
+    parser.add_argument("--recovery-report", type=Path,
+                        help="New Day 10 recovery artifact output (evaluate only; overwrite is forbidden)")
     parser.add_argument("--regression-rerun", action="store_true")
     args = parser.parse_args(argv)
     manifest = None
@@ -844,6 +846,12 @@ def main(argv=None) -> int:
             outside_repo(args.manifest)
             if args.report:
                 outside_repo(args.report)
+            if args.recovery_report:
+                outside_repo(args.recovery_report)
+                if args.action != "evaluate":
+                    raise EvidenceError("--recovery-report is only valid with evaluate")
+                if args.report and args.recovery_report.resolve() == args.report.resolve():
+                    raise EvidenceError("main report and recovery report must be different files")
             if args.evidence:
                 outside_repo(args.evidence)
             if args.candidate:
@@ -965,9 +973,17 @@ def main(argv=None) -> int:
                         "This report never authorizes activation.",
                     ],
                 }
+        outputs = {}
         if args.report:
             digest = immutable_write(args.report, obj)
-            print(json.dumps({"report": str(args.report), "sha256": digest, "eligible": obj.get("operator_evidence_gate", False)}))
+            outputs.update({"report": str(args.report), "sha256": digest})
+        if args.recovery_report:
+            recovery_digest = immutable_write(args.recovery_report, obj["day10_recovery"])
+            outputs.update({"recovery_report": str(args.recovery_report),
+                            "recovery_sha256": recovery_digest})
+        if outputs:
+            outputs["eligible"] = obj.get("operator_evidence_gate", False)
+            print(json.dumps(outputs))
         else:
             print(json.dumps(obj, ensure_ascii=False, sort_keys=True))
         if args.action == "evaluate":
