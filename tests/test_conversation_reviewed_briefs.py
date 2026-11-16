@@ -100,6 +100,7 @@ def test_admitted_reviewed_brief_replays_after_context_budget_is_lowered(contain
     assert created
 
     dispatch.settings = replace(dispatch.settings, max_agent_context_bytes=1024)
+    container.agent.settings = replace(container.agent.settings, max_agent_context_bytes=1024)
     result, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
     assert not created and result["run_id"] == run["run_id"]
     assert container.agent.worker_run(run["run_id"])["id"] == run["run_id"]
