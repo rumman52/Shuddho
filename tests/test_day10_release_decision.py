@@ -1,9 +1,9 @@
 """Release decision must reject unsigned, simulated and mismatched evidence."""
 from __future__ import annotations
 
-from copy import deepcopy
 import subprocess
 import sys
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import pytest
