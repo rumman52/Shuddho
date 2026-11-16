@@ -187,6 +187,12 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
             selected_action_ids.add(selected["id"])
             steps.append(AgentPlanStep(tool=name, arguments={"action_id": selected["id"]}))
             continue
+        if choice.output_language is not None and tool(choice.tool).kind != "task":
+            raise CoworkerError(
+                "planner_tool_scope",
+                "A per-step output language is allowed only for content-generation tasks.",
+                409,
+            )
         arguments = {
             "instruction": goal,
             "notes": goal if choice.tool == "report.create" else "",
