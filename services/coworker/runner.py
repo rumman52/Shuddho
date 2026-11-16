@@ -5,12 +5,15 @@ import asyncio
 import hashlib
 import json
 
+from pydantic import ValidationError
+
 from .container import Container
 from .drafting import DeepSeekDraftModel, DraftFailure, DraftModel
 from .errors import CoworkerError
 from .extraction import extract_in_subprocess
-from .exports import render_in_subprocess
+from .exports import render_in_subprocess, validate_day6_exports
 from .schemas import ResearchOptions, parse_draft, source_references
+from .task_brief_schemas import TaskBrief
 from .research import ResearchProvider, SearchFailure, TavilyResearchProvider, validate_evidence
 from .task_workflow_versions import task_skill_for_version
 from .skills import artifact_filenames
@@ -133,8 +136,48 @@ class DocumentRunner:
                 task["owner_id"], task["agent_run_id"], task["agent_step_id"],
             )
             sources.extend(handoff["sources"])
-        memory = (await asyncio.to_thread(self.container.memory.context_for_run, task["owner_id"], task["agent_run_id"])
-                  if task.get("agent_run_id") else {"facts": [], "provenance": []})
+        reviewed_brief = None
+        steering_instructions = []
+        if task.get("agent_run_id"):
+            run_context = await asyncio.to_thread(
+                self.container.agent.worker_run, task["agent_run_id"],
+            )
+            if run_context.get("owner_id") != task["owner_id"]:
+                raise CoworkerError("task_run_scope", "The task's run could not be verified.", 404)
+            snapshot = run_context.get("reviewed_brief") or {}
+            if snapshot:
+                raw_brief = snapshot.get("brief") if isinstance(snapshot, dict) else None
+                if not isinstance(raw_brief, dict):
+                    raise CoworkerError(
+                        "reviewed_brief_invalid",
+                        "The reviewed task brief could not be verified. Please review the task again.",
+                        409,
+                    )
+                try:
+                    brief = TaskBrief.model_validate(raw_brief)
+                except ValidationError:
+                    raise CoworkerError(
+                        "reviewed_brief_invalid",
+                        "The reviewed task brief could not be verified. Please review the task again.",
+                        409,
+                    ) from None
+                reviewed_brief = {
+                    "objective": brief.objective,
+                    "constraints": list(brief.constraints),
+                    "deliverables": list(brief.deliverables),
+                }
+            steering_instructions = [
+                {"revision": item["revision"], "instruction": item["instruction"]}
+                for item in (run_context.get("steering_instructions") or [])[-8:]
+                if isinstance(item, dict)
+                and type(item.get("revision")) is int
+                and isinstance(item.get("instruction"), str)
+            ]
+            memory = await asyncio.to_thread(
+                self.container.memory.context_for_run, task["owner_id"], task["agent_run_id"],
+            )
+        else:
+            memory = {"facts": [], "provenance": []}
         model = (DeepSeekDraftModel(self.container.settings, self.model.transport, skill_id=skill.id)
                  if isinstance(self.model, DeepSeekDraftModel) else self.model)
         generation_context = {
@@ -145,6 +188,10 @@ class DocumentRunner:
         prompt_task = prompt_task | {"generation_context": generation_context}
         if memory["facts"]:
             prompt_task = prompt_task | {"memory": memory["facts"]}
+        if reviewed_brief is not None:
+            prompt_task = prompt_task | {"reviewed_brief": reviewed_brief}
+        if steering_instructions:
+            prompt_task = prompt_task | {"steering_instructions": steering_instructions}
         messages = model.messages(prompt_task, sources)
         # Conservative UTF-8 byte bound, with room for chat framing and output.
         reservation = len(json.dumps(messages, ensure_ascii=False).encode()) + self.container.settings.max_output_tokens + 512
@@ -192,7 +239,17 @@ class DocumentRunner:
             raise CoworkerError("checkpoint_missing", "The draft could not be recovered. Please create a new task.")
         skill = task_skill_for_version(task["workflow_version"])
         options = {} if skill.id == "report_email" else {"skill_id": skill.id}
-        outputs = await asyncio.to_thread(self.renderer, parse_draft(skill.id, saved["draft"]), saved["sources"], **options)
+        parsed_draft = parse_draft(skill.id, saved["draft"])
+        outputs = await asyncio.to_thread(self.renderer, parsed_draft, saved["sources"], **options)
+        if skill.id in {"research", "report_email"}:
+            try:
+                validate_day6_exports(skill.id, parsed_draft, outputs)
+            except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+                raise CoworkerError(
+                    "export_invalid",
+                    "A native research or report artifact failed format, MIME, heading, or language validation. Please retry.",
+                    422,
+                ) from None
         manifest = []
         attempted_keys = []
         checkpoint_write_started = False
@@ -250,6 +307,7 @@ class DocumentRunner:
                 raise ValueError("Wrong output language")
         except (ValueError, KeyError, TypeError, AttributeError):
             raise CoworkerError("artifact_invalid", "The generated draft could not be verified. Please retry.") from None
+        verified_outputs = []
         for artifact in artifacts:
             # The key is server-owned, owner/task bound and content-addressed.
             # Recheck it before completion, not just on upload.
@@ -262,6 +320,16 @@ class DocumentRunner:
             body = await asyncio.to_thread(self.container.storage.get, artifact["object_key"], artifact["byte_size"])
             if len(body) != artifact["byte_size"] or hashlib.sha256(body).hexdigest() != artifact["sha256"]:
                 raise CoworkerError("artifact_invalid", "A generated download could not be verified. Please retry.")
+            verified_outputs.append((artifact.get("filename"), artifact.get("content_type"), body))
+        if skill.id in {"research", "report_email"}:
+            try:
+                validate_day6_exports(skill.id, validated, verified_outputs)
+            except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+                raise CoworkerError(
+                    "artifact_invalid",
+                    "A stored research or report artifact failed readback format, MIME, heading, or language validation.",
+                    409,
+                ) from None
         await asyncio.to_thread(self.repo.complete, task["id"], artifacts, bool(validated.missing_information))
 
     async def run_for_test(self, task_id):

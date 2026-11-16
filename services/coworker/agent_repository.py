@@ -2256,7 +2256,8 @@ class AgentRepository:
             result = {"decision": decision.decision}
             if decision.decision == "next_step":
                 result["ordinal"] = self.append_v3_step(
-                    run.owner_id, run_id, decision.tool, decision.objective, _db=db,
+                    run.owner_id, run_id, decision.tool, decision.objective,
+                    output_language=decision.output_language, _db=db,
                 )
             elif decision.decision == "complete":
                 if not self.v3_can_complete(run_id, _db=db):
@@ -2273,7 +2274,10 @@ class AgentRepository:
                 self._checkpoint(db, run, "v3_activity_result", resource_id=identity, evidence={"result": result})
             return result
 
-    def append_v3_step(self, owner: str, run_id: str, tool_name: str, objective: str, *, _db=None) -> int:
+    def append_v3_step(
+        self, owner: str, run_id: str, tool_name: str, objective: str, *,
+        output_language: str | None = None, _db=None,
+    ) -> int:
         """Translate one model-selected registered tool into server-owned arguments."""
         from .agent_planner import action_selection_candidates, exact_user_python_source, explicit_browser_url, intelligent_tool_names
 
@@ -2349,13 +2353,19 @@ class AgentRepository:
                         "instruction": objective,
                         "notes": run.goal if actual_name == "report.create" else "",
                         "document_ids": run_docs,
-                        "output_language": run.output_language,
+                        "output_language": output_language or run.output_language,
                     }
                     if actual_name == "research.search":
                         arguments["query"] = objective[:400]
                         arguments["time_range"] = "any"
 
             spec = tool(actual_name)
+            if output_language is not None and spec.kind != "task":
+                raise CoworkerError(
+                    "planner_tool_scope",
+                    "A per-step output language is allowed only for content-generation tasks.",
+                    409,
+                )
             if not spec.enabled(self.settings):
                 raise CoworkerError("tool_not_supported", "A required Agent tool is not enabled in this runtime.", 409)
             validated = spec.validate(arguments)

@@ -174,6 +174,12 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
             raise CoworkerError("planner_tool_scope", "The planner selected a tool outside the allowed registry.", 409)
         selected = candidates.get(choice.tool)
         if selected is not None:
+            if choice.output_language is not None:
+                raise CoworkerError(
+                    "planner_tool_scope",
+                    "A per-step output language is allowed only for content-generation tasks.",
+                    409,
+                )
             name = "email.send" if selected["kind"] == "email_send" else "calendar.create"
             spec = tool(name)
             if not spec.enabled(settings):
@@ -185,7 +191,7 @@ def proposal_to_plan(proposal: AgentPlannerProposal, goal: str, document_ids: li
             "instruction": goal,
             "notes": goal if choice.tool == "report.create" else "",
             "document_ids": document_ids,
-            "output_language": output_language,
+            "output_language": choice.output_language or output_language,
         }
         if choice.tool == "research.search":
             arguments["query"] = goal[:400]

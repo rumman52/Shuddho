@@ -87,6 +87,8 @@ class DeepSeekDraftModel:
             output_schema=self.draft_type.model_json_schema(),
             research=task.get("research"),
             memory=task.get("memory"),
+            reviewed_brief=task.get("reviewed_brief"),
+            steering_instructions=task.get("steering_instructions"),
             retrieval_used=bool(generation_context.get(
                 "retrieval_used", task.get("research") or task.get("memory")
             )),
