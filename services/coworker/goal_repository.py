@@ -91,6 +91,9 @@ class GoalRepository:
     def create(self, owner: str, request: GoalCreate, idempotency_key: str) -> tuple[dict, bool]:
         self._require_enabled()
         payload = request.model_dump(mode="json")
+        # Keep pre-project idempotency keys replayable for legacy clients.
+        if request.project_id is None:
+            payload.pop("project_id", None)
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
             if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
