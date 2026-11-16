@@ -1103,7 +1103,7 @@ def main(argv=None) -> int:
         if args.action == "preflight":
             return 0 if obj["passed"] else 1
         return 0
-    except (EvidenceError, OSError, ValueError, KeyError, TypeError) as exc:
+    except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         failure = {
             "schema_version": 2 if manifest and manifest.get("schema_version") == 2 else 1,
             "error": str(exc),
