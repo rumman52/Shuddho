@@ -971,15 +971,8 @@ def main(argv=None) -> int:
                 rows = prepare_blind(cases, manifest, candidate_rows,
                                      read_jsonl(args.competitor_outputs), blinding_key=key,
                                      manifest_sha256=manifest_digest)
-                obj = {
-                    "schema_version": 1,
-                    "manifest_sha256": manifest_digest,
-                    "release_id": manifest["release_id"],
-                    "source_revision": manifest["candidate_revision"],
-                    "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
-                    "run_id": manifest["run_id"],
-                    "rows": rows,
-                }
+                # Keep release identity and candidate/competitor mapping out of the reviewer packet.
+                obj = rows
             else:
                 if not args.candidate:
                     raise EvidenceError("external independently scored evidence and candidate outputs required")
@@ -1080,6 +1073,8 @@ def main(argv=None) -> int:
         if args.report:
             digest = immutable_write(args.report, obj)
             outputs.update({"report": str(args.report), "sha256": digest})
+            if args.action == "prepare-blind":
+                outputs.update({"manifest_sha256": manifest_digest, "blind_packet_only": True})
         if args.recovery_report:
             recovery_digest = immutable_write(args.recovery_report, obj["day10_recovery"])
             outputs.update({"recovery_report": str(args.recovery_report),
@@ -1089,7 +1084,8 @@ def main(argv=None) -> int:
             outputs.update({"holdout_report": str(args.holdout_report),
                             "holdout_sha256": holdout_digest})
         if outputs:
-            outputs["eligible"] = obj.get("operator_evidence_gate", False)
+            if isinstance(obj, dict):
+                outputs["eligible"] = obj.get("operator_evidence_gate", False)
             print(json.dumps(outputs))
         else:
             print(json.dumps(obj, ensure_ascii=False, sort_keys=True))
