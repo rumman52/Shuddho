@@ -176,6 +176,11 @@ def load_authorized_daily_scope(client: httpx.Client, token: str, automation: di
     if (goal.get("id") != goal_id or goal.get("revision") != revision
             or goal.get("state") != "active"):
         raise ScheduledProfileProbeFailure("Owner-approved goal identity/revision/state changed.")
+    project_id = goal.get("project_id")
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ScheduledProfileProbeFailure(
+            "Day 7 goal must be bound to an explicit owner-owned project ID."
+        )
     resources = goal.get("authorized_resources")
     if (not isinstance(resources, list) or not 1 <= len(resources) <= 5
             or any(not isinstance(resource, dict)
@@ -188,7 +193,26 @@ def load_authorized_daily_scope(client: httpx.Client, token: str, automation: di
     documents = [resource["reference"] for resource in resources]
     if len(set(documents)) != len(documents):
         raise ScheduledProfileProbeFailure("Owner-approved goal contains duplicate documents.")
-    return {"goal_id": goal_id, "goal_revision": revision,
+    project = json_object(
+        client.get(f"/api/v1/projects/{project_id}", headers=auth(token)),
+        "owner-approved briefing project",
+    )
+    if project.get("id") != project_id:
+        raise ScheduledProfileProbeFailure("Owner-approved project identity changed.")
+    project_resources = project.get("resources")
+    if not isinstance(project_resources, list):
+        raise ScheduledProfileProbeFailure("Owner-approved project resources have an unexpected shape.")
+    linked_documents = {
+        resource.get("resource_id")
+        for resource in project_resources
+        if isinstance(resource, dict) and resource.get("resource_type") == "document"
+        and isinstance(resource.get("resource_id"), str)
+    }
+    if not set(documents).issubset(linked_documents):
+        raise ScheduledProfileProbeFailure(
+            "Every approved briefing document must remain linked to the selected project."
+        )
+    return {"goal_id": goal_id, "goal_revision": revision, "project_id": project_id,
             "authorized_document_ids": documents}
 
 
@@ -349,7 +373,7 @@ def verify(args: argparse.Namespace) -> dict:
                 if scenario == "daily_coworker":
                     if (not daily_scope
                             or any(state.get(field) != daily_scope.get(field) for field in (
-                                "goal_id", "goal_revision", "authorized_document_ids"
+                                "goal_id", "goal_revision", "project_id", "authorized_document_ids"
                             ))):
                         raise ScheduledProfileProbeFailure(
                             "Owner-approved goal or selected document scope changed since preparation."
@@ -428,7 +452,7 @@ def verify(args: argparse.Namespace) -> dict:
                                 or prior.get("owner_id") != state.get("owner_id")
                                 or prior.get("automation_id") != state.get("automation_id")
                                 or any(prior.get(field) != daily_scope.get(field) for field in (
-                                    "goal_id", "goal_revision", "authorized_document_ids"
+                                    "goal_id", "goal_revision", "project_id", "authorized_document_ids"
                                 ))
                                 or not isinstance(prior.get("input_version_ids"), list)
                                 or not prior["input_version_ids"]):
