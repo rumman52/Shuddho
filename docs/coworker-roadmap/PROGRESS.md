@@ -1,3 +1,15 @@
+## Reuse PR CI results on review events
+
+Review events run `ci-merge-gate` without starting the test suites or
+cancelling an in-progress test run. The gate requires all existing test
+jobs and the ancestry check to pass for the same pull request, head SHA,
+and GitHub test merge SHA before verifying the latest independent approval.
+Main push CI and native branch rules retain their existing requirements.
+For a review-only gate run, `scripts.v01_merge_evidence` accepts `--ci-run`
+with the original test run ID printed in the successful reuse step.
+
+---
+
 ## PA-10 ruleset audit integrated with scoped CI — 16 November 2026 (Asia/Dhaka)
 
 PR [#714](https://github.com/rumman52/Shuddho/pull/714) now includes
@@ -14,18 +26,6 @@ and PR reviews. Main CI [#43804910236](https://github.com/rumman52/Shuddho/actio
 failed the native governance audit. App and environment setup, a successful
 live audit and worker qualification are pending. See the
 [infrastructure runbook](../../infra/README.md#authorize-the-github-ruleset-audit).
-
----
-
-## Reuse PR CI results on review events
-
-Review events run `ci-merge-gate` without starting the test suites or
-cancelling an in-progress test run. The gate requires all existing test
-jobs and the ancestry check to pass for the same pull request, head SHA,
-and GitHub test merge SHA before verifying the latest independent approval.
-Main push CI and native branch rules retain their existing requirements.
-For a review-only gate run, `scripts.v01_merge_evidence` accepts `--ci-run`
-with the original test run ID printed in the successful reuse step.
 
 ---
 
