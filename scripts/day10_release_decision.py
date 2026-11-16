@@ -18,9 +18,9 @@ if __package__ in {None, ""}:
     # Support the documented `python scripts/day10_release_decision.py` entrypoint.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.cohort_release_gate import evaluate_release
-from scripts.ruke_pilot_eval import OPERATED, operated_trace_ok, reviewer_identity
-from scripts.staging_release_freeze import (
+from scripts.cohort_release_gate import evaluate_release  # noqa: E402
+from scripts.ruke_pilot_eval import OPERATED, operated_trace_ok, reviewer_identity  # noqa: E402
+from scripts.staging_release_freeze import (  # noqa: E402
     EXPECTED_ROLLBACK,
     PA10_REQUIRED_FALSE,
     PA10_REQUIRED_TRUE,
