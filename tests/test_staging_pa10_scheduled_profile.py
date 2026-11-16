@@ -50,14 +50,17 @@ class _ScopeResponse:
         return self.payload
 
 
-@pytest.mark.parametrize("change", ["connector", "memory", "stale_revision", "empty_documents", "wrong_goal"])
+@pytest.mark.parametrize("change", ["connector", "memory", "stale_revision", "empty_documents", "wrong_goal", "missing_project", "unlinked_project_document"])
 def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
     automation = {
         "goal_id": "goal-1", "goal_revision": 2,
         "connector_read_grant_ids": [],
     }
-    goal = {"id": "goal-1", "revision": 2, "state": "active",
+    goal = {"id": "goal-1", "revision": 2, "state": "active", "project_id": "project-1",
             "authorized_resources": [{"kind": "document", "reference": "doc-1"}]}
+    project = {"id": "project-1", "resources": [
+        {"resource_type": "document", "resource_id": "doc-1", "title": "Doc 1"},
+    ]}
     if change == "connector":
         automation["connector_read_grant_ids"] = ["external-read-grant"]
     elif change == "memory":
@@ -68,12 +71,19 @@ def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
         goal["authorized_resources"] = []
     elif change == "wrong_goal":
         goal["id"] = "goal-2"
+    elif change == "missing_project":
+        goal["project_id"] = None
+    elif change == "unlinked_project_document":
+        project["resources"] = []
 
     class Client:
         def get(self, path, **kwargs):
-            assert path == "/api/v1/goals/goal-1"
             assert kwargs["headers"]["Authorization"] == "Bearer synthetic-token"
-            return _ScopeResponse(goal)
+            if path == "/api/v1/goals/goal-1":
+                return _ScopeResponse(goal)
+            if path == "/api/v1/projects/project-1":
+                return _ScopeResponse(project)
+            raise AssertionError(f"Unexpected GET {path}")
 
     with pytest.raises(probe.ScheduledProfileProbeFailure):
         probe.load_authorized_daily_scope(Client(), "synthetic-token", automation)
@@ -82,16 +92,20 @@ def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
 def test_daily_scope_is_bound_to_live_owner_goal_and_pinned_documents():
     automation = {"goal_id": "goal-1", "goal_revision": 2,
                   "connector_read_grant_ids": []}
-    goal = {"id": "goal-1", "revision": 2, "state": "active",
+    goal = {"id": "goal-1", "revision": 2, "state": "active", "project_id": "project-1",
             "authorized_resources": [{"kind": "document", "reference": "doc-1"},
                                      {"kind": "document", "reference": "doc-2"}]}
+    project = {"id": "project-1", "resources": [
+        {"resource_type": "document", "resource_id": "doc-1"},
+        {"resource_type": "document", "resource_id": "doc-2"},
+    ]}
 
     class Client:
         def get(self, path, **kwargs):
-            return _ScopeResponse(goal)
+            return _ScopeResponse(goal if path == "/api/v1/goals/goal-1" else project)
 
     scope = probe.load_authorized_daily_scope(Client(), "synthetic-token", automation)
-    assert scope == {"goal_id": "goal-1", "goal_revision": 2,
+    assert scope == {"goal_id": "goal-1", "goal_revision": 2, "project_id": "project-1",
                      "authorized_document_ids": ["doc-1", "doc-2"]}
     probe.require_daily_run_scope(["doc-1", "doc-2"], scope)
     with pytest.raises(probe.ScheduledProfileProbeFailure):
@@ -129,14 +143,14 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
         "run_profile": "briefing", "output_language": "en", "quiet_hours": None,
         "synthetic_account_label": "test-synthetic", "prepared_at": "2026-11-12T01:30:00Z",
         "baseline_occurrence_ids": [], "baseline_notification_ids": [],
-        "goal_id": "goal-1", "goal_revision": 1,
+        "goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
         "authorized_document_ids": ["doc-1"],
     }
     path = tmp_path / "state.json"
     path.write_text(json.dumps(state))
     current = {
         "owner_id": "owner-1", "automation": {"revision": 1},
-        "daily_scope": {"goal_id": "goal-1", "goal_revision": 1,
+        "daily_scope": {"goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
                         "authorized_document_ids": ["doc-1"]},
         "history": [{"occurrence_id": "occ-1", "trigger_type": "schedule",
                      "occurrence_state": "accepted", "run_state": "completed",
