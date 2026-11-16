@@ -139,6 +139,7 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
             "worker_readback_evidence_ref",
             "worker_stop_evidence_ref",
             "safe_state_procedure_ref",
+            "safe_state_deployment_reference",
             "safe_state_evidence_ref",
             "restored_data_probe_ref",
         )
@@ -161,6 +162,8 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
                 "restored_data_retrievable",
             ))
             and all(nonempty_text(value.get(key)) for key in evidence_refs)
+            and isinstance(value.get("safe_state_source_revision"), str)
+            and bool(SHA.fullmatch(value["safe_state_source_revision"]))
             and ordered_times(
                 value,
                 "rollback_started_at",
@@ -175,14 +178,17 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
             nonempty_text(value.get("cancelled_run_id"))
             and value.get("inference_active_at_cancel") is True
             and value.get("terminal_state") == "cancelled"
+            and value.get("late_result_observed") is True
+            and value.get("terminal_state_after_late_result") == "cancelled"
             and type(value.get("late_side_effects")) is int
             and value["late_side_effects"] == 0
             and ordered_times(
                 value,
                 "inference_started_at",
                 "cancelled_at",
+                "late_result_observed_at",
                 "verified_at",
-                strict_after=frozenset({0}),
+                strict_after=frozenset({0, 1}),
             )
         )
     if kind == "paused_schedule":
