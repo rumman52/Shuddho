@@ -332,6 +332,9 @@ class ConversationReplyService:
             buffer_source_deltas = bool(claim_result.get("sources"))
             text = ""
             try:
+                if buffer_source_deltas:
+                    # Catch revocation between claim/source extraction and provider start.
+                    await run_in_threadpool(self.assert_sources_current, owner, conversation_id, message_id)
                 stream_method = getattr(self.model, "stream", None)
                 if callable(stream_method):
                     async for part in stream_method(messages):
@@ -421,6 +424,9 @@ class ConversationReplyService:
         )
         if messages is None: return result
         try:
+            if result.get("sources"):
+                # Recheck immediately before non-streaming inference as well.
+                await run_in_threadpool(self.assert_sources_current, owner, conversation_id, message_id)
             text = await self.model.generate(messages)
             self.validate_grounded_text(text, result)
             result = {**result, "state": "completed", "text": text, "completed_at": iso(utcnow())}

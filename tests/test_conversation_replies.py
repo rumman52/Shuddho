@@ -820,6 +820,63 @@ def test_unsupported_or_unreadable_source_fails_before_model_invocation(containe
         assert db.get(ConversationMessage, message["id"]).assistant_reply is None
 
 
+
+
+def test_grounded_reply_rechecks_source_after_claim_before_provider_invocation(container):
+    from services.coworker.models import Document
+
+    data = setup(container)
+    document_id, _version_id = _attached_chat_source(container, data, b"Renewal date: 17 March 2027.")
+    service, model, _owner, _conversation, _message = data
+    original_check = service.assert_sources_current
+
+    def revoke_before_inference(owner, conversation_id, message_id):
+        with service.sessions.begin() as db:
+            db.get(Document, document_id).deleted = True
+        return original_check(owner, conversation_id, message_id)
+
+    service.assert_sources_current = revoke_before_inference
+    result = reply(data)
+    assert result["state"] == "failed" and not result["text"]
+    assert model.calls == 0
+
+
+def test_grounded_stream_rechecks_source_before_starting_provider(container):
+    from services.coworker.models import Document
+
+    data = setup(container)
+    document_id, _version_id = _attached_chat_source(container, data, b"Renewal date: 17 March 2027.")
+    service, _model, owner, conversation, message = data
+
+    class StreamingModel:
+        def __init__(self):
+            self.called = False
+
+        async def stream(self, _messages):
+            self.called = True
+            yield "Renewal date is 17 March 2027. [[src-1]]"
+
+    model = StreamingModel()
+    service.model = model
+    original_check = service.assert_sources_current
+
+    def revoke_before_inference(check_owner, conversation_id, message_id):
+        with service.sessions.begin() as db:
+            db.get(Document, document_id).deleted = True
+        return original_check(check_owner, conversation_id, message_id)
+
+    service.assert_sources_current = revoke_before_inference
+
+    async def collect():
+        claim, queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        return [event async for event in service.stream_events(claim, queue)]
+
+    events = asyncio.run(collect())
+    assert not model.called
+    assert all(event != "delta" for event, _value in events)
+    assert events[-1][0] == "final" and events[-1][1]["state"] == "failed"
+
+
 def test_grounded_stream_emits_text_only_after_citations_and_source_commit(container):
     data = setup(container)
     _attached_chat_source(container, data, b"Renewal date: 17 March 2027.")
