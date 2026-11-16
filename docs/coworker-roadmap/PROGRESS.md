@@ -1,3 +1,16 @@
+## Day 4 admission requires Runtime v3 for reviewed briefs — 17 November 2026 (Asia/Dhaka)
+
+The Day 4 workbook requires Runtime v3 for first admission of reviewed task
+briefs. Both legacy runtime variants could previously admit these requests.
+Admission now fails before creating a run or outbox entry when Runtime v3 is
+off. Unreviewed legacy requests and identical retries of admitted reviewed
+work retain their existing behavior.
+
+Both legacy admission cases reproduced on `d3866064`. Hosted qualification
+remains open. [Day 4 tracker](https://github.com/rumman52/Shuddho/issues/730)
+
+---
+
 ## Day 10 operated recovery traces — 16 November 2026 (Asia/Dhaka)
 
 The release decision now requires the Day 9 trace evidence for each of the
