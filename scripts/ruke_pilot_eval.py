@@ -780,11 +780,11 @@ def main(argv=None) -> int:
             if not custody_receipt_ok(evidence.get("custody")):
                 raise EvidenceError("independent D custody receipt is incomplete; heldout corpus was not read")
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
-            cases = validate_manifest(manifest, args.heldout, custody_verified=True)
             head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                   text=True, capture_output=True, check=True).stdout.strip()
-            if manifest["candidate_revision"] != head:
-                raise EvidenceError("manifest revision differs from exact checkout head")
+            if manifest.get("candidate_revision") != head:
+                raise EvidenceError("manifest revision differs from exact checkout head; heldout corpus was not read")
+            cases = validate_manifest(manifest, args.heldout, custody_verified=True)
             if args.action == "prepare-blind":
                 if not args.candidate or not args.competitor_outputs or not args.blinding_key:
                     raise EvidenceError("real outputs and D-only blinding key required for blind packet")
