@@ -9,8 +9,8 @@ from hashlib import sha256
 from uuid import UUID, uuid4
 
 import httpx
-import pytest
 from pydantic import ValidationError
+import pytest
 
 # The general baseline job intentionally does not install coworker extras.
 # The mandatory Day 4 gate runs with those extras and must execute these tests.
@@ -249,6 +249,28 @@ def test_bangla_task_brief_keeps_recent_turns_within_provider_byte_limit(contain
     assert 1 < len(sent) < 9
     assert sent[-1]["text"] == latest["text"]
 
+
+
+def test_task_brief_proposal_uses_only_the_latest_twelve_server_selected_turns(container):
+    owner, conversation, messages, service, _ = setup(container, "brief-history-limit")
+    for turn in range(1, 15):
+        latest = append(messages, owner, conversation, f"Conversation turn {turn}.", f"turn-{turn}")
+    observed = {}
+
+    class Planner:
+        async def propose_task_brief(self, history, source_ids):
+            observed["history"] = history
+            observed["source_ids"] = source_ids
+            return TaskBriefSuggestion(state="ready", brief=brief()), 12
+
+    service.model = Planner()
+    result = asyncio.run(service.propose(
+        owner, conversation["id"], latest["id"], expected_sequence=14,
+    ))
+    assert result["state"] == "ready"
+    assert [turn["sequence"] for turn in observed["history"]] == list(range(3, 15))
+    assert all(set(turn) == {"sequence", "text", "source_ids"} for turn in observed["history"])
+    assert observed["source_ids"] == []
 
 def test_task_brief_rejects_capacity_before_call_when_prompt_exceeds_workspace_budget(container):
     owner, conversation, messages, service, _ = setup(container, "brief-reservation")
