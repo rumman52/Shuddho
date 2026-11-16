@@ -124,6 +124,19 @@ Exact-head CI and the live release evidence remain pending.
 
 ---
 
+## Day 7 briefing receipt chronology — 16 November 2026 (Asia/Dhaka)
+
+The two-day briefing verifier rejects a verification or pause timestamp in the
+future and requires actual positive integer automation revisions. The existing
+pause command applies the same verifier before pausing the synthetic schedule
+and after reading back the paused state.
+
+Local verification: 89 tests passed across briefing, scheduling and the Day 10
+release decision. The two natural staging occurrences and independent Temporal
+timer evidence remain pending.
+
+---
+
 ## Day 1 final source-alignment follow-up — 10 November 2026 (Asia/Dhaka)
 
 After the source/UI ownership map identified an unsupported upload-picker claim, a React regression was committed first (`a8e7a37c6c86892976c7a67ffc4091297e8d308b`). GitHub frontend CI reproduced the precise RED: **240 passed, 1 failed**, actual picker `.txt,.docx,.pdf,.csv,.xlsx,.pptx` versus accepted `.txt,.docx,.pdf`. The subsequent code correction narrows the picker and hint without extending the upload client's formats, security boundaries, or the backend. **Exact corrected-head CI pending** at this source checkpoint.
