@@ -148,6 +148,8 @@ The external `evidence.json` has these keys:
 - `comparisons`: 160 blinded judgment records described above (or omitted, with gap disclosed).
 - `comparison_adjudications`: independent third-reviewer A/B decisions with source rationales for every unresolved comparative disagreement.
 - `custody`: three distinct pseudonymous IDs `custodian_id`, `developer_id`, `corpus_author_id`; independent operator review=`verified`; custodian positive-read test=`allowed`; developer negative-read test=`denied`; exposure-history review=`true`; replacement of exposed cases=`true`; and SHA-256 digests for frozen inputs, frozen answers, rubric, exposure history, access log and custody receipt. These are **unverified operator statements to this CLI**, not cryptographic attestations.
+
+The CLI requires this complete receipt and the candidate readbacks before it reads any holdout bytes. Both `evaluate` and `prepare-blind` require the external custody/readback evidence JSON. C/D must independently authenticate the human identities, positive/negative access tests, source access logs and isolated storage; the CLI's digest checks are not proof of custody.
 - `required_repository_checks` and `canonical_release_contract`: both `passed` only with independently inspected exact-head evidence; `unresolved_high_severity_failures` is a required array.
 
 ```bash
