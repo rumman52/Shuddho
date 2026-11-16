@@ -120,6 +120,10 @@ test("new goals persist the selected project and explicitly approved document ID
       await Promise.resolve();
     });
     await act(async () => { await Promise.resolve(); });
+    const objective = tree.root.findAllByType("textarea")[0];
+    await act(async () => {
+      objective.props.onChange({ target: { value: "Prepare the daily project briefing" } });
+    });
     const documentCheckbox = tree.root.findAllByType("input")
       .find(item => item.props.type === "checkbox" && item.props.checked === false);
     assert.ok(documentCheckbox, "project document checkbox should be available");
@@ -132,10 +136,6 @@ test("new goals persist the selected project and explicitly approved document ID
     assert.ok(approvalCheckbox, "explicit source-scope approval checkbox should be available");
     await act(async () => {
       approvalCheckbox.props.onChange({ target: { checked: true } });
-    });
-    const objective = tree.root.findAllByType("textarea")[0];
-    await act(async () => {
-      objective.props.onChange({ target: { value: "Prepare the daily project briefing" } });
     });
     await act(async () => {
       await tree.root.findByType("form").props.onSubmit({ preventDefault: () => undefined });
