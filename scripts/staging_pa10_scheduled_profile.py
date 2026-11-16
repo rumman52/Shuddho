@@ -549,7 +549,7 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         if (not daily_scope
                 or any(item.get(field) != daily_scope.get(field)
                        for item in (state, first, second)
-                       for field in ("goal_id", "goal_revision", "authorized_document_ids"))):
+                       for field in ("goal_id", "goal_revision", "project_id", "authorized_document_ids"))):
             raise ScheduledProfileProbeFailure(
                 "Live owner-approved goal scope changed before two-day pause."
             )
