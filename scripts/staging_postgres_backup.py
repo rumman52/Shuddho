@@ -109,7 +109,8 @@ def private_schema_access(connection) -> dict:
                 SELECT 1
                 FROM pg_default_acl AS d
                 CROSS JOIN LATERAL aclexplode(d.defaclacl) AS acl
-                WHERE d.defaclnamespace = n.oid AND d.defaclobjtype = 'r'
+                WHERE (d.defaclnamespace = 0 OR d.defaclnamespace = n.oid)
+                  AND d.defaclobjtype = 'r'
                   AND (
                     acl.grantee = 0
                     OR acl.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'anon')
@@ -122,7 +123,8 @@ def private_schema_access(connection) -> dict:
                 SELECT 1
                 FROM pg_default_acl AS d
                 CROSS JOIN LATERAL aclexplode(d.defaclacl) AS acl
-                WHERE d.defaclnamespace = n.oid AND d.defaclobjtype = 'r'
+                WHERE (d.defaclnamespace = 0 OR d.defaclnamespace = n.oid)
+                  AND d.defaclobjtype = 'r'
                   AND (
                     acl.grantee = 0
                     OR acl.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'authenticated')
