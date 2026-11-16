@@ -705,6 +705,12 @@ class AutomationRepository:
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
             )
             if request.run_profile == "briefing":
+                if request.expires_at is None:
+                    raise CoworkerError(
+                        "briefing_expiry_required",
+                        "Recurring project briefings must have an explicit future expiry.",
+                        409,
+                    )
                 validate_project_document_scope(
                     db, owner, goal.project_id, list(goal.authorized_resources or []),
                     require_documents=True,
@@ -844,6 +850,12 @@ class AutomationRepository:
                 PersonalGoal.owner_id == owner,
             ))
             if row.run_profile == "briefing":
+                if row.expires_at is None:
+                    raise CoworkerError(
+                        "briefing_expiry_required",
+                        "Recurring project briefings must have an explicit future expiry.",
+                        409,
+                    )
                 if current_goal is None:
                     raise not_found()
                 validate_project_document_scope(
