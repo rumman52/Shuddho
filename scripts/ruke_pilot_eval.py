@@ -1052,7 +1052,8 @@ def main(argv=None) -> int:
                     "scores": first_run_scores,
                     "reviewers": scores["reviewers"],
                     "outcomes": scores,
-                    "usage": {**usage, "reported_cost_per_accepted_task_microusd":
+                    "usage": {**{key: value for key, value in usage.items() if key != "case_run_receipts"},
+                              "reported_cost_per_accepted_task_microusd":
                               (usage["reported_cost_microusd"] / scores["accepted"]
                                if usage["reported_cost_microusd"] is not None and scores["accepted"] else None)},
                     "operations": faults,
