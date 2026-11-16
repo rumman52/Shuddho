@@ -1,3 +1,18 @@
+## Day 10 operated recovery traces — 16 November 2026 (Asia/Dhaka)
+
+The release decision now requires the Day 9 trace evidence for each of the
+20 named recovery scenarios on the exact frozen release. Missing or simulated
+execution and missing or unsafe access and mutation verdicts fail the gate.
+Every required PostgreSQL, Temporal, or object storage boundary needs a real
+instance reference and trace hash as defined by the scenario inventory.
+Operators verify the submitted evidence against the source systems.
+
+Twelve cases reproduced permissive decisions or malformed hash errors on
+main at `0e421803`. The corrected release and evidence suites passed 256
+tests, and the release-contract check passed. Hosted qualification remains open.
+
+---
+
 ## Day 10 distinct pilot approvers — 16 November 2026 (Asia/Dhaka)
 
 The handoff now requires two distinct, valid founder and operations-owner

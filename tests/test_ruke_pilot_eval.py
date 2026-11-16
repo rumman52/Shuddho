@@ -383,6 +383,15 @@ def test_operated_rows_reject_revision_mismatch_or_missing_row():
         verify_operations(rows[:-1], "a" * 40)
 
 
+@pytest.mark.parametrize("boundary", [None, "postgres"])
+def test_operated_rows_fail_closed_for_nonstring_trace_hashes(boundary):
+    rows = operations()
+    row = rows[0]
+    trace = row if boundary is None else row["boundaries"][boundary]
+    trace["trace_sha256"] = None
+    assert verify_operations(rows, "a" * 40)["failed_rows"] == [1]
+
+
 def test_blinding_secret_must_be_private_and_external(external_dir):
     path = external_dir / "blind.key"
     path.write_bytes(BLIND_KEY)

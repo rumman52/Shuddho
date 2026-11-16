@@ -54,7 +54,11 @@ def evidence():
     recovery = {**proof(), "scenarios": [dict(
         proof(), id=f"recovery-{i}", scenario=name,
         evidence_ref=f"https://evidence.example.test/recovery-{i}",
-    ) for i, (name, _) in OPERATED.items()]}
+        execution="operated", observed_at=NOW, trace_sha256="e" * 64,
+        unauthorized_access=False, unauthorized_mutation=False,
+        boundaries={target: {"mode": "real", "instance": f"staging-{target}", "trace_sha256": "f" * 64}
+                    for target in targets},
+    ) for i, (name, targets) in OPERATED.items()]}
     approval = {**proof(), "explicit_separate_authorization": True,
                 "reference": "founder-C-approved-change", "founder": "founder-signoff",
                 "owner_c": "C-signoff", "max_users": 5}
@@ -178,6 +182,27 @@ def test_release_requires_every_named_recovery_scenario(monkeypatch, scenario):
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "twenty_operated_recovery_scenarios" in result["blockers"]
+
+
+@pytest.mark.parametrize("mutate", [
+    pytest.param(lambda row: row.pop("execution"), id="missing-execution"),
+    pytest.param(lambda row: row.update(execution="simulated"), id="simulated"),
+    pytest.param(lambda row: row.update(unauthorized_access=True), id="unauthorized-access"),
+    pytest.param(lambda row: row.pop("unauthorized_mutation"), id="missing-mutation-verdict"),
+    pytest.param(lambda row: row.update(unauthorized_mutation=0), id="nonboolean-mutation-verdict"),
+    pytest.param(lambda row: row.update(trace_sha256=None), id="invalid-trace"),
+    pytest.param(lambda row: row.update(observed_at="9998-01-01T00:00:00Z"), id="future-observation"),
+    pytest.param(lambda row: row["boundaries"].pop("object_storage"), id="missing-object-storage"),
+    pytest.param(lambda row: row["boundaries"]["postgres"].update(mode="mock"), id="mock-postgres"),
+    pytest.param(lambda row: row["boundaries"]["temporal"].update(trace_sha256=None), id="invalid-temporal-trace"),
+])
+def test_release_requires_operated_recovery_traces(monkeypatch, mutate):
+    rollout, artifacts = evidence()
+    mutate(artifacts["recovery"]["scenarios"][-1])
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert result["blockers"] == ["twenty_operated_recovery_scenarios"]
+    assert result["scorecard"]["recovery_passed"] is None
 
 
 def test_canonical_decision_is_not_overridable(monkeypatch):

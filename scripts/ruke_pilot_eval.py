@@ -325,6 +325,34 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             "reviewer_count": len(reviewer_set), "results": results}
 
 
+def _trace_sha_ok(value: object) -> bool:
+    return isinstance(value, str) and bool(SHA.fullmatch(value))
+
+
+def operated_trace_ok(row: dict, required_boundaries: tuple[str, ...]) -> bool:
+    """Check the common trace evidence required for an operated recovery case."""
+    observed_at = row.get("observed_at")
+    boundaries = row.get("boundaries")
+    if (
+        row.get("execution") != "operated"
+        or row.get("unauthorized_access") is not False
+        or row.get("unauthorized_mutation") is not False
+        or not _trace_sha_ok(row.get("trace_sha256"))
+        or not isinstance(observed_at, str) or not observed_at.strip()
+        or not isinstance(boundaries, dict)
+    ):
+        return False
+    for target in required_boundaries:
+        evidence = boundaries.get(target)
+        if (
+            not isinstance(evidence, dict) or evidence.get("mode") != "real"
+            or not isinstance(evidence.get("instance"), str) or not evidence["instance"].strip()
+            or not _trace_sha_ok(evidence.get("trace_sha256"))
+        ):
+            return False
+    return True
+
+
 def verify_operations(rows: list[dict], candidate_revision: str) -> dict:
     ids = {str(i) for i in OPERATED}
     normalized = [{**r, "row": str(r.get("row"))} for r in rows]
@@ -335,21 +363,9 @@ def verify_operations(rows: list[dict], candidate_revision: str) -> dict:
         name, needed = OPERATED[index]
         if row.get("scenario") != name or row.get("candidate_revision") != candidate_revision:
             raise EvidenceError("operated scenario/revision mismatch")
-        if row.get("status") != "pass" or row.get("execution") != "operated":
+        if row.get("status") != "pass" or not operated_trace_ok(row, needed):
             failed.append(index)
-        if row.get("unauthorized_access") is not False or row.get("unauthorized_mutation") is not False:
-            failed.append(index)
-        if not SHA.fullmatch(row.get("trace_sha256", "")) or not isinstance(row.get("observed_at"), str) or not row["observed_at"].strip():
-            failed.append(index)
-        boundaries = row.get("boundaries")
-        if not isinstance(boundaries, dict):
-            failed.append(index)
-            continue
-        for target in needed:
-            evidence = boundaries.get(target)
-            if not isinstance(evidence, dict) or evidence.get("mode") != "real" or not isinstance(evidence.get("instance"), str) or not evidence["instance"].strip() or not SHA.fullmatch(evidence.get("trace_sha256", "")):
-                failed.append(index)
-    failed = sorted(set(failed))
+    failed.sort()
     return {"total": 20, "passed": 20 - len(failed), "failed_rows": failed, "fault_gate_pass": not failed,
             "evidence_level": "operator_submitted_operated_traces_not_independently_attested"}
 

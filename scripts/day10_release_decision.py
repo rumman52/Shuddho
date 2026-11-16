@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_release_gate import evaluate_release
-from scripts.ruke_pilot_eval import OPERATED, reviewer_identity
+from scripts.ruke_pilot_eval import OPERATED, operated_trace_ok, reviewer_identity
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -45,7 +45,7 @@ def time_ok(value: object) -> bool:
     try:
         stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return stamp.tzinfo is not None and stamp.astimezone(timezone.utc) <= datetime.now(timezone.utc)
-    except ValueError:
+    except (ValueError, OverflowError):
         return False
 
 
@@ -132,7 +132,7 @@ def recovery_ok(value: object, release: str, revision: str, digest: str) -> bool
     if not bound(value, release, revision, digest):
         return False
     rows = value.get("scenarios")
-    remaining = {name for name, _ in OPERATED.values()}
+    remaining = dict(OPERATED.values())
     if not isinstance(rows, list) or len(rows) != len(remaining):
         return False
     ids, refs = set(), set()
@@ -146,7 +146,9 @@ def recovery_ok(value: object, release: str, revision: str, digest: str) -> bool
         scenario = row.get("scenario")
         if not isinstance(scenario, str) or scenario not in remaining:
             return False
-        remaining.remove(scenario)
+        if not operated_trace_ok(row, remaining[scenario]) or not time_ok(row.get("observed_at")):
+            return False
+        del remaining[scenario]
     return not remaining
 
 
