@@ -12,6 +12,11 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+
+if __package__ in {None, ""}:
+    # Support the documented `python scripts/day10_release_decision.py` entrypoint.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.cohort_release_gate import evaluate_release
 from scripts.ruke_pilot_eval import OPERATED, operated_trace_ok, reviewer_identity
