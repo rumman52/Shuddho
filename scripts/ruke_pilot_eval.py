@@ -132,7 +132,7 @@ def validate_candidate_identity(manifest: dict) -> dict:
     if not isinstance(identity, dict) or set(identity) != required:
         raise EvidenceError("candidate identity fields are incomplete or unexpected")
     revision = manifest.get("candidate_revision")
-    if (not REV.fullmatch(revision or "")
+    if (not isinstance(revision, str) or not REV.fullmatch(revision)
             or identity["api_source_revision"] != revision
             or identity["worker_source_revision"] != revision):
         raise EvidenceError("API/worker source revisions do not match the exact candidate SHA")
