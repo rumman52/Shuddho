@@ -73,9 +73,8 @@ def evidence():
                  "model": {**proof(), "provider_model": "model-r"}, "approval": approval}
     artifacts.update({key: proof() for key in day10.PROOFS})
     artifacts["rollback"].update(
-        kill_switches_verified=["SHUDDHO_COWORKER_ENABLED=false",
-                                "SHUDDHO_AGENT_RUNTIME_ENABLED=false"],
-        capability_flags_after_rollback={key: False for key in day10.RUNTIME_CAPABILITY_KEYS},
+        kill_switches_verified=list(day10.EXPECTED_ROLLBACK.values()),
+        capability_flags_after_rollback={**{key: False for key in day10.RUNTIME_CAPABILITY_KEYS}, "memory": True},
         new_admissions_stopped=True,
         api_reload_verified=True,
         api_readback_evidence_ref="https://evidence.example.test/api-readback",
@@ -324,7 +323,9 @@ def test_day10_security_failure_is_absolute_nogo_with_39_human_accepted(monkeypa
     pytest.param(lambda a: a["rollback"].pop("new_admissions_stopped"), id="missing-admission-stop"),
     pytest.param(lambda a: a["rollback"].update(new_admissions_stopped=False), id="admissions-still-open"),
     pytest.param(lambda a: a["rollback"].pop("capability_flags_after_rollback"), id="missing-capability-readback"),
-    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(browser=True), id="capability-still-enabled"),
+    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(coworker=True), id="pilot-capability-still-enabled"),
+    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(conversations=True), id="required-off-capability-enabled"),
+    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(memory="true"), id="non-boolean-capability-readback"),
     pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(unreviewed=False), id="extra-capability"),
     pytest.param(lambda a: a["rollback"].update(api_reload_verified=False), id="api-reload-unverified"),
     pytest.param(lambda a: a["rollback"].pop("api_readback_evidence_ref"), id="api-readback-missing"),
@@ -333,6 +334,8 @@ def test_day10_security_failure_is_absolute_nogo_with_39_human_accepted(monkeypa
     pytest.param(lambda a: a["rollback"].update(outstanding_work_fenced=False), id="work-not-fenced"),
     pytest.param(lambda a: a["rollback"].update(ledger_consistency_verified=False), id="ledger-unverified"),
     pytest.param(lambda a: a["rollback"].pop("worker_stop_evidence_ref"), id="worker-stop-receipt-missing"),
+    pytest.param(lambda a: a["rollback"]["kill_switches_verified"].remove(day10.EXPECTED_ROLLBACK["browser_push_kill_switch"]), id="browser-push-kill-switch-missing"),
+    pytest.param(lambda a: a["rollback"]["kill_switches_verified"].remove(day10.EXPECTED_ROLLBACK["personal_goals_kill_switch"]), id="personal-goals-kill-switch-missing"),
     pytest.param(lambda a: a["rollback"].pop("safe_state_procedure_ref"), id="safe-state-procedure-missing"),
     pytest.param(lambda a: a["rollback"].pop("safe_state_source_revision"), id="safe-state-revision-missing"),
     pytest.param(lambda a: a["rollback"].update(safe_state_source_revision="not-a-sha"), id="safe-state-revision-invalid"),
