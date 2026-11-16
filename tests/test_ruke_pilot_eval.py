@@ -250,6 +250,7 @@ def test_legacy_manifest_is_readable_only_in_explicit_legacy_mode(external_dir):
     held.chmod(0o444)
     legacy = manifest()
     legacy["schema_version"] = 1
+    legacy["corpus_sha256"] = hashlib.sha256(held.read_bytes()).hexdigest()
     for key in ("release_id", "run_id", "rollout_manifest_sha256", "candidate_identity"):
         legacy.pop(key)
     with pytest.raises(EvidenceError, match="legacy manifest"):
