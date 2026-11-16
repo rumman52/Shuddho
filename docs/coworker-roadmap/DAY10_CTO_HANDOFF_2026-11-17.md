@@ -21,7 +21,7 @@ This is an evidence handoff, not a claim that the ten-day programme is operation
 | Work | Exact head | State at handoff |
 | --- | --- | --- |
 | PR #746 — reviewed brief UTF-8 budget | `540f6a9ef46077a5764bf221dc3b9c648d087ea1` | Draft; corrected-head CI run #43946993548 in progress |
-| PR #748 — Day 10 operated receipt contracts | `0961bc6ea447458b260da8bde11ee9bba74d8932` | Draft; corrected-head CI run #43947632267 in progress |
+| PR #748 — Day 10 operated receipt contracts | `ee04e512254a5eecc7a0aac84e9fef58eb975a68` | Draft; latest corrected-head CI run #43949295652 queued after synthetic-owner proof was added |
 
 Other open work already exists and must not be duplicated: PR #741 (staging preflight), #742 (Day 5 memory isolation), #744 (Day 3 grounded replies), and #747 (Day 7 project-bound briefings). Refresh their exact heads and CI before depending on them.
 
