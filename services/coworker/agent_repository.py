@@ -2294,9 +2294,9 @@ class AgentRepository:
             else:
                 result["wait_seconds"] = int(decision.wait_seconds)
             self.settle_planner_capacity(
-                        run_id, planner_call, total_tokens, cost_microusd,
-                        input_tokens=input_tokens, output_tokens=output_tokens, _db=db,
-                    )
+                run_id, planner_call, total_tokens, cost_microusd,
+                input_tokens=input_tokens, output_tokens=output_tokens, _db=db,
+            )
             if identity:
                 self._checkpoint(db, run, "v3_activity_result", resource_id=identity, evidence={"result": result})
             return result

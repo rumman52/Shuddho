@@ -85,7 +85,7 @@ The previous Phase 9 PR had a CI invocation defect: the evaluation file imported
 
 Migration `0067` adds nullable `cw_agent_decisions.latency_ms`; migration `0071` adds nullable planner and child-attempt input/output token fields. They are nullable so pre-migration and incomplete provider calls remain readable. Runtime v3 persists planner round-trip latency and aggregates provider-reported prompt/completion counts only when every planner reservation is settled with both directions. Child `ModelAttempt` rows persist each attempt's provider-reported directions. The exporter reports p50/p95/p99 model latency, tool latency and token-direction coverage without substituting reserved totals for directional usage.
 
-Execution retry rate is defined as planner/model/tool retry attempts divided by model calls plus tool calls in the selected window. Temporal outbox dispatch retries are reported separately because they have a different denominator. Counts and rates remain aggregate; no per-user or per-run labels are added.
+The execution retry/failure rate counts planner failures, child-model retries and tool retries divided by model calls plus tool calls in the selected window. Temporal outbox dispatch retries are reported separately because they have a different denominator. Counts and rates remain aggregate; no per-user or per-run labels are added.
 
 ## Monitoring and concurrent-load evidence
 

@@ -308,6 +308,10 @@ def aggregate(records: list[dict], transactions: list[Transaction], settings: Se
     execution_attempts = model_calls + tool_calls
     direction_complete = bool(records) and all(
         item.get("token_direction_breakdown_available") is True
+        and type(item.get("input_tokens")) is int
+        and item["input_tokens"] >= 0
+        and type(item.get("output_tokens")) is int
+        and item["output_tokens"] >= 0
         for item in records
     )
     input_token_total = (

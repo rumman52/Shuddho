@@ -481,6 +481,34 @@ def test_snapshot_keeps_directional_usage_unknown_when_any_planner_direction_is_
 
 
 
+def test_snapshot_keeps_directional_usage_unknown_when_child_attempt_lacks_direction(tmp_path):
+    container = make_container(tmp_path)
+    account_id = owner(container, "child-token-directions-missing")
+    run = create_run(container, account_id, "child-token-directions-missing-run")
+    task, _ = container.repository.create_task(
+        account_id,
+        TaskCreate(
+            instruction="Draft the bounded output.",
+            notes="Missing child usage test.",
+            output_language="en",
+        ),
+        "child-token-directions-missing-task",
+        enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=None,
+    )
+    attempt = container.repository.reserve_model(task["id"], 100)
+    container.repository.settle_model(task["id"], attempt, 40, 12, "completed")
+
+    snapshot = collect_snapshot(container.settings)
+    record = next(item for item in snapshot["records"] if item["run_id"] == run["id"])
+    assert record["input_tokens"] is None
+    assert record["output_tokens"] is None
+    assert record["token_direction_breakdown_available"] is False
+    assert record["token_direction_missing_components"] == ["child_model_attempts"]
+
+
+
 def _day8_fixture():
     """Four ten-task development cells and independently referenced outcomes."""
     cases = []
