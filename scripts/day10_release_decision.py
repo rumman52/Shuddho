@@ -15,7 +15,12 @@ from pathlib import Path
 
 from scripts.cohort_release_gate import evaluate_release
 from scripts.ruke_pilot_eval import OPERATED, operated_trace_ok, reviewer_identity
-from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+from scripts.staging_release_freeze import (
+    EXPECTED_ROLLBACK,
+    PA10_REQUIRED_FALSE,
+    PA10_REQUIRED_TRUE,
+    RUNTIME_CAPABILITY_KEYS,
+)
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -147,10 +152,14 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
             isinstance(switches, list)
             and all(isinstance(item, str) for item in switches)
             and len(switches) == len(set(switches))
-            and {"SHUDDHO_COWORKER_ENABLED=false", "SHUDDHO_AGENT_RUNTIME_ENABLED=false"}.issubset(set(switches))
+            and set(EXPECTED_ROLLBACK.values()).issubset(set(switches))
             and isinstance(flags, dict)
             and set(flags) == RUNTIME_CAPABILITY_KEYS
-            and all(type(enabled) is bool and enabled is False for enabled in flags.values())
+            and all(type(enabled) is bool for enabled in flags.values())
+            and all(
+                flags[key] is False
+                for key in PA10_REQUIRED_TRUE | PA10_REQUIRED_FALSE
+            )
             and all(value.get(key) is True for key in (
                 "new_admissions_stopped",
                 "api_reload_verified",
