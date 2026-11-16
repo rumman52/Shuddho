@@ -116,6 +116,7 @@ def evidence():
     artifacts["owner_isolation"].update(
         owner_a_ref="synthetic-A",
         owner_b_ref="synthetic-B",
+        synthetic_owners_verified=True,
         cross_owner_denied=True,
         both_directions_verified=True,
         denied_resource_types=["documents", "memory", "artifacts", "activity"],
@@ -388,6 +389,8 @@ def test_day10_paused_schedule_requires_observed_due_time_and_zero_admissions(mo
 
 
 @pytest.mark.parametrize("mutation", [
+    pytest.param(lambda a: a["owner_isolation"].pop("synthetic_owners_verified"), id="synthetic-owners-unverified"),
+    pytest.param(lambda a: a["owner_isolation"].update(synthetic_owners_verified=False), id="real-owner-fixtures"),
     pytest.param(lambda a: a["owner_isolation"].pop("both_directions_verified"), id="missing-reverse-direction"),
     pytest.param(lambda a: a["owner_isolation"].update(both_directions_verified=False), id="one-way-only"),
     pytest.param(lambda a: a["owner_isolation"].update(
