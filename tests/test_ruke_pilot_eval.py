@@ -14,8 +14,8 @@ from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, external_heldout,
     candidate_ledger, canonical_sha256, day10_first_run_scores, immutable_write, main,
     position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews,
-    validate_candidate_identity, validate_candidate_readbacks, validate_manifest,
-    verify_operations,
+    validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
+    validate_manifest, verify_operations,
 )
 
 
@@ -200,7 +200,7 @@ def test_candidate_api_worker_and_schema_readbacks_match_and_hash_exactly():
     assert validate_candidate_readbacks(value, readbacks)["consistent"] is True
     bad = deepcopy(readbacks)
     bad["api"]["provider_id"] = "gemma"
-    with pytest.raises(EvidenceError, match="readback digest"):
+    with pytest.raises(EvidenceError, match="does not match candidate manifest"):
         validate_candidate_readbacks(value, bad)
     bad = candidate_readbacks(value)
     bad["worker"]["runtime_capabilities"]["browser"] = True
@@ -210,6 +210,39 @@ def test_candidate_api_worker_and_schema_readbacks_match_and_hash_exactly():
     with pytest.raises(EvidenceError, match="does not match candidate manifest"):
         validate_candidate_readbacks(value, bad)
 
+
+
+def test_evidence_json_must_bind_exact_manifest_digest():
+    assert validate_evidence_binding({"manifest_sha256": "a" * 64}, "a" * 64)
+    with pytest.raises(EvidenceError, match="not bound"):
+        validate_evidence_binding({"manifest_sha256": "b" * 64}, "a" * 64)
+    with pytest.raises(EvidenceError, match="must be an object"):
+        validate_evidence_binding([], "a" * 64)
+
+
+def test_blind_packet_and_competitor_are_bound_to_same_release_manifest():
+    value = manifest()
+    digest = "a" * 64
+    candidate = [{"case_id": c["case_id"], "output": "candidate", "manifest_sha256": digest}
+                 for c in tasks()]
+    competitor_outputs = [{"case_id": c["case_id"], "output": "competitor", "manifest_sha256": digest}
+                          for c in tasks()]
+    packet = prepare_blind(tasks(), value, candidate, competitor_outputs,
+                           blinding_key=BLIND_KEY, manifest_sha256=digest)
+    assert len(packet) == 80
+    competitor = comparator()
+    competitor.update(manifest_sha256=digest, release_id=value["release_id"],
+                      rollout_manifest_sha256=value["rollout_manifest_sha256"])
+    assert compare(tasks(), value, competitor, blind_votes(), blinding_key=BLIND_KEY,
+                   manifest_sha256=digest)["complete"]
+    competitor["release_id"] = "different-release"
+    with pytest.raises(EvidenceError, match="not bound"):
+        compare(tasks(), value, competitor, blind_votes(), blinding_key=BLIND_KEY,
+                manifest_sha256=digest)
+    competitor_outputs[0]["manifest_sha256"] = "b" * 64
+    with pytest.raises(EvidenceError, match="not bound"):
+        prepare_blind(tasks(), value, candidate, competitor_outputs,
+                      blinding_key=BLIND_KEY, manifest_sha256=digest)
 
 def test_legacy_manifest_is_readable_only_in_explicit_legacy_mode(external_dir):
     held = external_dir / "legacy-heldout.jsonl"
