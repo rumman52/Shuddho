@@ -165,7 +165,7 @@ def test_private_schema_access_fails_closed_on_any_api_role_grant(row):
         backup.private_schema_access(Connection())
 
 
-def test_inventory_detects_real_schema_table_and_default_grants(tmp_path):
+def test_inventory_detects_real_schema_table_and_default_grants():
     pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
     if not pg_bin:
         pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
@@ -191,6 +191,9 @@ def test_inventory_detects_real_schema_table_and_default_grants(tmp_path):
             fixture.execute(
                 "ALTER DEFAULT PRIVILEGES IN SCHEMA shuddho_coworker "
                 "GRANT SELECT ON TABLES TO anon"
+            )
+            fixture.execute(
+                "ALTER DEFAULT PRIVILEGES GRANT INSERT ON TABLES TO authenticated"
             )
             with pytest.raises(backup.BackupError, match="Supabase API roles"):
                 backup.inventory(fixture)
