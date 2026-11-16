@@ -166,7 +166,7 @@ class GoalRepository:
                 row.budget = request.budget.model_dump(mode="json") if request.budget else {}
             if "authorized_resources" in fields:
                 row.authorized_resources = [item.model_dump(mode="json") for item in (request.authorized_resources or [])]
-            if row.project_id:
+            if row.project_id and "authorized_resources" in fields:
                 validate_project_document_scope(
                     db, owner, row.project_id, list(row.authorized_resources or []),
                 )
