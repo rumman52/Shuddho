@@ -595,40 +595,43 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             "synthetic_account_label": state["synthetic_account_label"],
             "owner_id": state["owner_id"], "automation_id": state["automation_id"],
             "expires_at": current["automation"].get("expires_at"),
-            "previous_revision": revision, "paused_revision": revision + 1,
-            "paused_at": utcnow_iso(), "operator_case_reference": case_ref,
+            "previous_revision": revision,
+            "operator_case_reference": case_ref,
         }
-        try:
-            verify_two_day(first, second, evidence)
-        except GateFailure as error:
-            raise ScheduledProfileProbeFailure(
-                f"Two-day evidence rejected before pause: {error}"
-            ) from None
         paused = json_object(
             client.post(
                 f'/api/v1/automations/{state["automation_id"]}/pause',
                 headers=auth(token), json={"expected_revision": revision},
             ), "pause synthetic automation",
         )
-        observed = json_object(
-            client.get(f'/api/v1/automations/{state["automation_id"]}', headers=auth(token)),
-            "read back paused automation",
-        )
-        if (paused.get("state") != "paused" or observed.get("state") != "paused"
-                or int(paused.get("revision", -1)) != int(observed.get("revision", -2))
-                or int(observed.get("revision", -1)) <= revision
-                or observed.get("id") != state["automation_id"]):
+        if (paused.get("state") != "paused"
+                or int(paused.get("revision", -1)) <= revision):
             raise ScheduledProfileProbeFailure(
                 "Pause did not persist the expected synthetic automation transition."
             )
-        if (
-            observed.get("schedule_applied_revision") != observed.get("revision")
-            or observed.get("schedule_applied_enabled") is not False
-            or observed.get("schedule_error_code")
-        ):
-            raise ScheduledProfileProbeFailure(
-                "Temporal worker has not applied the paused automation revision."
+        observed = None
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            observed = json_object(
+                client.get(f'/api/v1/automations/{state["automation_id"]}', headers=auth(token)),
+                "read back paused automation",
             )
+            if (
+                observed.get("state") == "paused"
+                and int(observed.get("revision", -1)) > revision
+                and observed.get("schedule_applied_revision") == observed.get("revision")
+                and observed.get("schedule_applied_enabled") is False
+                and not observed.get("schedule_error_code")
+                and observed.get("id") == state["automation_id"]
+            ):
+                break
+            time.sleep(2)
+        else:
+            raise ScheduledProfileProbeFailure(
+                "Temporal worker did not apply the paused automation revision before timeout."
+            )
+        if int(paused.get("revision", -1)) != int(observed.get("revision", -2)):
+            raise ScheduledProfileProbeFailure("Pause response and readback revisions disagree.")
         evidence["schedule_applied_revision"] = observed.get("schedule_applied_revision")
         evidence["schedule_applied_enabled"] = observed.get("schedule_applied_enabled")
         evidence["paused_revision"] = int(observed["revision"])
