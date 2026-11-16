@@ -559,10 +559,12 @@ def verify_operations(rows: list[dict], candidate_revision: str, *,
 
 
 def comparison_evidence_recorded(value: object) -> bool:
-    """A reproducible comparison or an explicit access gap is a valid report state."""
+    """A reproducible comparison or explicitly unavailable competitor access is reportable."""
     return (isinstance(value, dict) and (
         value.get("complete") is True
-        or (isinstance(value.get("comparison_gap"), str) and bool(value["comparison_gap"].strip()))
+        or (value.get("gap_reason") == "competitor_access_unavailable"
+            and isinstance(value.get("comparison_gap"), str)
+            and bool(value["comparison_gap"].strip()))
     ))
 
 def read_blinding_key(path: Path) -> bytes:
@@ -586,9 +588,17 @@ def position_map(case_id: str, corpus_sha256: str, *, blinding_key: bytes) -> di
 
 def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: list[dict] | None,
             adjudications: list[dict] | None = None, *, blinding_key: bytes | None = None,
-            manifest_sha256: str | None = None) -> dict:
+            manifest_sha256: str | None = None, access_gap: str | None = None) -> dict:
+    if competitor is None and rows is None:
+        if isinstance(access_gap, str) and access_gap.strip():
+            return {"complete": False, "comparison_gap": access_gap.strip(),
+                    "gap_reason": "competitor_access_unavailable",
+                    "wins": None, "ties": None, "losses": None}
+        return {"complete": False, "comparison_gap": "competitor access gap not explicitly documented",
+                "gap_reason": "unrecorded", "wins": None, "ties": None, "losses": None}
     if competitor is None or rows is None:
-        return {"complete": False, "comparison_gap": "competitor access or blinded judgment evidence missing", "wins": None, "ties": None, "losses": None}
+        return {"complete": False, "comparison_gap": "competitor metadata or blinded judgments missing",
+                "gap_reason": "incomplete_evidence", "wins": None, "ties": None, "losses": None}
     if not isinstance(blinding_key, bytes) or len(blinding_key) != 32:
         raise EvidenceError("independent D-controlled secret mapping required for comparator")
     for field in ("product", "product_version", "model", "run_started_at"):
@@ -775,6 +785,7 @@ def main(argv=None) -> int:
                     cases, manifest, evidence.get("competitor"), evidence.get("comparisons"),
                     evidence.get("comparison_adjudications", []), blinding_key=key,
                     manifest_sha256=manifest_digest,
+                    access_gap=evidence.get("competitor_access_gap"),
                 )
                 custody = evidence.get("custody", {})
                 if not isinstance(custody, dict):
