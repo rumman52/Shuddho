@@ -48,7 +48,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [quiet, setQuiet] = useState(true);
   const [expiresAtLocal, setExpiresAtLocal] = useState(() => {
-    const value = new Date(Date.now() + 72 * 60 * 60 * 1000);
+    const value = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000);
     value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
     return value.toISOString().slice(0, 16);
   });
@@ -449,7 +449,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
           </fieldset></>}
           {(kind === "daily" || kind === "weekly") && briefing && <label>Schedule expires<input type="datetime-local"
              required value={expiresAtLocal} onChange={event => { setExpiresAtLocal(event.target.value); createKey.current = ""; }} />
-             <span className="cw-fineprint">Default: 72 hours from now. The expiry must leave time for both natural daily occurrences.</span>
+             <span className="cw-fineprint">Default: 8 days from now. Set expiry after the planned natural occurrences; the Day 7 pilot must remain active through Day 8.</span>
            </label>}
            {kind === "weekly" && <fieldset><legend>Weekdays</legend><div className="cw-agent-meta">{DAYS.map(day =>
             <label key={day}><input type="checkbox" checked={weekdays.includes(day)} onChange={event => {
