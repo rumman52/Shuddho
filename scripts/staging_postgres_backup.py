@@ -52,7 +52,7 @@ def run_pg(pg_bin: Path | None, command: str, *args: str, db_env: dict[str, str]
 
 
 def private_schema_access(connection) -> dict:
-    """Prove that Supabase API roles cannot reach the private application schema.
+    """Audit database grants for Supabase API roles against the private schema.
 
     RLS is defense in depth, but it is not a substitute for keeping this schema
     outside the Data API and withholding schema/table grants from anon and
@@ -161,7 +161,7 @@ def private_schema_access(connection) -> dict:
     if exposed:
         raise BackupError(
             "The private Coworker schema grants access to Supabase API roles; "
-            "review schema, table and default privileges before backup."
+            "review schema, table and default privileges before backup or restore verification."
         )
     return access
 
