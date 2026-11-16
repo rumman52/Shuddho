@@ -1,3 +1,19 @@
+## Day 4 reviewed task retries across follow-up turns — 16 November 2026 (Asia/Dhaka)
+
+Base `2cbcae390865585f52cbe5299d52d8add1862db2`. An identical reviewed
+dispatch retry previously returned HTTP 409 after a follow-up message even
+though its original run and outbox entry had committed. The replay path now
+validates the original turn, reviewed digest and current source pins before
+returning the linked run. First admission and preview still require the latest
+turn. Regressions cover HTTP 200 replay, one run and outbox entry, changed
+brief or sequence, and source revocation after a follow-up.
+
+Local verification: 206 focused tests passed. The canonical release-contract
+check passed. GitHub CI, independent review, hosted staging qualification and
+pilot activation remain pending.
+
+---
+
 ## Reuse PR CI results on review events
 
 Review events run `ci-merge-gate` without starting the test suites or

@@ -138,6 +138,11 @@ def test_reviewed_brief_replay_and_changed_brief_conflicts_without_extra_outbox(
         dispatch.dispatch(owner, conversation["id"], item["id"], expected_sequence=1, output_language="en-GB",
                           reviewed_brief=changed, expected_digest=other["canonical_digest"])
     assert failure.value.code == "idempotency_conflict"
+    append(messages, owner, conversation, "What should we do next?", "msg-two")
+    with pytest.raises(CoworkerError) as failure:
+        dispatch.dispatch(owner, conversation["id"], item["id"], expected_sequence=1, output_language="en-GB",
+                          reviewed_brief=changed, expected_digest=other["canonical_digest"])
+    assert failure.value.code == "idempotency_conflict"
     with dispatch.sessions() as db:
         assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 1
 
@@ -216,6 +221,7 @@ def test_previous_turn_source_is_bound_and_deletion_revokes_reviewed_run(contain
         expected_digest=preview["canonical_digest"])
     assert created
     assert container.agent.worker_run(run["run_id"])["artifact_ids"] == [source.id]
+    append(messages, owner, conversation, "Also flag the dependencies.", "msg-three")
     with dispatch.sessions.begin() as db:
         db.delete(db.get(Artifact, source.id))
     with pytest.raises(CoworkerError) as error:
@@ -258,9 +264,21 @@ def test_http_reviewed_preview_and_dispatch_endpoint(container, signed_client):
                "expected_digest": digest, "output_language": "en-GB"}
     created = client.post(msg_path + "/dispatch", json=payload, headers=headers())
     assert created.status_code == 202, created.text
+    followup = client.post(path + "/messages", json={
+        "text": "Show me how this task is progressing.",
+        "client_request_key": "day4-http-followup",
+    }, headers=headers())
+    assert followup.status_code == 201, followup.text
     replay = client.post(msg_path + "/dispatch", json=payload, headers=headers())
     assert replay.status_code == 200 and replay.json()["run_id"] == created.json()["run_id"]
     assert replay.headers["Idempotent-Replayed"] == "true"
+    wrong_sequence = client.post(msg_path + "/dispatch", json={
+        **payload, "expected_sequence": 2,
+    }, headers=headers())
+    assert wrong_sequence.status_code == 409, wrong_sequence.text
+    with container.repository.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 1
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 1
 
 
 def test_additive_migration_works_with_old_reader_and_default(tmp_path):
