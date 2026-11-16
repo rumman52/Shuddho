@@ -50,7 +50,10 @@ class _ScopeResponse:
         return self.payload
 
 
-@pytest.mark.parametrize("change", ["connector", "memory", "stale_revision", "empty_documents", "wrong_goal", "missing_project", "unlinked_project_document"])
+@pytest.mark.parametrize("change", [
+    "connector", "memory", "stale_revision", "empty_documents", "wrong_goal",
+    "missing_project", "unlinked_project_document",
+])
 def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
     automation = {
         "goal_id": "goal-1", "goal_revision": 2,
