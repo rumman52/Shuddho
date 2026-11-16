@@ -15,7 +15,7 @@ from scripts.ruke_pilot_eval import (
     candidate_ledger, canonical_sha256, custody_receipt_ok, day10_first_run_scores, immutable_write, main,
     position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews, source_checks_ok,
     validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
-    validate_manifest, external_heldout, verify_operations,
+    validate_manifest, verify_operations,
 )
 
 
@@ -413,7 +413,7 @@ def test_holdout_matrix_and_answer_key_prohibited(external_dir):
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="distinct"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes(, custody_verified=True)).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest(), custody_verified=True)
 
 
 def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
