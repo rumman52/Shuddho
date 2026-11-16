@@ -59,8 +59,13 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [acceptedBriefingSchedule, setAcceptedBriefingSchedule] = useState<string | null>(null);
 
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
+  const selectedGoalDocumentCount = selectedGoal?.authorized_resources.filter(source => source.kind === "document").length ?? 0;
+  const briefingScopeReady = Boolean(
+    selectedGoal?.project_id && selectedGoalDocumentCount >= 1 && selectedGoalDocumentCount <= 5,
+  );
   const briefingScheduleSnapshot = JSON.stringify([
-    selectedGoal?.id, selectedGoal?.revision, kind, briefing, at, timezone, quiet,
+    selectedGoal?.id, selectedGoal?.revision, selectedGoal?.project_id,
+    selectedGoal?.authorized_resources, kind, briefing, at, timezone, quiet,
     kind === "weekly" ? weekdays : [], briefingGrantIds,
   ]);
   const briefingScheduleApproved = acceptedBriefingSchedule === briefingScheduleSnapshot;
@@ -121,7 +126,11 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   async function create(event: FormEvent) {
     event.preventDefault();
     if (!selectedGoal || busy) return;
-    if ((kind === "daily" || kind === "weekly") && briefing && !briefingScheduleApproved) {
+    if ((kind === "daily" || kind === "weekly") && briefing && !briefingScopeReady) {
+      setError("A project briefing requires an owned project and one to five approved current project documents on the selected goal.");
+      return;
+    }
+    if ((kind === "daily" || kind === "weekly") && briefing && (!briefingScopeReady || !briefingScheduleApproved)) {
       setError("Review and approve the exact recurring briefing schedule before saving.");
       return;
     }
@@ -453,7 +462,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <legend>Approve this exact recurring briefing</legend>
             <p className="cw-fineprint">
               {kind === "daily" ? "Every day" : weekdays.join(", ")} at {at} ({timezone}).
-              Goal revision {selectedGoal?.revision ?? "not selected"}; {selectedGoal?.authorized_resources.filter(source => source.kind === "document").length ?? 0} authorized project document(s).
+              Goal revision {selectedGoal?.revision ?? "not selected"}; {selectedGoal?.project_id ? "project-bound" : "no project selected"}; {selectedGoalDocumentCount} authorized project document(s).
+              {!briefingScopeReady ? " Select an owned project and approve one to five current project documents in Goals before scheduling." : ""}
               {quiet ? " Notifications are delayed during 22:00–07:00; the Agent run is not delayed." : " Notifications are not quiet-hours delayed."}
               Each occurrence starts at most one bounded private run; it cannot send or publish.
             </p>
