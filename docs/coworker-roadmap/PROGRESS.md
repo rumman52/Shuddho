@@ -1,3 +1,18 @@
+## Day 5 memory pins bound to reviewed tasks — 16 November 2026 (Asia/Dhaka)
+
+Based on merged `main` at `6316689c`. A reviewed brief preview now binds the
+exact selected memory IDs and versions. The UI validates after a selection
+change, admission rejects a mismatched digest before creating any run or outbox
+entry, and worker context checks the stored binding. Previously admitted runs
+retain their version-one replay format. Preview requests without selected memory
+retain the existing digest and request shape.
+
+Regressions cover changed selections, stale and foreign pins, the HTTP preview
+and dispatch path, version-one replay, and mismatched persisted worker pins.
+Hosted execution and current-head GitHub CI remain separate evidence.
+
+---
+
 ## Day 4 reviewed task retries across follow-up turns — 16 November 2026 (Asia/Dhaka)
 
 Base `2cbcae390865585f52cbe5299d52d8add1862db2`. An identical reviewed

@@ -142,7 +142,7 @@ def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> Non
     reviewed = dict(run.reviewed_brief or {})
     if reviewed:
         # Revalidate exact owner-pinned revisions from any prior user message.
-        from .task_brief_schemas import TaskBrief, canonical_brief_digest
+        from .task_brief_schemas import MEMORY_BOUND_BRIEF_VERSION, TaskBrief, canonical_brief_digest
         from .conversation_task_briefs import ConversationTaskBriefService
         try:
             brief = TaskBrief.model_validate(reviewed["brief"])
@@ -160,8 +160,14 @@ def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> Non
                 raise ValueError("Reviewed sources not authorised by the conversation")
             pins = require_current_selected_sources(db, owner, originals)
             saved_project = dict(run.project_context or {})
-            # Day 5 memory pins are separately validated and do not belong to
-            # the Day 4 project-only reviewed task brief digest.
+            schema_version = reviewed.get("schema_version", 1)
+            if schema_version not in (1, MEMORY_BOUND_BRIEF_VERSION):
+                raise ValueError("Unsupported reviewed brief")
+            # Version 1 runs retain their original digest. Version 2 binds the
+            # same memory pins used by the worker to the reviewed brief.
+            reviewed_memory = saved_project.get("memory_pins") if schema_version == MEMORY_BOUND_BRIEF_VERSION else None
+            if schema_version == MEMORY_BOUND_BRIEF_VERSION and not reviewed_memory:
+                raise ValueError("Reviewed memory pins missing")
             reviewed_project = {key: value for key, value in saved_project.items()
                                 if key != "memory_pins"}
             current_project = ConversationTaskBriefService._project(
@@ -170,7 +176,7 @@ def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> Non
             if (current_project != reviewed_project
                 or canonical_brief_digest(brief, pins, reviewed_project, owner_id=owner,
                     conversation_id=message.conversation_id, message_id=message.id,
-                    sequence=message.sequence) != reviewed["canonical_digest"]):
+                    sequence=message.sequence, memory_pins=reviewed_memory) != reviewed["canonical_digest"]):
                 raise ValueError("Review changed")
         except CoworkerError:
             raise

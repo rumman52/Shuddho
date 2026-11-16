@@ -1991,6 +1991,7 @@ def preview_conversation_task_brief(
         identity.account_id, str(conversation_id), str(message_id),
         expected_sequence=payload.expected_sequence, brief=payload.brief,
         project_id=str(payload.project_id) if payload.project_id is not None else None,
+        memory_pins=payload.memory_pins,
     )
 
 

@@ -509,6 +509,7 @@ export type TaskBriefPreview = {
   canonical_digest: string | null; question?: string | null;
   selected_sources?: Array<Record<string, unknown>>;
   project_context?: Record<string, unknown>;
+  memory_pins?: MemoryPin[];
 };
 export type ConversationMessageRecord = {
   assistant_reply?: AssistantReply | null;
@@ -794,12 +795,14 @@ export class CoworkerClient {
           ...(projectId ? { project_id: identifier(projectId) } : {}) }),
       });
   }
-  previewConversationTaskBrief(id: string, messageId: string, sequence: number, brief: TaskBrief, projectId?: string | null) {
+  previewConversationTaskBrief(id: string, messageId: string, sequence: number, brief: TaskBrief,
+                               projectId?: string | null, memoryPins?: MemoryPin[]) {
     return this.json<TaskBriefPreview>(
       "/api/v1/conversations/" + identifier(id) + "/messages/" + identifier(messageId) + "/task-brief/preview", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expected_sequence: sequence, brief,
-          ...(projectId ? { project_id: identifier(projectId) } : {}) }),
+          ...(projectId ? { project_id: identifier(projectId) } : {}),
+          ...(memoryPins?.length ? { memory_pins: memoryPins } : {}) }),
       });
   }
   dispatchConversationMessage(id: string, messageId: string, sequence: number,
