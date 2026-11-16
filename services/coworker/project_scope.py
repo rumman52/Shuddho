@@ -35,7 +35,7 @@ def validate_project_document_scope(
         Project.id == str(project_id),
         Project.owner_id == owner,
         Project.deleted.is_(False),
-    ))
+    ).with_for_update())
     if project is None:
         raise not_found()
 
@@ -69,7 +69,7 @@ def validate_project_document_scope(
         Document.id.in_(document_ids),
         Document.owner_id == owner,
         Document.deleted.is_(False),
-    )).all()
+    ).with_for_update()).all()
     if len(documents) != len(document_ids):
         raise not_found()
 
@@ -78,7 +78,7 @@ def validate_project_document_scope(
         ProjectResource.owner_id == owner,
         ProjectResource.resource_type == "document",
         ProjectResource.resource_id.in_(document_ids),
-    )).all())
+    ).with_for_update()).all())
     if linked_ids != set(document_ids):
         raise CoworkerError(
             "project_document_unlinked",
@@ -91,7 +91,7 @@ def validate_project_document_scope(
         latest = db.scalar(select(DocumentVersion).where(
             DocumentVersion.document_id == document.id,
             DocumentVersion.owner_id == owner,
-        ).order_by(DocumentVersion.version.desc()).limit(1))
+        ).order_by(DocumentVersion.version.desc()).limit(1).with_for_update())
         if (
             latest is None
             or latest.state != "uploaded"
