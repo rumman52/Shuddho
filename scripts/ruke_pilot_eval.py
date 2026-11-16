@@ -180,7 +180,7 @@ def source_checks_ok(evidence: object, manifest: dict | None = None) -> bool:
     if not isinstance(evidence, dict) or not isinstance(manifest, dict):
         return False
     checks = evidence.get("required_repository_checks")
-    if not isinstance(checks, dict) or set(checks) != REQUIRED_DAY9_CI:
+    if not isinstance(checks, dict) or not REQUIRED_DAY9_CI.issubset(checks):
         return False
     if any(checks[name] != "success" for name in REQUIRED_DAY9_CI):
         return False
