@@ -18,7 +18,7 @@ import pytest
 from scripts.main_protection_audit import GovernanceAuditError, audit_governance, inspect_repository
 
 
-CHECKS = {"coworker", "test-and-build", "ci-merge-gate"}
+CHECKS = {"test-and-build", "ci-merge-gate"}
 
 
 def protected_branch() -> dict:
@@ -57,7 +57,7 @@ def approved_ruleset() -> dict:
     }
 
 
-def test_exact_main_ruleset_with_independent_review_and_three_checks_is_candidate():
+def test_exact_main_ruleset_with_independent_review_and_two_checks_is_candidate():
     assert audit_governance(protected_branch(), [approved_ruleset()]) == 123
 
 
@@ -107,7 +107,7 @@ def test_required_checks_must_be_pinned_to_trusted_github_actions_source(source)
 def test_duplicate_required_check_with_untrusted_source_must_fail():
     rule = approved_ruleset()
     checks = rule["rules"][3]["parameters"]["required_status_checks"]
-    checks.append({"context": "coworker", "integration_id": 98765})
+    checks.append({"context": "test-and-build", "integration_id": 98765})
     with pytest.raises(GovernanceAuditError, match="ruleset"):
         audit_governance(protected_branch(), [rule])
 
@@ -259,6 +259,29 @@ def test_merge_gate_accepts_all_required_jobs_succeeding():
         "GOVERNANCE_AUDIT_RESULT": "success",
     })
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize(("event", "scope", "frontend", "backend", "expected"), [
+    ("pull_request", "docs", "skipped", "skipped", 0),
+    ("pull_request", "frontend", "success", "skipped", 0),
+    ("pull_request", "frontend", "skipped", "skipped", 1),
+    ("pull_request", "full", "success", "skipped", 1),
+    ("pull_request", "frontend", "success", "failure", 1),
+    ("pull_request", "invalid", "success", "success", 1),
+    ("push", "docs", "success", "skipped", 1),
+])
+def test_ci_gate_requires_checks_for_the_actual_scope(event, scope, frontend, backend, expected):
+    completed = _run_ci_result_gate({
+        "CI_EVENT_NAME": event,
+        "PR_CI_SCOPE": scope,
+        "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": frontend,
+        "BROWSER_QUALIFICATION_RESULT": frontend,
+        "COWORKER_RESULT": backend,
+        "POSTGRES18_RESULT": backend,
+        "GOVERNANCE_AUDIT_RESULT": "success" if event == "push" else "skipped",
+    })
+    assert completed.returncode == expected, completed.stdout + completed.stderr
 
 
 @pytest.mark.parametrize("event", ["pull_request", "pull_request_review"])

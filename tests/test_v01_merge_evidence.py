@@ -2,6 +2,8 @@
 import pytest
 
 from scripts.v01_merge_evidence import EvidenceError, inspect_premerge_evidence
+from scripts.pr_ci_reuse import CI_PATH, ci_title
+from scripts.pr_ci_scope import QUICK_JOBS, TEST_JOBS
 
 HEAD = 'a' * 40
 MERGE = '2026-10-20T18:42:34Z'
@@ -40,6 +42,31 @@ def test_successful_premerge_checks_and_review_are_still_not_branch_protection_p
     assert result['findings'] == []
     assert result['classification'] == 'no_incident_in_supplied_evidence'
     assert 'native_policy_not_verified' in result['limitations']
+
+
+def test_review_only_evidence_requires_matching_earlier_test_results():
+    pr, run, jobs, reviews = evidence()
+    run.update(event="pull_request_review", path=CI_PATH, display_title=ci_title(pr["number"], "b" * 40))
+    test_run = dict(run, event="pull_request", conclusion="failure")
+    test_jobs = [dict(jobs[1], name=name) for name in TEST_JOBS]
+    assert not inspect_premerge_evidence(pr, run, jobs[-1:], reviews, test_evidence=(test_run, test_jobs))["findings"]
+    test_jobs[-1]["completed_at"] = "2026-10-20T18:35:00Z"
+    result = inspect_premerge_evidence(pr, run, jobs[-1:], reviews, test_evidence=(test_run, test_jobs))
+    assert "ci-merge-gate:completed_before_pr_tests" in result["findings"]
+    test_run["display_title"] = ci_title(pr["number"], "c" * 40)
+    with pytest.raises(EvidenceError, match="do not match"):
+        inspect_premerge_evidence(pr, run, jobs[-1:], reviews, test_evidence=(test_run, test_jobs))
+
+
+def test_doc_pr_premerge_evidence_omits_integration_jobs():
+    pr, run, jobs, reviews = evidence()
+    run.update(path=CI_PATH, display_title=ci_title(pr["number"], "b" * 40))
+    tests = [dict(jobs[0], name=name) for name in QUICK_JOBS]
+    tests[0]["steps"] = [{"name": "PR CI scope (docs)", "conclusion": "success"}]
+    gate = jobs[-1:]
+    assert not inspect_premerge_evidence(pr, run, tests + gate, reviews)["findings"]
+    review_run = dict(run, event="pull_request_review")
+    assert not inspect_premerge_evidence(pr, review_run, gate, reviews, test_evidence=(run, tests))["findings"]
 
 
 @pytest.mark.parametrize('mutation', [

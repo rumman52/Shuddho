@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-CHECKS = frozenset({"test-and-build", "coworker", "ci-merge-gate"})
+CHECKS = frozenset({"test-and-build", "ci-merge-gate"})
 
 
 class GovernanceAuditError(ValueError):

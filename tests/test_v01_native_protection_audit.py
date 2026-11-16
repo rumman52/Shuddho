@@ -6,7 +6,7 @@ from pathlib import Path
 
 from scripts.v01_native_protection_audit import assess_native_policy
 
-JOBS = ('test-and-build', 'coworker', 'ci-merge-gate')
+JOBS = ('test-and-build', 'ci-merge-gate')
 
 
 def protection(**changes):
@@ -154,7 +154,7 @@ def test_branch_check_requires_correct_first_party_app_id_on_every_job():
         value = protection(required_status_checks={'strict': True, 'checks': checks})
         report = assess_native_policy(branch_protection=value)
         assert report['classification'] == 'blocked'
-        assert 'required_check_source_unpinned:coworker' in report['findings']
+        assert 'required_check_source_unpinned:ci-merge-gate' in report['findings']
 
 
 def test_ruleset_check_requires_correct_first_party_integration_id():
@@ -169,8 +169,8 @@ def test_ruleset_check_requires_correct_first_party_integration_id():
 
 def test_duplicate_check_with_untrusted_source_is_not_a_configuration_candidate():
     checks = [{'context': name, 'app_id': 15368} for name in JOBS]
-    checks.append({'context': 'coworker', 'app_id': -1})
+    checks.append({'context': 'ci-merge-gate', 'app_id': -1})
     value = protection(required_status_checks={'strict': True, 'checks': checks})
     report = assess_native_policy(branch_protection=value)
     assert report['classification'] == 'blocked'
-    assert 'required_check_source_unpinned:coworker' in report['findings']
+    assert 'required_check_source_unpinned:ci-merge-gate' in report['findings']

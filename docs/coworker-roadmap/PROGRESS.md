@@ -1,3 +1,15 @@
+## Reuse PR CI results on review events
+
+Review events run `ci-merge-gate` without starting the test suites or
+cancelling an in-progress test run. The gate requires all existing test
+jobs and the ancestry check to pass for the same pull request, head SHA,
+and GitHub test merge SHA before verifying the latest independent approval.
+Main push CI and native branch rules retain their existing requirements.
+For a review-only gate run, `scripts.v01_merge_evidence` accepts `--ci-run`
+with the original test run ID printed in the successful reuse step.
+
+---
+
 ## PA-10 live database check before worker provisioning — 16 November 2026 (Asia/Dhaka)
 
 The paid worker workflow now requires the live Supabase database to be reachable
