@@ -75,8 +75,11 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     require(isinstance(goal_id, str) and bool(goal_id.strip())
             and type(goal_revision) is int and goal_revision >= 1,
             "Daily briefing must identify one owner-approved goal and revision.")
+    project_id = first.get("project_id")
+    require(isinstance(project_id, str) and bool(project_id.strip()),
+            "Daily briefing must identify one owner-approved project.")
     identity = ("release", "owner_id", "automation_id", "synthetic_account_label",
-                "goal_id", "goal_revision", "authorized_document_ids")
+                "goal_id", "goal_revision", "project_id", "authorized_document_ids")
     schedule_identity = ("timezone", "schedule", "automation_revision", "run_profile",
                          "output_language", "quiet_hours")
     for index, item in enumerate((first, second), start=1):
@@ -172,7 +175,8 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     return {
         "status": "passed", "scenario": "day7_two_day_daily_briefing",
         "release": first["release"], "owner_id": first["owner_id"],
-        "automation_id": first["automation_id"], "timezone": first["timezone"],
+        "automation_id": first["automation_id"], "project_id": first["project_id"],
+        "timezone": first["timezone"],
         "scheduled_local_dates": [str(item) for item in local_dates],
         "first_occurrence_id": first["occurrence_id"],
         "second_occurrence_id": second["occurrence_id"],
