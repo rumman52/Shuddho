@@ -202,6 +202,22 @@ def test_only_authorization_missing_is_staging_only(monkeypatch):
     assert result["pilot_activated"] is False
 
 
+@pytest.mark.parametrize("owner_c", [
+    "founder-signoff",
+    "FOUNDER-SIGNOFF",
+    "ｆｏｕｎｄｅｒ-ｓｉｇｎｏｆｆ",
+    " founder-signoff ",
+    "operator\nC",
+])
+def test_release_requires_distinct_valid_pilot_approvers(monkeypatch, owner_c):
+    rollout, artifacts = evidence()
+    artifacts["approval"]["owner_c"] = owner_c
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "STAGING_ONLY"
+    assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+    assert result["pilot_activated"] is False
+
+
 def test_rollout_less_than_five_is_not_pilot(monkeypatch):
     rollout, artifacts = evidence()
     rollout["cohort"]["max_users"] = 4

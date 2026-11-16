@@ -1,3 +1,18 @@
+## Day 10 distinct pilot approvers — 16 November 2026 (Asia/Dhaka)
+
+The handoff now requires two distinct, valid founder and operations-owner
+identities. The gate uses the existing Day 9 identity normalization, so a case
+or Unicode width variant of one signer cannot satisfy the second role. The
+operator verifies both written approvals at the receipt reference.
+
+Five duplicate or malformed identity cases reproduced an incorrect
+`READY_FOR_OWNER_CONTROLLED_PILOT` decision on `main` at `3b6f5acb`.
+The corrected result is `STAGING_ONLY` when all technical gates pass. The
+focused release and evidence suites passed 244 tests, and the release-contract
+check passed. Hosted qualification and owner approval remain open.
+
+---
+
 ## Day 5 memory pins bound to reviewed tasks — 16 November 2026 (Asia/Dhaka)
 
 Based on merged `main` at `6316689c`. A reviewed brief preview now binds the

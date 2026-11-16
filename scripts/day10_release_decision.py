@@ -253,11 +253,14 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
              and isinstance(artifacts.get("model"), dict) and item.get("provider_model") == artifacts["model"].get("provider_model"))
     # Human authorization is not a deploy API call; the operator must verify its authenticity.
     approval = artifacts.get("approval")
+    approvers = (
+        {reviewer_identity(approval.get(role)) for role in ("founder", "owner_c")}
+        if isinstance(approval, dict) else set()
+    )
     approved = (bound(approval, release, revision, rollout_hash)
                 and approval.get("explicit_separate_authorization") is True
                 and isinstance(approval.get("reference"), str) and bool(approval["reference"].strip())
-                and isinstance(approval.get("founder"), str) and bool(approval["founder"].strip())
-                and isinstance(approval.get("owner_c"), str) and bool(approval["owner_c"].strip())
+                and len(approvers) == 2 and None not in approvers
                 and type(approval.get("max_users")) is int
                 and 5 <= approval["max_users"] <= 10
                 and approval["max_users"] == cohort_limit)
