@@ -391,7 +391,7 @@ def test_holdout_matrix_and_answer_key_prohibited(external_dir):
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="answer keys"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes(, custody_verified=True)).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest(), custody_verified=True)
     rows[0].pop("expected_facts")
     rows[1]["case_id"] = rows[0]["case_id"]
     held.chmod(0o644)
