@@ -11,6 +11,7 @@ This is an evidence handoff, not a claim that the ten-day programme is operation
 - Repository: `rumman52/Shuddho`
 - Default branch observed: `main`
 - Main SHA at this snapshot: `8f92814ab5f25d1214596d63213824c7ba577a93`
+- Source provider default in README: `SHUDDHO_LLM_PROVIDER=deepseek`, `DEEPSEEK_MODEL=deepseek-flash`; explicit Gemma rollback remains supported. This is source configuration, not a live API/worker model readback or frozen release identity.
 - Day 10 tracker: [issue #736](https://github.com/rumman52/Shuddho/issues/736)
 - Day 4 tracker: [issue #730](https://github.com/rumman52/Shuddho/issues/730)
 - Previous Day 4 PR #726 is **closed without merging**. Its aggregate UTF-8 snapshot-budget fix is absent from this main SHA; [PR #746](https://github.com/rumman52/Shuddho/pull/746) re-applies it on current main.
