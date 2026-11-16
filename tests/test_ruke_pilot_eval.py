@@ -11,7 +11,7 @@ import pytest
 
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from scripts.ruke_pilot_eval import (
-    OPERATED, RUBRIC, EvidenceError, compare, external_heldout,
+    OPERATED, RUBRIC, EvidenceError, compare, comparison_evidence_recorded, external_heldout,
     candidate_ledger, canonical_sha256, day10_first_run_scores, immutable_write, main,
     position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews,
     validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
@@ -477,6 +477,8 @@ def test_competitor_access_gap_is_recorded_without_fabricating_a_comparison():
     gap = compare(tasks(), manifest(), None, None)
     assert gap["complete"] is False
     assert gap["comparison_gap"]
+    assert comparison_evidence_recorded(gap)
+    assert not comparison_evidence_recorded({"complete": False})
 
 def test_unsupported_source_or_failed_security_cannot_be_outweighed():
     reviews, checks = reviews_and_checks()
