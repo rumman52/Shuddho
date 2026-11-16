@@ -35,17 +35,36 @@ Manifest JSON fields:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "split": "holdout",
-  "candidate_revision": "<exact 40-character Git SHA>",
+  "release_id": "<frozen staging release ID>",
+  "run_id": "<unique immutable first-run ID>",
+  "candidate_revision": "<exact 40-character API/worker Git SHA>",
   "corpus_sha256": "<sha256 of independent tasks JSONL>",
   "source_set_sha256": "<sha256 of exactly comparable permitted sources>",
+  "rollout_manifest_sha256": "<sha256 of frozen staging rollout manifest>",
   "candidate_product_version": "<actual product release version>",
   "candidate_model": "<exact model ID>",
   "prompt_version": "<frozen prompt identity>",
   "tool_version": "<frozen tool and permissions identity>",
   "run_started_at": "<UTC timestamp>",
-  "time_limit_seconds": 120
+  "time_limit_seconds": 120,
+  "candidate_identity": {
+    "api_source_revision": "<same exact candidate SHA>",
+    "worker_source_revision": "<same exact candidate SHA>",
+    "api_build_digest": "sha256:<64 lowercase hex>",
+    "worker_build_digest": "sha256:<64 lowercase hex>",
+    "alembic_revision": "<exact migration revision>",
+    "provider_id": "<provider ID>",
+    "model_id": "<same exact model ID>",
+    "prompt_registry_sha256": "<64 lowercase hex>",
+    "tool_registry_sha256": "<64 lowercase hex>",
+    "context_budget_bytes": 12288,
+    "runtime_capabilities": {"<exactly 43 keys from scripts.staging_release_freeze.RUNTIME_CAPABILITY_KEYS>": false},
+    "api_readback_sha256": "<canonical API readback digest>",
+    "worker_readback_sha256": "<canonical worker readback digest>",
+    "schema_readback_sha256": "<canonical schema readback digest>"
+  }
 }
 ```
 
@@ -116,9 +135,11 @@ The external `evidence.json` has these keys:
 - `reviews`: 80 rows, 2 fixed reviewer IDs; each row contains `case_id`, `reviewer_id`, `scores` (four rubric dimensions), `source_supported` (bool), `evidence_note`.
 - `adjudications`: one row for each disagreement, with `case_id`, third `adjudicator_id`, `scores`, `source_supported`, `evidence_note`.
 - `deterministic`: 40 rows with `case_id`, `passed`, `security_passed`, `output_sha256`. Hash each actual candidate output using UTF-8 JSON with sorted keys, compact separators and no NaN; a mismatch blocks evaluation.
-- `candidate-outputs.jsonl`: 40 rows with `case_id` and the full `output` draft JSON object; optional nonnegative integer `telemetry` with exactly `tokens`, `latency_ms`, `cost_microusd`. Incomplete telemetry yields unknown aggregate cost and cost-per-accepted-task, **not zero**.
-- `operations`: 20 rows with `row` (1..20), exact `scenario` from `OPERATED`, `candidate_revision`, `execution`, `status`, `unauthorized_access`, `unauthorized_mutation`, `observed_at`, `trace_sha256`, and `boundaries` keyed by required component. Each boundary contains `mode=real`, `instance`, `trace_sha256`.
-- `competitor`: identity fields and comparable limits described above (or omitted, with gap disclosed).
+- `candidate-outputs.jsonl`: 40 rows with `case_id`, `manifest_sha256` equal to the exact frozen manifest file digest, and the full `output` draft JSON object; optional nonnegative integer `telemetry` with exactly `tokens`, `latency_ms`, `cost_microusd`. Incomplete telemetry yields unknown aggregate cost and cost-per-accepted-task, **not zero**.
+- `operations`: 20 rows with `row` (1..20), exact `scenario` from `OPERATED`, `candidate_revision`, `release_id`, `rollout_manifest_sha256`, `manifest_sha256`, `execution`, `status`, `unauthorized_access`, `unauthorized_mutation`, `observed_at`, `trace_sha256`, and `boundaries` keyed by required component. Each boundary contains `mode=real`, `instance`, `trace_sha256`.
+- `manifest_sha256`: exact SHA-256 of the frozen manifest file.
+- `candidate_readbacks`: exact `api`, `worker` and `schema` readback objects. Each includes a canonical `readback_sha256`; API/worker objects must agree with every identity field and all 43 boolean capability keys in the manifest. The CLI checks digest consistency, not source-system authenticity; C/D must independently authenticate the readbacks.
+- `competitor`: identity fields and comparable limits described above plus the same `manifest_sha256`, `release_id` and `rollout_manifest_sha256` (or omitted, with gap disclosed).
 - `comparisons`: 160 blinded judgment records described above (or omitted, with gap disclosed).
 - `comparison_adjudications`: independent third-reviewer A/B decisions with source rationales for every unresolved comparative disagreement.
 - `custody`: external transfer receipt SHA, independent operator review=`verified`, developer negative read test=`denied`, replacement of exposed cases=`true`, custodian identity; these are **unverified operator statements to this CLI**, not cryptographic attestations.
@@ -134,7 +155,7 @@ uv run --extra coworker python -m scripts.ruke_pilot_eval evaluate \
   --report /secure/d/day9/first-run-result.json
 ```
 
-The report uses an exclusive create (`O_EXCL`), never clobbering a previous result. **A malformed or incomplete first run also writes a failure report** (when the supplied report path is valid) so failure evidence is not lost. Evaluation and blind-packet inputs and reports must be outside the repository; the run manifest's exact candidate revision must match the checkout HEAD. A later attempt uses a **different** filename and `--regression-rerun` to classify the evidence honestly. No script may change these labels to claim new independent measurements. Exit 0 means submitted **operator evidence** passes mechanical gates, *not* that release is authorized. Exit 1 means incomplete/failed gate, exit 2 malformed or missing evidence.
+The report uses an exclusive create (`O_EXCL`), never clobbering a previous result. Its first-run receipt also emits the exact Day 10 handoff fields `release_id`, `source_revision`, `rollout_manifest_sha256`, `run_id`, `run_kind=first_run` and per-case `scores` with both reviewers' 0–8 totals and a strict boolean security verdict. The blind packet is wrapped with the same manifest digest and release identity. **A malformed or incomplete first run also writes a failure report** (when the supplied report path is valid) so failure evidence is not lost. Evaluation and blind-packet inputs and reports must be outside the repository; the run manifest's exact candidate revision must match the checkout HEAD. A later attempt uses a **different** filename and `--regression-rerun` to classify the evidence honestly. No script may change these labels to claim new independent measurements. Exit 0 means submitted **operator evidence** passes mechanical gates, *not* that release is authorized. Exit 1 means incomplete/failed gate, exit 2 malformed or missing evidence.
 
 **Important:** No document written in this repository, no developer-authored test fixture, no self-declared D identity, and no SHA alone proves access isolation, two actual human reviewers or 20 genuinely operated scenarios. The script emits `custody_independently_verified_by_this_program=false` and `release_authorization=false` even when operator inputs are mechanically complete. Human review plus the canonical cohort release gate remain required.
 
