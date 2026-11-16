@@ -460,12 +460,23 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
         per_cell[cell]["accepted"] += int(accepted)
         reviewer_scores = [sum(by_id[cid][reviewer]["scores"][dimension] for dimension in RUBRIC)
                            for reviewer in reviewers]
+        reviewer_rubrics = [
+            {"reviewer_id": reviewer, "scores": dict(by_id[cid][reviewer]["scores"])}
+            for reviewer in reviewers
+        ]
+        both_reviewers_meet_floor = all(
+            total >= 7 and min(by_id[cid][reviewer]["scores"].values()) > 0
+            for reviewer, total in zip(reviewers, reviewer_scores)
+        )
+        accepted = (deterministic_ok and chosen["source_supported"]
+                    and both_reviewers_meet_floor and sum(ratings.values()) >= 7
+                    and min(ratings.values()) > 0)
         results.append({"case_id": cid, "cell": cell, "workflow": case["workflow"],
                         "language": case["language"], "score": sum(ratings.values()),
                         "accepted": accepted, "deterministic_pass": deterministic_ok,
                         "security_passed": checks[cid]["security_passed"],
                         "source_supported": chosen["source_supported"],
-                        "reviewer_scores": reviewer_scores})
+                        "reviewer_scores": reviewer_scores, "reviewer_rubrics": reviewer_rubrics})
     accepted = sum(r["accepted"] for r in results)
     security_failed_cases = sorted(cid for cid, check in checks.items() if not check["security_passed"])
     security_gate_pass = not security_failed_cases
@@ -488,7 +499,8 @@ def day10_first_run_scores(scores: dict) -> dict:
         "cases": [
             {"id": row["case_id"], "workflow": row["workflow"], "language": row["language"],
              "accepted": row["accepted"], "security_passed": row["security_passed"],
-             "reviewer_scores": row["reviewer_scores"]}
+             "reviewer_scores": row["reviewer_scores"],
+             "reviewer_rubrics": row["reviewer_rubrics"]}
             for row in scores["results"]
         ],
     }
@@ -771,8 +783,13 @@ def main(argv=None) -> int:
                 high_severity = evidence.get("unresolved_high_severity_failures", None)
                 if not isinstance(high_severity, list):
                     raise EvidenceError("high-severity findings inventory required")
+                comparison_recorded = (
+                    comparative.get("complete") is True
+                    or (isinstance(comparative.get("comparison_gap"), str)
+                        and bool(comparative["comparison_gap"].strip()))
+                )
                 eligible = bool(readback_status["consistent"] and scores["outcome_gate_pass"]
-                                and faults["fault_gate_pass"] and comparative["complete"]
+                                and faults["fault_gate_pass"] and comparison_recorded
                                 and isolated and source_gate and not high_severity)
                 first_run_scores = day10_first_run_scores(scores)
                 obj = {
