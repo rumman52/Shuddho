@@ -9,10 +9,10 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
 
 if __package__ in {None, ""}:
     # Support the documented `python scripts/day10_release_decision.py` entrypoint.
