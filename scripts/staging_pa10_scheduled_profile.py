@@ -30,6 +30,18 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def require_future_expiry(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ScheduledProfileProbeFailure("Recurring briefing must have an explicit expiry.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ScheduledProfileProbeFailure("Recurring briefing expiry is not a valid ISO timestamp.") from None
+    if parsed.tzinfo is None or parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+        raise ScheduledProfileProbeFailure("Recurring briefing expiry must be a future timezone-aware timestamp.")
+    return value
+
+
 def require_guard() -> None:
     if os.environ.get("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "").lower() != "true":
         raise ScheduledProfileProbeFailure(
@@ -268,6 +280,16 @@ def load_owned(
             f"Automation does not match the {scenario} profile/schedule contract."
         )
 
+    if scenario in {"daily_coworker", "weekly_coworker"}:
+        require_future_expiry(automation.get("expires_at"))
+        if (
+            automation.get("schedule_applied_revision") != automation.get("revision")
+            or automation.get("schedule_applied_enabled") is not True
+            or automation.get("schedule_error_code")
+        ):
+            raise ScheduledProfileProbeFailure(
+                "Temporal worker has not applied the active automation revision."
+            )
     daily_scope = (
         load_authorized_daily_scope(client, token, automation)
         if scenario == "daily_coworker" else {}
@@ -318,6 +340,9 @@ def prepare(args: argparse.Namespace) -> dict:
         "run_profile": current["automation"]["run_profile"],
         "output_language": current["automation"]["output_language"],
         "quiet_hours": current["automation"].get("quiet_hours"),
+        "expires_at": current["automation"].get("expires_at"),
+        "schedule_applied_revision": current["automation"].get("schedule_applied_revision"),
+        "schedule_applied_enabled": current["automation"].get("schedule_applied_enabled"),
         **current["daily_scope"],
         "baseline_occurrence_ids": sorted(
             str(item.get("occurrence_id"))
@@ -381,6 +406,14 @@ def verify(args: argparse.Namespace) -> dict:
                 if int(current["automation"]["revision"]) != int(state["automation_revision"]):
                     raise ScheduledProfileProbeFailure(
                         "Automation revision changed during the scenario."
+                    )
+                if (
+                    current["automation"].get("expires_at") != state.get("expires_at")
+                    or current["automation"].get("schedule_applied_revision") != state.get("schedule_applied_revision")
+                    or current["automation"].get("schedule_applied_enabled") is not True
+                ):
+                    raise ScheduledProfileProbeFailure(
+                        "Automation expiry or Temporal applied schedule state changed during the scenario."
                     )
                 history = [
                     item for item in current["history"]
@@ -490,6 +523,9 @@ def verify(args: argparse.Namespace) -> dict:
                     "run_profile": state["run_profile"],
                     "output_language": state["output_language"],
                     "quiet_hours": state["quiet_hours"],
+                    "expires_at": state["expires_at"],
+                    "schedule_applied_revision": state["schedule_applied_revision"],
+                    "schedule_applied_enabled": state["schedule_applied_enabled"],
                     "prepared_at": state["prepared_at"],
                     "verified_at": utcnow_iso(),
                     "occurrence_id": occurrence_id,
@@ -549,7 +585,7 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         if (not daily_scope
                 or any(item.get(field) != daily_scope.get(field)
                        for item in (state, first, second)
-                       for field in ("goal_id", "goal_revision", "project_id", "authorized_document_ids"))):
+                       for field in ("goal_id", "goal_revision", "project_id", "authorized_document_ids", "expires_at"))):
             raise ScheduledProfileProbeFailure(
                 "Live owner-approved goal scope changed before two-day pause."
             )
@@ -558,6 +594,7 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             "status": "paused", "release": release,
             "synthetic_account_label": state["synthetic_account_label"],
             "owner_id": state["owner_id"], "automation_id": state["automation_id"],
+            "expires_at": current["automation"].get("expires_at"),
             "previous_revision": revision, "paused_revision": revision + 1,
             "paused_at": utcnow_iso(), "operator_case_reference": case_ref,
         }
@@ -584,6 +621,16 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             raise ScheduledProfileProbeFailure(
                 "Pause did not persist the expected synthetic automation transition."
             )
+        if (
+            observed.get("schedule_applied_revision") != observed.get("revision")
+            or observed.get("schedule_applied_enabled") is not False
+            or observed.get("schedule_error_code")
+        ):
+            raise ScheduledProfileProbeFailure(
+                "Temporal worker has not applied the paused automation revision."
+            )
+        evidence["schedule_applied_revision"] = observed.get("schedule_applied_revision")
+        evidence["schedule_applied_enabled"] = observed.get("schedule_applied_enabled")
         evidence["paused_revision"] = int(observed["revision"])
         evidence["paused_at"] = utcnow_iso()
         try:
