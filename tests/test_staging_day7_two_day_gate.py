@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -84,6 +85,21 @@ def test_two_day_gate_rejects_invalid_operator_evidence(mutation):
 def test_two_day_gate_rejects_missing_run_source_evidence():
     first, second, paused = valid_pair()
     del first["input_version_ids"]
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
+
+
+@pytest.mark.parametrize("field", ["future_verification", "future_pause", "boolean_revision"])
+def test_two_day_gate_rejects_unobserved_times_and_invalid_revision(field):
+    first, second, paused = valid_pair()
+    future = datetime.now(timezone.utc) + timedelta(days=2)
+    if field == "future_verification":
+        second["verified_at"] = future.isoformat()
+        paused["paused_at"] = (future + timedelta(minutes=1)).isoformat()
+    elif field == "future_pause":
+        paused["paused_at"] = future.isoformat()
+    else:
+        second["automation_revision"] = True
     with pytest.raises(GateFailure):
         verify_two_day(first, second, paused)
 

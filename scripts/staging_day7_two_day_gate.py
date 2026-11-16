@@ -49,6 +49,7 @@ def strings(value: object, field: str) -> list[str]:
 
 def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     """Check cross-day pins, local schedule, identity, notices and paused state."""
+    now = datetime.now(timezone.utc)
     require(all(isinstance(x, dict) for x in (first, second, paused)),
             "Expected three JSON evidence objects.")
     release = first.get("release")
@@ -90,6 +91,9 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
                 and all(item.get(k) for k in ("occurrence_id", "run_id", "started_notification_id",
                                                  "completion_notification_id", "operator_case_reference")),
                 f"Day {index} is missing one-run/two-notice evidence.")
+        revision = item.get("automation_revision")
+        require(type(revision) is int and revision >= 1,
+                f"Day {index} must identify a valid accepted automation revision.")
         for field in (*identity, *schedule_identity):
             require(item.get(field) == first.get(field), f"Day {index} changed {field}.")
     # Two different lifecycle notices must have different persisted IDs, both
@@ -112,8 +116,9 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     require(paused.get("status") == "paused"
             and bool(paused.get("operator_case_reference")),
             "Pause evidence must confirm a paused synthetic automation.")
-    require(paused.get("previous_revision") == first.get("automation_revision")
-            and isinstance(paused.get("paused_revision"), int)
+    require(type(paused.get("previous_revision")) is int
+            and paused["previous_revision"] == first["automation_revision"]
+            and type(paused.get("paused_revision")) is int
             and paused["paused_revision"] > paused["previous_revision"],
             "Pause must follow the accepted schedule revision.")
     schedule = first.get("schedule")
@@ -127,19 +132,20 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
         raise GateFailure("Timezone must be a valid IANA zone.") from error
     local_dates: list[date] = []
     due_timestamps: list[datetime] = []
+    verified_timestamps: list[datetime] = []
     for item in (first, second):
         due = timestamp(item.get("due_at"), "due_at")
         local = due.astimezone(zone)
         require((local.hour, local.minute, local.second) ==
                 (schedule["hour"], schedule["minute"], 0),
                 "An occurrence was not due at the owner-approved local schedule time.")
-        require(timestamp(item.get("prepared_at"), "prepared_at") <= due
-                <= timestamp(item.get("verified_at"), "verified_at"),
-                "Occurrence must happen between its staging preparation and verification.")
+        verified = timestamp(item.get("verified_at"), "verified_at")
+        require(timestamp(item.get("prepared_at"), "prepared_at") <= due <= verified <= now,
+                "Occurrence must be prepared and verified in order by the current time.")
         due_timestamps.append(due)
+        verified_timestamps.append(verified)
         local_dates.append(local.date())
-    require(timestamp(second.get("prepared_at"), "Day 8 prepared_at") >
-            timestamp(first.get("verified_at"), "Day 7 verified_at"),
+    require(timestamp(second.get("prepared_at"), "Day 8 prepared_at") > verified_timestamps[0],
             "Day 8 baseline must be prepared after Day 7 verification.")
     require(local_dates[1] == local_dates[0] + timedelta(days=1)
             and due_timestamps[1] > due_timestamps[0],
@@ -161,9 +167,8 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
             "Day 7 original source versions changed or were not rechecked on Day 8.")
     require(set(pins_first) != set(pins_second),
             "No source version changed between the two days.")
-    require(timestamp(paused.get("paused_at"), "paused_at") >=
-            timestamp(second.get("verified_at"), "Day 8 verified_at"),
-            "Pause was not performed after Day 8 verification.")
+    require(verified_timestamps[1] <= timestamp(paused.get("paused_at"), "paused_at") <= now,
+            "Pause must be observed after Day 8 verification and by the current time.")
     return {
         "status": "passed", "scenario": "day7_two_day_daily_briefing",
         "release": first["release"], "owner_id": first["owner_id"],
