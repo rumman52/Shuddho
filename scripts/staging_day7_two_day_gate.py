@@ -181,8 +181,11 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
             "Day 7 original source versions changed or were not rechecked on Day 8.")
     require(set(pins_first) != set(pins_second),
             "No source version changed between the two days.")
-    require(verified_timestamps[1] <= timestamp(paused.get("paused_at"), "paused_at") <= now,
+    paused_at = timestamp(paused.get("paused_at"), "paused_at")
+    require(verified_timestamps[1] <= paused_at <= now,
             "Pause must be observed after Day 8 verification and by the current time.")
+    require(timestamp(first.get("expires_at"), "expires_at") > paused_at,
+            "The approved schedule expiry must remain after the Day 8 pause.")
     return {
         "status": "passed", "scenario": "day7_two_day_daily_briefing",
         "release": first["release"], "owner_id": first["owner_id"],
