@@ -21,6 +21,7 @@ from .models import Artifact, Document, DocumentVersion
 SUPPORTED_KINDS = frozenset({"pdf", "txt", "docx", "csv", "xlsx", "pptx"})
 # This is data cited by the model, never another system-level instruction.
 CITATION = re.compile(r"\[\[([^\[\]\r\n]{1,80})\]\]")
+SOURCE_MARKER_START = re.compile(r"\[\[\s*src\s*-", re.IGNORECASE)
 MAX_CHAT_SOURCES = 5
 
 
@@ -30,7 +31,7 @@ def check_grounded_citations(text: str, source_map: dict[str, dict]) -> None:
     if not citations or any(identifier not in source_map for identifier in citations):
         raise ValueError("Grounded reply is missing or inventing citations")
     # Malformed source-style markers must not sidestep the allow-list.
-    if "[[src-" in CITATION.sub("", text):
+    if SOURCE_MARKER_START.search(CITATION.sub("", text)):
         raise ValueError("Malformed source citation")
 
 

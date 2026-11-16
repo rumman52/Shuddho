@@ -395,3 +395,13 @@ def test_grounding_rejects_invented_and_missing_citations():
                    "[[src-1]] [[src-2]]", "[[src-1"):
         with pytest.raises(ValueError):
             check_grounded_citations(answer, allowed)
+
+
+@pytest.mark.parametrize("broken", ["[[ SRC-999", "[[src -999]", "[[\nsrc-999"])
+def test_grounding_rejects_malformed_source_markers_even_with_a_valid_citation(broken):
+    from services.coworker.conversation_grounding import check_grounded_citations
+
+    allowed = {"src-1": {"resource_type": "document_version", "resource_id": "doc"}}
+    check_grounded_citations("Original claim. [[src-1]] Another use. [[src-1]]", allowed)
+    with pytest.raises(ValueError, match="Malformed source citation"):
+        check_grounded_citations(f"Valid claim. [[src-1]] Unsupported claim. {broken}", allowed)
