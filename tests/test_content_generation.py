@@ -50,12 +50,18 @@ def test_prompt_separates_task_context_and_server_owned_output_contract():
         sources=[{"id": "brief", "text": malicious_source}],
         skill_guidance="Use concise findings and preserve source references.",
         output_schema=schema,
+        reviewed_brief={
+            "objective": "Write the code review memo.",
+            "constraints": ["Preserve source references", "Do not claim tests were run"],
+            "deliverables": ["A concise memo"],
+        },
+        steering_instructions=[{"revision": 1, "instruction": "Use a short risk-first structure."}],
         retrieval_used=True,
         tools_used=["tavily.search"],
     )
 
     assert [message["role"] for message in messages] == ["system", "user"]
-    assert PROMPT_VERSION == "rukh-content-v1"
+    assert PROMPT_VERSION == "rukh-content-v2"
     assert malicious_source not in messages[0]["content"]
 
     payload = json.loads(messages[1]["content"])
@@ -65,6 +71,12 @@ def test_prompt_separates_task_context_and_server_owned_output_contract():
         "task_type": "code",
     }
     assert payload["context"]["sources"] == [{"id": "brief", "text": malicious_source}]
+    assert payload["context"]["reviewed_brief"]["constraints"] == [
+        "Preserve source references", "Do not claim tests were run",
+    ]
+    assert payload["context"]["steering_instructions"] == [
+        {"revision": 1, "instruction": "Use a short risk-first structure."},
+    ]
     assert payload["execution_metadata"] == {
         "retrieval_used": True,
         "tools_used": ["tavily.search"],
@@ -80,6 +92,7 @@ def test_prompt_separates_task_context_and_server_owned_output_contract():
     }
     system = messages[0]["content"].lower()
     assert "untrusted data" in system
+    assert "task.output_language field is authoritative" in system
     assert "never claim code was executed or tests passed" in system
     assert "use concise findings and preserve source references" in system
 
