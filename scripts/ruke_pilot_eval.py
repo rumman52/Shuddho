@@ -168,6 +168,13 @@ def validate_candidate_identity(manifest: dict) -> dict:
 
 
 
+
+def source_checks_ok(evidence: object) -> bool:
+    """Require exact-head mandatory CI and canonical release-contract evidence."""
+    return (isinstance(evidence, dict)
+            and evidence.get("required_repository_checks") == "passed"
+            and evidence.get("canonical_release_contract") == "passed")
+
 def custody_receipt_ok(custody: object) -> bool:
     """Fail closed unless D's independent access boundary has a complete receipt."""
     if not isinstance(custody, dict):
@@ -780,6 +787,8 @@ def main(argv=None) -> int:
             if not custody_receipt_ok(evidence.get("custody")):
                 raise EvidenceError("independent D custody receipt is incomplete; heldout corpus was not read")
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
+            if not source_checks_ok(evidence):
+                raise EvidenceError("exact-head required CI and canonical release contract must pass before reading heldout bytes")
             head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                   text=True, capture_output=True, check=True).stdout.strip()
             if manifest.get("candidate_revision") != head:
@@ -823,7 +832,7 @@ def main(argv=None) -> int:
                 )
                 custody = evidence.get("custody", {})
                 isolated = custody_receipt_ok(custody)
-                source_gate = evidence.get("required_repository_checks") == "passed" and evidence.get("canonical_release_contract") == "passed"
+                source_gate = source_checks_ok(evidence)
                 high_severity = evidence.get("unresolved_high_severity_failures", None)
                 if not isinstance(high_severity, list):
                     raise EvidenceError("high-severity findings inventory required")
