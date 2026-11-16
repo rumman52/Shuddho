@@ -44,7 +44,8 @@ def evidence():
              "run_id": "day9-first", "scores": {"accepted": 28, "total": 40}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
-               "generation_identity_verified": True, "reviewers": ["human-D1", "human-D2"],
+               "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
+               "reviewers": ["human-D1", "human-D2"],
                "custody_receipt": {**proof(), "independent_d_controls_access": True,
                                    "developer_negative_read_denied": True},
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
