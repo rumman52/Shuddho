@@ -522,7 +522,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     setWorking(true); setError("");
     try {
       const preview = await client.previewConversationTaskBrief(
-        selected, item.id, item.sequence, briefDraft, projectId);
+        selected, item.id, item.sequence, briefDraft, projectId,
+        memoryEnabled ? selectedMemoryPins : undefined);
       if (selectedRef.current === selected) setBriefPreview(preview);
     } catch (cause) {
       setBriefPreview(null);
@@ -530,15 +531,21 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     } finally { setWorking(false); }
   }
 
+  const reviewedPins = briefPreview?.memory_pins ?? [];
+  const taskPins = memoryEnabled ? selectedMemoryPins : [];
+  const reviewedDigest = reviewedPins.length === taskPins.length && reviewedPins.every((pin, index) =>
+    pin.fact_id === taskPins[index].fact_id && pin.expected_version === taskPins[index].expected_version)
+    ? briefPreview?.canonical_digest : null;
+
   async function dispatch(item: ConversationMessageRecord) {
-    if (!selected || working || !briefDraft || !briefPreview?.canonical_digest
+    if (!selected || working || !briefDraft || !reviewedDigest
       || briefMessageId !== item.id) return;
     setWorking(true); setError(""); setNotice("");
     try {
       await client.dispatchConversationMessage(
         selected, item.id, item.sequence, projectId,
         memoryEnabled ? selectedMemoryPins : undefined,
-        briefDraft, briefPreview.canonical_digest);
+        briefDraft, reviewedDigest);
       setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null);
       setSelectedMemoryPins([]);
       await reloadConversation(selected);
@@ -854,7 +861,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                   {briefQuestion && <p role="status">{briefQuestion} Reply in the conversation to clarify.</p>}
                   {briefDraft && <form className="rukh-steer-form" onSubmit={event => {
                     event.preventDefault();
-                    if (briefPreview?.canonical_digest) void dispatch(item);
+                    if (reviewedDigest) void dispatch(item);
                     else void previewBrief(item);
                   }}>
                     <label>Task objective
@@ -885,10 +892,10 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                         {sourceLabel(source, manifest)}
                       </label>;
                     })}
-                    {briefPreview?.canonical_digest && <p role="status">Validated preview: {briefPreview.canonical_digest.slice(0, 12)}…</p>}
+                    {reviewedDigest && <p role="status">Validated preview: {reviewedDigest.slice(0, 12)}…</p>}
                     <small>Edits invalidate the preview. Sources are untrusted data; this does not approve external actions.</small>
                     <button type="submit" disabled={working || !briefDraft.objective.trim() || briefDraft.deliverables.length === 0}>
-                      {briefPreview?.canonical_digest ? "Confirm and start reviewed task" : "Validate task preview"}
+                      {reviewedDigest ? "Confirm and start reviewed task" : "Validate task preview"}
                     </button>
                   </form>}
                 </section>}
@@ -1017,9 +1024,12 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                 <input type="checkbox" aria-label={`Use memory ${fact.namespace} / ${fact.key} in next task`}
                   checked={selectedMemoryPins.some(pin => pin.fact_id === fact.id && pin.expected_version === fact.version)}
                   disabled={working || !fact.active || (!selectedMemoryPins.some(pin => pin.fact_id === fact.id) && selectedMemoryPins.length >= 20)}
-                  onChange={event => setSelectedMemoryPins(current => event.target.checked
-                    ? [...current.filter(pin => pin.fact_id !== fact.id), { fact_id: fact.id, expected_version: fact.version }]
-                    : current.filter(pin => pin.fact_id !== fact.id))} />
+                  onChange={event => {
+                    setBriefPreview(null);
+                    setSelectedMemoryPins(current => event.target.checked
+                      ? [...current.filter(pin => pin.fact_id !== fact.id), { fact_id: fact.id, expected_version: fact.version }]
+                      : current.filter(pin => pin.fact_id !== fact.id));
+                  }} />
                 Use in next task
               </label>
               {editingMemory === fact.id ? <>

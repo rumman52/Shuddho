@@ -231,8 +231,18 @@ try {
   await page.getByLabel("Add source files").setInputFiles({ name: "meeting.txt", mimeType: "text/plain", buffer: Buffer.from("Meeting held on 10 September 2026. The team completed 12 reviews.") });
   await page.getByRole("button", { name: "Remove meeting.txt from this task" }).waitFor();
   await page.getByLabel("Output language").selectOption("bn");
+  const reportAdmission = page.waitForResponse(response =>
+    response.request().method() === "POST" && response.url().endsWith("/api/v1/tasks"));
   await page.getByRole("button", { name: "Create report & email draft" }).click();
-  await page.getByRole("region", { name: "Task result" }).waitFor();
+  const reportResponse = await reportAdmission;
+  assert.equal(reportResponse.status(), 202, "The Bangla report must be accepted before switching workspaces.");
+  const reportTask = await reportResponse.json();
+  assert.equal(typeof reportTask.id, "string");
+  const result = page.getByRole("region", { name: "Task result" })
+    .and(page.locator(`[data-task-id=${JSON.stringify(reportTask.id)}]`));
+  // Recent work already contains results from the Agent continuity scenario.
+  // Wait until this report is the current task before testing refresh recovery.
+  await result.waitFor();
   assert.equal(await page.getByRole("link", { name: "Web Editor", exact: true }).count(), 0);
   await page.getByRole("link", { name: "Writing Assistant", exact: true }).click();
   await page.waitForURL(url => url.pathname === "/writing");
@@ -322,7 +332,6 @@ try {
   await page.setViewportSize({ width: 1365, height: 960 });
   await page.getByRole("navigation", { name: "Primary workspace navigation" }).waitFor();
   await navigateWorkspace(page, "Files & drafts");
-  const result = page.getByRole("region", { name: "Task result" });
   await result.getByText("Ready", { exact: true }).waitFor({ timeout: 60000 });
   await result.getByRole("heading", { name: "প্রকল্পের অগ্রগতি", exact: true }).first().waitFor();
   assert.equal(await taskHistory.count(), initialTaskCount + 1);

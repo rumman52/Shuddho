@@ -15,10 +15,11 @@ from .agent_planning_model import (
 )
 from .conversation_context import require_current_selected_sources
 from .errors import CoworkerError
-from .models import Conversation, ConversationMessage, Project, ProjectResource
+from .memory_repository import require_current_memory_pins
+from .models import Conversation, ConversationMessage, Project, ProjectResource, Workspace
 from .provider_capacity import acquire_provider_lease, settle_provider_lease
 from .repository import not_found
-from .task_brief_schemas import TaskBrief, canonical_brief_digest
+from .task_brief_schemas import MemoryPin, TaskBrief, TaskBriefMemorySelection, canonical_brief_digest
 
 _SECOND = re.compile(r"\b(?:second|2nd)\s+(?:option|structure|one)\b", re.I)
 _OPTION_TWO = re.compile(r"(?:\b(?:option|structure)\s*(?:2|two|second)\b|(?:^|\n)\s*2[.)])", re.I)
@@ -86,7 +87,8 @@ class ConversationTaskBriefService:
     @classmethod
     def validate_in_session(cls, db, settings, owner, conversation_id, message_id,
                             expected_sequence, brief: TaskBrief, project_id=None, *,
-                            allow_historical_replay: bool = False):
+                            allow_historical_replay: bool = False,
+                            memory_pins: list[dict] | None = None):
         if not settings.conversations_enabled:
             raise CoworkerError("conversations_unavailable", "Conversations not enabled.", 409)
         cls._checked(db, owner, conversation_id, message_id, expected_sequence,
@@ -99,14 +101,22 @@ class ConversationTaskBriefService:
         pins = require_current_selected_sources(db, owner, [known[s] for s in source_ids])
         project = cls._project(db, settings, owner, conversation_id, project_id)
         digest = canonical_brief_digest(brief, pins, project, owner_id=owner,
-                  conversation_id=conversation_id, message_id=message_id, sequence=expected_sequence)
+                  conversation_id=conversation_id, message_id=message_id, sequence=expected_sequence,
+                  memory_pins=memory_pins)
         return {"brief": brief.model_dump(mode="json"), "selected_sources": pins,
-                "project_context": project, "canonical_digest": digest}
+                "project_context": project, "canonical_digest": digest, "memory_pins": memory_pins or []}
 
-    def validate(self, owner, conversation_id, message_id, *, expected_sequence, brief, project_id=None):
+    def validate(self, owner, conversation_id, message_id, *, expected_sequence, brief, project_id=None,
+                 memory_pins: list[MemoryPin] | None = None):
+        selection = TaskBriefMemorySelection(memory_pins=memory_pins or []).model_dump(mode="json")["memory_pins"]
         with self.sessions() as db:
             result = self.validate_in_session(db, self.settings, owner, conversation_id,
-                     message_id, expected_sequence, brief, project_id)
+                     message_id, expected_sequence, brief, project_id, memory_pins=selection)
+            if selection:
+                workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
+                if workspace_id is None:
+                    raise not_found()
+                require_current_memory_pins(db, owner, workspace_id, selection, self.settings)
         return {"state": "ready", **result}
 
     async def propose(self, owner, conversation_id, message_id, *, expected_sequence, project_id=None):

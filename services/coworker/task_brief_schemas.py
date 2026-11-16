@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .goal_schemas import _safe_text
 
 
+MEMORY_BOUND_BRIEF_VERSION = 2
+
+
 class MemoryPin(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -86,16 +89,19 @@ class TaskBriefProposeRequest(BaseModel):
     expected_sequence: int = Field(ge=1)
     project_id: UUID | None = None
 
-class TaskBriefPreviewRequest(TaskBriefProposeRequest):
+class TaskBriefPreviewRequest(TaskBriefProposeRequest, TaskBriefMemorySelection):
     brief: TaskBrief
 
 def canonical_brief_digest(brief: TaskBrief, pins: list[dict], project: dict, *,
-                           owner_id: str, conversation_id: str, message_id: str, sequence: int) -> str:
+                           owner_id: str, conversation_id: str, message_id: str, sequence: int,
+                           memory_pins: list[dict] | None = None) -> str:
     bounded_pins = [{"resource_type": p["resource_type"], "resource_id": p["resource_id"],
                      "sha256": p["sha256"], "document_id": p.get("document_id"),
                      "version": p.get("version")} for p in pins]
     data = {"schema_version": 1, "brief": brief.model_dump(mode="json"), "source_pins": bounded_pins,
             "project_context": project or {}, "owner": owner_id, "conversation": conversation_id,
             "message": message_id, "sequence": sequence}
+    if memory_pins:
+        data.update(schema_version=MEMORY_BOUND_BRIEF_VERSION, memory_pins=memory_pins)
     return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False,
                                       separators=(",", ":")).encode("utf-8")).hexdigest()

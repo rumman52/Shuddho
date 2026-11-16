@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import ConversationWorkspace from "./ConversationWorkspace";
-import { WorkspaceError, type CoworkerClient, type ConversationMessageRecord, type AgentRun, type WorkspaceManifest } from "./client";
+import { WorkspaceError, type CoworkerClient, type ConversationMessageRecord, type AgentRun, type MemoryFact, type MemoryPin, type WorkspaceManifest } from "./client";
 
 const timestamp = "2026-11-04T00:00:00Z";
 const record = { id: "conversation-1", title: "Research brief", message_sequence: 0, created_at: timestamp, updated_at: timestamp };
@@ -56,6 +56,49 @@ test("empty workspace has a composer and first message creates a conversation wi
     assert.equal(calls.messages[0].text, "আমার কাজের পরিকল্পনা করুন");
     assert.equal(calls.dispatches, 0);
   });
+});
+
+test("changing task memories requires a new brief preview before Agent admission", async () => {
+  const data = fixture([{ ...record, message_sequence: 1 }]);
+  const brief = { objective: "Create a report", deliverables: ["Report"], constraints: [], source_ids: [], output_language: "en" };
+  const facts: MemoryFact[] = ["a", "b"].map(id => ({
+    id, namespace: "preferences", key: id, value: `Preference ${id}`, language: "en", version: 2, active: true,
+  }));
+  const previews: MemoryPin[][] = [];
+  const starts: { pins: MemoryPin[] | undefined; digest: string | undefined }[] = [];
+  Object.assign(data.client, {
+    memory: async () => ({ enabled: true, facts }),
+    conversationHistory: async () => ({ items: [{
+      id: "message-1", conversation_id: record.id, sequence: 1, text: "Create a report", created_at: timestamp,
+      selected_sources: [], resource_links: [],
+    }] }),
+    proposeConversationTaskBrief: async () => ({ state: "ready", brief, canonical_digest: "unbound-preview" }),
+    previewConversationTaskBrief: async (...args: Parameters<CoworkerClient["previewConversationTaskBrief"]>) => {
+      const pins = args[5] ?? [];
+      previews.push(pins);
+      return { state: "ready", brief, canonical_digest: `review-${previews.length}`, memory_pins: pins };
+    },
+    dispatchConversationMessage: async (...args: Parameters<CoworkerClient["dispatchConversationMessage"]>) => {
+      starts.push({ pins: args[4], digest: args[6] });
+    },
+  });
+  await mount(async tree => {
+    const choose = (id: string, checked: boolean) => act(async () =>
+      tree.root.findByProps({ "aria-label": `Use memory preferences / ${id} in next task` }).props.onChange({ target: { checked } }));
+    const submit = () => act(async () => tree.root.findByProps({ "aria-label": "Review task brief" })
+      .findByType("form").props.onSubmit({ preventDefault() {} }));
+    await choose("a", true);
+    await act(async () => tree.root.findAllByType("button").find(button => button.children.includes("Start task"))!.props.onClick());
+    await submit();
+    assert.deepEqual(previews, [[{ fact_id: "a", expected_version: 2 }]]);
+    await choose("b", true);
+    await submit();
+    assert.equal(starts.length, 0);
+    await submit();
+    assert.deepEqual(starts, [{ pins: [
+      { fact_id: "a", expected_version: 2 }, { fact_id: "b", expected_version: 2 },
+    ], digest: "review-2" }]);
+  }, data);
 });
 
 test("lost first-message response retries in the same conversation with the same key", async () => {
@@ -510,8 +553,8 @@ test("selected task memory is previewed, corrected versions are cleared, and onl
       }, canonical_digest: null, question: null,
     }),
     previewConversationTaskBrief: async (_conversation: string, _message: string, _sequence: number,
-      brief: unknown) => ({
-      state: "ready", brief, canonical_digest: "a".repeat(64),
+      brief: unknown, _project: string | null, pins?: MemoryPin[]) => ({
+      state: "ready", brief, canonical_digest: "a".repeat(64), memory_pins: pins,
       question: null,
     }),
     dispatchConversationMessage: async (_conversation: string, _message: string, _sequence: number,

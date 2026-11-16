@@ -9,15 +9,17 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from test_context_memory import enable_pa04, owner as memory_owner
 from test_conversation_dispatch import container, message, setup
+from test_coworker import signed_client
 from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.conversation_task_briefs import ConversationTaskBriefService
 from services.coworker.errors import CoworkerError
 from services.coworker.memory_schemas import MemoryFactCreate, MemoryFactUpdate
-from services.coworker.models import AgentRun, MemoryFact, utcnow
-from services.coworker.task_brief_schemas import MemoryPin, TaskBriefMemorySelection
+from services.coworker.models import AgentOutbox, AgentRun, MemoryFact, utcnow
+from services.coworker.task_brief_schemas import MemoryPin, TaskBrief, TaskBriefMemorySelection
 
 
 def seeded(container):
@@ -38,6 +40,112 @@ def seeded(container):
 
 def pin(fact):
     return MemoryPin(fact_id=UUID(fact["id"]), expected_version=fact["version"])
+
+
+def test_reviewed_brief_rejects_adding_memory_after_preview(container):
+    alice, _, conv, conversations, dispatch, keep, _, _ = seeded(container)
+    msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+    brief = TaskBrief(objective=msg["text"], deliverables=["A customer report"])
+    service = ConversationTaskBriefService(dispatch.sessions, dispatch.settings)
+    preview = service.validate(alice, conv["id"], msg["id"], expected_sequence=1, brief=brief)
+
+    with pytest.raises(CoworkerError) as denied:
+        dispatch.dispatch(alice, conv["id"], msg["id"], expected_sequence=1,
+                          reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+                          memory_pins=[pin(keep)])
+    assert denied.value.code == "task_brief_digest_mismatch"
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
+
+
+def test_reviewed_memory_selection_is_rechecked_at_admission_replay_and_worker_use(container):
+    alice, _, conv, conversations, dispatch, keep, omit, foreign = seeded(container)
+    msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+    brief = TaskBrief(objective=msg["text"], deliverables=["A customer report"])
+    service = ConversationTaskBriefService(dispatch.sessions, dispatch.settings)
+    for unavailable in (pin(foreign), pin(keep).model_copy(update={"expected_version": 2})):
+        with pytest.raises(CoworkerError) as denied:
+            service.validate(alice, conv["id"], msg["id"], expected_sequence=1,
+                             brief=brief, memory_pins=[unavailable])
+        assert denied.value.code == "memory_pins_changed"
+    preview = service.validate(alice, conv["id"], msg["id"], expected_sequence=1,
+                               brief=brief, memory_pins=[pin(keep)])
+    assert preview["memory_pins"] == [pin(keep).model_dump(mode="json")]
+    options = dict(expected_sequence=1, reviewed_brief=brief, expected_digest=preview["canonical_digest"])
+    for different in ([], [pin(omit)]):
+        with pytest.raises(CoworkerError) as denied:
+            dispatch.dispatch(alice, conv["id"], msg["id"], **options, memory_pins=different)
+        assert denied.value.code == "task_brief_digest_mismatch"
+    admitted, created = dispatch.dispatch(alice, conv["id"], msg["id"], **options, memory_pins=[pin(keep)])
+    assert created
+    assert container.agent.worker_run(admitted["run_id"])["id"] == admitted["run_id"]
+    replayed, created = dispatch.dispatch(alice, conv["id"], msg["id"], **options, memory_pins=[pin(keep)])
+    assert not created and replayed["run_id"] == admitted["run_id"]
+    with dispatch.sessions.begin() as db:
+        run = db.get(AgentRun, admitted["run_id"])
+        run.project_context = {**run.project_context, "memory_pins": [pin(omit).model_dump(mode="json")]}
+    with pytest.raises(CoworkerError) as denied:
+        container.agent.worker_run(admitted["run_id"])
+    assert denied.value.code == "context_sources_changed"
+
+
+def test_existing_version_one_reviewed_runs_with_pins_remain_replayable(container):
+    alice, _, conv, conversations, dispatch, keep, _, _ = seeded(container)
+    msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+    brief = TaskBrief(objective=msg["text"], deliverables=["A customer report"])
+    service = ConversationTaskBriefService(dispatch.sessions, dispatch.settings)
+    legacy = service.validate(alice, conv["id"], msg["id"], expected_sequence=1, brief=brief)
+    current = service.validate(alice, conv["id"], msg["id"], expected_sequence=1,
+                               brief=brief, memory_pins=[pin(keep)])
+    options = dict(expected_sequence=1, reviewed_brief=brief, memory_pins=[pin(keep)])
+    result, _ = dispatch.dispatch(alice, conv["id"], msg["id"], **options,
+                                  expected_digest=current["canonical_digest"])
+    with dispatch.sessions.begin() as db:
+        run = db.get(AgentRun, result["run_id"])
+        old_digest = legacy["canonical_digest"]
+        run.reviewed_brief = {**run.reviewed_brief, "schema_version": 1, "canonical_digest": old_digest}
+        run.fingerprint = dispatch._dispatch_fingerprint(
+            AgentRunCreate(goal=brief.objective, output_language=brief.output_language),
+            [], run.project_context, reviewed_digest=old_digest,
+        )
+    assert container.agent.worker_run(result["run_id"])["id"] == result["run_id"]
+    retry, created = dispatch.dispatch(alice, conv["id"], msg["id"], **options,
+                                       expected_digest=legacy["canonical_digest"])
+    assert not created and retry["run_id"] == result["run_id"]
+
+
+def test_http_preview_carries_selected_memory_into_the_review_digest(container, signed_client):
+    settings = replace(enable_pa04(container), conversations_enabled=True)
+    container.settings = settings
+    container.conversations.settings = settings
+    container.conversation_task_briefs.settings = settings
+    container.conversation_dispatch.settings = settings
+    client, headers = signed_client
+    started = client.post("/api/v1/conversations", json={"title": "Memory review"},
+                          headers={**headers(), "Idempotency-Key": "day5-http-conv"})
+    assert started.status_code == 201, started.text
+    path = "/api/v1/conversations/" + started.json()["id"]
+    text = "Create a customer report for the project release."
+    added = client.post(path + "/messages", json={"text": text, "client_request_key": "day5-http-turn"},
+                        headers=headers())
+    assert added.status_code == 201, added.text
+    saved = client.post("/api/v1/memory", json={"namespace": "preferences", "key": "reports",
+                                             "value": "Keep reports concise."}, headers=headers())
+    assert saved.status_code == 201, saved.text
+    facts = [pin(saved.json()).model_dump(mode="json")]
+    msg_path = path + "/messages/" + added.json()["id"]
+    draft = TaskBrief(objective=text, deliverables=["A customer report"]).model_dump(mode="json")
+    preview = client.post(msg_path + "/task-brief/preview", json={
+        "expected_sequence": 1, "brief": draft, "memory_pins": facts,
+    }, headers=headers())
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["memory_pins"] == facts
+    result = client.post(msg_path + "/dispatch", json={
+        "expected_sequence": 1, "reviewed_brief": draft, "memory_pins": facts,
+        "expected_digest": preview.json()["canonical_digest"],
+    }, headers=headers())
+    assert result.status_code == 202, result.text
 
 
 def test_one_selected_project_fact_enters_planner_context_unselected_never_enters(container):

@@ -21,7 +21,7 @@ from .conversation_context import require_current_selected_sources
 from .conversation_task_briefs import ConversationTaskBriefService
 from .errors import CoworkerError
 from .memory_repository import require_current_memory_pins
-from .task_brief_schemas import MemoryPin, TaskBriefMemorySelection, TaskBrief
+from .task_brief_schemas import MEMORY_BOUND_BRIEF_VERSION, MemoryPin, TaskBriefMemorySelection, TaskBrief
 from .models import (
     Account, AgentEvent, AgentOutbox, AgentRun, AgentStep, Conversation,
     ConversationMessage, Project, ProjectResource, Workspace, utcnow,
@@ -170,7 +170,8 @@ class ConversationDispatchService:
                     preview = ConversationTaskBriefService.validate_in_session(
                         db, self.settings, owner, conversation_id, message_id,
                         expected_sequence, reviewed_brief, project_id,
-                        allow_historical_replay=True)
+                        allow_historical_replay=True,
+                        memory_pins=selection if reviewed_snapshot.get("schema_version") == MEMORY_BOUND_BRIEF_VERSION else None)
                     if (preview["canonical_digest"] != expected_digest
                             or reviewed_snapshot.get("canonical_digest") != expected_digest):
                         raise CoworkerError("idempotency_conflict", "Reviewed brief or sources changed.", 409)
@@ -214,7 +215,7 @@ class ConversationDispatchService:
             if reviewed_brief is not None:
                 preview = ConversationTaskBriefService.validate_in_session(
                     db, self.settings, owner, conversation_id, message_id,
-                    expected_sequence, reviewed_brief, project_id)
+                    expected_sequence, reviewed_brief, project_id, memory_pins=selection)
                 if preview["canonical_digest"] != expected_digest:
                     raise CoworkerError("task_brief_digest_mismatch", "Brief changed. Preview it again.", 409)
                 if output_language not in {"auto", reviewed_brief.output_language}:
@@ -294,7 +295,8 @@ class ConversationDispatchService:
                 input_artifacts=[pin["resource_id"] for pin in artifact_pins],
                 project_context=project_context,
                 reviewed_brief=({
-                    "schema_version": 1, "brief": reviewed_brief.model_dump(mode="json"),
+                    "schema_version": MEMORY_BOUND_BRIEF_VERSION if selection else 1,
+                    "brief": reviewed_brief.model_dump(mode="json"),
                     "source_pins": pins, "canonical_digest": expected_digest,
                     "message_sequence": expected_sequence,
                 } if reviewed_brief is not None else {}),
