@@ -214,6 +214,7 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
             nonempty_text(value.get("owner_a_ref"))
             and nonempty_text(value.get("owner_b_ref"))
             and value["owner_a_ref"] != value["owner_b_ref"]
+            and value.get("synthetic_owners_verified") is True
             and value.get("cross_owner_denied") is True
             and value.get("both_directions_verified") is True
             and isinstance(denied, list)
