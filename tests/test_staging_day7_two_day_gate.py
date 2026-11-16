@@ -22,6 +22,8 @@ def evidence(day: int, version: str) -> dict:
         "automation_id": "automation-1", "automation_revision": 1,
         "timezone": "Asia/Dhaka", "schedule": {"kind": "daily", "hour": 8, "minute": 0, "weekdays": []},
         "run_profile": "briefing", "output_language": "en", "quiet_hours": {"start": "22:00", "end": "07:00"},
+        "expires_at": "2026-11-15T02:00:00+00:00",
+        "schedule_applied_revision": 1, "schedule_applied_enabled": True,
         "prepared_at": f"2026-11-{day:02d}T01:30:00+00:00",
         "verified_at": f"2026-11-{day:02d}T02:07:00+00:00",
         "occurrence_id": f"occ-{day}", "due_at": due, "run_id": f"run-{day}",
@@ -39,7 +41,9 @@ def pause_evidence() -> dict:
             "synthetic_account_label": "stage-day7-synthetic",
             "automation_id": "automation-1", "goal_id": "goal-1",
             "goal_revision": 1, "authorized_document_ids": ["doc-1"],
-            "project_id": "project-1", "previous_revision": 1, "paused_revision": 2,
+            "project_id": "project-1", "expires_at": "2026-11-15T02:00:00+00:00",
+            "schedule_applied_revision": 2, "schedule_applied_enabled": False,
+            "previous_revision": 1, "paused_revision": 2,
             "paused_at": "2026-11-13T02:10:00+00:00",
             "operator_case_reference": "CASE-7"}
 
@@ -75,6 +79,9 @@ def test_two_day_gate_accepts_unchanged_scope_fresh_pins_and_pause():
     lambda a, b, p: b.update(new_notification_count=3),
     lambda a, b, p: b.update(automation_id="someone-else"),
     lambda a, b, p: b.update(project_id="project-other"),
+    lambda a, b, p: b.update(expires_at="2026-11-12T02:00:00+00:00"),
+    lambda a, b, p: b.update(schedule_applied_enabled=False),
+    lambda a, b, p: p.update(schedule_applied_enabled=True),
     lambda a, b, p: p.update(paused_revision=1),
 ])
 def test_two_day_gate_rejects_invalid_operator_evidence(mutation):
@@ -137,6 +144,7 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
         "synthetic_account_label": "stage-day7-synthetic",
         "goal_id": "goal-1", "goal_revision": 1,
         "authorized_document_ids": ["doc-1"], "project_id": "project-1",
+        "expires_at": "2026-11-15T02:00:00+00:00",
     }))
     args = argparse.Namespace(
         state=state_path, first_evidence=first_path, second_evidence=second_path,
@@ -150,7 +158,10 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
     monkeypatch.setattr(probe, "utcnow_iso", lambda: "2026-11-13T02:10:00+00:00")
     monkeypatch.setattr(probe, "release_identity", lambda *_args: deepcopy(RELEASE))
     monkeypatch.setattr(probe, "load_owned", lambda *_args: {
-        "owner_id": "owner-1", "automation": {"revision": 1},
+        "owner_id": "owner-1", "automation": {
+            "revision": 1, "expires_at": "2026-11-15T02:00:00+00:00",
+            "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+        },
         "daily_scope": {"goal_id": "goal-1", "goal_revision": 1,
                         "authorized_document_ids": ["doc-1"], "project_id": "project-1"},
     })
@@ -159,7 +170,11 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
         status_code = 200
 
         def json(self):
-            return {"id": "automation-1", "state": "paused", "revision": 2}
+            return {
+                "id": "automation-1", "state": "paused", "revision": 2,
+                "schedule_applied_revision": 2, "schedule_applied_enabled": False,
+                "schedule_error_code": None,
+            }
 
     class Client:
         def __init__(self):
