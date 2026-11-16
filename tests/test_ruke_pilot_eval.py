@@ -12,10 +12,10 @@ import pytest
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, comparison_evidence_recorded, external_heldout,
-    candidate_ledger, canonical_sha256, day10_first_run_scores, immutable_write, main,
+    candidate_ledger, canonical_sha256, custody_receipt_ok, day10_first_run_scores, immutable_write, main,
     position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews,
     validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
-    validate_manifest, verify_operations,
+    validate_manifest, external_heldout, verify_operations,
 )
 
 
@@ -244,6 +244,39 @@ def test_blind_packet_and_competitor_are_bound_to_same_release_manifest():
         prepare_blind(tasks(), value, candidate, competitor_outputs,
                       blinding_key=BLIND_KEY, manifest_sha256=digest)
 
+
+def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_proofs():
+    receipt = {
+        "custodian_id": "independent-D",
+        "developer_id": "developer-A",
+        "corpus_author_id": "corpus-author-B",
+        "independent_operator_review": "verified",
+        "custodian_positive_read_test": "allowed",
+        "developer_negative_read_test": "denied",
+        "exposure_history_reviewed": True,
+        "replacement_of_exposed_cases": True,
+        "frozen_inputs_sha256": "a" * 64,
+        "frozen_answers_sha256": "b" * 64,
+        "rubric_sha256": "c" * 64,
+        "exposure_history_sha256": "d" * 64,
+        "access_log_sha256": "e" * 64,
+        "receipt_sha256": "f" * 64,
+    }
+    assert custody_receipt_ok(receipt)
+    assert not custody_receipt_ok(dict(receipt, custodian_id="developer-A"))
+    assert not custody_receipt_ok(dict(receipt, custodian_positive_read_test="denied"))
+    assert not custody_receipt_ok(dict(receipt, exposure_history_reviewed=False))
+    assert not custody_receipt_ok(dict(receipt, access_log_sha256="not-a-digest"))
+
+
+def test_holdout_manifest_cannot_read_corpus_before_explicit_custody_verification(tmp_path):
+    value = manifest()
+    absent = tmp_path / "must-not-be-opened.jsonl"
+    with pytest.raises(EvidenceError, match="custody"):
+        validate_manifest(value, absent)
+    with pytest.raises(EvidenceError, match="custody"):
+        external_heldout(absent, corpus_sha256=value["corpus_sha256"])
+
 def test_legacy_manifest_is_readable_only_in_explicit_legacy_mode(external_dir):
     held = external_dir / "legacy-heldout.jsonl"
     held.write_text("\n".join(json.dumps(row) for row in tasks()) + "\n")
@@ -254,8 +287,8 @@ def test_legacy_manifest_is_readable_only_in_explicit_legacy_mode(external_dir):
     for key in ("release_id", "run_id", "rollout_manifest_sha256", "candidate_identity"):
         legacy.pop(key)
     with pytest.raises(EvidenceError, match="legacy manifest"):
-        validate_manifest(legacy, held)
-    assert len(validate_manifest(legacy, held, allow_legacy=True)) == 40
+        validate_manifest(legacy, held, custody_verified=True)
+    assert len(validate_manifest(legacy, held, allow_legacy=True, custody_verified=True)) == 40
 
 
 def test_candidate_outputs_require_exact_manifest_digest_when_bound():
@@ -331,7 +364,7 @@ def test_external_holdout_missing_prompt_and_source_is_rejected(external_dir):
     held.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="instruction/source contract"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest(), custody_verified=True)
 
 
 def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir):
