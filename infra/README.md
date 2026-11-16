@@ -66,11 +66,11 @@ Configure the same app identity in **both** environments:
 The composite audit action mints a temporary installation token scoped to the
 single `Shuddho` repository. It uses that token for the protected-branch
 revalidation and the sensitive ruleset detail (including bypass-actor) read,
-then revokes it after the job. The ordinary workflow token is used only for CI
-run/job reads. The unprivileged source-gate checks the exact `main` SHA and
-successful CI; the privileged audit is the authority for the native protection
-state. Post-approval audits prevent a stale approval from releasing staging
-credentials after the ruleset or branch state changes.
+then revokes it after the job. The ordinary workflow token lists active
+rulesets and reads CI runs and jobs. The unprivileged source gate checks the
+exact `main` SHA and successful CI. The privileged audit verifies native
+protection. The post-approval audit rechecks that protection before the worker
+workflow uses staging credentials to access the database or mutate Render.
 
 After configuring both environments, confirm `governance-audit` passes on the
 current `main` push, then run **PA-10 staging prerequisite preflight**. Do not

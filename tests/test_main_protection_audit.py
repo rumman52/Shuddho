@@ -18,7 +18,7 @@ import pytest
 from scripts.main_protection_audit import GovernanceAuditError, audit_governance, inspect_repository
 
 
-CHECKS = {"coworker", "test-and-build", "ci-merge-gate"}
+CHECKS = {"test-and-build", "ci-merge-gate"}
 
 
 def protected_branch() -> dict:
@@ -57,7 +57,7 @@ def approved_ruleset() -> dict:
     }
 
 
-def test_exact_main_ruleset_with_independent_review_and_three_checks_is_candidate():
+def test_exact_main_ruleset_with_independent_review_and_two_checks_is_candidate():
     assert audit_governance(protected_branch(), [approved_ruleset()]) == 123
 
 
@@ -107,8 +107,39 @@ def test_required_checks_must_be_pinned_to_trusted_github_actions_source(source)
 def test_duplicate_required_check_with_untrusted_source_must_fail():
     rule = approved_ruleset()
     checks = rule["rules"][3]["parameters"]["required_status_checks"]
-    checks.append({"context": "coworker", "integration_id": 98765})
+    checks.append({"context": "test-and-build", "integration_id": 98765})
     with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_redacted_bypass_actors_fails_closed_with_actionable_reason():
+    # GitHub's documented GET response withholds bypass_actors when the
+    # caller lacks ruleset write access; missing does not prove an empty list.
+    rule = approved_ruleset()
+    del rule["bypass_actors"]
+    with pytest.raises(GovernanceAuditError, match="redacted bypass_actors"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_null_bypass_actors_is_not_trusted_as_empty():
+    rule = approved_ruleset()
+    rule["bypass_actors"] = None
+    with pytest.raises(GovernanceAuditError, match="redacted bypass_actors"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_a_separate_fully_inspectable_ruleset_can_qualify_even_if_another_is_redacted():
+    redacted = approved_ruleset()
+    del redacted["bypass_actors"]
+    assert audit_governance(protected_branch(), [redacted, approved_ruleset()]) == 123
+
+
+def test_visible_bypass_actor_is_never_accepted_as_no_bypass():
+    rule = approved_ruleset()
+    rule["bypass_actors"] = [
+        {"actor_id": 1, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+    ]
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
         audit_governance(protected_branch(), [rule])
 
 
@@ -194,6 +225,15 @@ def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     assert "uses: ./.github/actions/audit-main-ruleset" in job
     assert "secrets.V01_RULESET_APP_PRIVATE_KEY" in job
     assert "V01_RULESET_APP_" not in workflow.split("\n  governance-audit:\n", 1)[0]
+    provision = Path(".github/workflows/provision-pa10-staging-worker.yml").read_text(encoding="utf-8")
+    source_gate = provision.split("\n  source_gate:\n", 1)[1].split("\n  ruleset_audit:\n", 1)[0]
+    # The PA-10 source gate runs BEFORE any protected-environment approval.
+    # Keep it secret-free; a successful privileged main CI audit must be
+    # established separately before staging credential access can be unlocked.
+    assert "GITHUB_TOKEN: ${{ github.token }}" in source_gate
+    assert "secrets." not in source_gate
+    assert "github.ref == 'refs/heads/main'" in source_gate
+    assert "inputs.confirm == 'PROVISION'" in source_gate
     assert "continue-on-error" not in job
     gate = workflow.split("\n  ci-merge-gate:\n", 1)[1].split("\n  governance-audit:\n", 1)[0]
     assert "    if: always()" in gate
@@ -267,6 +307,29 @@ def test_merge_gate_accepts_all_required_jobs_succeeding():
         "GOVERNANCE_AUDIT_RESULT": "success",
     })
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize(("event", "scope", "frontend", "backend", "expected"), [
+    ("pull_request", "docs", "skipped", "skipped", 0),
+    ("pull_request", "frontend", "success", "skipped", 0),
+    ("pull_request", "frontend", "skipped", "skipped", 1),
+    ("pull_request", "full", "success", "skipped", 1),
+    ("pull_request", "frontend", "success", "failure", 1),
+    ("pull_request", "invalid", "success", "success", 1),
+    ("push", "docs", "success", "skipped", 1),
+])
+def test_ci_gate_requires_checks_for_the_actual_scope(event, scope, frontend, backend, expected):
+    completed = _run_ci_result_gate({
+        "CI_EVENT_NAME": event,
+        "PR_CI_SCOPE": scope,
+        "TEST_AND_BUILD_RESULT": "success",
+        "FRONTEND_RESULT": frontend,
+        "BROWSER_QUALIFICATION_RESULT": frontend,
+        "COWORKER_RESULT": backend,
+        "POSTGRES18_RESULT": backend,
+        "GOVERNANCE_AUDIT_RESULT": "success" if event == "push" else "skipped",
+    })
+    assert completed.returncode == expected, completed.stdout + completed.stderr
 
 
 @pytest.mark.parametrize("event", ["pull_request", "pull_request_review"])

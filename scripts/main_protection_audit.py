@@ -14,14 +14,14 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-CHECKS = frozenset({"test-and-build", "coworker", "ci-merge-gate"})
+CHECKS = frozenset({"test-and-build", "ci-merge-gate"})
 
 
 class GovernanceAuditError(ValueError):
     """Governance configuration missing, inconsistent or not inspectable."""
 
 
-def _active_main_ruleset(rule: dict) -> bool:
+def _targets_main(rule: dict) -> bool:
     if not isinstance(rule, dict):
         return False
     if rule.get("target") != "branch" or rule.get("enforcement") != "active":
@@ -41,12 +41,13 @@ def _active_main_ruleset(rule: dict) -> bool:
         return False
     # Even a non-literal exclusion can be a branch-matching glob. Only an
     # empty exclusion list proves main is not exempt from this ruleset.
-    if excludes:
-        return False
-    # Normal development accounts must not have a bypass on this rule.
-    if rule.get("bypass_actors") != []:
-        return False
-    return True
+    return not excludes
+
+
+def _active_main_ruleset(rule: dict) -> bool:
+    # GitHub deliberately redacts bypass_actors unless the caller has WRITE
+    # access to the ruleset. Missing is NOT equivalent to an empty bypass list.
+    return _targets_main(rule) and rule.get("bypass_actors") == []
 
 
 def _has_required_rules(rule: dict) -> bool:
@@ -115,6 +116,20 @@ def audit_governance(branch: dict, rulesets: list[dict]) -> int:
         ruleset_id = item.get("id")
         if type(ruleset_id) is int and ruleset_id > 0:
             return ruleset_id
+    # A normal GITHUB_TOKEN can read the ruleset's public configuration but
+    # GitHub omits bypass_actors without ruleset write access. Report the
+    # missing evidence explicitly, without trusting absent data as no bypass.
+    if any(
+        _targets_main(item)
+        and _has_required_rules(item)
+        and isinstance(item, dict)
+        and item.get("bypass_actors") is None
+        for item in rulesets
+    ):
+        raise GovernanceAuditError(
+            "active main ruleset has redacted bypass_actors; the audit credential "
+            "needs ruleset write access to establish that no bypass is configured"
+        )
     raise GovernanceAuditError("no enforceable main ruleset matching the V-01 minimum policy")
 
 

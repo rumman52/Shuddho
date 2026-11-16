@@ -1,48 +1,31 @@
-## PA-10 protected-main audit coverage — 16 November 2026 (Asia/Dhaka)
+## PA-10 ruleset audit integrated with scoped CI — 16 November 2026 (Asia/Dhaka)
 
-The active repository ruleset is now confirmed on `main`: ruleset `27324410`
-is active for `refs/heads/main`, has an empty bypass-actor list, requires one
-approval, dismisses stale approvals, requires last-push approval and resolved
-review threads, and pins the required CI contexts. GitHub reports the branch
-protected. This supersedes older historical entries below that recorded an
-unprotected main branch.
+PR [#714](https://github.com/rumman52/Shuddho/pull/714) now includes
+`main` at `2cbcae390865585f52cbe5299d52d8add1862db2`. Routine PR CI retains its
+scope selection and exact-revision review reuse. Native governance on `main`
+uses the repository-scoped GitHub App audit. The PA-10 source entry job remains
+secret-free. A separate audit guards staging access and runs again after approval.
 
-**Root cause:** the main-push governance workflow and PA-10 source gate used
-the ordinary workflow token for protection-state checks. The ruleset detail
-endpoint also withholds `bypass_actors` unless the caller has ruleset write
-access. PR [#714](https://github.com/rumman52/Shuddho/pull/714) now mints a
-repository-only GitHub App token with Contents read (branch endpoint) and Administration write (bypass-actor visibility) for those reads.
-The CI-only source gate checks exact main SHA and all required CI jobs; the
-separate privileged audit verifies native protection before any staging
-credentials are released. The same audit action is repeated after `pa10-staging`
-environment approval, immediately before DB access and each provider/Render
-mutation.
+Local verification: 283 governance, PA-10 and scoped-CI tests passed. The
+canonical release-contract check and duplicate-key YAML validation passed.
 
-**RED evidence:** test-only [run #43751851225](https://github.com/rumman52/Shuddho/actions/runs/43751851225) exposed **5** governance/source/secret-boundary failures (1,970 passed, 84 skipped). A follow-up test-only [run #43753830007](https://github.com/rumman52/Shuddho/actions/runs/43753830007) exposed the missing `Contents: read` permission (**1 failed, 1,974 passed, 84 skipped**). The fixes now cover branch lookup, ruleset bypass visibility, source-gate separation and post-approval rechecks. Final corrected-head CI is pending.
-
-**Owner configuration still required:** install the dedicated App on this
-repository only with **Contents: read** and **Administration: write**; keep it
-off the bypass list. Configure `V01_RULESET_APP_CLIENT_ID` and
-`V01_RULESET_APP_PRIVATE_KEY` in both `v01-governance` and `pa10-staging`.
-Restrict both environments to `main`; do not require a reviewer for
-`v01-governance` (main CI must run unattended), but require reviewer approval
-for `pa10-staging`. No app credentials were created or copied by this session. The paid Render worker, live private archive/restore, operated
-Temporal/S3 checks, model checkpoints, independent 40-case holdout and 20
-recovery scenarios remain separate blockers. No paid provisioning, migration,
-external send, merge or production deployment was performed.
+The live rules endpoint currently lists deletion, non-fast-forward protection,
+and PR reviews. Main CI [#43804910236](https://github.com/rumman52/Shuddho/actions/runs/43804910236)
+failed the native governance audit. App and environment setup, a successful
+live audit and worker qualification are pending. See the
+[infrastructure runbook](../../infra/README.md#authorize-the-github-ruleset-audit).
 
 ---
 
-## PA-10 ruleset audit authorization — 16 November 2026 (Asia/Dhaka)
+## Reuse PR CI results on review events
 
-Live preflight 43747359370 reached native protected `main` but failed the
-ruleset audit because GitHub withheld `bypass_actors` from the workflow's
-read-only identity. This change adds a `main`-only audit environment and a
-repository-scoped GitHub App token for ruleset detail requests. PA-10 still
-requires green exact-head push CI and a fresh full ruleset audit before any
-staging credentials are used. App setup, live worker provisioning and the
-recovery drill still require operator credentials. See the
-[audit setup in the infrastructure runbook](../../infra/README.md#authorize-the-github-ruleset-audit).
+Review events run `ci-merge-gate` without starting the test suites or
+cancelling an in-progress test run. The gate requires all existing test
+jobs and the ancestry check to pass for the same pull request, head SHA,
+and GitHub test merge SHA before verifying the latest independent approval.
+Main push CI and native branch rules retain their existing requirements.
+For a review-only gate run, `scripts.v01_merge_evidence` accepts `--ci-run`
+with the original test run ID printed in the successful reuse step.
 
 ---
 

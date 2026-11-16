@@ -13,6 +13,9 @@ import re
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from scripts.pr_ci_reuse import CI_PATH, ci_title
+from scripts.pr_ci_scope import required_test_jobs
+
 
 REQUIRED_JOBS = ("test-and-build", "coworker", "ci-merge-gate")
 TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
@@ -38,7 +41,7 @@ def _when(value: object) -> datetime:
     return parsed
 
 
-def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) -> dict:
+def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list, *, test_evidence: tuple[dict, list] | None = None) -> dict:
     """Classify evidence; no incident observed is NOT native branch-rule proof."""
     if not isinstance(pr, dict) or not isinstance(run, dict) or not isinstance(jobs, list) or not isinstance(reviews, list):
         raise EvidenceError("invalid GitHub response shape")
@@ -84,6 +87,38 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
     if run.get("conclusion") not in {"success", "failure", "cancelled", "timed_out", "action_required", "neutral", "skipped", "stale"}:
         raise EvidenceError("invalid workflow conclusion")
 
+    required_jobs = REQUIRED_JOBS
+    split_review = test_evidence is not None
+    if test_evidence is not None:
+        test_run, test_jobs = test_evidence
+        title = run.get("display_title")
+        if (
+            run.get("event") != "pull_request_review"
+            or not isinstance(test_run, dict) or not isinstance(test_jobs, list)
+            or test_run.get("event") != "pull_request" or test_run.get("status") != "completed"
+            or test_run.get("path") != CI_PATH or run.get("path") != CI_PATH
+            or not isinstance(title, str) or not HEX_SHA.fullmatch(title.rsplit(" ", 1)[-1])
+            or title != ci_title(pr.get("number"), title.rsplit(" ", 1)[-1])
+            or any(test_run.get(key) != run.get(key) for key in ("display_title", "head_sha", "head_branch"))
+            or any(not isinstance(test_run.get(key), dict) or test_run[key].get("id") != run[key]["id"]
+                   for key in ("repository", "head_repository"))
+            or test_run.get("conclusion") not in {"success", "failure"}
+        ):
+            raise EvidenceError("PR test and review runs do not match")
+        gate_jobs = [job for job in jobs if isinstance(job, dict) and job.get("name") == "ci-merge-gate"]
+        try:
+            test_names = required_test_jobs(test_jobs)
+        except ValueError as exc:
+            raise EvidenceError("Invalid PR CI scope evidence") from exc
+        jobs = gate_jobs + [job for job in test_jobs if isinstance(job, dict) and job.get("name") in test_names]
+        required_jobs = (*test_names, "ci-merge-gate")
+    else:
+        try:
+            test_names = required_test_jobs(jobs, legacy_jobs=REQUIRED_JOBS[:-1])
+            required_jobs = (*test_names, "ci-merge-gate")
+        except ValueError as exc:
+            raise EvidenceError("Invalid PR CI scope evidence") from exc
+
     job_by_name = {}
     for job in jobs:
         if not isinstance(job, dict) or not isinstance(job.get("name"), str):
@@ -91,12 +126,12 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
         if job["name"] in job_by_name:
             raise EvidenceError("duplicate job name")
         job_by_name[job["name"]] = job
-    if any(name not in job_by_name for name in REQUIRED_JOBS):
+    if any(name not in job_by_name for name in required_jobs):
         raise EvidenceError("missing required job evidence")
 
     findings = []
     job_finished = {}
-    for name in REQUIRED_JOBS:
+    for name in required_jobs:
         job = job_by_name[name]
         if job.get("status") != "completed" or not isinstance(job.get("conclusion"), str):
             raise EvidenceError(f"incomplete job evidence: {name}")
@@ -108,6 +143,8 @@ def inspect_premerge_evidence(pr: dict, run: dict, jobs: list, reviews: list) ->
             findings.append(f"{name}:completed_after_merge")
     if run["conclusion"] != "success":
         findings.append(f"workflow:{run['conclusion']}")
+    if split_review and any(job_finished[name] > job_finished["ci-merge-gate"] for name in required_jobs[:-1]):
+        findings.append("ci-merge-gate:completed_before_pr_tests")
 
     author = pr.get("user") or {}
     if not isinstance(author, dict):
@@ -226,8 +263,9 @@ def main() -> int:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--pr", type=int, required=True)
     parser.add_argument("--run", type=int, required=True)
+    parser.add_argument("--ci-run", type=int, help="Original test run when --run is a review-only run")
     args = parser.parse_args()
-    if not REPO.fullmatch(args.repository) or args.pr < 1 or args.run < 1:
+    if not REPO.fullmatch(args.repository) or args.pr < 1 or args.run < 1 or (args.ci_run is not None and args.ci_run < 1):
         parser.error("invalid repo/PR/run")
     root = f"https://api.github.com/repos/{args.repository}"
     token = os.environ.get("GITHUB_TOKEN", "")
@@ -236,7 +274,11 @@ def main() -> int:
         run = _get_json(f"{root}/actions/runs/{args.run}", token)
         jobs = _pages(f"{root}/actions/runs/{args.run}/jobs", token, "jobs")
         reviews = _pages(f"{root}/pulls/{args.pr}/reviews", token)
-        report = inspect_premerge_evidence(pr, run, jobs, reviews)
+        test_evidence = None
+        if args.ci_run is not None:
+            ci_url = f"{root}/actions/runs/{args.ci_run}"
+            test_evidence = (_get_json(ci_url, token), _pages(f"{ci_url}/jobs", token, "jobs"))
+        report = inspect_premerge_evidence(pr, run, jobs, reviews, test_evidence=test_evidence)
     except EvidenceError as exc:
         print(json.dumps({"classification": "evidence_unavailable", "reason": str(exc), "native_policy_verified": False}))
         return 2
