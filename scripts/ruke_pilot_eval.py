@@ -170,8 +170,8 @@ def validate_candidate_identity(manifest: dict) -> dict:
 
 
 REQUIRED_DAY9_CI = {
-    "test-and-build", "frontend", "coworker", "browser-qualification",
-    "postgres-18-qualification", "governance-audit", "ci-merge-gate",
+    "test-and-build", "Frontend tests and builds", "coworker", "browser-qualification",
+    "PostgreSQL 18 staging compatibility", "governance-audit", "ci-merge-gate",
 }
 
 
