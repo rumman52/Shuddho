@@ -167,6 +167,30 @@ def validate_candidate_identity(manifest: dict) -> dict:
 
 
 
+
+def custody_receipt_ok(custody: object) -> bool:
+    """Fail closed unless D's independent access boundary has a complete receipt."""
+    if not isinstance(custody, dict):
+        return False
+    identities = [custody.get("custodian_id"), custody.get("developer_id"),
+                  custody.get("corpus_author_id")]
+    if any(not isinstance(value, str) or not value.strip() for value in identities):
+        return False
+    if len(set(identities)) != 3:
+        return False
+    if (custody.get("independent_operator_review") != "verified"
+            or custody.get("custodian_positive_read_test") != "allowed"
+            or custody.get("developer_negative_read_test") != "denied"
+            or custody.get("exposure_history_reviewed") is not True
+            or custody.get("replacement_of_exposed_cases") is not True):
+        return False
+    digest_fields = (
+        "frozen_inputs_sha256", "frozen_answers_sha256", "rubric_sha256",
+        "exposure_history_sha256", "access_log_sha256", "receipt_sha256",
+    )
+    return all(isinstance(custody.get(field), str) and SHA.fullmatch(custody[field])
+               for field in digest_fields)
+
 def validate_evidence_binding(evidence: object, manifest_sha256: str) -> dict:
     """Bind the complete evidence JSON envelope to the exact frozen manifest."""
     if not isinstance(evidence, dict):
@@ -266,8 +290,11 @@ def outside_repo(path: Path, repo_root: Path = ROOT) -> None:
         raise EvidenceError("symlinked custody path is prohibited")
 
 
-def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT) -> list[dict]:
-    """Validate external corpus structure, NOT custody/independence."""
+def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT,
+                    custody_verified: bool = False) -> list[dict]:
+    """Validate corpus structure only after the independent custodian gate passes."""
+    if custody_verified is not True:
+        raise EvidenceError("independent D custody must be verified before reading heldout bytes")
     outside_repo(path, repo_root)
     if path.stat().st_mode & 0o222:
         raise EvidenceError("independent heldout fixture must be read-only")
@@ -311,7 +338,8 @@ def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT) 
     return rows
 
 
-def validate_manifest(manifest: dict, corpus: Path, *, allow_legacy: bool = False) -> list[dict]:
+def validate_manifest(manifest: dict, corpus: Path, *, allow_legacy: bool = False,
+                      custody_verified: bool = False) -> list[dict]:
     """Validate a frozen candidate identity; legacy manifests are read-only."""
     if not isinstance(manifest, dict) or manifest.get("split") != "holdout":
         raise EvidenceError("invalid run manifest")
@@ -351,7 +379,9 @@ def validate_manifest(manifest: dict, corpus: Path, *, allow_legacy: bool = Fals
     limit = manifest.get("time_limit_seconds")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 3600:
         raise EvidenceError("invalid comparable time limit")
-    return external_heldout(corpus, corpus_sha256=manifest["corpus_sha256"])
+    if custody_verified is not True:
+        raise EvidenceError("independent D custody must be verified before reading heldout bytes")
+    return external_heldout(corpus, corpus_sha256=manifest["corpus_sha256"], custody_verified=True)
 
 def _unique_rows(rows: list[dict], key: str, allowed: set[str], count: int) -> dict:
     if not isinstance(rows, list) or len(rows) != count:
@@ -719,7 +749,7 @@ def main(argv=None) -> int:
     parser.add_argument("--competitor-outputs", type=Path)
     parser.add_argument("--blinding-key", type=Path,
                         help="D-only secret 32-byte file outside checkout; never share with judges")
-    parser.add_argument("--evidence", type=Path, help="JSON with reviews, deterministic, operations, adjudications, comparison")
+    parser.add_argument("--evidence", type=Path, help="D custody/readbacks plus, for evaluate, reviews, deterministic, operations and comparison")
     parser.add_argument("--report", type=Path, help="New output file; overwrite is forbidden")
     parser.add_argument("--regression-rerun", action="store_true")
     args = parser.parse_args(argv)
@@ -744,7 +774,13 @@ def main(argv=None) -> int:
                 outside_repo(args.competitor_outputs)
             manifest = read_json(args.manifest)
             manifest_digest = sha256(args.manifest)
-            cases = validate_manifest(manifest, args.heldout)
+            if not args.evidence:
+                raise EvidenceError("D custody and candidate readback evidence is required before reading heldout bytes")
+            evidence = validate_evidence_binding(read_json(args.evidence), manifest_digest)
+            if not custody_receipt_ok(evidence.get("custody")):
+                raise EvidenceError("independent D custody receipt is incomplete; heldout corpus was not read")
+            readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
+            cases = validate_manifest(manifest, args.heldout, custody_verified=True)
             head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                   text=True, capture_output=True, check=True).stdout.strip()
             if manifest["candidate_revision"] != head:
@@ -766,10 +802,8 @@ def main(argv=None) -> int:
                     "rows": rows,
                 }
             else:
-                if not args.evidence or not args.candidate:
+                if not args.candidate:
                     raise EvidenceError("external independently scored evidence and candidate outputs required")
-                evidence = validate_evidence_binding(read_json(args.evidence), manifest_digest)
-                readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
                 output_hashes, usage = candidate_ledger(
                     cases, read_jsonl(args.candidate), manifest_sha256=manifest_digest
                 )
@@ -788,15 +822,7 @@ def main(argv=None) -> int:
                     access_gap=evidence.get("competitor_access_gap"),
                 )
                 custody = evidence.get("custody", {})
-                if not isinstance(custody, dict):
-                    raise EvidenceError("custody receipt must be an object")
-                isolated = (custody.get("independent_operator_review") == "verified"
-                            and custody.get("developer_negative_read_test") == "denied"
-                            and custody.get("replacement_of_exposed_cases") is True
-                            and custody.get("custodian") not in (None, "", "developer")
-                            and custody.get("receipt_sha256") is not None
-                            and isinstance(custody.get("receipt_sha256"), str)
-                            and SHA.fullmatch(custody["receipt_sha256"]) is not None)
+                isolated = custody_receipt_ok(custody)
                 source_gate = evidence.get("required_repository_checks") == "passed" and evidence.get("canonical_release_contract") == "passed"
                 high_severity = evidence.get("unresolved_high_severity_failures", None)
                 if not isinstance(high_severity, list):
