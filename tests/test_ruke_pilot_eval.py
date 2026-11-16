@@ -138,9 +138,11 @@ def operations():
         {"row": i, "scenario": scenario, "candidate_revision": "a" * 40,
          "status": "pass", "execution": "operated",
          "unauthorized_access": False, "unauthorized_mutation": False,
-         "trace_sha256": "e" * 64, "observed_at": "2026-11-12T00:00:00Z",
+         "trace_sha256": hashlib.sha256(f"scenario-{i}".encode()).hexdigest(),
+         "evidence_ref": "sha256:" + hashlib.sha256(f"scenario-{i}".encode()).hexdigest(),
+         "observed_at": "2026-11-12T00:00:00Z", "verified_at": "2026-11-12T00:01:00Z",
          "boundaries": {k: {"mode": "real", "instance": "synthetic-test-instance",
-                           "trace_sha256": "f" * 64} for k in boundaries}}
+                           "trace_sha256": hashlib.sha256(f"boundary-{i}-{k}".encode()).hexdigest()} for k in boundaries}}
         for i, (scenario, boundaries) in OPERATED.items()
     ]
 
