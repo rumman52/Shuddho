@@ -147,7 +147,7 @@ The external `evidence.json` has these keys:
 - `competitor`: identity fields and comparable limits described above plus the same `manifest_sha256`, `release_id` and `rollout_manifest_sha256`; if access is unavailable, omit competitor/comparison rows and provide a nonempty `competitor_access_gap` explanation. A missing judgment file when a competitor was available is incomplete evidence, not an access gap.
 - `comparisons`: 160 blinded judgment records described above (or omitted, with gap disclosed).
 - `comparison_adjudications`: independent third-reviewer A/B decisions with source rationales for every unresolved comparative disagreement.
-- `custody`: external transfer receipt SHA, independent operator review=`verified`, developer negative read test=`denied`, replacement of exposed cases=`true`, custodian identity; these are **unverified operator statements to this CLI**, not cryptographic attestations.
+- `custody`: three distinct pseudonymous IDs `custodian_id`, `developer_id`, `corpus_author_id`; independent operator review=`verified`; custodian positive-read test=`allowed`; developer negative-read test=`denied`; exposure-history review=`true`; replacement of exposed cases=`true`; and SHA-256 digests for frozen inputs, frozen answers, rubric, exposure history, access log and custody receipt. These are **unverified operator statements to this CLI**, not cryptographic attestations.
 - `required_repository_checks` and `canonical_release_contract`: both `passed` only with independently inspected exact-head evidence; `unresolved_high_severity_failures` is a required array.
 
 ```bash
