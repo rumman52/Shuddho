@@ -423,6 +423,10 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
     by_id = {case["case_id"]: case for case in cases}
     hashes, usage, case_receipts = {}, [], []
     run_ids = set()
+    if manifest is not None and (
+        not isinstance(manifest_sha256, str) or not SHA.fullmatch(manifest_sha256)
+    ):
+        raise EvidenceError("candidate run manifest digest is required")
     identity = manifest.get("candidate_identity", {}) if manifest is not None else {}
     for cid, row in indexed.items():
         if manifest_sha256 is not None and row.get("manifest_sha256") != manifest_sha256:
@@ -443,7 +447,8 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
             if any(row.get(key) != value for key, value in expected.items()):
                 raise EvidenceError("candidate run identity does not match frozen manifest: " + cid)
             run_id = row.get("run_id")
-            if not isinstance(run_id, str) or not run_id.strip() or run_id in run_ids:
+            if (not isinstance(run_id, str) or not run_id.strip() or run_id != run_id.strip()
+                    or len(run_id) > 128 or run_id in run_ids):
                 raise EvidenceError("candidate run IDs must be present and unique: " + cid)
             run_ids.add(run_id)
         if not isinstance(row.get("output"), dict):
