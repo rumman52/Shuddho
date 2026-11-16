@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect, select
+from sqlalchemy import delete, inspect, select
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
@@ -1500,6 +1500,40 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         assert "daily/weekly briefing" in completed[0].message
 
 
+def test_day7_occurrence_blocks_when_a_selected_document_is_unlinked_from_its_project(
+    automation_client, automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    goal, project_id, document_id, _version_id = create_project_document_goal(
+        client, auth, automation_container, key="revoked-project-goal",
+    )
+    body = automation_payload(goal)
+    body["run_profile"] = "briefing"
+    response = client.post(
+        "/api/v1/automations", headers=auth | {"Idempotency-Key": "revoked-project-automation"},
+        json=body,
+    )
+    assert response.status_code == 201
+    automation = response.json()
+    with automation_container.repository.sessions.begin() as db:
+        db.execute(delete(ProjectResource).where(
+            ProjectResource.project_id == project_id,
+            ProjectResource.owner_id == db.scalar(
+                select(Account.id).where(Account.subject == "alice")
+            ),
+            ProjectResource.resource_type == "document",
+            ProjectResource.resource_id == document_id,
+        ))
+    occurrence = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], utcnow().replace(microsecond=0),
+    )
+    assert occurrence["state"] == "blocked"
+    assert occurrence["reason"] == "project_document_unlinked"
+    assert occurrence["run_id"] is None
+
+
 def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation_client, automation_container):
     """Controlled daily due timestamps; real daily wake-up needs operated staging."""
     client, headers = automation_client
@@ -1508,6 +1542,7 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
     goal, project_id, document_id, v1 = create_project_document_goal(
         client, auth, automation_container, key="day7-goal",
     )
+    assert goal["project_id"] == project_id
     v2 = str(uuid4())
     with automation_container.repository.sessions() as db:
         owner_id = db.scalar(select(Account.id).where(Account.subject == "alice"))
