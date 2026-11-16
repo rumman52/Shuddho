@@ -372,16 +372,16 @@ def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir
     held.write_text("\n".join(json.dumps(x) for x in tasks()) + "\n")
     digest = hashlib.sha256(held.read_bytes()).hexdigest()
     with pytest.raises(EvidenceError, match="read-only"):
-        external_heldout(held, corpus_sha256=digest)
+        external_heldout(held, corpus_sha256=digest, custody_verified=True)
     held.chmod(0o444)
-    assert len(external_heldout(held, corpus_sha256=digest)) == 40
+    assert len(external_heldout(held, corpus_sha256=digest, custody_verified=True)) == 40
     with pytest.raises(EvidenceError, match="hash mismatch"):
-        external_heldout(held, corpus_sha256="0" * 64)
+        external_heldout(held, corpus_sha256="0" * 64, custody_verified=True)
     with pytest.raises(EvidenceError, match="separate"):
-        external_heldout(held, corpus_sha256=digest, repo_root=external_dir)
+        external_heldout(held, corpus_sha256=digest, repo_root=external_dir, custody_verified=True)
     m = manifest()
     m["corpus_sha256"] = digest
-    assert validate_manifest(m, held) == tasks()
+    assert validate_manifest(m, held, custody_verified=True) == tasks()
 
 
 def test_holdout_matrix_and_answer_key_prohibited(external_dir):
@@ -391,14 +391,14 @@ def test_holdout_matrix_and_answer_key_prohibited(external_dir):
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="answer keys"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes(, custody_verified=True)).hexdigest())
     rows[0].pop("expected_facts")
     rows[1]["case_id"] = rows[0]["case_id"]
     held.chmod(0o644)
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="distinct"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes(, custody_verified=True)).hexdigest())
 
 
 def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
@@ -453,7 +453,7 @@ def test_external_holdout_rejects_exposed_development_prompt_and_source(external
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     path.chmod(0o444)
     with pytest.raises(EvidenceError, match="exposed"):
-        external_heldout(path, corpus_sha256=digest)
+        external_heldout(path, corpus_sha256=digest, custody_verified=True)
 
 
 def test_two_reviewers_full_rubric_accept_all_synthetic_cases():
