@@ -67,7 +67,7 @@ export type AgentStep = { id: string; ordinal: number; tool: string | null; stat
 export type PersonalGoalState = "draft" | "active" | "paused" | "blocked" | "completed" | "cancelled" | "archived";
 export type PersonalGoal = {
   id: string; objective: string; success_criteria: string[]; constraints: string[];
-  deadline_at: string | null; timezone: string; revision: number; state: PersonalGoalState;
+  deadline_at: string | null; timezone: string; project_id?: string | null; revision: number; state: PersonalGoalState;
   milestones: { label: string; due_at: string | null; completed: boolean }[];
   budget: { max_runs: number; max_planner_tokens: number | null };
   authorized_resources: { kind: "document" | "memory_namespace"; reference: string }[];
@@ -76,7 +76,7 @@ export type PersonalGoal = {
 };
 export type PersonalGoalCreate = {
   objective: string; success_criteria: string[]; constraints: string[]; deadline_at: string | null;
-  timezone: string; state: "draft" | "active"; milestones: { label: string; due_at: string | null; completed: boolean }[];
+  timezone: string; project_id?: string | null; state: "draft" | "active"; milestones: { label: string; due_at: string | null; completed: boolean }[];
   budget: { max_runs: number; max_planner_tokens: number | null }; authorized_resources: { kind: "document" | "memory_namespace"; reference: string }[]; next_review_at: string | null;
 };
 export type PersonalSuggestionPreferences = {
