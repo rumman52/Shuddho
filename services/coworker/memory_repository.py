@@ -388,6 +388,12 @@ class MemoryRepository:
                 ).order_by(MemoryFact.updated_at.desc()).limit(
                     max(self.settings.max_memory_context_facts * 3, self.settings.max_memory_context_facts)
                 )).all()
+            current_instructions = [run.goal]
+            reviewed = (run.reviewed_brief or {}).get("brief")
+            if isinstance(reviewed, dict) and isinstance(reviewed.get("constraints"), list):
+                current_instructions.extend(
+                    constraint for constraint in reviewed["constraints"] if isinstance(constraint, str)
+                )
             now = utcnow()
             ranked = []
             for row in rows:
@@ -397,9 +403,11 @@ class MemoryRepository:
                     max_age_seconds=self.settings.max_memory_context_age_seconds,
                 ):
                     continue
-                conflict = memory_conflict(run.goal, row.key, row.value)
-                if conflict is not None:
-                    # The newest explicit instruction always wins for this run.
+                if any(
+                    memory_conflict(instruction, row.key, row.value) is not None
+                    for instruction in current_instructions
+                ):
+                    # Current reviewed instructions take precedence for this run.
                     continue
                 value, redactions = filter_sensitive(row.value)
                 if not value.strip():

@@ -70,6 +70,20 @@ Hosted execution and current-head GitHub CI remain separate evidence.
 
 ---
 
+## Day 5 reviewed constraints override saved preferences — 17 November 2026 (Asia/Dhaka)
+
+The current task objective was checked for conflicts with saved preferences.
+Review can store a newer explicit instruction separately as a constraint.
+Memory assembly now applies the existing deterministic conflict checks to
+the objective and each reviewed constraint. An overridden fact stays out
+of planner context for that run. Its stored value and version are preserved.
+
+The regression reproduced on main at `d3866064`, with a casual reviewed
+constraint and a selected formal preference. Hosted two-owner and quality
+qualification remain open. [Day 5 tracker](https://github.com/rumman52/Shuddho/issues/731)
+
+---
+
 ## Day 4 reviewed task retries across follow-up turns — 16 November 2026 (Asia/Dhaka)
 
 Base `2cbcae390865585f52cbe5299d52d8add1862db2`. An identical reviewed

@@ -214,6 +214,28 @@ def test_explicit_current_task_instruction_overrides_pinned_formal_preference(co
     assert container.memory.context_for_run(alice, accepted["run_id"])["facts"] == []
 
 
+def test_reviewed_brief_constraint_overrides_pinned_preference_without_editing_memory(container):
+    alice, _, conv, conversations, dispatch, keep, _, _ = seeded(container)
+    tone = container.memory.create(alice, MemoryFactCreate(
+        namespace="preferences", key="writing.tone", value="Usually write formally.",
+    ))
+    item = message(conversations, alice, conv, "Create a customer report for the project release.")
+    reviewed = TaskBrief(objective=item["text"], deliverables=["A customer report"],
+                         constraints=["For this report make it casual and conversational."])
+    selected_pins = [pin(tone), pin(keep)]
+    service = ConversationTaskBriefService(dispatch.sessions, dispatch.settings)
+    preview = service.validate(alice, conv["id"], item["id"], expected_sequence=1,
+                               brief=reviewed, memory_pins=selected_pins)
+    accepted, _ = dispatch.dispatch(alice, conv["id"], item["id"], expected_sequence=1,
+                                    reviewed_brief=reviewed, expected_digest=preview["canonical_digest"],
+                                    memory_pins=selected_pins)
+
+    context, _ = container.context.planner_context(alice, accepted["run_id"])
+    assert [fact["id"] for fact in context["memory_provenance"]] == [keep["id"]]
+    saved = next(fact for fact in container.memory.list(alice) if fact["id"] == tone["id"])
+    assert saved["version"] == tone["version"] and saved["value"] == tone["value"]
+
+
 def test_idempotency_fingerprint_rejects_changed_or_removed_memory_selection(container):
     alice, _, conv, conversations, dispatch, keep, omit, _ = seeded(container)
     msg = message(conversations, alice, conv, "Create a customer report for the project release.")
