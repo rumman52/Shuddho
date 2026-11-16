@@ -68,6 +68,8 @@ Manifest JSON fields:
 }
 ```
 
+
+The block above is a **schema sketch**, not a usable manifest. The capability placeholder is shorthand only: a real manifest must contain all 43 keys exactly once with their exact runtime boolean values, including false values. Replace the illustrative context-budget integer with the authenticated runtime value. The CLI rejects placeholders, missing/extra flags, non-boolean flags and inconsistent readback digests.
 Generate actual candidate outputs once with the frozen model, prompts, permissions, sources and per-task time/usage limits. Record output artifact SHA-256 plus deterministic/security check results **for all 40 IDs**; no missing task may disappear from the denominator. Store source links/claims and signed or human-controlled first-run evidence outside the development surface.
 
 Each independent reviewer D1/D2 scores **four** rubric dimensions `factual_source_fidelity`, `constraint_compliance`, `completeness_usefulness`, `language_quality`, each an integer 0, 1 or 2 (failed, minor correction, usable as delivered). A task is accepted only if sum ≥7, all four nonzero, source-supported and deterministic/security checks pass. Both reviewers must provide per-task source-supported booleans and evidence-based notes; disagreement requires a **separate adjudicator's** reconciled rubric and rationale. Fluency, verbosity and polished wording never cure unsupported claims.
@@ -136,9 +138,10 @@ The external `evidence.json` has these keys:
 - `adjudications`: one row for each disagreement, with `case_id`, third `adjudicator_id`, `scores`, `source_supported`, `evidence_note`.
 - `deterministic`: 40 rows with `case_id`, `passed`, `security_passed`, `output_sha256`. Hash each actual candidate output using UTF-8 JSON with sorted keys, compact separators and no NaN; a mismatch blocks evaluation.
 - `candidate-outputs.jsonl`: 40 rows with `case_id`, `manifest_sha256` equal to the exact frozen manifest file digest, and the full `output` draft JSON object; optional nonnegative integer `telemetry` with exactly `tokens`, `latency_ms`, `cost_microusd`. Incomplete telemetry yields unknown aggregate cost and cost-per-accepted-task, **not zero**.
+- `competitor-outputs.jsonl`: 40 same-task output rows, each carrying the same `manifest_sha256`; competitor metadata in `evidence.json` also carries the same `release_id` and `rollout_manifest_sha256`.
 - `operations`: 20 rows with `row` (1..20), exact `scenario` from `OPERATED`, `candidate_revision`, `release_id`, `rollout_manifest_sha256`, `manifest_sha256`, `execution`, `status`, `unauthorized_access`, `unauthorized_mutation`, `observed_at`, `trace_sha256`, and `boundaries` keyed by required component. Each boundary contains `mode=real`, `instance`, `trace_sha256`.
 - `manifest_sha256`: exact SHA-256 of the frozen manifest file.
-- `candidate_readbacks`: exact `api`, `worker` and `schema` readback objects. Each includes a canonical `readback_sha256`; API/worker objects must agree with every identity field and all 43 boolean capability keys in the manifest. The CLI checks digest consistency, not source-system authenticity; C/D must independently authenticate the readbacks.
+- `candidate_readbacks`: exact `api`, `worker` and `schema` readback objects. Each includes a canonical `readback_sha256` computed over that object with the digest field omitted; API/worker objects must agree with every identity field and all 43 boolean capability keys in the manifest. The CLI checks digest consistency, not source-system authenticity; C/D must independently authenticate the readbacks.
 - `competitor`: identity fields and comparable limits described above plus the same `manifest_sha256`, `release_id` and `rollout_manifest_sha256` (or omitted, with gap disclosed).
 - `comparisons`: 160 blinded judgment records described above (or omitted, with gap disclosed).
 - `comparison_adjudications`: independent third-reviewer A/B decisions with source rationales for every unresolved comparative disagreement.
