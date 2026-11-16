@@ -21,8 +21,8 @@ This is an evidence handoff, not a claim that the ten-day programme is operation
 
 | Work | Exact head | State at handoff |
 | --- | --- | --- |
-| PR #746 — reviewed brief UTF-8 budget | `540f6a9ef46077a5764bf221dc3b9c648d087ea1` | Draft; corrected-head CI run #43946993548 in progress |
-| PR #748 — Day 10 operated receipt contracts | `3cb6d0e22b2cd2a39de0d877ff73727b8468b055` | Draft; corrected-head CI run #43951881194 pending after aligning all ten rollback toggles and PA10-reviewed flags |
+| PR #746 — reviewed brief UTF-8 budget | `540f6a9ef46077a5764bf221dc3b9c648d087ea1` | Ready for independent review; corrected-head run #43952673480 in progress (all checks except full Coworker suite already pass) |
+| PR #748 — Day 10 operated receipt contracts | `fb1dc8c45c0544c35388fbf90abfcc5a4dedbd27` | Draft; corrected-head run #43952415700 in progress (test-and-build, frontend, browser and PostgreSQL 18 checks pass; Coworker suite remains in progress) |
 
 Other open work already exists and must not be duplicated: PR #741 (staging preflight), #742 (Day 5 memory isolation), #744 (Day 3 grounded replies), and #747 (Day 7 project-bound briefings). Refresh their exact heads and CI before depending on them.
 
