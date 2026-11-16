@@ -20,6 +20,7 @@ import sys
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
+from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from services.coworker.schemas import parse_draft, source_references
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,7 @@ RUBRIC = ("factual_source_fidelity", "constraint_compliance", "completeness_usef
 MAX_BYTES = 4_000_000
 SHA = re.compile(r"^[0-9a-f]{64}$")
 REV = re.compile(r"^[0-9a-f]{40}$")
+BUILD_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 # These are requirements, not simulated success records.
 OPERATED = {
     1: ("private_upload_retrieval", ("postgres", "object_storage")),
@@ -98,6 +100,118 @@ def read_jsonl(path: Path) -> list[dict]:
                 raise EvidenceError("JSONL rows must be objects")
             rows.append(obj)
     return rows
+
+
+def canonical_sha256(value: dict) -> str:
+    """Canonical digest for a release-bound JSON readback object."""
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise EvidenceError("candidate readback is not canonical JSON") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _readback_digest(value: object) -> str:
+    if not isinstance(value, dict) or "readback_sha256" not in value:
+        raise EvidenceError("candidate readback digest is missing")
+    payload = {key: item for key, item in value.items() if key != "readback_sha256"}
+    return canonical_sha256(payload)
+
+
+def validate_candidate_identity(manifest: dict) -> dict:
+    """Require the full immutable candidate identity before any holdout is read."""
+    identity = manifest.get("candidate_identity")
+    required = {
+        "api_source_revision", "worker_source_revision",
+        "api_build_digest", "worker_build_digest", "alembic_revision",
+        "provider_id", "model_id", "prompt_registry_sha256", "tool_registry_sha256",
+        "context_budget_bytes", "runtime_capabilities",
+        "api_readback_sha256", "worker_readback_sha256", "schema_readback_sha256",
+    }
+    if not isinstance(identity, dict) or set(identity) != required:
+        raise EvidenceError("candidate identity fields are incomplete or unexpected")
+    revision = manifest.get("candidate_revision")
+    if (not REV.fullmatch(revision or "")
+            or identity["api_source_revision"] != revision
+            or identity["worker_source_revision"] != revision):
+        raise EvidenceError("API/worker source revisions do not match the exact candidate SHA")
+    if not BUILD_DIGEST.fullmatch(identity.get("api_build_digest", "")) or not BUILD_DIGEST.fullmatch(identity.get("worker_build_digest", "")):
+        raise EvidenceError("API/worker image build digest is invalid")
+    schema_revision = identity.get("alembic_revision")
+    if (not isinstance(schema_revision, str) or not schema_revision.strip()
+            or len(schema_revision) > 64 or not re.fullmatch(r"[A-Za-z0-9_]+", schema_revision)):
+        raise EvidenceError("Alembic schema revision is invalid")
+    for field in ("provider_id", "model_id"):
+        value = identity.get(field)
+        if not isinstance(value, str) or not value.strip() or len(value) > 128:
+            raise EvidenceError("candidate provider/model identity is missing: " + field)
+    if identity["model_id"] != manifest.get("candidate_model"):
+        raise EvidenceError("candidate model does not match the frozen runtime identity")
+    for field in ("prompt_registry_sha256", "tool_registry_sha256",
+                  "api_readback_sha256", "worker_readback_sha256", "schema_readback_sha256"):
+        if not SHA.fullmatch(identity.get(field, "")):
+            raise EvidenceError("candidate identity digest is invalid: " + field)
+    budget = identity.get("context_budget_bytes")
+    if type(budget) is not int or not 1 <= budget <= 1_048_576:
+        raise EvidenceError("candidate context budget must be a positive bounded integer")
+    capabilities = identity.get("runtime_capabilities")
+    if (not isinstance(capabilities, dict)
+            or set(capabilities) != RUNTIME_CAPABILITY_KEYS
+            or any(type(value) is not bool for value in capabilities.values())):
+        raise EvidenceError("candidate runtime capability inventory must contain exactly 43 boolean keys")
+    return identity
+
+
+def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
+    """Check exact API, worker and schema readback equality and canonical digests.
+
+    This validates consistency only. The independent operator must authenticate
+    each readback against its source system before accepting the receipt.
+    """
+    identity = validate_candidate_identity(manifest)
+    if not isinstance(readbacks, dict) or set(readbacks) != {"api", "worker", "schema"}:
+        raise EvidenceError("authenticated API, worker and schema readbacks are required")
+    common = {
+        "release_id": manifest["release_id"],
+        "alembic_revision": identity["alembic_revision"],
+        "provider_id": identity["provider_id"],
+        "model_id": identity["model_id"],
+        "prompt_registry_sha256": identity["prompt_registry_sha256"],
+        "tool_registry_sha256": identity["tool_registry_sha256"],
+        "context_budget_bytes": identity["context_budget_bytes"],
+        "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
+        "runtime_capabilities": identity["runtime_capabilities"],
+    }
+    for role in ("api", "worker"):
+        row = readbacks.get(role)
+        expected = {
+            **common,
+            "source_revision": identity[f"{role}_source_revision"],
+            "build_digest": identity[f"{role}_build_digest"],
+        }
+        if not isinstance(row, dict) or set(row) != set(expected) | {"readback_sha256"}:
+            raise EvidenceError(role + " readback fields are incomplete or unexpected")
+        if any(row.get(key) != value for key, value in expected.items()):
+            raise EvidenceError(role + " authenticated readback does not match candidate manifest")
+        if row.get("readback_sha256") != identity[f"{role}_readback_sha256"] or _readback_digest(row) != row.get("readback_sha256"):
+            raise EvidenceError(role + " readback digest does not match candidate manifest")
+    schema = readbacks.get("schema")
+    schema_expected = {
+        "release_id": manifest["release_id"],
+        "source_revision": manifest["candidate_revision"],
+        "migration_revision": identity["alembic_revision"],
+        "api_revision": identity["alembic_revision"],
+        "worker_revision": identity["alembic_revision"],
+        "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
+    }
+    if not isinstance(schema, dict) or set(schema) != set(schema_expected) | {"readback_sha256"}:
+        raise EvidenceError("schema readback fields are incomplete or unexpected")
+    if any(schema.get(key) != value for key, value in schema_expected.items()):
+        raise EvidenceError("Alembic API/worker schema readback does not match candidate manifest")
+    if schema.get("readback_sha256") != identity["schema_readback_sha256"] or _readback_digest(schema) != schema.get("readback_sha256"):
+        raise EvidenceError("schema readback digest does not match candidate manifest")
+    return {"api": True, "worker": True, "schema": True, "consistent": True}
 
 
 def registry_cases(path: Path = REGISTRY) -> list[dict]:
@@ -183,27 +297,44 @@ def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT) 
     return rows
 
 
-def validate_manifest(manifest: dict, corpus: Path) -> list[dict]:
-    """Manifest is a recorded identity, never proof of independent custody."""
-    if not isinstance(manifest, dict):
-        raise EvidenceError("run manifest must be an object")
-    if manifest.get("schema_version") != 1 or manifest.get("split") != "holdout":
+def validate_manifest(manifest: dict, corpus: Path, *, allow_legacy: bool = False) -> list[dict]:
+    """Validate a frozen candidate identity; legacy manifests are read-only."""
+    if not isinstance(manifest, dict) or manifest.get("split") != "holdout":
         raise EvidenceError("invalid run manifest")
-    if not REV.fullmatch(manifest.get("candidate_revision", "")):
-        raise EvidenceError("unbound candidate revision")
-    if not SHA.fullmatch(manifest.get("corpus_sha256", "")):
-        raise EvidenceError("missing frozen corpus digest")
-    for key in ("candidate_product_version", "candidate_model", "prompt_version", "tool_version",
-                "source_set_sha256", "run_started_at"):
-        if not isinstance(manifest.get(key), str) or not manifest[key].strip():
-            raise EvidenceError("missing frozen generation identity: " + key)
-    if not SHA.fullmatch(manifest["source_set_sha256"]):
-        raise EvidenceError("invalid source-set digest")
+    version = manifest.get("schema_version")
+    if version == 1:
+        if not allow_legacy:
+            raise EvidenceError("legacy manifest cannot qualify a new independent holdout")
+        if not REV.fullmatch(manifest.get("candidate_revision", "")):
+            raise EvidenceError("unbound candidate revision")
+        if not SHA.fullmatch(manifest.get("corpus_sha256", "")):
+            raise EvidenceError("missing frozen corpus digest")
+        for key in ("candidate_product_version", "candidate_model", "prompt_version", "tool_version",
+                    "source_set_sha256", "run_started_at"):
+            if not isinstance(manifest.get(key), str) or not manifest[key].strip():
+                raise EvidenceError("missing frozen generation identity: " + key)
+        if not SHA.fullmatch(manifest["source_set_sha256"]):
+            raise EvidenceError("invalid source-set digest")
+    elif version == 2:
+        if not REV.fullmatch(manifest.get("candidate_revision", "")):
+            raise EvidenceError("unbound candidate revision")
+        if not SHA.fullmatch(manifest.get("corpus_sha256", "")):
+            raise EvidenceError("missing frozen corpus digest")
+        for key in ("release_id", "run_id", "candidate_product_version", "candidate_model",
+                    "prompt_version", "tool_version", "source_set_sha256", "run_started_at"):
+            if not isinstance(manifest.get(key), str) or not manifest[key].strip():
+                raise EvidenceError("missing frozen generation identity: " + key)
+        if not SHA.fullmatch(manifest["source_set_sha256"]):
+            raise EvidenceError("invalid source-set digest")
+        if not SHA.fullmatch(manifest.get("rollout_manifest_sha256", "")):
+            raise EvidenceError("missing frozen rollout-manifest digest")
+        validate_candidate_identity(manifest)
+    else:
+        raise EvidenceError("unsupported run manifest schema_version")
     limit = manifest.get("time_limit_seconds")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 3600:
         raise EvidenceError("invalid comparable time limit")
     return external_heldout(corpus, corpus_sha256=manifest["corpus_sha256"])
-
 
 def _unique_rows(rows: list[dict], key: str, allowed: set[str], count: int) -> dict:
     if not isinstance(rows, list) or len(rows) != count:
@@ -216,13 +347,16 @@ def _unique_rows(rows: list[dict], key: str, allowed: set[str], count: int) -> d
     return indexed
 
 
-def candidate_ledger(cases: list[dict], outputs: list[dict]) -> tuple[dict[str, str], dict]:
+def candidate_ledger(cases: list[dict], outputs: list[dict], *,
+                    manifest_sha256: str | None = None) -> tuple[dict[str, str], dict]:
     """Bind scores to actual submitted outputs, preserving unknown usage as null."""
     ids = {case["case_id"] for case in cases}
     indexed = _unique_rows(outputs, "case_id", ids, 40)
     by_id = {case["case_id"]: case for case in cases}
     hashes, usage = {}, []
     for cid, row in indexed.items():
+        if manifest_sha256 is not None and row.get("manifest_sha256") != manifest_sha256:
+            raise EvidenceError("candidate output is not bound to frozen manifest digest: " + cid)
         if not isinstance(row.get("output"), dict):
             raise EvidenceError("candidate output must be a draft object")
         try:
@@ -254,9 +388,8 @@ def candidate_ledger(cases: list[dict], outputs: list[dict]) -> tuple[dict[str, 
                     "total_latency_ms": sum(t["latency_ms"] for t in usage) if complete else None,
                     "reported_cost_microusd": sum(t["cost_microusd"] for t in usage) if complete else None}
 
-
 def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[dict],
-                  deterministic: list[dict], *, output_hashes: dict | None = None) -> dict:
+                   deterministic: list[dict], *, output_hashes: dict | None = None) -> dict:
     ids = {c["case_id"] for c in cases}
     checks = _unique_rows(deterministic, "case_id", ids, 40)
     for case_id, check in checks.items():
@@ -286,6 +419,7 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
     reviewer_set = {r for scores in by_id.values() for r in scores}
     if len(reviewer_set) != 2:
         raise EvidenceError("two fixed independent reviewers required throughout")
+    reviewers = sorted(reviewer_set)
     pending = {cid for cid, r in by_id.items() if len({(tuple(x["scores"][d] for d in RUBRIC), x["source_supported"]) for x in r.values()}) > 1}
     resolved = _unique_rows(adjudications, "case_id", pending, len(pending))
     for cid, row in resolved.items():
@@ -307,11 +441,15 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
         cell = case["workflow"] + "/" + case["language"]
         per_cell[cell]["total"] += 1
         per_cell[cell]["accepted"] += int(accepted)
-        results.append({"case_id": cid, "cell": cell, "score": sum(ratings.values()), "accepted": accepted,
-                        "deterministic_pass": deterministic_ok, "source_supported": chosen["source_supported"]})
+        reviewer_scores = [sum(by_id[cid][reviewer]["scores"][dimension] for dimension in RUBRIC)
+                           for reviewer in reviewers]
+        results.append({"case_id": cid, "cell": cell, "workflow": case["workflow"],
+                        "language": case["language"], "score": sum(ratings.values()),
+                        "accepted": accepted, "deterministic_pass": deterministic_ok,
+                        "security_passed": checks[cid]["security_passed"],
+                        "source_supported": chosen["source_supported"],
+                        "reviewer_scores": reviewer_scores})
     accepted = sum(r["accepted"] for r in results)
-    # A deterministic security violation is never an acceptable quality miss:
-    # the 36/40 tolerance applies to task quality, not owner/safety boundaries.
     security_failed_cases = sorted(cid for cid, check in checks.items() if not check["security_passed"])
     security_gate_pass = not security_failed_cases
     quality_gate_pass = accepted >= 36 and all(
@@ -322,8 +460,21 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             "security_gate_pass": security_gate_pass,
             "security_failed_cases": security_failed_cases,
             "disagreements_adjudicated": len(pending),
-            "reviewer_count": len(reviewer_set), "results": results}
+            "reviewer_count": len(reviewer_set), "reviewers": reviewers, "results": results}
 
+
+def day10_first_run_scores(scores: dict) -> dict:
+    """Shape the preserved Day 9 scores for the existing Day 10 exact-release gate."""
+    return {
+        "accepted": scores["accepted"],
+        "total": scores["total"],
+        "cases": [
+            {"id": row["case_id"], "workflow": row["workflow"], "language": row["language"],
+             "accepted": row["accepted"], "security_passed": row["security_passed"],
+             "reviewer_scores": row["reviewer_scores"]}
+            for row in scores["results"]
+        ],
+    }
 
 def _trace_sha_ok(value: object) -> bool:
     return isinstance(value, str) and bool(SHA.fullmatch(value))
@@ -353,7 +504,10 @@ def operated_trace_ok(row: dict, required_boundaries: tuple[str, ...]) -> bool:
     return True
 
 
-def verify_operations(rows: list[dict], candidate_revision: str) -> dict:
+def verify_operations(rows: list[dict], candidate_revision: str, *,
+                      manifest_sha256: str | None = None,
+                      release_id: str | None = None,
+                      rollout_manifest_sha256: str | None = None) -> dict:
     ids = {str(i) for i in OPERATED}
     normalized = [{**r, "row": str(r.get("row"))} for r in rows]
     indexed = _unique_rows(normalized, "row", ids, 20)
@@ -363,12 +517,17 @@ def verify_operations(rows: list[dict], candidate_revision: str) -> dict:
         name, needed = OPERATED[index]
         if row.get("scenario") != name or row.get("candidate_revision") != candidate_revision:
             raise EvidenceError("operated scenario/revision mismatch")
+        if manifest_sha256 is not None and row.get("manifest_sha256") != manifest_sha256:
+            raise EvidenceError("operated scenario is not bound to frozen manifest digest")
+        if release_id is not None and row.get("release_id") != release_id:
+            raise EvidenceError("operated scenario release identity mismatch")
+        if rollout_manifest_sha256 is not None and row.get("rollout_manifest_sha256") != rollout_manifest_sha256:
+            raise EvidenceError("operated scenario rollout identity mismatch")
         if row.get("status") != "pass" or not operated_trace_ok(row, needed):
             failed.append(index)
     failed.sort()
     return {"total": 20, "passed": 20 - len(failed), "failed_rows": failed, "fault_gate_pass": not failed,
             "evidence_level": "operator_submitted_operated_traces_not_independently_attested"}
-
 
 def read_blinding_key(path: Path) -> bytes:
     """External secret custody, separate from reviewer packets and the repo."""
@@ -390,7 +549,8 @@ def position_map(case_id: str, corpus_sha256: str, *, blinding_key: bytes) -> di
 
 
 def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: list[dict] | None,
-            adjudications: list[dict] | None = None, *, blinding_key: bytes | None = None) -> dict:
+            adjudications: list[dict] | None = None, *, blinding_key: bytes | None = None,
+            manifest_sha256: str | None = None) -> dict:
     if competitor is None or rows is None:
         return {"complete": False, "comparison_gap": "competitor access or blinded judgment evidence missing", "wins": None, "ties": None, "losses": None}
     if not isinstance(blinding_key, bytes) or len(blinding_key) != 32:
@@ -400,6 +560,12 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
             raise EvidenceError("competitor identity incomplete: " + field)
     if competitor.get("source_set_sha256") != manifest["source_set_sha256"] or competitor.get("time_limit_seconds") != manifest["time_limit_seconds"]:
         raise EvidenceError("competitor sources/time ceiling not comparable")
+    if manifest_sha256 is not None and (
+        competitor.get("manifest_sha256") != manifest_sha256
+        or competitor.get("release_id") != manifest["release_id"]
+        or competitor.get("rollout_manifest_sha256") != manifest["rollout_manifest_sha256"]
+    ):
+        raise EvidenceError("competitor comparison is not bound to frozen candidate manifest")
     if len(rows) != 160:
         raise EvidenceError("two reviewers and both swapped positions required for 40 tasks")
     ids = {c["case_id"] for c in cases}
@@ -430,8 +596,6 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
             inconsistent.append(cid)
         else:
             votes[choices[0]] += 1
-    # Reviewers are genuinely independent: conflicting or position-sensitive
-    # judgments require a THIRD blind adjudicator, never a majority shortcut.
     contested = set(inconsistent)
     adjudications = [] if adjudications is None else adjudications
     resolutions = _unique_rows(adjudications, "case_id", contested, len(adjudications))
@@ -455,14 +619,18 @@ def compare(cases: list[dict], manifest: dict, competitor: dict | None, rows: li
             "candidate_product_version": manifest["candidate_product_version"],
             "competitor_product_version": competitor["product_version"],
             "time_limit_seconds": manifest["time_limit_seconds"],
-            "source_set_sha256": manifest["source_set_sha256"]}
-
+            "source_set_sha256": manifest["source_set_sha256"],
+            "manifest_sha256": manifest_sha256}
 
 def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], competitor: list[dict],
-                  *, blinding_key: bytes) -> list[dict]:
+                   *, blinding_key: bytes, manifest_sha256: str | None = None) -> list[dict]:
     ids = {c["case_id"] for c in cases}
     a = _unique_rows(candidate, "case_id", ids, 40)
     b = _unique_rows(competitor, "case_id", ids, 40)
+    if manifest_sha256 is not None and any(
+        row.get("manifest_sha256") != manifest_sha256 for row in (*a.values(), *b.values())
+    ):
+        raise EvidenceError("blind packet outputs are not bound to frozen manifest digest")
     result = []
     for case in cases:
         cid = case["case_id"]
@@ -471,7 +639,6 @@ def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], comp
             result.append({"case_id": cid, "position": position, "response_a": values[left],
                            "response_b": values[right]})
     return result
-
 
 def immutable_write(path: Path, obj: object) -> str:
     """O_EXCL preserves first-run evidence; reruns require a NEW named path."""
@@ -510,6 +677,8 @@ def main(argv=None) -> int:
     parser.add_argument("--report", type=Path, help="New output file; overwrite is forbidden")
     parser.add_argument("--regression-rerun", action="store_true")
     args = parser.parse_args(argv)
+    manifest = None
+    manifest_digest = None
     try:
         if args.action == "validate-registry":
             obj = {"development_registry": len(registry_cases()), "heldout_executed": False}
@@ -528,6 +697,7 @@ def main(argv=None) -> int:
             if args.competitor_outputs:
                 outside_repo(args.competitor_outputs)
             manifest = read_json(args.manifest)
+            manifest_digest = sha256(args.manifest)
             cases = validate_manifest(manifest, args.heldout)
             head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                   text=True, capture_output=True, check=True).stdout.strip()
@@ -537,22 +707,42 @@ def main(argv=None) -> int:
                 if not args.candidate or not args.competitor_outputs or not args.blinding_key:
                     raise EvidenceError("real outputs and D-only blinding key required for blind packet")
                 key = read_blinding_key(args.blinding_key)
-                obj = prepare_blind(cases, manifest, read_jsonl(args.candidate),
-                                    read_jsonl(args.competitor_outputs), blinding_key=key)
+                rows = prepare_blind(cases, manifest, read_jsonl(args.candidate),
+                                     read_jsonl(args.competitor_outputs), blinding_key=key,
+                                     manifest_sha256=manifest_digest)
+                obj = {
+                    "schema_version": 1,
+                    "manifest_sha256": manifest_digest,
+                    "release_id": manifest["release_id"],
+                    "source_revision": manifest["candidate_revision"],
+                    "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
+                    "run_id": manifest["run_id"],
+                    "rows": rows,
+                }
             else:
                 if not args.evidence or not args.candidate:
                     raise EvidenceError("external independently scored evidence and candidate outputs required")
                 evidence = read_json(args.evidence)
-                output_hashes, usage = candidate_ledger(cases, read_jsonl(args.candidate))
+                if evidence.get("manifest_sha256") != manifest_digest:
+                    raise EvidenceError("evidence.json is not bound to the exact candidate manifest digest")
+                readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
+                output_hashes, usage = candidate_ledger(
+                    cases, read_jsonl(args.candidate), manifest_sha256=manifest_digest
+                )
                 scores = score_reviews(cases, evidence["reviews"], evidence.get("adjudications", []),
                                        evidence["deterministic"], output_hashes=output_hashes)
-                faults = verify_operations(evidence["operations"], manifest["candidate_revision"])
+                faults = verify_operations(
+                    evidence["operations"], manifest["candidate_revision"],
+                    manifest_sha256=manifest_digest, release_id=manifest["release_id"],
+                    rollout_manifest_sha256=manifest["rollout_manifest_sha256"],
+                )
                 key = read_blinding_key(args.blinding_key) if args.blinding_key else None
-                comparative = compare(cases, manifest, evidence.get("competitor"), evidence.get("comparisons"),
-                                      evidence.get("comparison_adjudications", []), blinding_key=key)
+                comparative = compare(
+                    cases, manifest, evidence.get("competitor"), evidence.get("comparisons"),
+                    evidence.get("comparison_adjudications", []), blinding_key=key,
+                    manifest_sha256=manifest_digest,
+                )
                 custody = evidence.get("custody", {})
-                # A checked-in self-assertion is not a proof. Preserve the external
-                # custodian's status; independent attestation is reviewed out-of-band.
                 isolated = (custody.get("independent_operator_review") == "verified"
                             and custody.get("developer_negative_read_test") == "denied"
                             and custody.get("replacement_of_exposed_cases") is True
@@ -564,24 +754,48 @@ def main(argv=None) -> int:
                 high_severity = evidence.get("unresolved_high_severity_failures", None)
                 if not isinstance(high_severity, list):
                     raise EvidenceError("high-severity findings inventory required")
-                eligible = bool(scores["outcome_gate_pass"] and faults["fault_gate_pass"] and comparative["complete"]
+                eligible = bool(readback_status["consistent"] and scores["outcome_gate_pass"]
+                                and faults["fault_gate_pass"] and comparative["complete"]
                                 and isolated and source_gate and not high_severity)
-                obj = {"schema_version": 1, "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
-                       "candidate_revision": manifest["candidate_revision"], "manifest_sha256": sha256(args.manifest),
-                       "corpus_sha256": manifest["corpus_sha256"], "input_evidence_sha256": sha256(args.evidence),
-                       "candidate_outputs_sha256": sha256(args.candidate),
-                       "generated_at": datetime.now(timezone.utc).isoformat(), "outcomes": scores,
-                       "usage": {**usage, "reported_cost_per_accepted_task_microusd":
-                                 (usage["reported_cost_microusd"] / scores["accepted"]
-                                  if usage["reported_cost_microusd"] is not None and scores["accepted"] else None)},
-                       "operations": faults, "comparison": comparative, "custody_claim_submitted": bool(isolated),
-                       "custody_independently_verified_by_this_program": False,
-                       "repository_checks_reported_pass": source_gate, "unresolved_high_severity_failures": high_severity,
-                       "operator_evidence_gate": eligible,
-                       "release_authorization": False,
-                       "limitations": ["External human custody, reviewer independence, source comparability and operated traces are not cryptographically or independently verified by this CLI.",
-                                       "Canonical cohort_release_gate.py and human release authority are still mandatory.",
-                                       "This report never authorizes activation."]}
+                first_run_scores = day10_first_run_scores(scores)
+                obj = {
+                    "schema_version": 2,
+                    "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
+                    "run_kind": "regression_rerun" if args.regression_rerun else "first_run",
+                    "run_id": manifest["run_id"],
+                    "release_id": manifest["release_id"],
+                    "source_revision": manifest["candidate_revision"],
+                    "candidate_revision": manifest["candidate_revision"],
+                    "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
+                    "candidate_identity": manifest["candidate_identity"],
+                    "candidate_readbacks": evidence["candidate_readbacks"],
+                    "manifest_sha256": manifest_digest,
+                    "corpus_sha256": manifest["corpus_sha256"],
+                    "input_evidence_sha256": sha256(args.evidence),
+                    "candidate_outputs_sha256": sha256(args.candidate),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "scores": first_run_scores,
+                    "reviewers": scores["reviewers"],
+                    "outcomes": scores,
+                    "usage": {**usage, "reported_cost_per_accepted_task_microusd":
+                              (usage["reported_cost_microusd"] / scores["accepted"]
+                               if usage["reported_cost_microusd"] is not None and scores["accepted"] else None)},
+                    "operations": faults,
+                    "comparison": comparative,
+                    "custody_claim_submitted": bool(isolated),
+                    "custody_independently_verified_by_this_program": False,
+                    "candidate_readback_consistency_pass": readback_status["consistent"],
+                    "repository_checks_reported_pass": source_gate,
+                    "unresolved_high_severity_failures": high_severity,
+                    "operator_evidence_gate": eligible,
+                    "release_authorization": False,
+                    "limitations": [
+                        "Readback digests prove internal consistency only; C/D must authenticate the API, worker and schema receipts against source systems.",
+                        "External human custody, reviewer independence, source comparability and operated traces are not independently verified by this CLI.",
+                        "Canonical cohort_release_gate.py and human release authority are still mandatory.",
+                        "This report never authorizes activation.",
+                    ],
+                }
         if args.report:
             digest = immutable_write(args.report, obj)
             print(json.dumps({"report": str(args.report), "sha256": digest, "eligible": obj.get("operator_evidence_gate", False)}))
@@ -593,13 +807,23 @@ def main(argv=None) -> int:
             return 0 if obj["passed"] else 1
         return 0
     except (EvidenceError, OSError, ValueError, KeyError, TypeError) as exc:
-        failure = {"error": str(exc), "qualified": False,
-                   "result_kind": "regression_validation" if args.regression_rerun
-                   else "operator_submitted_first_run",
-                   "release_authorization": False}
+        failure = {
+            "schema_version": 2 if manifest and manifest.get("schema_version") == 2 else 1,
+            "error": str(exc),
+            "qualified": False,
+            "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
+            "run_kind": "regression_rerun" if args.regression_rerun else "first_run",
+            "release_authorization": False,
+        }
+        if isinstance(manifest, dict):
+            failure.update({
+                "run_id": manifest.get("run_id"),
+                "release_id": manifest.get("release_id"),
+                "source_revision": manifest.get("candidate_revision"),
+                "rollout_manifest_sha256": manifest.get("rollout_manifest_sha256"),
+                "manifest_sha256": manifest_digest,
+            })
         if args.report:
-            # Preserve first-run failure evidence too. Never replace earlier results,
-            # even when inputs are invalid or a reviewer's submission is incomplete.
             try:
                 outside_repo(args.report)
                 digest = immutable_write(args.report, failure)
@@ -609,7 +833,6 @@ def main(argv=None) -> int:
         else:
             print(json.dumps(failure))
         return 2
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
