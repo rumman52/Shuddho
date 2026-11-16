@@ -1,9 +1,18 @@
 """Bounded task proposal and owner-scoped validation of reviewed conversation work."""
 from __future__ import annotations
+import json
 import re
 from uuid import uuid4
 from sqlalchemy import select
-from .agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+from .agent_planning_model import (
+    TASK_BRIEF_MAX_CONTEXT_BYTES,
+    TASK_BRIEF_MAX_OUTPUT_TOKENS,
+    TASK_BRIEF_MAX_SOURCE_IDS,
+    DeepSeekAgentPlanner,
+    PlannerFailure,
+    task_brief_body,
+    task_brief_messages,
+)
 from .conversation_context import require_current_selected_sources
 from .errors import CoworkerError
 from .models import Conversation, ConversationMessage, Project, ProjectResource
@@ -107,19 +116,29 @@ class ConversationTaskBriefService:
             self._checked(db, owner, conversation_id, message_id, expected_sequence)
             history, known = self._history(db, owner, conversation_id, expected_sequence)
             self._project(db, self.settings, owner, conversation_id, project_id)
+        recent_ids = [source_id for turn in reversed(history) for source_id in turn["source_ids"]]
+        source_ids = list(dict.fromkeys([*recent_ids, *reversed(known)]))[:TASK_BRIEF_MAX_SOURCE_IDS]
+        body = task_brief_body(history, source_ids)
+        while len(history) > 1 and len(body.encode("utf-8")) > TASK_BRIEF_MAX_CONTEXT_BYTES:
+            history.pop(0)
+            body = task_brief_body(history, source_ids)
+        if len(body.encode("utf-8")) > TASK_BRIEF_MAX_CONTEXT_BYTES:
+            raise PlannerFailure("task_brief_context_limit", "Conversation context too large.")
         if history and _SECOND.search(history[-1]["text"]):
             if not _OPTION_TWO.search("\n".join(item["text"] for item in history[:-1])):
                 return {"state": "needs_input", "question": "Which second option or structure do you mean?",
                         "brief": None, "canonical_digest": None}
         lease_id = str(uuid4())
-        reserved = min(self.settings.agent_planner_max_output_tokens + 3000,
-                       self.settings.provider_max_reserved_tokens_per_workspace)
+        # Use the same conservative UTF-8 reservation as conversation replies.
+        reserved = (len(json.dumps(task_brief_messages(body), ensure_ascii=False).encode("utf-8"))
+                    + min(TASK_BRIEF_MAX_OUTPUT_TOKENS, self.settings.agent_planner_max_output_tokens)
+                    + 512)
         with self.sessions.begin() as db:
             acquire_provider_lease(db, self.settings, owner_id=owner, kind="planner",
                                    resource_id=lease_id, sequence=1, reserved_tokens=reserved)
         tokens = None
         try:
-            proposal, tokens = await self.model.propose_task_brief(history, list(known))
+            proposal, tokens = await self.model.propose_task_brief(history, source_ids)
         except PlannerFailure as error:
             tokens = error.total_tokens
             raise
@@ -131,6 +150,8 @@ class ConversationTaskBriefService:
             return {"state": "needs_input", "question": proposal.question,
                     "brief": None, "canonical_digest": None}
         brief = proposal.brief
+        if any(str(source_id) not in source_ids for source_id in brief.source_ids):
+            raise CoworkerError("task_brief_source_invalid", "Source was not offered to the task brief planner.", 409)
         prior = "\n".join(item["text"] for item in history[:-1])
         latest = history[-1]["text"] if history else ""
         constraints = list(brief.constraints)

@@ -114,6 +114,21 @@ Exact-head CI and the live release evidence remain pending.
 
 ---
 
+## Day 4 multilingual task-brief budget — 16 November 2026 (Asia/Dhaka)
+
+Task-brief history now drops the oldest turns until the serialized request fits
+the provider's UTF-8 byte limit. The proposal reserves the serialized prompt,
+output allowance and framing before calling the provider. The workspace and
+global capacity limits can reject the request before any model call. The latest
+turn remains in the bounded history, and recent selected attachments take
+precedence when the planner's source list reaches its limit.
+
+Local verification: 132 focused tests passed, including Bangla requests,
+workspace reservations and recent attachment selection. Exact-head CI and
+remote staging are pending.
+
+---
+
 ## V-01 source safeguard — 13 November 2026 (Asia/Dhaka)
 
 **Scope:** fail-closed pull-request ancestry check. Existing draft PR #695 is 171 commits behind `main` (GitHub compare on `ce8a21046970a94a65d0b53a31da4c55d048e51a` vs `1b98702c602a8e57848175b3063bdad298abb6ae`) and omits previously merged conversation memory-pin admission and revocation checks. A blocking code review was posted to #695. The new guard checks the actual PR head rather than the synthetic PR merge checkout; `ci-merge-gate` rejects failed or skipped PR ancestry checks, while push events remain governed by the existing governance audit.
