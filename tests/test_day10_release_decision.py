@@ -163,6 +163,14 @@ def test_bad_identity_or_missing_gate_blocks(monkeypatch, mutation, blocked):
 
 
 
+
+def test_holdout_requires_independent_generation_identity_receipt_digest(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["holdout"].pop("generation_identity_receipt_sha256")
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
 def test_rejected_case_can_preserve_zero_reviewer_total_but_accepted_case_cannot(monkeypatch):
     rollout, artifacts = evidence()
     row = artifacts["holdout"]["cases"][0]
