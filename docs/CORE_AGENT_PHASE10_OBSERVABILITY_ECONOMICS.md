@@ -27,7 +27,7 @@ The export is implemented in `scripts/core_agent_observability.py`. JSON preserv
 
 ## Dashboard metrics
 
-The Phase 10 export provides run success ratio, tool failure ratio, model failure ratio, p50/p95/p99 end-to-end run latency, model inference latency and tool execution latency percentiles, latency coverage, retry-attempt rate, average tool steps per run, total token consumption, cost-estimate completeness, duplicate attempts, `outcome_unknown`, abandoned/deadline runs, and provider failures. Planner latency is sourced from persisted `AgentDecision.latency_ms`; child-model latency is sourced from `ModelAttempt.latency_ms`. Failed planner attempts without a persisted latency are excluded from latency percentiles and lower the reported coverage.
+The Phase 10 export provides run success ratio, tool failure ratio, model failure ratio, p50/p95/p99 end-to-end run latency, model inference latency and tool execution latency percentiles, latency coverage, execution retry rate, separate Temporal dispatch retries, aggregate token consumption and provider-reported input/output token totals when complete, token-direction coverage, cost-estimate completeness, duplicate attempts, `outcome_unknown`, abandoned/deadline runs, and provider failures. Planner latency is sourced from persisted `AgentDecision.latency_ms`; child-model latency is sourced from `ModelAttempt.latency_ms`. Failed planner attempts without a persisted latency are excluded from latency percentiles and lower the reported coverage.
 
 Transactions are measured as a separate safety domain: terminal transaction samples, confirmed transactions, failed transactions, and transaction `outcome_unknown` count/ratio. An uncertain transaction remains a reconciliation event and is never transformed into an automatic retry.
 
@@ -83,9 +83,9 @@ The previous Phase 9 PR had a CI invocation defect: the evaluation file imported
 
 ## Added inference and execution telemetry
 
-Migration `0067` adds nullable `cw_agent_decisions.latency_ms`. It is nullable so pre-migration decisions remain readable. Runtime v3 persists the measured provider round-trip latency returned by the planner. The operator exporter combines those successful planner samples with child `ModelAttempt.latency_ms` samples and reports p50/p95/p99 plus coverage. Tool latency is independently reported at p50/p95/p99.
+Migration `0067` adds nullable `cw_agent_decisions.latency_ms`; migration `0071` adds nullable planner and child-attempt input/output token fields. They are nullable so pre-migration and incomplete provider calls remain readable. Runtime v3 persists planner round-trip latency and aggregates provider-reported prompt/completion counts only when every planner reservation is settled with both directions. Child `ModelAttempt` rows persist each attempt's provider-reported directions. The exporter reports p50/p95/p99 model latency, tool latency and token-direction coverage without substituting reserved totals for directional usage.
 
-Retry rate is defined as retry attempts divided by model calls plus tool calls in the selected window. The denominator and numerator are emitted as aggregate counts/rates; no per-user or per-run labels are added.
+Execution retry rate is defined as planner/model/tool retry attempts divided by model calls plus tool calls in the selected window. Temporal outbox dispatch retries are reported separately because they have a different denominator. Counts and rates remain aggregate; no per-user or per-run labels are added.
 
 ## Monitoring and concurrent-load evidence
 
@@ -108,10 +108,13 @@ The normal observability export remains available:
       --prom-output /var/lib/shuddho/ops/core-agent.prom
 
 Create operator report directories with mode 0700 and retain JSON locally behind
-access control. OpenMetrics remains label-free. The exporter now distinguishes
-aggregate/reserved usage from input/output token counts, which are null when not
-persisted. Runtime completion does not automatically verify artifacts or
-human-accepted outcomes; unverified references stay empty.
+access control. OpenMetrics remains label-free. The exporter reports aggregate
+input/output token totals only when every planner call is settled with both
+provider-reported directions and every child-model attempt has both counts.
+Historical, failed-without-usage, interrupted and partially measured calls remain
+null; reserved/charged totals are never split or relabeled as provider directions.
+Runtime completion does not automatically verify artifacts or human-accepted
+outcomes; unverified references stay empty.
 
 The two Day 8 reports must contain exactly the 40 frozen development task IDs
 with matching workflow/language and the same provider, model, model-parameter

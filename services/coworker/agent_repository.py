@@ -1314,6 +1314,11 @@ class AgentRepository:
             if daily.allocated_tokens + reserve_tokens > self.settings.daily_token_budget:
                 raise CoworkerError("daily_limit", "Your daily coworker model budget has been reached.", 429)
             call = run.planner_calls + 1
+            if call == 1:
+                # New runs start with a complete zero baseline; any missing
+                # provider direction on any call permanently makes the total unknown.
+                run.planner_input_tokens = 0
+                run.planner_output_tokens = 0
             acquire_provider_lease(
                 db, self.settings, owner_id=run.owner_id, kind="planner",
                 resource_id=run.id, sequence=call, reserved_tokens=reserve_tokens,
@@ -1327,7 +1332,10 @@ class AgentRepository:
 
     def settle_planner_capacity(
         self, run_id: str, call: int, actual_tokens: int | None,
-        cost_microusd: int | None = None, *, _db=None,
+        cost_microusd: int | None = None, *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        _db=None,
     ) -> None:
         with (nullcontext(_db) if _db is not None else self.sessions.begin()) as db:
             run = db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
@@ -1346,6 +1354,18 @@ class AgentRepository:
                 run.planner_actual_tokens += max(0, int(actual_tokens))
                 if cost_microusd is not None:
                     run.planner_cost_microusd += max(0, int(cost_microusd))
+            directions_valid = (
+                type(input_tokens) is int and input_tokens >= 0
+                and type(output_tokens) is int and output_tokens >= 0
+            )
+            if directions_valid and run.planner_input_tokens is not None and run.planner_output_tokens is not None:
+                run.planner_input_tokens += input_tokens
+                run.planner_output_tokens += output_tokens
+            else:
+                # One missing direction, a legacy call, or a pre-migration
+                # history makes the run-level directional total unavailable.
+                run.planner_input_tokens = None
+                run.planner_output_tokens = None
             self._checkpoint(db, run, "planner_capacity_settled", resource_id=str(call))
 
     def release_planner_capacity(self, run_id: str, call: int) -> None:
@@ -2210,6 +2230,8 @@ class AgentRepository:
         observation_count: int, total_tokens: int | None, cost_microusd: int | None,
         memory_repository, context_sources: dict, expected_steering_revision: int | None = None,
         latency_ms: int | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
     ) -> dict:
         """Commit a decision, its local effects and retry result as one run transaction.
 
@@ -2231,7 +2253,10 @@ class AgentRepository:
                 if existing is not None:
                     # A concurrent attempt may have inferred too; charge that actual
                     # attempt while reusing the winning local decision and effects.
-                    self.settle_planner_capacity(run_id, planner_call, total_tokens, cost_microusd, _db=db)
+                    self.settle_planner_capacity(
+                        run_id, planner_call, total_tokens, cost_microusd,
+                        input_tokens=input_tokens, output_tokens=output_tokens, _db=db,
+                    )
                     return dict(existing.evidence["result"])
             if (
                 expected_steering_revision is not None
@@ -2268,7 +2293,10 @@ class AgentRepository:
                     raise CoworkerError("approval_state_unverified", "Runtime v3 cannot claim an approval wait without a persisted waiting action.", 409)
             else:
                 result["wait_seconds"] = int(decision.wait_seconds)
-            self.settle_planner_capacity(run_id, planner_call, total_tokens, cost_microusd, _db=db)
+            self.settle_planner_capacity(
+                        run_id, planner_call, total_tokens, cost_microusd,
+                        input_tokens=input_tokens, output_tokens=output_tokens, _db=db,
+                    )
             if identity:
                 self._checkpoint(db, run, "v3_activity_result", resource_id=identity, evidence={"result": result})
             return result

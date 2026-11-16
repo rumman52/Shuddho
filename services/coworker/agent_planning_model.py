@@ -47,10 +47,21 @@ def task_brief_messages(body: str) -> list[dict[str, str]]:
 
 
 class PlannerFailure(CoworkerError):
-    def __init__(self, code: str, message: str, *, retryable: bool = False, total_tokens: int | None = None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        total_tokens: int | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ):
         super().__init__(code, message, 502)
         self.retryable = retryable
         self.total_tokens = total_tokens
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 class DeepSeekAgentPlanner:
@@ -142,11 +153,21 @@ class DeepSeekAgentPlanner:
             raise PlannerFailure("planner_unavailable", "The planner is temporarily unavailable.", retryable=retryable)
 
         total_tokens = None
+        input_tokens = None
+        output_tokens = None
         try:
             data = response.json()
-            usage = data.get("usage") or {}
-            if isinstance(usage.get("total_tokens"), int) and not isinstance(usage.get("total_tokens"), bool):
-                total_tokens = max(0, usage["total_tokens"])
+            usage = data.get("usage")
+            if not isinstance(usage, dict):
+                usage = {}
+
+            def token_count(name: str) -> int | None:
+                value = usage.get(name)
+                return value if type(value) is int and value >= 0 else None
+
+            total_tokens = token_count("total_tokens")
+            input_tokens = token_count("prompt_tokens")
+            output_tokens = token_count("completion_tokens")
             choices = data["choices"]
             if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
                 raise ValueError()
@@ -161,11 +182,15 @@ class DeepSeekAgentPlanner:
                 "invalid_planner_output",
                 "The planner returned an invalid runtime-v3 decision.",
                 total_tokens=total_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             ) from None
         return decision, total_tokens, int((time.monotonic() - started) * 1000), {
             "model": self.settings.deepseek_model,
             "prompt_sha256": prompt_sha256,
             "tool_schema_sha256": tool_schema_sha256,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
         }
 
     async def propose_task_brief(

@@ -217,6 +217,10 @@ def test_dashboard_reports_model_tool_latency_and_retry_rate():
         "abandoned": False,
         "provider_failures": 0,
         "retries": 1,
+        "dispatch_retries": 3,
+        "token_direction_breakdown_available": True,
+        "input_tokens": 100,
+        "output_tokens": 200,
         "model_latency_ms": [100, 200, 300],
         "tool_latency_ms": [20, 40],
     }]
@@ -228,6 +232,10 @@ def test_dashboard_reports_model_tool_latency_and_retry_rate():
     assert dashboard["tools"]["p50_latency_ms"] == 20
     assert dashboard["tools"]["p95_latency_ms"] == 40
     assert dashboard["runs"]["retry_rate"] == pytest.approx(1 / 5, abs=1e-6)
+    assert dashboard["runs"]["dispatch_retry_attempts"] == 3
+    assert dashboard["runs"]["input_token_consumption"] == 100
+    assert dashboard["runs"]["output_token_consumption"] == 200
+    assert dashboard["runs"]["token_direction_coverage"] == 1.0
 
 
 def test_unpriced_model_usage_is_not_reported_as_zero_cost():
@@ -262,6 +270,10 @@ def test_openmetrics_exports_latency_and_retry_metrics_without_labels():
         "abandoned": False,
         "provider_failures": 0,
         "retries": 0,
+        "dispatch_retries": 2,
+        "token_direction_breakdown_available": True,
+        "input_tokens": 30,
+        "output_tokens": 70,
         "model_latency_ms": [25],
         "tool_latency_ms": [10],
     }], [], settings)
@@ -270,6 +282,10 @@ def test_openmetrics_exports_latency_and_retry_metrics_without_labels():
     assert "shuddho_core_agent_model_latency_p50_ms 25" in text
     assert "shuddho_core_agent_tool_latency_p95_ms 10" in text
     assert "shuddho_core_agent_retry_rate 0" in text
+    assert "shuddho_core_agent_dispatch_retry_attempts 2" in text
+    assert "shuddho_core_agent_input_token_consumption 30" in text
+    assert "shuddho_core_agent_output_token_consumption 70" in text
+    assert "shuddho_core_agent_token_direction_coverage 1" in text
     assert "{" not in text
     assert "run_id" not in text
 
@@ -348,6 +364,120 @@ def test_snapshot_includes_persisted_planner_inference_latency(tmp_path):
     assert record["model_latency_ms_p50"] == 37
     assert record["model_latency_coverage"] == 1.0
     assert snapshot["dashboard"]["models"]["p95_latency_ms"] == 37
+
+
+
+def test_v3_planner_preserves_provider_token_directions():
+    import asyncio
+    import httpx
+
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+
+    settings = Settings(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+        deepseek_api_key="test-only-placeholder",
+    )
+    response_body = {
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"content": json.dumps({"decision": "wait", "wait_seconds": 1})},
+        }],
+        "usage": {"total_tokens": 50, "prompt_tokens": 30, "completion_tokens": 20},
+    }
+    planner = DeepSeekAgentPlanner(
+        settings,
+        httpx.MockTransport(lambda _: httpx.Response(200, json=response_body)),
+    )
+    decision, total, _latency, evidence = asyncio.run(planner.decide(
+        "Prepare a bounded project report.",
+        ["email.draft"],
+        [],
+        remaining_budget={},
+        dependencies={},
+    ))
+    assert decision.decision == "wait"
+    assert total == 50
+    assert evidence["input_tokens"] == 30
+    assert evidence["output_tokens"] == 20
+
+    invalid_body = {
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"content": json.dumps({"decision": "next_step"})},
+        }],
+        "usage": {"total_tokens": 50, "prompt_tokens": 30, "completion_tokens": 20},
+    }
+    invalid = DeepSeekAgentPlanner(
+        settings,
+        httpx.MockTransport(lambda _: httpx.Response(200, json=invalid_body)),
+    )
+    with pytest.raises(PlannerFailure) as failure:
+        asyncio.run(invalid.decide(
+            "Prepare a bounded project report.",
+            ["email.draft"],
+            [],
+            remaining_budget={},
+            dependencies={},
+        ))
+    assert failure.value.input_tokens == 30
+    assert failure.value.output_tokens == 20
+
+
+def test_snapshot_aggregates_directional_usage_only_when_every_call_is_measured(tmp_path):
+    container = make_container(tmp_path)
+    account_id = owner(container, "token-directions")
+    run = create_run(container, account_id, "token-directions-run")
+
+    planner = container.agent.reserve_planner(run["id"], 100)
+    container.agent.settle_planner_capacity(
+        run["id"], planner["call"], 50,
+        input_tokens=30, output_tokens=20,
+    )
+    task, _ = container.repository.create_task(
+        account_id,
+        TaskCreate(
+            instruction="Draft the bounded output.",
+            notes="Directional usage persistence test.",
+            output_language="en",
+        ),
+        "token-directions-child",
+        enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=None,
+    )
+    attempt = container.repository.reserve_model(task["id"], 100)
+    container.repository.settle_model(
+        task["id"], attempt, 40, 12, "completed",
+        input_tokens=25, output_tokens=15,
+    )
+
+    snapshot = collect_snapshot(container.settings)
+    record = next(item for item in snapshot["records"] if item["run_id"] == run["id"])
+    assert record["input_tokens"] == 55
+    assert record["output_tokens"] == 35
+    assert record["token_direction_breakdown_available"] is True
+    assert record["token_direction_missing_components"] == []
+
+
+def test_snapshot_keeps_directional_usage_unknown_when_any_planner_direction_is_missing(tmp_path):
+    container = make_container(tmp_path)
+    account_id = owner(container, "token-directions-missing")
+    run = create_run(container, account_id, "token-directions-missing-run")
+    planner = container.agent.reserve_planner(run["id"], 100)
+    container.agent.settle_planner_capacity(
+        run["id"], planner["call"], 50,
+        input_tokens=30, output_tokens=None,
+    )
+
+    snapshot = collect_snapshot(container.settings)
+    record = next(item for item in snapshot["records"] if item["run_id"] == run["id"])
+    assert record["input_tokens"] is None
+    assert record["output_tokens"] is None
+    assert record["token_direction_breakdown_available"] is False
+    assert record["token_direction_missing_components"] == ["planner"]
 
 
 
