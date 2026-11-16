@@ -19,7 +19,14 @@ from .memory_repository import require_current_memory_pins
 from .models import Conversation, ConversationMessage, Project, ProjectResource, Workspace
 from .provider_capacity import acquire_provider_lease, settle_provider_lease
 from .repository import not_found
-from .task_brief_schemas import MemoryPin, TaskBrief, TaskBriefMemorySelection, canonical_brief_digest
+from .task_brief_schemas import (
+    MAX_REVIEWED_TASK_BRIEF_BYTES,
+    MemoryPin,
+    TaskBrief,
+    TaskBriefMemorySelection,
+    TaskBriefSnapshotTooLarge,
+    canonical_brief_digest,
+)
 
 _SECOND = re.compile(r"\b(?:second|2nd)\s+(?:option|structure|one)\b", re.I)
 _OPTION_TWO = re.compile(r"(?:\b(?:option|structure)\s*(?:2|two|second)\b|(?:^|\n)\s*2[.)])", re.I)
@@ -100,9 +107,28 @@ class ConversationTaskBriefService:
                                 "Source was not selected in this conversation.", 409)
         pins = require_current_selected_sources(db, owner, [known[s] for s in source_ids])
         project = cls._project(db, settings, owner, conversation_id, project_id)
-        digest = canonical_brief_digest(brief, pins, project, owner_id=owner,
-                  conversation_id=conversation_id, message_id=message_id, sequence=expected_sequence,
-                  memory_pins=memory_pins)
+        max_bytes = min(MAX_REVIEWED_TASK_BRIEF_BYTES, settings.max_agent_context_bytes)
+        try:
+            # A previously admitted task retains its original digest/replay contract
+            # even if the operator later reduces the configured context budget.
+            digest = canonical_brief_digest(
+                brief,
+                pins,
+                project,
+                owner_id=owner,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                sequence=expected_sequence,
+                memory_pins=memory_pins,
+                max_bytes=None if allow_historical_replay else max_bytes,
+            )
+        except TaskBriefSnapshotTooLarge:
+            raise CoworkerError(
+                "task_brief_snapshot_too_large",
+                f"The reviewed task brief exceeds {max_bytes} UTF-8 bytes. "
+                "Shorten the brief or select less context.",
+                422,
+            ) from None
         return {"brief": brief.model_dump(mode="json"), "selected_sources": pins,
                 "project_context": project, "canonical_digest": digest, "memory_pins": memory_pins or []}
 
