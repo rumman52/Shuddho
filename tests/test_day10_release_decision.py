@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from scripts import day10_release_decision as day10
@@ -11,6 +11,9 @@ from scripts.ruke_pilot_eval import OPERATED
 REV = "a" * 40
 HASH = "b" * 64
 RELEASE = "rukh-pilot-001"
+STARTED = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+STOPPED = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+RESTORED = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
 NOW = datetime.now(timezone.utc).isoformat()
 
 
@@ -85,23 +88,23 @@ def evidence():
         safe_state_evidence_ref="https://evidence.example.test/safe-state",
         restored_data_retrievable=True,
         restored_data_probe_ref="https://evidence.example.test/restore-probe",
-        rollback_started_at=NOW,
-        worker_stopped_at=NOW,
-        safe_state_restored_at=NOW,
+        rollback_started_at=STARTED,
+        worker_stopped_at=STOPPED,
+        safe_state_restored_at=RESTORED,
     )
     artifacts["cancellation"].update(
         cancelled_run_id="run-cancelled",
         inference_active_at_cancel=True,
-        inference_started_at=NOW,
-        cancelled_at=NOW,
+        inference_started_at=STARTED,
+        cancelled_at=STOPPED,
         terminal_state="cancelled",
         late_side_effects=0,
     )
     artifacts["paused_schedule"].update(
         schedule_id="schedule-paused",
-        paused_at=NOW,
-        next_due_at=NOW,
-        observed_after_due_at=NOW,
+        paused_at=STARTED,
+        next_due_at=STOPPED,
+        observed_after_due_at=RESTORED,
         executions_while_paused=0,
         admitted_executions_while_paused=0,
     )
