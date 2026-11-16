@@ -45,12 +45,14 @@ before the second natural day. A passing JSON comparison **alone** cannot prove
 that a Temporal firing was natural instead of manually triggered.
 
 The controlled Day 7 probe now fetches the synthetic account's **live, owner-scoped
-persistent goal** at prepare, verify, and before pausing. The goal must be active,
-its revision must match the automation's pinned `goal_revision`, and its approved
-resources must consist of **one to five distinct documents only**, with no
-connected read grants or memory namespaces. The `goal_id`, `goal_revision`, and
-`authorized_document_ids` are captured in the evidence and checked against the
-Agent run's actual `document_ids` on both days. Any change of goal revision,
+persistent goal** and its **owner-owned project** at prepare, verify, and before
+pausing. The goal must be active, its revision must match the automation's pinned
+`goal_revision`, its explicit `project_id` must resolve to a live project owned
+by the same account, and every selected document must remain linked to that
+project. Its approved resources must consist of **one to five distinct documents
+only**, with no connected read grants or memory namespaces. The `goal_id`,
+`goal_revision`, `project_id`, and `authorized_document_ids` are captured in
+the evidence and checked against the Agent run's actual `document_ids` on both days. Any change of goal revision,
 approved read scope, or run document set fails closed; uploading a new version
 of the **same** approved document does not change that scope. The offline gate
 checks evidence consistency, but the operator must still authenticate the live
