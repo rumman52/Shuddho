@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -404,3 +406,15 @@ def test_day10_owner_isolation_requires_all_resource_classes_and_both_directions
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "operated_owner_isolation" in result["blockers"]
+
+
+def test_day10_release_decision_cli_help_runs_without_evidence_files():
+    result = subprocess.run(
+        [sys.executable, "scripts/day10_release_decision.py", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "usage:" in result.stdout.lower()
+    assert "--rollout" in result.stdout
