@@ -51,6 +51,119 @@ def run_pg(pg_bin: Path | None, command: str, *args: str, db_env: dict[str, str]
         raise BackupError(f"{command} failed (exit {result.returncode}).")
 
 
+def private_schema_access(connection) -> dict:
+    """Prove that Supabase API roles cannot reach the private application schema.
+
+    RLS is defense in depth, but it is not a substitute for keeping this schema
+    outside the Data API and withholding schema/table grants from anon and
+    authenticated. This check is read-only and deliberately does not enable RLS.
+    """
+    row = connection.execute(
+        """
+        SELECT
+            COALESCE((
+                SELECT has_schema_privilege(r.oid, n.oid, 'USAGE')
+                    OR has_schema_privilege(r.oid, n.oid, 'CREATE')
+                FROM pg_roles AS r WHERE r.rolname = 'anon'
+            ), false) AS anon_schema_access,
+            COALESCE((
+                SELECT has_schema_privilege(r.oid, n.oid, 'USAGE')
+                    OR has_schema_privilege(r.oid, n.oid, 'CREATE')
+                FROM pg_roles AS r WHERE r.rolname = 'authenticated'
+            ), false) AS authenticated_schema_access,
+            COALESCE((
+                SELECT count(*)::int
+                FROM pg_class AS c
+                WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND EXISTS (
+                    SELECT 1 FROM pg_roles AS r
+                    WHERE r.rolname = 'anon' AND (
+                        has_table_privilege(r.oid, c.oid, 'SELECT')
+                        OR has_table_privilege(r.oid, c.oid, 'INSERT')
+                        OR has_table_privilege(r.oid, c.oid, 'UPDATE')
+                        OR has_table_privilege(r.oid, c.oid, 'DELETE')
+                        OR has_table_privilege(r.oid, c.oid, 'TRUNCATE')
+                        OR has_table_privilege(r.oid, c.oid, 'REFERENCES')
+                        OR has_table_privilege(r.oid, c.oid, 'TRIGGER')
+                    )
+                  )
+            ), 0) AS anon_table_privilege_count,
+            COALESCE((
+                SELECT count(*)::int
+                FROM pg_class AS c
+                WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND EXISTS (
+                    SELECT 1 FROM pg_roles AS r
+                    WHERE r.rolname = 'authenticated' AND (
+                        has_table_privilege(r.oid, c.oid, 'SELECT')
+                        OR has_table_privilege(r.oid, c.oid, 'INSERT')
+                        OR has_table_privilege(r.oid, c.oid, 'UPDATE')
+                        OR has_table_privilege(r.oid, c.oid, 'DELETE')
+                        OR has_table_privilege(r.oid, c.oid, 'TRUNCATE')
+                        OR has_table_privilege(r.oid, c.oid, 'REFERENCES')
+                        OR has_table_privilege(r.oid, c.oid, 'TRIGGER')
+                    )
+                  )
+            ), 0) AS authenticated_table_privilege_count,
+            EXISTS (
+                SELECT 1
+                FROM pg_default_acl AS d
+                CROSS JOIN LATERAL aclexplode(d.defaclacl) AS acl
+                WHERE d.defaclnamespace = n.oid AND d.defaclobjtype = 'r'
+                  AND (
+                    acl.grantee = 0
+                    OR acl.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'anon')
+                  )
+                  AND acl.privilege_type IN (
+                    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+                  )
+            ) AS anon_default_table_privileges,
+            EXISTS (
+                SELECT 1
+                FROM pg_default_acl AS d
+                CROSS JOIN LATERAL aclexplode(d.defaclacl) AS acl
+                WHERE d.defaclnamespace = n.oid AND d.defaclobjtype = 'r'
+                  AND (
+                    acl.grantee = 0
+                    OR acl.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'authenticated')
+                  )
+                  AND acl.privilege_type IN (
+                    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+                  )
+            ) AS authenticated_default_table_privileges,
+            (
+                SELECT count(*)::int
+                FROM pg_class AS c
+                WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND c.relrowsecurity
+            ) AS rls_enabled_table_count
+        FROM pg_namespace AS n
+        WHERE n.nspname = %s
+        """,
+        (SCHEMA,),
+    ).fetchone()
+    if row is None:
+        raise BackupError("The private Coworker schema is missing.")
+
+    keys = (
+        "anon_schema_access",
+        "authenticated_schema_access",
+        "anon_table_privilege_count",
+        "authenticated_table_privilege_count",
+        "anon_default_table_privileges",
+        "authenticated_default_table_privileges",
+        "rls_enabled_table_count",
+    )
+    access = dict(zip(keys, row))
+    exposed = any(access[key] for key in keys if key != "rls_enabled_table_count")
+    if exposed:
+        raise BackupError(
+            "The private Coworker schema grants access to Supabase API roles; "
+            "review schema, table and default privileges before backup."
+        )
+    return access
+
+
 def inventory(connection) -> dict:
     from psycopg import sql
 
@@ -68,6 +181,7 @@ def inventory(connection) -> dict:
     ).fetchall()
     if len(revisions) != 1 or not revisions[0][0]:
         raise BackupError("Expected one Coworker migration revision.")
+    access_control = private_schema_access(connection)
 
     result = {}
     for (table,) in tables:
@@ -83,7 +197,7 @@ def inventory(connection) -> dict:
                 digest.update(row.encode("utf-8") + b"\n")
                 count += 1
         result[table] = {"rows": count, "sha256": digest.hexdigest()}
-    return {"revision": revisions[0][0], "tables": result}
+    return {"revision": revisions[0][0], "tables": result, "access_control": access_control}
 
 
 def dump_source(url: str, archive: Path, pg_bin: Path | None) -> dict:
