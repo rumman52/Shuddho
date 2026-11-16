@@ -910,6 +910,8 @@ def test_grounded_citation_allowlist_accepts_repeated_valid_source_ids():
     check_grounded_citations("First claim [[src-1]]. Second claim [[src-1]].", source_map)
     with pytest.raises(ValueError):
         check_grounded_citations("Valid [[src-1]], forged [[src-2]].", source_map)
+    with pytest.raises(ValueError):
+        check_grounded_citations("Malformed citation [[src-]].", source_map)
 
 
 def test_unknown_grounded_citation_rejected_without_storing_text(container):
