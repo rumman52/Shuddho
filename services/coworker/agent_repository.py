@@ -1358,7 +1358,11 @@ class AgentRepository:
                 type(input_tokens) is int and input_tokens >= 0
                 and type(output_tokens) is int and output_tokens >= 0
             )
-            if directions_valid and run.planner_input_tokens is not None and run.planner_output_tokens is not None:
+            if (
+                directions_valid
+                and run.planner_input_tokens is not None
+                and run.planner_output_tokens is not None
+            ):
                 run.planner_input_tokens += input_tokens
                 run.planner_output_tokens += output_tokens
             else:

@@ -194,8 +194,14 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         for item in model_attempts
     )
     model_call_count = planner_call_count + len(model_attempts)
-    planner_input = int(run.planner_input_tokens) if planner_call_count and planner_direction_complete else 0
-    planner_output = int(run.planner_output_tokens) if planner_call_count and planner_direction_complete else 0
+    planner_input = (
+        int(run.planner_input_tokens)
+        if planner_call_count and planner_direction_complete else 0
+    )
+    planner_output = (
+        int(run.planner_output_tokens)
+        if planner_call_count and planner_direction_complete else 0
+    )
     child_input = sum(int(item.input_tokens) for item in model_attempts) if child_direction_complete else 0
     child_output = sum(int(item.output_tokens) for item in model_attempts) if child_direction_complete else 0
     token_directions_available = (
