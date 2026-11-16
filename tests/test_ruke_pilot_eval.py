@@ -474,11 +474,14 @@ def test_each_original_reviewer_must_meet_seven_of_eight_without_zero_even_after
 
 
 def test_competitor_access_gap_is_recorded_without_fabricating_a_comparison():
-    gap = compare(tasks(), manifest(), None, None)
+    unrecorded = compare(tasks(), manifest(), None, None)
+    assert unrecorded["complete"] is False
+    assert not comparison_evidence_recorded(unrecorded)
+    gap = compare(tasks(), manifest(), None, None, access_gap="No competitor seat was available during the frozen evaluation window")
     assert gap["complete"] is False
-    assert gap["comparison_gap"]
+    assert gap["gap_reason"] == "competitor_access_unavailable"
     assert comparison_evidence_recorded(gap)
-    assert not comparison_evidence_recorded({"complete": False})
+    assert not comparison_evidence_recorded({"complete": False, "comparison_gap": "some evidence missing", "gap_reason": "incomplete_evidence"})
 
 def test_unsupported_source_or_failed_security_cannot_be_outweighed():
     reviews, checks = reviews_and_checks()
