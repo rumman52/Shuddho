@@ -1,12 +1,14 @@
 """Day 4 reviewed task briefs: authoritative digest, conversation constraints and atomic admission."""
 from __future__ import annotations
 import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
 from hashlib import sha256
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 # The general baseline job intentionally does not install coworker extras.
@@ -17,6 +19,7 @@ pytest.importorskip("temporalio")
 from sqlalchemy import select, func
 from test_coworker import account, container, signed_client
 from services.coworker.agent_runtime import AgentRuntime
+from services.coworker.agent_planning_model import DeepSeekAgentPlanner
 from services.coworker.conversation_dispatch import ConversationDispatchService
 from services.coworker.conversation_repository import ConversationRepository
 from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
@@ -83,6 +86,88 @@ def test_ambiguous_second_option_asks_for_input(container):
     result = asyncio.run(service.propose(owner, conversation["id"], item["id"], expected_sequence=1))
     assert result["state"] == "needs_input" and result["question"]
     assert result["brief"] is None
+
+
+def test_bangla_task_brief_keeps_recent_turns_within_provider_byte_limit(container):
+    owner, conversation, messages, service, _ = setup(container, "bangla-context")
+    for turn in range(1, 10):
+        latest = append(messages, owner, conversation, f"{turn}. " + "বাংলা " * 295, f"turn-{turn}")
+    settings = replace(service.settings, deepseek_api_key="test-key")
+    service.settings = settings
+    sent = []
+
+    def respond(request):
+        body = json.loads(request.content)["messages"][1]["content"]
+        assert len(body.encode("utf-8")) <= 24_000
+        sent.extend(json.loads(body)["history"])
+        suggestion = TaskBriefSuggestion(state="ready", brief=brief())
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": suggestion.model_dump_json()}}],
+            "usage": {"total_tokens": 100},
+        })
+
+    service.model = DeepSeekAgentPlanner(settings, transport=httpx.MockTransport(respond))
+    result = asyncio.run(service.propose(owner, conversation["id"], latest["id"], expected_sequence=9))
+    assert result["state"] == "ready"
+    assert [turn["sequence"] for turn in sent] == list(range(sent[0]["sequence"], 10))
+    assert 1 < len(sent) < 9
+    assert sent[-1]["text"] == latest["text"]
+
+
+def test_task_brief_rejects_capacity_before_call_when_prompt_exceeds_workspace_budget(container):
+    owner, conversation, messages, service, _ = setup(container, "brief-reservation")
+    item = append(messages, owner, conversation, "বাংলা " * 295, "long-turn")
+    service.settings = replace(service.settings, provider_max_reserved_tokens_per_workspace=6000)
+    calls = []
+
+    class Planner:
+        async def propose_task_brief(self, history, source_ids):
+            calls.append(history)
+            return TaskBriefSuggestion(state="ready", brief=brief()), 100
+
+    service.model = Planner()
+    with pytest.raises(CoworkerError) as failure:
+        asyncio.run(service.propose(owner, conversation["id"], item["id"], expected_sequence=1))
+    assert failure.value.code == "workspace_provider_busy"
+    assert not calls
+
+
+def test_task_brief_source_limit_keeps_latest_selected_attachment(container):
+    owner, conversation, messages, service, dispatch = setup(container, "brief-latest-source")
+    settings = replace(service.settings, context_retrieval_enabled=True, deepseek_api_key="test-key")
+    service.settings = settings
+    messages.settings = settings
+    contents = b"Approved reference."
+    sources = [uuid4() for _ in range(21)]
+    with dispatch.sessions.begin() as db:
+        for source in sources:
+            db.add(Artifact(id=str(source), owner_id=owner, filename="reference.txt",
+                            content_type="text/plain", object_key=str(source),
+                            sha256=sha256(contents).hexdigest(), byte_size=len(contents),
+                            expires_at=utcnow() + timedelta(days=1)))
+    for index in range(0, len(sources), 5):
+        latest, _ = messages.append_message(owner, conversation["id"], MessageCreate(
+            text="Use the selected references to prepare a report.",
+            client_request_key=f"source-turn-{index}", selected_resource_ids=sources[index:index + 5],
+        ))
+
+    def respond(request):
+        body = json.loads(json.loads(request.content)["messages"][1]["content"])
+        permitted = set(body["allowed_source_ids"])
+        assert len(permitted) == 20
+        assert str(sources[-1]) in permitted
+        assert all(set(turn["source_ids"]) <= permitted for turn in body["history"])
+        suggestion = TaskBriefSuggestion(state="ready", brief=brief().model_copy(
+            update={"source_ids": [sources[-1]]},
+        ))
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": suggestion.model_dump_json()}}],
+            "usage": {"total_tokens": 100},
+        })
+
+    service.model = DeepSeekAgentPlanner(settings, transport=httpx.MockTransport(respond))
+    result = asyncio.run(service.propose(owner, conversation["id"], latest["id"], expected_sequence=5))
+    assert result["brief"]["source_ids"] == [str(sources[-1])]
 
 
 def test_model_invented_source_id_fails_without_ledger(container):
