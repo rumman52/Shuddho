@@ -296,6 +296,8 @@ class ConversationReplyService:
 
     def finish(self, owner, conversation_id, message_id, result):
         with self.sessions.begin() as db:
+            # Source mutation paths take this same owner-row lock; validation and
+            # reply persistence therefore serialize with deletion/revocation.
             self.conversations._lock_account(db, owner)
             self.conversations._conversation(db, owner, conversation_id, lock=True)
             row = db.get(ConversationMessage, message_id)
@@ -325,6 +327,10 @@ class ConversationReplyService:
         async def produce():
             parts = []
             output_bytes = 0
+            # Grounded output is buffered until citation validation and the final
+            # source revalidation/commit succeed. Text-only replies still stream.
+            buffer_source_deltas = bool(claim_result.get("sources"))
+            text = ""
             try:
                 stream_method = getattr(self.model, "stream", None)
                 if callable(stream_method):
@@ -335,20 +341,22 @@ class ConversationReplyService:
                         if output_bytes > MAX_OUTPUT_BYTES:
                             raise ValueError("Reply too large")
                         if part:
-                            if claim_result.get("sources"):
+                            if buffer_source_deltas:
                                 await run_in_threadpool(self.assert_sources_current, owner, conversation_id, message_id)
                             parts.append(part)
-                            await queue.put(("delta", {"delta": part}))
+                            if not buffer_source_deltas:
+                                await queue.put(("delta", {"delta": part}))
                 else:
                     # Compatibility for injected deterministic models and older adapters.
                     part = await self.model.generate(messages)
                     if not isinstance(part, str) or len(part.encode("utf-8")) > MAX_OUTPUT_BYTES:
                         raise ValueError("Invalid model output")
                     if part:
-                        if claim_result.get("sources"):
+                        if buffer_source_deltas:
                             await run_in_threadpool(self.assert_sources_current, owner, conversation_id, message_id)
                         parts.append(part)
-                        await queue.put(("delta", {"delta": part}))
+                        if not buffer_source_deltas:
+                            await queue.put(("delta", {"delta": part}))
                 text = "".join(parts).strip()
                 if not text:
                     raise ValueError("Empty model output")
@@ -360,7 +368,7 @@ class ConversationReplyService:
             except Exception:
                 # Provider diagnostics may contain private input or credentials.
                 result = {
-                    **claim_result, "state": "failed", "text": "",
+                    **claim_result, "state": "failed", "text": "", "sources": [],
                     "error": "The AI reply could not be completed. Send a new message to try again.",
                 }
             finally:
@@ -378,6 +386,10 @@ class ConversationReplyService:
             except Exception:
                 await queue.put(("error", {"error": "The AI reply could not be saved. Reload the conversation."}))
                 return
+            if buffer_source_deltas and stored.get("state") == "completed":
+                # finish() has validated citations and rechecked the source pins
+                # under the owner lock before any grounded text becomes visible.
+                await queue.put(("delta", {"delta": stored["text"]}))
             await queue.put(("final", stored))
 
         producer_task = asyncio.create_task(produce())
