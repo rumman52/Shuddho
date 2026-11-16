@@ -560,6 +560,24 @@ def _trace_sha_ok(value: object) -> bool:
     return isinstance(value, str) and bool(SHA.fullmatch(value))
 
 
+
+def timestamp_ok(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return stamp.tzinfo is not None and stamp.astimezone(timezone.utc) <= datetime.now(timezone.utc)
+    except (ValueError, OverflowError):
+        return False
+
+
+def timestamp_order_ok(observed_at: object, verified_at: object) -> bool:
+    if not timestamp_ok(observed_at) or not timestamp_ok(verified_at):
+        return False
+    observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    verified = datetime.fromisoformat(verified_at.replace("Z", "+00:00"))
+    return verified.astimezone(timezone.utc) >= observed.astimezone(timezone.utc)
+
 def operated_trace_ok(row: dict, required_boundaries: tuple[str, ...]) -> bool:
     """Check the common trace evidence required for an operated recovery case."""
     observed_at = row.get("observed_at")
@@ -592,7 +610,10 @@ def verify_operations(rows: list[dict], candidate_revision: str, *,
     normalized = [{**r, "row": str(r.get("row"))} for r in rows]
     indexed = _unique_rows(normalized, "row", ids, 20)
     failed = []
-    for raw_id, row in indexed.items():
+    receipts = []
+    evidence_refs = set()
+    for raw_id in sorted(indexed, key=int):
+        row = indexed[raw_id]
         index = int(raw_id)
         name, needed = OPERATED[index]
         if row.get("scenario") != name or row.get("candidate_revision") != candidate_revision:
@@ -603,12 +624,47 @@ def verify_operations(rows: list[dict], candidate_revision: str, *,
             raise EvidenceError("operated scenario release identity mismatch")
         if rollout_manifest_sha256 is not None and row.get("rollout_manifest_sha256") != rollout_manifest_sha256:
             raise EvidenceError("operated scenario rollout identity mismatch")
-        if row.get("status") != "pass" or not operated_trace_ok(row, needed):
+        trace_sha = row.get("trace_sha256")
+        evidence_ref = row.get("evidence_ref")
+        receipt_ok = (
+            _trace_sha_ok(trace_sha)
+            and evidence_ref == "sha256:" + trace_sha
+            and evidence_ref not in evidence_refs
+            and timestamp_order_ok(row.get("observed_at"), row.get("verified_at"))
+        )
+        if isinstance(evidence_ref, str) and evidence_ref:
+            evidence_refs.add(evidence_ref)
+        passed = row.get("status") == "pass" and operated_trace_ok(row, needed) and receipt_ok
+        if not passed:
             failed.append(index)
+        receipts.append({
+            "id": f"day9-scenario-{index:02d}",
+            "scenario": name,
+            "release_id": release_id,
+            "source_revision": candidate_revision,
+            "rollout_manifest_sha256": rollout_manifest_sha256,
+            "manifest_sha256": manifest_sha256,
+            "evidence_ref": evidence_ref,
+            "verified_at": row.get("verified_at"),
+            "status": "passed" if passed else "failed",
+            "execution": row.get("execution"),
+            "unauthorized_access": row.get("unauthorized_access"),
+            "unauthorized_mutation": row.get("unauthorized_mutation"),
+            "trace_sha256": trace_sha,
+            "observed_at": row.get("observed_at"),
+            "boundaries": row.get("boundaries"),
+        })
     failed.sort()
+    recovery = {
+        "release_id": release_id,
+        "source_revision": candidate_revision,
+        "rollout_manifest_sha256": rollout_manifest_sha256,
+        "manifest_sha256": manifest_sha256,
+        "scenarios": receipts,
+    }
     return {"total": 20, "passed": 20 - len(failed), "failed_rows": failed, "fault_gate_pass": not failed,
-            "evidence_level": "operator_submitted_operated_traces_not_independently_attested"}
-
+            "evidence_level": "operator_submitted_operated_traces_not_independently_attested",
+            "scenario_receipts": receipts, "day10_recovery": recovery}
 
 def comparison_evidence_recorded(value: object) -> bool:
     """A reproducible comparison or explicitly unavailable competitor access is reportable."""
@@ -887,6 +943,7 @@ def main(argv=None) -> int:
                               (usage["reported_cost_microusd"] / scores["accepted"]
                                if usage["reported_cost_microusd"] is not None and scores["accepted"] else None)},
                     "operations": faults,
+                    "day10_recovery": faults["day10_recovery"],
                     "comparison": comparative,
                     "custody_claim_submitted": bool(isolated),
                     "custody_independently_verified_by_this_program": False,
