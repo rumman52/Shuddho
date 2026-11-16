@@ -456,6 +456,28 @@ def test_per_cell_gate_stricter_than_global():
     assert result["accepted"] == 38 and not result["outcome_gate_pass"]
 
 
+
+def test_each_original_reviewer_must_meet_seven_of_eight_without_zero_even_after_adjudication():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    reviews[0]["scores"][RUBRIC[0]] = 0
+    adjudication = [{
+        "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
+        "scores": dict.fromkeys(RUBRIC, 2), "source_supported": True,
+        "evidence_note": "Independent adjudication preserves both original reviewer ratings",
+    }]
+    result = score_reviews(cases, reviews, adjudication, checks)
+    assert result["results"][0]["reviewer_scores"] == [6, 8]
+    assert result["results"][0]["accepted"] is False
+    assert result["results"][0]["reviewer_rubrics"][0]["scores"][RUBRIC[0]] == 0
+    assert result["accepted"] == 39
+
+
+def test_competitor_access_gap_is_recorded_without_fabricating_a_comparison():
+    gap = compare(tasks(), manifest(), None, None)
+    assert gap["complete"] is False
+    assert gap["comparison_gap"]
+
 def test_unsupported_source_or_failed_security_cannot_be_outweighed():
     reviews, checks = reviews_and_checks()
     for row in reviews:
