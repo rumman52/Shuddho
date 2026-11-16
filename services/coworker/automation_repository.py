@@ -16,6 +16,7 @@ from .models import (
     Account, AgentRun, AuditEvent, Automation, AutomationOccurrence, AutomationRevision,
     AutomationScheduleOutbox, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Notification, PersonalGoal, Workspace, utcnow,
 )
+from .project_scope import validate_project_document_scope
 from .repository import aware, iso, not_found
 
 
@@ -703,6 +704,11 @@ class AutomationRepository:
             self._validate_briefing_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
             )
+            if request.run_profile == "briefing":
+                validate_project_document_scope(
+                    db, owner, goal.project_id, list(goal.authorized_resources or []),
+                    require_documents=True,
+                )
             self._validate_meeting_profile(
                 db, owner, payload["schedule"], request.run_profile, connector_read_grant_ids
             )
@@ -837,6 +843,14 @@ class AutomationRepository:
                 PersonalGoal.id == row.goal_id,
                 PersonalGoal.owner_id == owner,
             ))
+            if row.run_profile == "briefing":
+                if current_goal is None:
+                    raise not_found()
+                validate_project_document_scope(
+                    db, owner, current_goal.project_id,
+                    list(current_goal.authorized_resources or []),
+                    require_documents=True,
+                )
             self._validate_deadline_profile(
                 db, owner, dict(row.schedule), row.run_profile, list(row.connector_read_grant_ids or []), current_goal
             )
@@ -2182,7 +2196,7 @@ class AutomationRepository:
             ))
             objective = goal.objective if goal is not None else None
             briefing_document_ids: list[str] = []
-            if run_profile in {"briefing", "proactive"} and goal is not None:
+            if run_profile == "proactive" and goal is not None:
                 for resource in list(goal.authorized_resources or []):
                     if (
                         isinstance(resource, dict)
@@ -2193,6 +2207,7 @@ class AutomationRepository:
                         briefing_document_ids.append(resource["reference"])
                     if len(briefing_document_ids) >= 5:
                         break
+            now = utcnow()
             reason = None
             if not self.settings.automations_enabled:
                 reason = "kill_switch"
@@ -2200,12 +2215,27 @@ class AutomationRepository:
                 reason = "stale_revision"
             elif row.state != "active":
                 reason = "not_active"
-            elif row.expires_at is not None and aware(row.expires_at) <= due_at:
+            elif row.expires_at is not None and aware(row.expires_at) <= max(now, due_at):
                 reason = "expired"
             elif objective is None:
                 reason = "goal_missing"
-            elif utcnow() - due_at > timedelta(seconds=row.catchup_window_seconds):
+            elif now - due_at > timedelta(seconds=row.catchup_window_seconds):
                 reason = "catchup_window"
+            if reason is None and run_profile == "briefing":
+                try:
+                    briefing_document_ids = validate_project_document_scope(
+                        db, owner, goal.project_id if goal is not None else None,
+                        list(goal.authorized_resources or []) if goal is not None else [],
+                        require_documents=True,
+                    )
+                except CoworkerError as error:
+                    previous.state = "blocked"
+                    previous.reason = error.code[:80]
+                    previous.updated_at = now
+                    return {
+                        "occurrence_id": previous.id, "run_id": None, "state": "blocked",
+                        "reason": error.code, "replayed": False,
+                    }
             if run_profile == "proactive" and objective is not None:
                 objective = (
                     objective
