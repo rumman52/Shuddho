@@ -19,9 +19,10 @@ from tests.test_context_memory import container, enable_pa04, owner
 
 
 class Planner:
-    def __init__(self, decision="next_step"):
+    def __init__(self, decision="next_step", output_language=None):
         self.calls = 0
         self.decision = decision
+        self.output_language = output_language
 
     async def decide(self, *_args, **_kwargs):
         self.calls += 1
@@ -31,6 +32,8 @@ class Planner:
                 "namespace": "preferences", "key": "update_style", "value": "Use concise updates.",
                 "language": "en", "source_ids": ["goal"],
             })
+            if self.output_language is not None:
+                value["output_language"] = self.output_language
         elif self.decision == "wait":
             value["wait_seconds"] = 2
         else:
@@ -40,17 +43,31 @@ class Planner:
         }
 
 
-def setup(container, decision="next_step"):
+def setup(container, decision="next_step", output_language=None):
     enable_pa04(container)
     actor = owner(container)
     run, _ = container.agent.create(actor, AgentRunCreate(goal="Create a concise weekly update.", output_language="en"), "recovery")
-    planner = Planner(decision)
+    planner = Planner(decision, output_language=output_language)
     return actor, run["id"], AgentRuntime(container, None, planner=planner), planner
 
 
 def counts(container, run_id):
     with container.repository.sessions() as db:
         return [len(db.scalars(select(model).where(model.run_id == run_id)).all()) for model in (AgentDecision, ToolInvocation, MemoryProposal)]
+
+
+
+def test_v3_step_language_overrides_only_that_task_not_the_run_default(container):
+    actor, run_id, runtime, planner = setup(container, output_language="bn")
+
+    result = asyncio.run(runtime.decide_v3(run_id, activity_key="workflow/mixed-language"))
+
+    assert result == {"decision": "next_step", "ordinal": 1}
+    saved = container.agent.get(actor, run_id)
+    assert saved["output_language"] == "en"
+    with container.repository.sessions() as db:
+        invocation = db.scalar(select(ToolInvocation).where(ToolInvocation.run_id == run_id))
+        assert invocation.arguments["output_language"] == "bn"
 
 
 def test_committed_activity_replays_without_inference_step_memory_or_charge(container):
