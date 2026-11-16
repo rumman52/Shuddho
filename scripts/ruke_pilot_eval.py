@@ -166,6 +166,17 @@ def validate_candidate_identity(manifest: dict) -> dict:
     return identity
 
 
+
+def validate_evidence_binding(evidence: object, manifest_sha256: str) -> dict:
+    """Bind the complete evidence JSON envelope to the exact frozen manifest."""
+    if not isinstance(evidence, dict):
+        raise EvidenceError("evidence.json must be an object")
+    if not isinstance(manifest_sha256, str) or not SHA.fullmatch(manifest_sha256):
+        raise EvidenceError("candidate manifest digest is invalid")
+    if evidence.get("manifest_sha256") != manifest_sha256:
+        raise EvidenceError("evidence.json is not bound to the exact candidate manifest digest")
+    return evidence
+
 def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
     """Check exact API, worker and schema readback equality and canonical digests.
 
@@ -728,11 +739,7 @@ def main(argv=None) -> int:
             else:
                 if not args.evidence or not args.candidate:
                     raise EvidenceError("external independently scored evidence and candidate outputs required")
-                evidence = read_json(args.evidence)
-                if not isinstance(evidence, dict):
-                    raise EvidenceError("evidence.json must be an object")
-                if evidence.get("manifest_sha256") != manifest_digest:
-                    raise EvidenceError("evidence.json is not bound to the exact candidate manifest digest")
+                evidence = validate_evidence_binding(read_json(args.evidence), manifest_digest)
                 readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
                 output_hashes, usage = candidate_ledger(
                     cases, read_jsonl(args.candidate), manifest_sha256=manifest_digest
