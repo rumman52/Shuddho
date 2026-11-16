@@ -236,3 +236,31 @@ def test_inventory_detects_inherited_default_privileges(api_role, membership_opt
             )
             with pytest.raises(backup.BackupError, match="Supabase API roles"):
                 backup.inventory(fixture)
+
+def test_inventory_detects_public_default_privileges():
+    pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
+    if not pg_bin:
+        pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
+    import psycopg
+
+    with backup.isolated_postgres(Path(pg_bin)) as db_env:
+        connect = dict(
+            host=db_env["PGHOST"], port=db_env["PGPORT"], user=db_env["PGUSER"],
+            dbname=db_env["PGDATABASE"], sslmode="disable",
+        )
+        with psycopg.connect(**connect) as fixture:
+            fixture.execute("CREATE ROLE anon NOLOGIN")
+            fixture.execute("CREATE ROLE authenticated NOLOGIN")
+            fixture.execute("CREATE SCHEMA shuddho_coworker")
+            fixture.execute(
+                "CREATE TABLE shuddho_coworker.cw_alembic_version (version_num text)"
+            )
+            fixture.execute("INSERT INTO shuddho_coworker.cw_alembic_version VALUES ('0070')")
+            # PUBLIC receives the privilege on future tables; no current table
+            # grant exists for the API roles to reveal this through has_table_privilege.
+            fixture.execute(
+                "ALTER DEFAULT PRIVILEGES IN SCHEMA shuddho_coworker "
+                "GRANT SELECT ON TABLES TO PUBLIC"
+            )
+            with pytest.raises(backup.BackupError, match="Supabase API roles"):
+                backup.inventory(fixture)
