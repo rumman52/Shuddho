@@ -175,8 +175,8 @@ def source_checks_ok(evidence: object) -> bool:
             and evidence.get("required_repository_checks") == "passed"
             and evidence.get("canonical_release_contract") == "passed")
 
-def custody_receipt_ok(custody: object) -> bool:
-    """Fail closed unless D's independent access boundary has a complete receipt."""
+def custody_receipt_ok(custody: object, manifest: dict | None = None) -> bool:
+    """Fail closed unless D's independent access boundary binds the frozen corpus/answers/rubric."""
     if not isinstance(custody, dict):
         return False
     identities = [custody.get("custodian_id"), custody.get("developer_id"),
@@ -195,8 +195,16 @@ def custody_receipt_ok(custody: object) -> bool:
         "frozen_inputs_sha256", "frozen_answers_sha256", "rubric_sha256",
         "exposure_history_sha256", "access_log_sha256", "receipt_sha256",
     )
-    return all(isinstance(custody.get(field), str) and SHA.fullmatch(custody[field])
-               for field in digest_fields)
+    if not all(isinstance(custody.get(field), str) and SHA.fullmatch(custody[field])
+               for field in digest_fields):
+        return False
+    if manifest is not None and (
+        custody["frozen_inputs_sha256"] != manifest.get("corpus_sha256")
+        or custody["frozen_answers_sha256"] != manifest.get("answer_key_sha256")
+        or custody["rubric_sha256"] != manifest.get("rubric_sha256")
+    ):
+        return False
+    return True
 
 def validate_evidence_binding(evidence: object, manifest_sha256: str) -> dict:
     """Bind the complete evidence JSON envelope to the exact frozen manifest."""
@@ -372,11 +380,15 @@ def validate_manifest(manifest: dict, corpus: Path, *, allow_legacy: bool = Fals
         if not isinstance(manifest.get("corpus_sha256"), str) or not SHA.fullmatch(manifest["corpus_sha256"]):
             raise EvidenceError("missing frozen corpus digest")
         for key in ("release_id", "run_id", "candidate_product_version", "candidate_model",
-                    "prompt_version", "tool_version", "source_set_sha256", "run_started_at"):
+                    "prompt_version", "tool_version", "source_set_sha256", "run_started_at",
+                    "answer_key_sha256", "rubric_sha256"):
             if not isinstance(manifest.get(key), str) or not manifest[key].strip():
                 raise EvidenceError("missing frozen generation identity: " + key)
         if not isinstance(manifest["source_set_sha256"], str) or not SHA.fullmatch(manifest["source_set_sha256"]):
             raise EvidenceError("invalid source-set digest")
+        if (not SHA.fullmatch(manifest["answer_key_sha256"])
+                or not SHA.fullmatch(manifest["rubric_sha256"])):
+            raise EvidenceError("missing frozen answer-key or rubric digest")
         if (not isinstance(manifest.get("rollout_manifest_sha256"), str)
                 or not SHA.fullmatch(manifest["rollout_manifest_sha256"])):
             raise EvidenceError("missing frozen rollout-manifest digest")
@@ -784,7 +796,7 @@ def main(argv=None) -> int:
             if not args.evidence:
                 raise EvidenceError("D custody and candidate readback evidence is required before reading heldout bytes")
             evidence = validate_evidence_binding(read_json(args.evidence), manifest_digest)
-            if not custody_receipt_ok(evidence.get("custody")):
+            if not custody_receipt_ok(evidence.get("custody"), manifest):
                 raise EvidenceError("independent D custody receipt is incomplete; heldout corpus was not read")
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
             if not source_checks_ok(evidence):
@@ -831,7 +843,7 @@ def main(argv=None) -> int:
                     access_gap=evidence.get("competitor_access_gap"),
                 )
                 custody = evidence.get("custody", {})
-                isolated = custody_receipt_ok(custody)
+                isolated = custody_receipt_ok(custody, manifest)
                 source_gate = source_checks_ok(evidence)
                 high_severity = evidence.get("unresolved_high_severity_failures", None)
                 if not isinstance(high_severity, list):
