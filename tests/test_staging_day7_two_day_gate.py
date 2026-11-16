@@ -29,6 +29,7 @@ def evidence(day: int, version: str) -> dict:
         "completion_notification_id": f"completed-{day}", "new_notification_count": 2,
         "input_version_ids": [version], "document_ids": ["doc-1"],
         "authorized_document_ids": ["doc-1"], "goal_id": "goal-1", "goal_revision": 1,
+        "project_id": "project-1",
         "operator_case_reference": "CASE-7",
     }
 
@@ -38,7 +39,7 @@ def pause_evidence() -> dict:
             "synthetic_account_label": "stage-day7-synthetic",
             "automation_id": "automation-1", "goal_id": "goal-1",
             "goal_revision": 1, "authorized_document_ids": ["doc-1"],
-            "previous_revision": 1, "paused_revision": 2,
+            "project_id": "project-1", "previous_revision": 1, "paused_revision": 2,
             "paused_at": "2026-11-13T02:10:00+00:00",
             "operator_case_reference": "CASE-7"}
 
@@ -73,6 +74,7 @@ def test_two_day_gate_accepts_unchanged_scope_fresh_pins_and_pause():
     lambda a, b, p: b.update(prior_run_input_version_ids=[]),
     lambda a, b, p: b.update(new_notification_count=3),
     lambda a, b, p: b.update(automation_id="someone-else"),
+    lambda a, b, p: b.update(project_id="project-other"),
     lambda a, b, p: p.update(paused_revision=1),
 ])
 def test_two_day_gate_rejects_invalid_operator_evidence(mutation):
@@ -134,7 +136,7 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
         "automation_revision": 1,
         "synthetic_account_label": "stage-day7-synthetic",
         "goal_id": "goal-1", "goal_revision": 1,
-        "authorized_document_ids": ["doc-1"],
+        "authorized_document_ids": ["doc-1"], "project_id": "project-1",
     }))
     args = argparse.Namespace(
         state=state_path, first_evidence=first_path, second_evidence=second_path,
@@ -150,7 +152,7 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
     monkeypatch.setattr(probe, "load_owned", lambda *_args: {
         "owner_id": "owner-1", "automation": {"revision": 1},
         "daily_scope": {"goal_id": "goal-1", "goal_revision": 1,
-                        "authorized_document_ids": ["doc-1"]},
+                        "authorized_document_ids": ["doc-1"], "project_id": "project-1"},
     })
 
     class Response:
