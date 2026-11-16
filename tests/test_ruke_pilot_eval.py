@@ -10,10 +10,11 @@ import tempfile
 import pytest
 
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
-from scripts.day10_release_decision import recovery_ok
+from scripts.day10_release_decision import holdout_ok, recovery_ok
 from scripts.ruke_pilot_eval import (
     OPERATED, RUBRIC, EvidenceError, compare, comparison_evidence_recorded, external_heldout,
-    candidate_ledger, canonical_sha256, custody_receipt_ok, day10_first_run_scores, immutable_write, main,
+    candidate_ledger, canonical_sha256, custody_receipt_ok, day10_first_run_scores,
+    day10_holdout_receipt, generation_identity_ok, immutable_write, main,
     position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews, source_checks_ok,
     validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
     validate_manifest, verify_operations,
@@ -181,6 +182,61 @@ def external_dir():
 
 
 
+
+def test_candidate_outputs_bind_each_run_model_prompt_tool_budget_and_sources():
+    value = manifest()
+    rows = candidate_outputs_for_manifest(value)
+    hashes, usage = candidate_ledger(tasks(), rows, manifest_sha256="a" * 64, manifest=value)
+    assert len(hashes) == 40
+    assert len(usage["case_run_receipts"]) == 40
+    assert usage["total_tokens"] == 4000
+    assert all(receipt["provider_id"] == "deepseek"
+               and receipt["model_id"] == "synthetic"
+               and receipt["source_refs"]
+               and receipt["time_limit_seconds"] == 60
+               for receipt in usage["case_run_receipts"])
+    bad = candidate_outputs_for_manifest(value)
+    bad[0]["model_id"] = "other-model"
+    with pytest.raises(EvidenceError, match="run identity"):
+        candidate_ledger(tasks(), bad, manifest_sha256="a" * 64, manifest=value)
+    bad = candidate_outputs_for_manifest(value)
+    bad[1]["run_id"] = bad[0]["run_id"]
+    with pytest.raises(EvidenceError, match="run IDs"):
+        candidate_ledger(tasks(), bad, manifest_sha256="a" * 64, manifest=value)
+    bad = candidate_outputs_for_manifest(value)
+    bad[2]["source_refs"] = []
+    with pytest.raises(EvidenceError, match="source list"):
+        candidate_ledger(tasks(), bad, manifest_sha256="a" * 64, manifest=value)
+
+
+def test_generation_identity_receipt_and_day10_holdout_artifact_are_compatible():
+    evidence = {"generation_identity_verified": True, "generation_identity_receipt_sha256": "a" * 64}
+    assert generation_identity_ok(evidence)
+    assert not generation_identity_ok({"generation_identity_verified": False,
+                                       "generation_identity_receipt_sha256": "a" * 64})
+    assert not generation_identity_ok({"generation_identity_verified": True,
+                                       "generation_identity_receipt_sha256": "bad"})
+    value = manifest()
+    custody = {
+        "custodian_id": "independent-D", "developer_id": "developer-A",
+        "corpus_author_id": "corpus-author-B", "independent_operator_review": "verified",
+        "custodian_positive_read_test": "allowed", "developer_negative_read_test": "denied",
+        "exposure_history_reviewed": True, "replacement_of_exposed_cases": True,
+        "frozen_inputs_sha256": value["corpus_sha256"],
+        "frozen_answers_sha256": value["answer_key_sha256"],
+        "rubric_sha256": value["rubric_sha256"],
+        "exposure_history_sha256": "d" * 64, "access_log_sha256": "e" * 64,
+        "receipt_sha256": "f" * 64, "verified_at": "2026-11-12T00:02:00Z",
+    }
+    reviews, checks = reviews_and_checks()
+    scores = score_reviews(tasks(), reviews, [], checks)
+    artifact = day10_holdout_receipt(
+        value, scores, custody, manifest_sha256="9" * 64,
+        generation_identity_verified=True, generation_identity_receipt_sha256="a" * 64,
+    )
+    assert holdout_ok(artifact, value["release_id"], value["candidate_revision"],
+                      value["rollout_manifest_sha256"])
+
 def test_candidate_manifest_requires_exact_43_boolean_runtime_flags_and_identity():
     value = manifest()
     identity = validate_candidate_identity(value)
@@ -281,6 +337,7 @@ def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_pro
         "exposure_history_sha256": "d" * 64,
         "access_log_sha256": "e" * 64,
         "receipt_sha256": "f" * 64,
+        "verified_at": "2026-11-12T00:02:00Z",
     }
     value = manifest()
     assert custody_receipt_ok(receipt, value)
@@ -324,6 +381,34 @@ def test_operated_receipts_fail_without_unique_trace_reference_and_later_verific
     assert {1, 2} <= set(result["failed_rows"])
     assert len(result["failed_rows"]) == 3
     assert result["day10_recovery"]["scenarios"][0]["status"] == "failed"
+
+
+def candidate_outputs_for_manifest(value, manifest_digest="a" * 64):
+    from scripts.pilot_workflow_eval import load_suite
+    suite = load_suite()
+    reference = {row["case_id"]: row["draft"] for row in suite["reference_outputs"]}
+    result = []
+    for task in tasks():
+        output = deepcopy(reference[task["case_id"]])
+        refs = sorted({task["citation_id"]})
+        identity = value["candidate_identity"]
+        result.append({
+            "case_id": task["case_id"], "output": output,
+            "manifest_sha256": manifest_digest,
+            "release_id": value["release_id"],
+            "source_revision": value["candidate_revision"],
+            "rollout_manifest_sha256": value["rollout_manifest_sha256"],
+            "source_set_sha256": value["source_set_sha256"],
+            "provider_id": identity["provider_id"], "model_id": identity["model_id"],
+            "prompt_registry_sha256": identity["prompt_registry_sha256"],
+            "tool_registry_sha256": identity["tool_registry_sha256"],
+            "context_budget_bytes": identity["context_budget_bytes"],
+            "time_limit_seconds": value["time_limit_seconds"],
+            "run_id": "agent-run-" + task["case_id"],
+            "source_refs": refs,
+            "telemetry": {"tokens": 100, "latency_ms": 500, "cost_microusd": 10},
+        })
+    return result
 
 def test_candidate_outputs_require_exact_manifest_digest_when_bound():
     from scripts.pilot_workflow_eval import load_suite
