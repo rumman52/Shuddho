@@ -27,6 +27,11 @@ name from the [Day 9 operated inventory](coworker-roadmap/DAY9_PILOT_QUALIFICATI
 Include each of the 20 names once. The `--holdout` reviewer IDs must identify
 two distinct reviewers under the same case and Unicode normalization as Day 9.
 
+The `--approval` receipt uses the stable identity of each signer in `founder`
+and `owner_c`. Both IDs must be valid and distinct under the same normalization
+as the holdout reviewer IDs. The operator verifies both written signoffs at the
+receipt's `reference`.
+
 ```bash
 uv run --extra coworker python scripts/day10_release_decision.py \
   --rollout /secure/release/cohort-rollout.json \
