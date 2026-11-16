@@ -25,6 +25,16 @@ def test_scenario_contracts_are_explicit_and_bounded():
     assert probe.SCENARIOS["goal_driven_proactivity"]["profile"] == "proactive"
 
 
+def test_future_expiry_rejects_missing_naive_or_past_values():
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="explicit expiry"):
+        probe.require_future_expiry(None)
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="timezone-aware"):
+        probe.require_future_expiry("2030-01-01T00:00:00")
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="future"):
+        probe.require_future_expiry("2020-01-01T00:00:00+00:00")
+    assert probe.require_future_expiry("2030-01-01T00:00:00+00:00")
+
+
 def test_clean_origin_rejects_non_https_or_path():
     assert probe.clean_origin("https://stage.example.test") == "https://stage.example.test"
     for value in (
@@ -144,6 +154,8 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
         "automation_revision": 1, "timezone": "Asia/Dhaka",
         "schedule": {"kind": "daily", "hour": 8, "minute": 0},
         "run_profile": "briefing", "output_language": "en", "quiet_hours": None,
+        "expires_at": "2030-01-01T00:00:00+00:00",
+        "schedule_applied_revision": 1, "schedule_applied_enabled": True,
         "synthetic_account_label": "test-synthetic", "prepared_at": "2026-11-12T01:30:00Z",
         "baseline_occurrence_ids": [], "baseline_notification_ids": [],
         "goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
@@ -152,7 +164,10 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
     path = tmp_path / "state.json"
     path.write_text(json.dumps(state))
     current = {
-        "owner_id": "owner-1", "automation": {"revision": 1},
+        "owner_id": "owner-1", "automation": {
+            "revision": 1, "expires_at": "2030-01-01T00:00:00+00:00",
+            "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+        },
         "daily_scope": {"goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
                         "authorized_document_ids": ["doc-1"]},
         "history": [{"occurrence_id": "occ-1", "trigger_type": "schedule",
