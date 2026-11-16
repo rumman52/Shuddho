@@ -46,7 +46,7 @@ The governance audit fails because the GitHub App client ID input is missing. Co
 - Environment secret: `V01_RULESET_APP_PRIVATE_KEY`
 - Required environments: `v01-governance` and `pa10-staging`
 
-The native ruleset `27324410` is active and has no bypass actors, but its live readback is materially weaker than the checked-in `infra/github/main-ruleset.json` policy: `required_approving_review_count=0`, stale-review dismissal is false, last-push approval is false, review-thread resolution is false, and no required status-check rule is configured. The checked-in policy specifies one approval, stale-review dismissal, last-push approval, resolved review threads, and required CI checks. The material PR author must not be the sole reviewer. Do not self-approve or merge these changes. `scripts/apply_main_ruleset.py` refuses to replace an existing non-compliant active ruleset and directs the operator to manual reconciliation; do not blindly invoke a create/apply path.
+The native ruleset `27324410` is active and has no bypass actors, but its live readback is materially weaker than the checked-in `infra/github/main-ruleset.json` policy: `required_approving_review_count=0`, stale-review dismissal is false, last-push approval is false, review-thread resolution is false, and no required status-check rule is configured. The checked-in policy specifies one approval, stale-review dismissal, last-push approval, resolved review threads, and strict required checks for `test-and-build` and `ci-merge-gate`. The material PR author must not be the sole reviewer. Do not self-approve or merge these changes. `scripts/apply_main_ruleset.py` refuses to replace an existing non-compliant active ruleset and directs the operator to manual reconciliation; do not blindly invoke a create/apply path.
 
 ## Staging readback
 
@@ -93,7 +93,7 @@ The connected Vercel account currently exposes only the `ali` project; no Shuddh
 
 ## Ranked next actions
 
-1. Configure the GitHub App client ID/private key in both required GitHub environments; rerun main governance audit. Then have an authorized administrator manually reconcile live ruleset 27324410 against `infra/github/main-ruleset.json` (one approval, stale-review dismissal, last-push approval, thread resolution and required checks), and verify negative/positive merge-control tests. The current apply script intentionally refuses to overwrite a non-compliant active ruleset.
+1. Configure the GitHub App client ID/private key in both required GitHub environments; rerun main governance audit. Then have an authorized administrator manually reconcile live ruleset 27324410 against `infra/github/main-ruleset.json` (one approval, stale-review dismissal, last-push approval, thread resolution, and strict `test-and-build` plus `ci-merge-gate` checks), and verify negative/positive merge-control tests. The current apply script intentionally refuses to overwrite a non-compliant active ruleset.
 2. Confirm the `Rumman` Render workspace for read-only inspection. Verify current service/deployment identities, worker inventory, health and logs. Do not provision anything.
 3. Obtain a fresh owner billing decision before any paid worker or hosting change. Secure Temporal and S3 credentials in their approved secret stores; do not paste them into issues or chat.
 4. Establish approved synthetic Auth identities, selected private documents and a real Temporal schedule. Operate API/worker pairing, storage access and natural schedule firings on a non-production candidate.
