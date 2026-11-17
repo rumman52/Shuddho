@@ -40,6 +40,22 @@ and high-authority flags off; no pilot is authorized.
 
 ---
 
+## Day 4 reviewed task brief UTF-8 snapshot budget — 17 November 2026 (Asia/Dhaka)
+
+The previously closed, unmerged PR #726 fix has been ported onto current main
+without replacing newer conversation, memory-pin or runtime-v3 changes. The
+canonical UTF-8 snapshot is capped at the lower of 16,000 bytes and the
+configured Agent context budget. Oversized previews and first admissions fail
+with HTTP 422 before creating an AgentRun or outbox effect. Historical retries
+retain the original digest semantics after a budget reduction.
+
+Regression tests cover both preview and dispatch, the 16,000-byte and lower
+configured ceilings, and replay of an already-admitted task after the budget is
+reduced. Exact-head CI and independent review are pending; this source change
+does not satisfy the Day 9 custody or operated-evidence gates.
+
+---
+
 ## Day 4 admission requires Runtime v3 for reviewed briefs — 17 November 2026 (Asia/Dhaka)
 
 The Day 4 workbook requires Runtime v3 for first admission of reviewed task
