@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -200,6 +201,13 @@ def _reject_nonfinite_json_constant(_value: str) -> None:
     raise EvidenceError("JSON input contains non-finite numeric constants")
 
 
+def _reject_nonfinite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise EvidenceError("JSON input contains a non-finite numeric value")
+    return number
+
+
 def _read_json(path: Path) -> tuple[dict, str]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_READ_BYTES:
         raise EvidenceError("a JSON input is missing, symlinked, or exceeds the size ceiling")
@@ -210,6 +218,7 @@ def _read_json(path: Path) -> tuple[dict, str]:
         data = json.loads(
             raw, object_pairs_hook=_unique_json_object,
             parse_constant=_reject_nonfinite_json_constant,
+            parse_float=_reject_nonfinite_json_float,
         )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise EvidenceError("invalid JSON input") from exc
