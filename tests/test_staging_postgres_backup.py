@@ -49,6 +49,15 @@ def test_verification_receipt_requires_identical_row_inventory(tmp_path):
             receipt = backup.run_backup(SOURCE, destination)
     assert receipt["status"] == "verified"
     assert receipt["source"] == source
+    alignment = receipt["schema_alignment"]
+    assert alignment["status"] == "migration_required"
+    assert alignment["source_revision"] == "0070"
+    assert alignment["code_head"] == "0072_merge_0071_heads"
+    assert alignment["pending_migrations"] == [
+        "0071", "0071_project_scoped_goals", "0072_merge_0071_heads",
+    ]
+    assert alignment["source_is_current"] is False
+    assert alignment["release_qualified"] is False
     assert receipt["archive_sha256"] == backup.file_hash(destination / "coworker.dump")
     assert (destination / "verification.json").stat().st_mode & 0o777 == 0o600
     assert (destination / "coworker.dump").stat().st_mode & 0o777 == 0o600
