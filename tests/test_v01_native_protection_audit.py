@@ -6,7 +6,7 @@ from pathlib import Path
 
 from scripts.v01_native_protection_audit import assess_native_policy
 
-JOBS = ('test-and-build', 'ci-merge-gate')
+JOBS = ('test-and-build', 'ci-merge-gate', 'coworker')
 
 
 def protection(**changes):
