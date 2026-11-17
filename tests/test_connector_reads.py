@@ -1223,7 +1223,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         run = db.get(AgentRun, result["run_id"])
         assert run is not None
         assert run.connector_read_grant_ids == [grant["id"]]
-        assert run.document_ids == [document_id]
+        # AgentRun persists the exact selected versions, not document IDs.
         assert run.input_versions == [version_id]
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.action_ids == []
