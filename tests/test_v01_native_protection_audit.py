@@ -174,3 +174,13 @@ def test_duplicate_check_with_untrusted_source_is_not_a_configuration_candidate(
     report = assess_native_policy(branch_protection=value)
     assert report['classification'] == 'blocked'
     assert 'required_check_source_unpinned:ci-merge-gate' in report['findings']
+
+def test_day1_coworker_is_required_by_native_policy_diagnostic():
+    rule = ruleset()
+    checks = rule["rules"][1]["parameters"]["required_status_checks"]
+    rule["rules"][1]["parameters"]["required_status_checks"] = [
+        entry for entry in checks if entry["context"] != "coworker"
+    ]
+    result = assess_native_policy(rulesets=[rule])
+    assert result["classification"] == "blocked"
+    assert "missing_required_checks:coworker" in result["findings"]
