@@ -184,3 +184,22 @@ def test_day1_coworker_is_required_by_native_policy_diagnostic():
     result = assess_native_policy(rulesets=[rule])
     assert result["classification"] == "blocked"
     assert "missing_required_checks:coworker" in result["findings"]
+
+
+def test_day1_coworker_branch_protection_must_be_pinned_to_actions_app():
+    missing = protection()
+    missing['required_status_checks']['checks'] = [
+        entry for entry in missing['required_status_checks']['checks']
+        if entry['context'] != 'coworker'
+    ]
+    result = assess_native_policy(branch_protection=missing)
+    assert result['classification'] == 'blocked'
+    assert 'missing_required_checks:coworker' in result['findings']
+
+    untrusted = protection()
+    for entry in untrusted['required_status_checks']['checks']:
+        if entry['context'] == 'coworker':
+            entry['app_id'] = 98765
+    result = assess_native_policy(branch_protection=untrusted)
+    assert result['classification'] == 'blocked'
+    assert 'required_check_source_unpinned:coworker' in result['findings']
