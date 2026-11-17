@@ -69,6 +69,7 @@ def test_branch_aware_alignment_remains_read_only_and_never_qualifies_release(
     ("0071.py", "revision='0071'\ndown_revision='missing'\n", "absent parent"),
     ("0071.py", "revision='0071'\ndown_revision=('0070','0070')\n", "duplicate or invalid parents"),
     ("0072_merge_0071_heads.py", "revision='0072_merge_0071_heads'\ndown_revision=None\n", "exactly one head"),
+    ("0071.py", "revision='0071'\\n", "Missing Alembic metadata"),
     ("0071.py", "revision='0071'\ndown_revision=make_parent()\n", "Cannot safely parse"),
 ])
 def test_malformed_or_ambiguous_history_fails_closed(tmp_path, file, contents, reason):
