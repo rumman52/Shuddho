@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -48,7 +48,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Document, DocumentVersion, ExternalAction, Notification, NotificationOutbox, PersonalGoal, Project, ProjectResource, Workspace, utcnow
 
 
 class ReadGoogle:
@@ -1148,6 +1148,37 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
     asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
 
+    # Day 7 deliberately requires a bounded project/document source for
+    # recurring briefings. Preserve that admission rule in this connected-read
+    # regression rather than removing the expiry/project checks from runtime.
+    project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
+    with container.repository.sessions.begin() as db:
+        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner))
+        assert workspace is not None
+        now = utcnow()
+        db.add(Project(
+            id=project_id, owner_id=owner,
+            idempotency_key=f"connected-briefing-project-{project_id}",
+            fingerprint="f" * 64,
+            name="Connected briefing context", description="",
+            revision=1, deleted=False, created_at=now, updated_at=now,
+        ))
+        db.add(Document(
+            id=document_id, owner_id=owner, workspace_id=workspace.id,
+            filename="briefing-reference.txt",
+        ))
+        db.flush()
+        db.add(ProjectResource(
+            project_id=project_id, owner_id=owner,
+            resource_type="document", resource_id=document_id,
+        ))
+        db.add(DocumentVersion(
+            id=version_id, document_id=document_id, owner_id=owner,
+            version=1, kind="txt", byte_size=10, sha256="a" * 64,
+            object_key=f"inputs/connected-briefing-{version_id}",
+            state="uploaded", expires_at=now + timedelta(days=7),
+        ))
+
     goal, created = container.goals.create(
         owner,
         GoalCreate(
@@ -1155,6 +1186,8 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             success_criteria=["Create one concise private briefing."],
             constraints=["Do not send, publish, or mutate anything externally."],
             timezone="UTC",
+            project_id=UUID(project_id),
+            authorized_resources=[{"kind": "document", "reference": document_id}],
             state="active",
             budget={"max_runs": 10, "max_planner_tokens": 50000},
         ),
@@ -1174,7 +1207,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             overlap_policy="skip",
             catchup_window_seconds=3600,
             quiet_hours=None,
-            expires_at=None,
+            expires_at=utcnow() + timedelta(days=3),
         ),
         "briefing-connected-automation-" + str(uuid4()),
     )
@@ -1188,6 +1221,8 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         run = db.get(AgentRun, result["run_id"])
         assert run is not None
         assert run.connector_read_grant_ids == [grant["id"]]
+        assert run.document_ids == [document_id]
+        assert run.input_versions == [version_id]
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.action_ids == []
     context = container.context.for_run(owner, result["run_id"])
