@@ -169,6 +169,7 @@ def test_reviewed_policy_rejects_untrusted_or_duplicate_additional_checks(bad_ch
     '{"name":"wrong","name":"main","protected":true}',
     '{"name":"main","protected":true,"commit":{"sha":"wrong","sha":"' + SHA + '"}}',
     '{"name":"main","protected":true,"quality":NaN,"commit":{"sha":"' + SHA + '"}}',
+    '{"name":"main","protected":true,"quality":1e999,"commit":{"sha":"' + SHA + '"}}',
 ])
 def test_cli_rejects_duplicate_json_keys_and_nonfinite_values(
     tmp_path, capsys, bad_branch_json
