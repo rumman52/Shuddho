@@ -19,7 +19,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.cohort_release_gate import evaluate_release  # noqa: E402
-from scripts.ruke_pilot_eval import OPERATED, operated_trace_ok, reviewer_identity  # noqa: E402
+from scripts.ruke_pilot_eval import OPERATED, RUBRIC, operated_trace_ok, reviewer_identity  # noqa: E402
 from scripts.staging_release_freeze import (  # noqa: E402
     EXPECTED_ROLLBACK,
     PA10_REQUIRED_FALSE,
@@ -103,7 +103,10 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
             or custody.get("independent_d_controls_access") is not True
             or custody.get("developer_negative_read_denied") is not True):
         return False
-    if value.get("mode") != "independent_human_holdout" or value.get("generation_identity_verified") is not True:
+    if (value.get("mode") != "independent_human_holdout"
+            or value.get("generation_identity_verified") is not True
+            or not isinstance(value.get("generation_identity_receipt_sha256"), str)
+            or not DIGEST.fullmatch(value["generation_identity_receipt_sha256"])):
         return False
     reviewers = value.get("reviewers")
     if not isinstance(reviewers, list) or len(reviewers) != 2:
@@ -127,9 +130,30 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
         # Missing, false, or non-boolean results are not positive evidence.
         if row.get("security_passed") is not True:
             return False
-        # Two-reviewer 8-point rubric, no zero scores; each accepted case >=7/8.
+        # Preserve both original 4-dimension rubrics. Rejected cases may score zero;
+        # every accepted case requires both reviewers >=7/8 with no zero dimension.
         scores = row.get("reviewer_scores")
-        if not isinstance(scores, list) or len(scores) != 2 or any(type(s) is not int or not 1 <= s <= 8 for s in scores):
+        rubrics = row.get("reviewer_rubrics")
+        if (not isinstance(scores, list) or len(scores) != 2
+                or any(type(score) is not int or not 0 <= score <= 8 for score in scores)
+                or not isinstance(rubrics, list) or len(rubrics) != 2):
+            return False
+        rubric_totals = {}
+        for rubric in rubrics:
+            if not isinstance(rubric, dict):
+                return False
+            reviewer = reviewer_identity(rubric.get("reviewer_id"))
+            dimensions = rubric.get("scores")
+            if (reviewer not in identities or reviewer in rubric_totals
+                    or not isinstance(dimensions, dict) or set(dimensions) != set(RUBRIC)
+                    or any(type(score) is not int or not 0 <= score <= 2 for score in dimensions.values())):
+                return False
+            rubric_totals[reviewer] = sum(dimensions.values())
+            if row["accepted"] and (rubric_totals[reviewer] < 7 or min(dimensions.values()) == 0):
+                return False
+        if set(rubric_totals) != identities:
+            return False
+        if [rubric_totals[reviewer_identity(reviewer)] for reviewer in reviewers] != scores:
             return False
         if row["accepted"] and min(scores) < 7:
             return False

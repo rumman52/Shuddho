@@ -604,6 +604,20 @@ test("selected task memory is previewed, corrected versions are cleared, and onl
       taskForm.props.onSubmit({ preventDefault() {} });
     });
     assert.equal(admissions.length, 0);
+
+    // Changing selected memories after validation invalidates the preview.
+    await act(async () => pick().props.onChange({ target: { checked: false } }));
+    await act(async () => {
+      taskForm.props.onSubmit({ preventDefault() {} });
+    });
+    assert.equal(admissions.length, 0);
+
+    // Re-selecting a memory also requires a fresh validation before admission.
+    await act(async () => pick().props.onChange({ target: { checked: true } }));
+    await act(async () => {
+      taskForm.props.onSubmit({ preventDefault() {} });
+    });
+    assert.equal(admissions.length, 0);
     await act(async () => {
       taskForm.props.onSubmit({ preventDefault() {} });
     });

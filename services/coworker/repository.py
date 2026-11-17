@@ -1885,7 +1885,10 @@ class Repository:
             self._audit(db, owner, task_id, "model_budget_reserved")
             return number
 
-    def settle_model(self, task_id, attempt, actual_tokens, latency_ms, state):
+    def settle_model(
+        self, task_id, attempt, actual_tokens, latency_ms, state, *,
+        input_tokens=None, output_tokens=None,
+    ):
         with self.sessions.begin() as db:
             owner = db.scalar(select(ModelAttempt.owner_id).where(ModelAttempt.task_id == task_id, ModelAttempt.attempt == attempt))
             self._account(db, owner)
@@ -1900,6 +1903,12 @@ class Repository:
             daily = db.get(DailyUsage, (row.owner_id, row.day))
             daily.allocated_tokens += charged - row.charged_tokens
             row.charged_tokens, row.latency_ms, row.state = charged, latency_ms, state
+            row.input_tokens = (
+                input_tokens if type(input_tokens) is int and input_tokens >= 0 else None
+            )
+            row.output_tokens = (
+                output_tokens if type(output_tokens) is int and output_tokens >= 0 else None
+            )
             settle_provider_lease(
                 db, kind="draft", resource_id=task_id, sequence=attempt,
                 actual_tokens=actual_tokens if state != "unknown" else None,

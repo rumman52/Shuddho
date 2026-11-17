@@ -23,10 +23,22 @@ def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[di
     Rechecked at admission AND on worker use. Invalidated or foreign pins fail
     closed instead of silently selecting a replacement or falling back to a namespace.
     """
-    if not settings.agent_memory_enabled:
-        raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
     if not isinstance(pins, list) or len(pins) > settings.max_memory_context_facts:
         raise CoworkerError("memory_selection_limit", "Too many selected memories for this task.", 409)
+    # An explicit empty selection is a valid no-memory run. It must not depend
+    # on the memory feature flag or fall back to namespace retrieval.
+    if not pins:
+        return []
+    if not settings.agent_memory_enabled:
+        raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
+    # A matching fact.workspace_id is not sufficient: corrupted rows could
+    # pair an owner's fact with another owner's workspace. Validate the
+    # workspace principal independently before resolving any selected fact.
+    if db.scalar(select(Workspace.id).where(
+        Workspace.id == workspace_id,
+        Workspace.owner_id == owner,
+    )) is None:
+        raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
     now = utcnow()
     rows, seen = [], set()
     for pin in pins:

@@ -118,7 +118,8 @@ export default function GoalWorkspace({ client, openAgent, openAutomations }: { 
       }
       const next = await client.createGoal({
         objective, success_criteria: lines(criteria), constraints: lines(constraints),
-        deadline_at: deadline ? new Date(deadline).toISOString() : null, timezone, state: "active",
+        deadline_at: deadline ? new Date(deadline).toISOString() : null, timezone,
+        project_id: projectId || null, state: "active",
         milestones: [], budget: { max_runs: maxRuns, max_planner_tokens: null },
         authorized_resources: authorizedDocumentIds.map(reference => ({ kind: "document", reference })),
         next_review_at: null,
