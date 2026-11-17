@@ -129,3 +129,36 @@ def test_cli_rejects_symlinked_input(tmp_path):
         "--policy-json", str(tmp_path / "policy.json"),
         "--expected-main-sha", SHA,
     ]) == 2
+
+def test_additional_reviewed_coworker_check_cannot_be_ignored():
+    updated_policy = policy()
+    status = updated_policy["rules"][-1]["parameters"]["required_status_checks"]
+    status.append({"context": "coworker", "integration_id": 15368})
+
+    # The observed ruleset still has the former two checks. The diagnostic
+    # must report the new reviewed requirement even before PR #754 merges.
+    report = analyze(branch(), live(), updated_policy, expected_main_sha=SHA)
+    assert report["status"] == "blocked_configuration"
+    assert "checks.first_party_coworker" in report["drift"]
+    assert report["qualified"] is False
+
+    updated_live = live()
+    updated_live["rules"][-1]["parameters"]["required_status_checks"].append(
+        {"context": "coworker", "integration_id": 15368}
+    )
+    good = analyze(branch(), updated_live, updated_policy, expected_main_sha=SHA)
+    assert good["status"] == "configuration_candidate"
+    assert good["qualified"] is False
+
+
+@pytest.mark.parametrize("bad_check", [
+    {"context": "coworker", "integration_id": True},
+    {"context": "coworker", "integration_id": 12345},
+    {"context": 17, "integration_id": 15368},
+    {"context": "test-and-build", "integration_id": 15368},
+])
+def test_reviewed_policy_rejects_untrusted_or_duplicate_additional_checks(bad_check):
+    updated_policy = policy()
+    updated_policy["rules"][-1]["parameters"]["required_status_checks"].append(bad_check)
+    with pytest.raises(EvidenceError, match="reviewed policy"):
+        analyze(branch(), live(), updated_policy, expected_main_sha=SHA)
