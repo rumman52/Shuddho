@@ -1,3 +1,45 @@
+## Day 10 CTO handoff and live blockers — 17 November 2026 (Asia/Dhaka)
+
+The current Day 10 disposition remains **SOURCE_ONLY / NO-GO**. The exact main
+snapshot is `8f92814ab5f25d1214596d63213824c7ba577a93`. Main test/build, frontend,
+Coworker, browser and PostgreSQL 18 checks passed, but `governance-audit` and
+`ci-merge-gate` failed because the GitHub App client ID is not configured.
+The active ruleset currently reports zero required approving reviews; the
+workbook requires an independent reviewer for material changes.
+
+Two source gaps were reproduced and have separate draft fixes:
+- [PR #746](https://github.com/rumman52/Shuddho/pull/746) restores the missing
+  16,000-byte UTF-8 cap on canonical reviewed-task snapshots, with the lower
+  configured Agent context budget applied. It preserves already-admitted
+  replay after a later budget reduction. Test-only exact-head CI reproduced
+  four oversized Bangla preview/dispatch failures; corrected-head CI is running.
+- [PR #748](https://github.com/rumman52/Shuddho/pull/748) tightens Day 10
+  rollback, cancellation, paused-schedule and two-way owner-isolation receipt
+  validation. Test-only exact-head CI reproduced 31 permissive false-positive
+  cases; corrected-head CI is running. It does not create operated evidence.
+
+Fresh read-only Supabase checks confirm healthy PostgreSQL 17.11, 84 private
+application tables at Alembic `0070`, a private object bucket, and zero
+application accounts/conversations/runs/artifacts, Auth users or storage
+objects. `anon` and `authenticated` have no schema USAGE or table privileges
+on `shuddho_coworker`; all 84 tables still report RLS disabled. Do not apply
+blanket RLS without checking the runtime role and explicit policies. Performance
+advisor findings remain informational and unoptimized.
+
+Render workspace selection is pending; the only available workspace is
+`Rumman`. The last Render/Temporal/S3 readback in issue #291 is historical
+(16 Nov), not a fresh verification. No paid worker is authorized. The connected
+Vercel account lists only project `ali`, not a Shuddho deployment.
+
+The full source/CI/staging/approval matrix and ranked next actions are in
+[the Day 10 CTO handoff](DAY10_CTO_HANDOFF_2026-11-17.md). No release manifest,
+live planner/quality report, independent 40-case holdout, 20/20 operated
+recovery receipts, rollback/cancellation/schedule/isolation operation, golden
+run, or authentic Founder + Owner-C approvals is established. Keep production
+and high-authority flags off; no pilot is authorized.
+
+---
+
 ## Day 4 reviewed task brief UTF-8 snapshot budget — 17 November 2026 (Asia/Dhaka)
 
 The previously closed, unmerged PR #726 fix has been ported onto current main

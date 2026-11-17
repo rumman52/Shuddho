@@ -247,6 +247,8 @@ class AgentRuntime:
 
         reservation = self.repo.reserve_planner(run_id, self._v3_planner_reservation())
         actual_tokens = None
+        actual_input_tokens = None
+        actual_output_tokens = None
         cost_microusd = None
         retry_for_steering = False
         try:
@@ -257,6 +259,8 @@ class AgentRuntime:
                 remaining_budget=remaining,
                 dependencies=dependencies,
             )
+            actual_input_tokens = evidence.get("input_tokens")
+            actual_output_tokens = evidence.get("output_tokens")
             if actual_tokens is not None and self.container.settings.agent_v3_planner_cost_microusd_per_1k_tokens > 0:
                 cost_microusd = (
                     actual_tokens * self.container.settings.agent_v3_planner_cost_microusd_per_1k_tokens + 999
@@ -269,6 +273,7 @@ class AgentRuntime:
                     tool_schema_sha256=evidence["tool_schema_sha256"],
                     observation_count=len(observations), total_tokens=actual_tokens,
                     cost_microusd=cost_microusd, latency_ms=latency_ms,
+                    input_tokens=actual_input_tokens, output_tokens=actual_output_tokens,
                     memory_repository=self.container.memory,
                     context_sources=context_sources,
                     expected_steering_revision=run["steering_revision"],
@@ -281,6 +286,8 @@ class AgentRuntime:
                 retry_for_steering = True
         except PlannerFailure as error:
             actual_tokens = error.total_tokens
+            actual_input_tokens = error.input_tokens
+            actual_output_tokens = error.output_tokens
             raise
         finally:
             self.repo.settle_planner_capacity(
@@ -288,6 +295,8 @@ class AgentRuntime:
                 reservation["call"],
                 actual_tokens,
                 cost_microusd,
+                input_tokens=actual_input_tokens,
+                output_tokens=actual_output_tokens,
             )
         if retry_for_steering:
             return await self.decide_v3(

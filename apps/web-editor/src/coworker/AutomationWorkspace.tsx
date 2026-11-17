@@ -47,6 +47,11 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [at, setAt] = useState("08:00");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [quiet, setQuiet] = useState(true);
+  const [expiresAtLocal, setExpiresAtLocal] = useState(() => {
+    const value = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000);
+    value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
+    return value.toISOString().slice(0, 16);
+  });
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -59,8 +64,15 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   const [acceptedBriefingSchedule, setAcceptedBriefingSchedule] = useState<string | null>(null);
 
   const selectedGoal = useMemo(() => goals.find(item => item.id === goalId) ?? null, [goals, goalId]);
+  const selectedGoalDocumentCount = selectedGoal?.authorized_resources.filter(source => source.kind === "document").length ?? 0;
+  const briefingScopeReady = Boolean(
+    selectedGoal?.project_id && selectedGoalDocumentCount >= 1 && selectedGoalDocumentCount <= 5,
+  );
+  const briefingExpiryTimestamp = expiresAtLocal ? new Date(expiresAtLocal).getTime() : Number.NaN;
+  const briefingExpiryReady = Number.isFinite(briefingExpiryTimestamp) && briefingExpiryTimestamp > Date.now();
   const briefingScheduleSnapshot = JSON.stringify([
-    selectedGoal?.id, selectedGoal?.revision, kind, briefing, at, timezone, quiet,
+    selectedGoal?.id, selectedGoal?.revision, selectedGoal?.project_id,
+    selectedGoal?.authorized_resources, kind, briefing, at, timezone, quiet, expiresAtLocal,
     kind === "weekly" ? weekdays : [], briefingGrantIds,
   ]);
   const briefingScheduleApproved = acceptedBriefingSchedule === briefingScheduleSnapshot;
@@ -121,7 +133,15 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
   async function create(event: FormEvent) {
     event.preventDefault();
     if (!selectedGoal || busy) return;
-    if ((kind === "daily" || kind === "weekly") && briefing && !briefingScheduleApproved) {
+    if ((kind === "daily" || kind === "weekly") && briefing && !briefingScopeReady) {
+      setError("A project briefing requires an owned project and one to five approved current project documents on the selected goal.");
+      return;
+    }
+    if ((kind === "daily" || kind === "weekly") && briefing && !briefingExpiryReady) {
+      setError("Choose an explicit future expiry for the recurring briefing.");
+      return;
+    }
+    if ((kind === "daily" || kind === "weekly") && briefing && (!briefingScopeReady || !briefingExpiryReady || !briefingScheduleApproved)) {
       setError("Review and approve the exact recurring briefing schedule before saving.");
       return;
     }
@@ -147,7 +167,8 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
         connector_read_grant_ids: kind === "meeting" ? meetingEmailGrantIds : kind === "proactive" ? proactiveGrantIds : briefing && kind !== "event" && kind !== "email" && kind !== "deadline" ? briefingGrantIds : [],
         tool_allowlist: kind === "proactive" ? proactiveTools : [],
         output_language: "en", overlap_policy: "skip", catchup_window_seconds: 3600,
-        quiet_hours: quiet ? { start: "22:00", end: "07:00" } : null, expires_at: null,
+        quiet_hours: quiet ? { start: "22:00", end: "07:00" } : null, expires_at: briefing && (kind === "daily" || kind === "weekly")
+           ? new Date(expiresAtLocal).toISOString() : null,
       }, createKey.current);
       createKey.current = "";
       setAcceptedBriefingSchedule(null);
@@ -426,7 +447,11 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
                     createKey.current = "";
                   }} /> {grant.provider} · {grant.capability}</label>)}</div>
           </fieldset></>}
-          {kind === "weekly" && <fieldset><legend>Weekdays</legend><div className="cw-agent-meta">{DAYS.map(day =>
+          {(kind === "daily" || kind === "weekly") && briefing && <label>Schedule expires<input type="datetime-local"
+             required value={expiresAtLocal} onChange={event => { setExpiresAtLocal(event.target.value); createKey.current = ""; }} />
+             <span className="cw-fineprint">Default: 8 days from now. Set expiry after the planned natural occurrences; the Day 7 pilot must remain active through Day 8.</span>
+           </label>}
+           {kind === "weekly" && <fieldset><legend>Weekdays</legend><div className="cw-agent-meta">{DAYS.map(day =>
             <label key={day}><input type="checkbox" checked={weekdays.includes(day)} onChange={event => {
               setWeekdays(previous => event.target.checked ? [...previous, day] : previous.filter(value => value !== day)); createKey.current = "";
             }} /> {day.toUpperCase()}</label>)}</div></fieldset>}
@@ -434,7 +459,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             setBriefing(event.target.checked); createKey.current = "";
           }} /> Create a private daily/weekly briefing</label>}
           {kind !== "reminder" && kind !== "event" && kind !== "meeting" && kind !== "email" && kind !== "deadline" && kind !== "proactive" && briefing && <fieldset><legend>Optional connected sources</legend>
-            <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes.</p>
+            <p className="cw-fineprint">Only selected, active read grants become briefing context. Provider content stays untrusted and cannot authorize writes. Day 7 staging qualification is document-only, so leave this list empty for that pilot.</p>
             <div className="cw-agent-meta">{activeConnectorGrants.length === 0
               ? <span>No active connected read grants</span>
               : activeConnectorGrants.map(grant => <label key={grant.id}><input type="checkbox"
@@ -453,7 +478,10 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             <legend>Approve this exact recurring briefing</legend>
             <p className="cw-fineprint">
               {kind === "daily" ? "Every day" : weekdays.join(", ")} at {at} ({timezone}).
-              Goal revision {selectedGoal?.revision ?? "not selected"}; {selectedGoal?.authorized_resources.filter(source => source.kind === "document").length ?? 0} authorized project document(s).
+              Goal revision {selectedGoal?.revision ?? "not selected"}; {selectedGoal?.project_id ? "project-bound" : "no project selected"}; {selectedGoalDocumentCount} authorized project document(s).
+              {!briefingScopeReady ? " Select an owned project and approve one to five current project documents in Goals before scheduling." : ""}
+              Expires {expiresAtLocal ? new Date(expiresAtLocal).toLocaleString() : "not set"}.
+              {!briefingExpiryReady ? " Choose a future expiry before approving." : ""}
               {quiet ? " Notifications are delayed during 22:00–07:00; the Agent run is not delayed." : " Notifications are not quiet-hours delayed."}
               Each occurrence starts at most one bounded private run; it cannot send or publish.
             </p>
@@ -461,7 +489,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
               onChange={event => setAcceptedBriefingSchedule(event.target.checked ? briefingScheduleSnapshot : null)} />
               I approve this exact repeating time, timezone, goal revision, and read scope.</label>
           </fieldset>}
-          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || ((kind === "daily" || kind === "weekly") && briefing && !briefingScheduleApproved) || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId) || (kind === "proactive" && proactiveTools.length === 0)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
+          <button className="cw-primary" type="submit" disabled={Boolean(busy) || !selectedGoal || ((kind === "daily" || kind === "weekly") && briefing && (!briefingScopeReady || !briefingExpiryReady || !briefingScheduleApproved)) || (kind === "weekly" && weekdays.length === 0) || (kind === "event" && !eventGrantId) || (kind === "email" && !emailGrantId) || (kind === "meeting" && !meetingGrantId) || (kind === "proactive" && proactiveTools.length === 0)}>{busy === "create" ? "Saving…" : "Create automation"}<span aria-hidden="true">↗</span></button>
           <p className="cw-fineprint">A schedule or connected event never grants email, calendar-write, purchase, or provider authority. Briefings are restricted to the existing daily-plan tool; selected provider content remains untrusted context. Consequential actions still use the separate approval boundary.</p>
         </form>
       </section>

@@ -9,11 +9,15 @@ import tempfile
 
 import pytest
 
+from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+from scripts.day10_release_decision import holdout_ok, recovery_ok
 from scripts.ruke_pilot_eval import (
-    OPERATED, RUBRIC, EvidenceError, compare, external_heldout,
-    candidate_ledger, immutable_write, main, position_map, prepare_blind, registry_cases,
-    read_blinding_key,
-    score_reviews, validate_manifest, verify_operations,
+    OPERATED, RUBRIC, EvidenceError, compare, comparison_evidence_recorded, external_heldout,
+    candidate_ledger, canonical_sha256, custody_receipt_ok, day10_first_run_scores,
+    day10_holdout_receipt, generation_identity_ok, immutable_write, main,
+    position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews, source_checks_ok,
+    validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
+    validate_manifest, verify_operations,
 )
 
 
@@ -32,19 +36,88 @@ def tasks():
     ]
 
 
-def manifest():
+def _candidate_identity_base():
     return {
-        "schema_version": 1,
+        "api_source_revision": "a" * 40,
+        "worker_source_revision": "a" * 40,
+        "api_build_digest": "sha256:" + "1" * 64,
+        "worker_build_digest": "sha256:" + "2" * 64,
+        "alembic_revision": "0070",
+        "provider_id": "deepseek",
+        "model_id": "synthetic",
+        "prompt_registry_sha256": "3" * 64,
+        "tool_registry_sha256": "4" * 64,
+        "context_budget_bytes": 12_288,
+        "runtime_capabilities": {key: False for key in RUNTIME_CAPABILITY_KEYS},
+    }
+
+
+def _readback_payloads(value):
+    identity = value["candidate_identity"]
+    common = {
+        "release_id": value["release_id"],
+        "alembic_revision": identity["alembic_revision"],
+        "provider_id": identity["provider_id"],
+        "model_id": identity["model_id"],
+        "prompt_registry_sha256": identity["prompt_registry_sha256"],
+        "tool_registry_sha256": identity["tool_registry_sha256"],
+        "context_budget_bytes": identity["context_budget_bytes"],
+        "rollout_manifest_sha256": value["rollout_manifest_sha256"],
+        "runtime_capabilities": identity["runtime_capabilities"],
+    }
+    api = {
+        **common, "source_revision": identity["api_source_revision"],
+        "build_digest": identity["api_build_digest"],
+    }
+    worker = {
+        **common, "source_revision": identity["worker_source_revision"],
+        "build_digest": identity["worker_build_digest"],
+    }
+    schema = {
+        "release_id": value["release_id"],
+        "source_revision": value["candidate_revision"],
+        "migration_revision": identity["alembic_revision"],
+        "api_revision": identity["alembic_revision"],
+        "worker_revision": identity["alembic_revision"],
+        "rollout_manifest_sha256": value["rollout_manifest_sha256"],
+    }
+    return {"api": api, "worker": worker, "schema": schema}
+
+
+def manifest():
+    value = {
+        "schema_version": 2,
         "split": "holdout",
+        "release_id": "day9-test-release-001",
+        "run_id": "day9-first-run-test-001",
         "candidate_revision": "a" * 40,
         "corpus_sha256": "b" * 64,
         "source_set_sha256": "c" * 64,
+        "rollout_manifest_sha256": "d" * 64,
+        "answer_key_sha256": "e" * 64,
+        "rubric_sha256": "f" * 64,
         "candidate_product_version": "test-1",
         "candidate_model": "synthetic",
         "prompt_version": "synthetic-v1",
         "tool_version": "test-v1",
         "run_started_at": "2026-11-12T00:00:00Z",
         "time_limit_seconds": 60,
+        "candidate_identity": _candidate_identity_base(),
+    }
+    payloads = _readback_payloads(value)
+    value["candidate_identity"].update({
+        "api_readback_sha256": canonical_sha256(payloads["api"]),
+        "worker_readback_sha256": canonical_sha256(payloads["worker"]),
+        "schema_readback_sha256": canonical_sha256(payloads["schema"]),
+    })
+    return value
+
+
+def candidate_readbacks(value=None):
+    value = value or manifest()
+    return {
+        role: {**payload, "readback_sha256": canonical_sha256(payload)}
+        for role, payload in _readback_payloads(value).items()
     }
 
 
@@ -67,9 +140,11 @@ def operations():
         {"row": i, "scenario": scenario, "candidate_revision": "a" * 40,
          "status": "pass", "execution": "operated",
          "unauthorized_access": False, "unauthorized_mutation": False,
-         "trace_sha256": "e" * 64, "observed_at": "2026-11-12T00:00:00Z",
+         "trace_sha256": hashlib.sha256(f"scenario-{i}".encode()).hexdigest(),
+         "evidence_ref": "sha256:" + hashlib.sha256(f"scenario-{i}".encode()).hexdigest(),
+         "observed_at": "2026-11-12T00:00:00Z", "verified_at": "2026-11-12T00:01:00Z",
          "boundaries": {k: {"mode": "real", "instance": "synthetic-test-instance",
-                           "trace_sha256": "f" * 64} for k in boundaries}}
+                           "trace_sha256": hashlib.sha256(f"boundary-{i}-{k}".encode()).hexdigest()} for k in boundaries}}
         for i, (scenario, boundaries) in OPERATED.items()
     ]
 
@@ -105,6 +180,297 @@ def external_dir():
         yield Path(folder)
 
 
+
+
+
+def test_candidate_outputs_bind_each_run_model_prompt_tool_budget_and_sources():
+    value = manifest()
+    rows = candidate_outputs_for_manifest(value)
+    hashes, usage = candidate_ledger(tasks(), rows, manifest_sha256="a" * 64, manifest=value)
+    assert len(hashes) == 40
+    assert len(usage["case_run_receipts"]) == 40
+    assert usage["total_tokens"] == 4000
+    assert all(receipt["provider_id"] == "deepseek"
+               and receipt["model_id"] == "synthetic"
+               and receipt["source_refs"]
+               and receipt["time_limit_seconds"] == 60
+               for receipt in usage["case_run_receipts"])
+    bad = candidate_outputs_for_manifest(value)
+    bad[0]["model_id"] = "other-model"
+    with pytest.raises(EvidenceError, match="run identity"):
+        candidate_ledger(tasks(), bad, manifest_sha256="a" * 64, manifest=value)
+    bad = candidate_outputs_for_manifest(value)
+    bad[1]["run_id"] = bad[0]["run_id"]
+    with pytest.raises(EvidenceError, match="run IDs"):
+        candidate_ledger(tasks(), bad, manifest_sha256="a" * 64, manifest=value)
+    bad = candidate_outputs_for_manifest(value)
+    bad[2]["source_refs"] = []
+    with pytest.raises(EvidenceError, match="source list"):
+        candidate_ledger(tasks(), bad, manifest_sha256="a" * 64, manifest=value)
+
+
+def test_generation_identity_receipt_and_day10_holdout_artifact_are_compatible():
+    evidence = {"generation_identity_verified": True, "generation_identity_receipt_sha256": "a" * 64}
+    assert generation_identity_ok(evidence)
+    assert not generation_identity_ok({"generation_identity_verified": False,
+                                       "generation_identity_receipt_sha256": "a" * 64})
+    assert not generation_identity_ok({"generation_identity_verified": True,
+                                       "generation_identity_receipt_sha256": "bad"})
+    value = manifest()
+    custody = {
+        "custodian_id": "independent-D", "developer_id": "developer-A",
+        "corpus_author_id": "corpus-author-B", "independent_operator_review": "verified",
+        "custodian_positive_read_test": "allowed", "developer_negative_read_test": "denied",
+        "exposure_history_reviewed": True, "replacement_of_exposed_cases": True,
+        "frozen_inputs_sha256": value["corpus_sha256"],
+        "frozen_answers_sha256": value["answer_key_sha256"],
+        "rubric_sha256": value["rubric_sha256"],
+        "exposure_history_sha256": "d" * 64, "access_log_sha256": "e" * 64,
+        "receipt_sha256": "f" * 64, "verified_at": "2026-11-12T00:02:00Z",
+    }
+    reviews, checks = reviews_and_checks()
+    scores = score_reviews(tasks(), reviews, [], checks)
+    artifact = day10_holdout_receipt(
+        value, scores, custody, manifest_sha256="9" * 64,
+        generation_identity_verified=True, generation_identity_receipt_sha256="a" * 64,
+    )
+    assert holdout_ok(artifact, value["release_id"], value["candidate_revision"],
+                      value["rollout_manifest_sha256"])
+
+def test_candidate_manifest_requires_exact_43_boolean_runtime_flags_and_identity():
+    value = manifest()
+    identity = validate_candidate_identity(value)
+    assert len(identity["runtime_capabilities"]) == 43
+    bad = deepcopy(value)
+    bad["candidate_identity"]["runtime_capabilities"].pop(next(iter(bad["candidate_identity"]["runtime_capabilities"])))
+    with pytest.raises(EvidenceError, match="exactly 43"):
+        validate_candidate_identity(bad)
+    bad = deepcopy(value)
+    bad["candidate_identity"]["runtime_capabilities"][next(iter(bad["candidate_identity"]["runtime_capabilities"]))] = 1
+    with pytest.raises(EvidenceError, match="exactly 43"):
+        validate_candidate_identity(bad)
+    bad = deepcopy(value)
+    bad["candidate_identity"]["worker_source_revision"] = "b" * 40
+    with pytest.raises(EvidenceError, match="source revisions"):
+        validate_candidate_identity(bad)
+
+
+def test_candidate_api_worker_and_schema_readbacks_match_and_hash_exactly():
+    value = manifest()
+    readbacks = candidate_readbacks(value)
+    assert validate_candidate_readbacks(value, readbacks)["consistent"] is True
+    bad = deepcopy(readbacks)
+    bad["api"]["provider_id"] = "gemma"
+    with pytest.raises(EvidenceError, match="does not match candidate manifest"):
+        validate_candidate_readbacks(value, bad)
+    bad = candidate_readbacks(value)
+    bad["worker"]["runtime_capabilities"]["browser"] = True
+    bad["worker"]["readback_sha256"] = canonical_sha256({
+        key: item for key, item in bad["worker"].items() if key != "readback_sha256"
+    })
+    with pytest.raises(EvidenceError, match="does not match candidate manifest"):
+        validate_candidate_readbacks(value, bad)
+
+
+
+def test_evidence_json_must_bind_exact_manifest_digest():
+    assert validate_evidence_binding({"manifest_sha256": "a" * 64}, "a" * 64)
+    with pytest.raises(EvidenceError, match="not bound"):
+        validate_evidence_binding({"manifest_sha256": "b" * 64}, "a" * 64)
+    with pytest.raises(EvidenceError, match="must be an object"):
+        validate_evidence_binding([], "a" * 64)
+
+
+def test_blind_packet_and_competitor_are_bound_to_same_release_manifest():
+    value = manifest()
+    digest = "a" * 64
+    candidate = [{"case_id": c["case_id"], "output": "candidate", "manifest_sha256": digest}
+                 for c in tasks()]
+    competitor_outputs = [{"case_id": c["case_id"], "output": "competitor", "manifest_sha256": digest}
+                          for c in tasks()]
+    packet = prepare_blind(tasks(), value, candidate, competitor_outputs,
+                           blinding_key=BLIND_KEY, manifest_sha256=digest)
+    assert len(packet) == 80
+    competitor = comparator()
+    competitor.update(manifest_sha256=digest, release_id=value["release_id"],
+                      rollout_manifest_sha256=value["rollout_manifest_sha256"])
+    assert compare(tasks(), value, competitor, blind_votes(), blinding_key=BLIND_KEY,
+                   manifest_sha256=digest)["complete"]
+    competitor["release_id"] = "different-release"
+    with pytest.raises(EvidenceError, match="not bound"):
+        compare(tasks(), value, competitor, blind_votes(), blinding_key=BLIND_KEY,
+                manifest_sha256=digest)
+    competitor_outputs[0]["manifest_sha256"] = "b" * 64
+    with pytest.raises(EvidenceError, match="not bound"):
+        prepare_blind(tasks(), value, candidate, competitor_outputs,
+                      blinding_key=BLIND_KEY, manifest_sha256=digest)
+
+
+
+def test_exact_head_ci_and_release_contract_must_be_reported_passed_before_holdout():
+    value = manifest()
+    evidence = {
+        "required_repository_checks": {name: "success" for name in {
+            "test-and-build", "Frontend tests and builds", "coworker", "browser-qualification",
+            "PostgreSQL 18 staging compatibility", "governance-audit", "ci-merge-gate",
+        }},
+        "ci_source_revision": value["candidate_revision"],
+        "ci_evidence_sha256": "a" * 64,
+        "canonical_release_contract": "passed",
+        "release_contract_source_revision": value["candidate_revision"],
+        "release_contract_evidence_sha256": "b" * 64,
+    }
+    assert source_checks_ok(evidence, value)
+    assert not source_checks_ok(dict(evidence, ci_source_revision="c" * 40), value)
+    assert not source_checks_ok(dict(evidence, canonical_release_contract="failed"), value)
+    failed_job = dict(evidence)
+    failed_job["required_repository_checks"] = dict(evidence["required_repository_checks"], coworker="failure")
+    assert not source_checks_ok(failed_job, value)
+
+def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_proofs():
+    receipt = {
+        "custodian_id": "independent-D",
+        "developer_id": "developer-A",
+        "corpus_author_id": "corpus-author-B",
+        "independent_operator_review": "verified",
+        "custodian_positive_read_test": "allowed",
+        "developer_negative_read_test": "denied",
+        "exposure_history_reviewed": True,
+        "replacement_of_exposed_cases": True,
+        "frozen_inputs_sha256": manifest()["corpus_sha256"],
+        "frozen_answers_sha256": manifest()["answer_key_sha256"],
+        "rubric_sha256": manifest()["rubric_sha256"],
+        "exposure_history_sha256": "d" * 64,
+        "access_log_sha256": "e" * 64,
+        "receipt_sha256": "f" * 64,
+        "verified_at": "2026-11-12T00:02:00Z",
+    }
+    value = manifest()
+    assert custody_receipt_ok(receipt, value)
+    assert not custody_receipt_ok(dict(receipt, custodian_id="developer-A"), value)
+    assert not custody_receipt_ok(dict(receipt, custodian_positive_read_test="denied"), value)
+    assert not custody_receipt_ok(dict(receipt, exposure_history_reviewed=False), value)
+    assert not custody_receipt_ok(dict(receipt, access_log_sha256="not-a-digest"), value)
+    assert not custody_receipt_ok(dict(receipt, frozen_inputs_sha256="0" * 64), value)
+
+
+def test_holdout_manifest_cannot_read_corpus_before_explicit_custody_verification(tmp_path):
+    value = manifest()
+    absent = tmp_path / "must-not-be-opened.jsonl"
+    with pytest.raises(EvidenceError, match="custody"):
+        validate_manifest(value, absent)
+    with pytest.raises(EvidenceError, match="custody"):
+        external_heldout(absent, corpus_sha256=value["corpus_sha256"])
+
+def test_legacy_manifest_is_readable_only_in_explicit_legacy_mode(external_dir):
+    held = external_dir / "legacy-heldout.jsonl"
+    held.write_text("\n".join(json.dumps(row) for row in tasks()) + "\n")
+    held.chmod(0o444)
+    legacy = manifest()
+    legacy["schema_version"] = 1
+    legacy["corpus_sha256"] = hashlib.sha256(held.read_bytes()).hexdigest()
+    for key in ("release_id", "run_id", "rollout_manifest_sha256", "candidate_identity"):
+        legacy.pop(key)
+    with pytest.raises(EvidenceError, match="legacy manifest"):
+        validate_manifest(legacy, held, custody_verified=True)
+    assert len(validate_manifest(legacy, held, allow_legacy=True, custody_verified=True)) == 40
+
+
+
+
+def test_operated_receipts_fail_without_unique_trace_reference_and_later_verification():
+    rows = operations()
+    rows[0]["evidence_ref"] = "sha256:" + "0" * 64
+    rows[1]["verified_at"] = "not-a-timestamp"
+    rows[2]["trace_sha256"] = rows[3]["trace_sha256"]
+    rows[2]["evidence_ref"] = rows[3]["evidence_ref"]
+    result = verify_operations(rows, "a" * 40)
+    assert {1, 2} <= set(result["failed_rows"])
+    assert len(result["failed_rows"]) == 3
+    assert result["day10_recovery"]["scenarios"][0]["status"] == "failed"
+
+
+def candidate_outputs_for_manifest(value, manifest_digest="a" * 64):
+    from scripts.pilot_workflow_eval import load_suite
+    suite = load_suite()
+    reference = {row["case_id"]: row["draft"] for row in suite["reference_outputs"]}
+    per_cell = {}
+    for task in suite["cases"]:
+        if task["split"] == "development":
+            per_cell.setdefault((task["workflow"], task["language"]), reference[task["id"]])
+    result = []
+    for task in tasks():
+        output = deepcopy(per_cell[(task["workflow"], task["language"])])
+        refs = sorted({task["citation_id"]})
+        identity = value["candidate_identity"]
+        result.append({
+            "case_id": task["case_id"], "output": output,
+            "manifest_sha256": manifest_digest,
+            "release_id": value["release_id"],
+            "source_revision": value["candidate_revision"],
+            "rollout_manifest_sha256": value["rollout_manifest_sha256"],
+            "source_set_sha256": value["source_set_sha256"],
+            "provider_id": identity["provider_id"], "model_id": identity["model_id"],
+            "prompt_registry_sha256": identity["prompt_registry_sha256"],
+            "tool_registry_sha256": identity["tool_registry_sha256"],
+            "context_budget_bytes": identity["context_budget_bytes"],
+            "time_limit_seconds": value["time_limit_seconds"],
+            "run_id": "agent-run-" + task["case_id"],
+            "source_refs": refs,
+            "telemetry": {"tokens": 100, "latency_ms": 500, "cost_microusd": 10},
+        })
+    return result
+
+def test_candidate_outputs_require_exact_manifest_digest_when_bound():
+    from scripts.pilot_workflow_eval import load_suite
+    suite = load_suite()
+    reference = {row["case_id"]: row["draft"] for row in suite["reference_outputs"]}
+    per_cell = {}
+    for task in suite["cases"]:
+        if task["split"] == "development":
+            per_cell.setdefault((task["workflow"], task["language"]), reference[task["id"]])
+    rows = [{"case_id": task["case_id"],
+             "output": deepcopy(per_cell[(task["workflow"], task["language"])]),
+             "manifest_sha256": "a" * 64}
+            for task in tasks()]
+    hashes, _ = candidate_ledger(tasks(), rows, manifest_sha256="a" * 64)
+    assert len(hashes) == 40
+    rows[0]["manifest_sha256"] = "b" * 64
+    with pytest.raises(EvidenceError, match="not bound"):
+        candidate_ledger(tasks(), rows, manifest_sha256="a" * 64)
+
+
+def test_operated_rows_require_exact_release_and_manifest_binding():
+    rows = operations()
+    for row in rows:
+        row.update(manifest_sha256="a" * 64, release_id="release-1",
+                   rollout_manifest_sha256="b" * 64)
+    result = verify_operations(
+        rows, "a" * 40, manifest_sha256="a" * 64,
+        release_id="release-1", rollout_manifest_sha256="b" * 64,
+    )
+    assert result["fault_gate_pass"]
+    recovery = result["day10_recovery"]
+    assert recovery["release_id"] == "release-1"
+    assert len(recovery["scenarios"]) == 20
+    assert all(row["status"] == "passed" and row["evidence_ref"].startswith("sha256:")
+               for row in recovery["scenarios"])
+    assert recovery_ok(recovery, "release-1", "a" * 40, "b" * 64)
+    rows[0]["manifest_sha256"] = "c" * 64
+    with pytest.raises(EvidenceError, match="not bound"):
+        verify_operations(rows, "a" * 40, manifest_sha256="a" * 64)
+
+
+def test_day10_first_run_scores_include_per_case_security_and_two_reviewer_scores():
+    reviews, checks = reviews_and_checks()
+    scores = score_reviews(tasks(), reviews, [], checks)
+    receipt = day10_first_run_scores(scores)
+    assert receipt["accepted"] == 40 and receipt["total"] == 40
+    assert len(receipt["cases"]) == 40
+    assert all(row["security_passed"] is True and row["reviewer_scores"] == [8, 8]
+               for row in receipt["cases"])
+    assert scores["reviewers"] == ["d1", "d2"]
+
 def test_development_registry_balanced_bound_to_real_existing_suite():
     cases = registry_cases()
     assert len(cases) == 40
@@ -135,7 +501,7 @@ def test_external_holdout_missing_prompt_and_source_is_rejected(external_dir):
     held.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="instruction/source contract"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest(), custody_verified=True)
 
 
 def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir):
@@ -143,16 +509,16 @@ def test_external_holdout_must_be_outside_repo_and_match_frozen_sha(external_dir
     held.write_text("\n".join(json.dumps(x) for x in tasks()) + "\n")
     digest = hashlib.sha256(held.read_bytes()).hexdigest()
     with pytest.raises(EvidenceError, match="read-only"):
-        external_heldout(held, corpus_sha256=digest)
+        external_heldout(held, corpus_sha256=digest, custody_verified=True)
     held.chmod(0o444)
-    assert len(external_heldout(held, corpus_sha256=digest)) == 40
+    assert len(external_heldout(held, corpus_sha256=digest, custody_verified=True)) == 40
     with pytest.raises(EvidenceError, match="hash mismatch"):
-        external_heldout(held, corpus_sha256="0" * 64)
+        external_heldout(held, corpus_sha256="0" * 64, custody_verified=True)
     with pytest.raises(EvidenceError, match="separate"):
-        external_heldout(held, corpus_sha256=digest, repo_root=external_dir)
+        external_heldout(held, corpus_sha256=digest, repo_root=external_dir, custody_verified=True)
     m = manifest()
     m["corpus_sha256"] = digest
-    assert validate_manifest(m, held) == tasks()
+    assert validate_manifest(m, held, custody_verified=True) == tasks()
 
 
 def test_holdout_matrix_and_answer_key_prohibited(external_dir):
@@ -162,14 +528,14 @@ def test_holdout_matrix_and_answer_key_prohibited(external_dir):
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="answer keys"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest(), custody_verified=True)
     rows[0].pop("expected_facts")
     rows[1]["case_id"] = rows[0]["case_id"]
     held.chmod(0o644)
     held.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
     held.chmod(0o444)
     with pytest.raises(EvidenceError, match="distinct"):
-        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest())
+        external_heldout(held, corpus_sha256=hashlib.sha256(held.read_bytes()).hexdigest(), custody_verified=True)
 
 
 def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
@@ -224,7 +590,7 @@ def test_external_holdout_rejects_exposed_development_prompt_and_source(external
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     path.chmod(0o444)
     with pytest.raises(EvidenceError, match="exposed"):
-        external_heldout(path, corpus_sha256=digest)
+        external_heldout(path, corpus_sha256=digest, custody_verified=True)
 
 
 def test_two_reviewers_full_rubric_accept_all_synthetic_cases():
@@ -260,6 +626,33 @@ def test_per_cell_gate_stricter_than_global():
     result = score_reviews(tasks(), reviews, [], checks)
     assert result["accepted"] == 38 and not result["outcome_gate_pass"]
 
+
+
+def test_each_original_reviewer_must_meet_seven_of_eight_without_zero_even_after_adjudication():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    reviews[0]["scores"][RUBRIC[0]] = 0
+    adjudication = [{
+        "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
+        "scores": dict.fromkeys(RUBRIC, 2), "source_supported": True,
+        "evidence_note": "Independent adjudication preserves both original reviewer ratings",
+    }]
+    result = score_reviews(cases, reviews, adjudication, checks)
+    assert result["results"][0]["reviewer_scores"] == [6, 8]
+    assert result["results"][0]["accepted"] is False
+    assert result["results"][0]["reviewer_rubrics"][0]["scores"][RUBRIC[0]] == 0
+    assert result["accepted"] == 39
+
+
+def test_competitor_access_gap_is_recorded_without_fabricating_a_comparison():
+    unrecorded = compare(tasks(), manifest(), None, None)
+    assert unrecorded["complete"] is False
+    assert not comparison_evidence_recorded(unrecorded)
+    gap = compare(tasks(), manifest(), None, None, access_gap="No competitor seat was available during the frozen evaluation window")
+    assert gap["complete"] is False
+    assert gap["gap_reason"] == "competitor_access_unavailable"
+    assert comparison_evidence_recorded(gap)
+    assert not comparison_evidence_recorded({"complete": False, "comparison_gap": "some evidence missing", "gap_reason": "incomplete_evidence"})
 
 def test_unsupported_source_or_failed_security_cannot_be_outweighed():
     reviews, checks = reviews_and_checks()

@@ -54,7 +54,6 @@ def create_run(container, account_id, key="phase10-run"):
         key,
     )[0]
 
-
 def test_total_model_call_budget_spans_planner_and_child_tasks(tmp_path):
     container = make_container(
         tmp_path,
@@ -85,7 +84,6 @@ def test_total_model_call_budget_spans_planner_and_child_tasks(tmp_path):
     assert error.value.code == "agent_model_call_limit"
     assert error.value.status_code == 429
 
-
 def test_cost_budget_is_fail_closed_before_provider_call(tmp_path):
     container = make_container(
         tmp_path,
@@ -101,14 +99,12 @@ def test_cost_budget_is_fail_closed_before_provider_call(tmp_path):
     assert error.value.code == "agent_cost_limit"
     assert error.value.status_code == 402
 
-
 def test_tool_budget_is_exposed_by_runtime_v3(tmp_path):
     container = make_container(tmp_path, max_agent_tool_calls_per_run=1)
     account_id = owner(container, "tools")
     run = create_run(container, account_id, "phase10-tools")
     remaining = container.agent.v3_remaining_budget(run["id"])
     assert remaining["tool_steps_remaining"] == 1
-
 
 def test_observability_record_has_required_phase10_fields(tmp_path):
     container = make_container(tmp_path)
@@ -124,7 +120,6 @@ def test_observability_record_has_required_phase10_fields(tmp_path):
     assert required <= set(record)
     assert record["routing_decision"] == "agent_run"
     assert snapshot["dashboard"]["budgets"]["max_runtime_seconds"] == 1800
-
 
 def test_dashboard_covers_reliability_economics_and_transaction_unknown():
     settings = Settings(
@@ -163,7 +158,6 @@ def test_dashboard_covers_reliability_economics_and_transaction_unknown():
     assert dashboard["models"]["failure_rate"] == pytest.approx(1 / 3, abs=1e-6)
     assert dashboard["transactions"]["outcome_unknown"] == 1
 
-
 def test_openmetrics_is_label_free_and_exports_transaction_unknown():
     settings = Settings(
         database_url="sqlite://",
@@ -179,7 +173,6 @@ def test_openmetrics_is_label_free_and_exports_transaction_unknown():
     assert "run_id" not in text
     assert text.endswith("# EOF\n")
 
-
 def test_invalid_phase10_budget_configuration_is_rejected():
     base = Settings(
         database_url="sqlite://",
@@ -193,8 +186,6 @@ def test_invalid_phase10_budget_configuration_is_rejected():
         replace(base, max_agent_model_calls_per_run=3, max_agent_v3_planner_calls=4).validate()
     with pytest.raises(ValueError, match="MAX_TOKENS_PER_RUN"):
         replace(base, max_agent_tokens_per_run=20000, agent_v3_planner_token_budget=24000).validate()
-
-
 
 def test_dashboard_reports_model_tool_latency_and_retry_rate():
     settings = Settings(
@@ -217,6 +208,10 @@ def test_dashboard_reports_model_tool_latency_and_retry_rate():
         "abandoned": False,
         "provider_failures": 0,
         "retries": 1,
+        "dispatch_retries": 3,
+        "token_direction_breakdown_available": True,
+        "input_tokens": 100,
+        "output_tokens": 200,
         "model_latency_ms": [100, 200, 300],
         "tool_latency_ms": [20, 40],
     }]
@@ -228,7 +223,10 @@ def test_dashboard_reports_model_tool_latency_and_retry_rate():
     assert dashboard["tools"]["p50_latency_ms"] == 20
     assert dashboard["tools"]["p95_latency_ms"] == 40
     assert dashboard["runs"]["retry_rate"] == pytest.approx(1 / 5, abs=1e-6)
-
+    assert dashboard["runs"]["dispatch_retry_attempts"] == 3
+    assert dashboard["runs"]["input_token_consumption"] == 100
+    assert dashboard["runs"]["output_token_consumption"] == 200
+    assert dashboard["runs"]["token_direction_coverage"] == 1.0
 
 def test_unpriced_model_usage_is_not_reported_as_zero_cost():
     settings = Settings(
@@ -239,7 +237,6 @@ def test_unpriced_model_usage_is_not_reported_as_zero_cost():
         agent_v3_planner_cost_microusd_per_1k_tokens=0,
     )
     assert estimated_cost_microusd(1000, settings) is None
-
 
 def test_openmetrics_exports_latency_and_retry_metrics_without_labels():
     settings = Settings(
@@ -262,6 +259,10 @@ def test_openmetrics_exports_latency_and_retry_metrics_without_labels():
         "abandoned": False,
         "provider_failures": 0,
         "retries": 0,
+        "dispatch_retries": 2,
+        "token_direction_breakdown_available": True,
+        "input_tokens": 30,
+        "output_tokens": 70,
         "model_latency_ms": [25],
         "tool_latency_ms": [10],
     }], [], settings)
@@ -270,10 +271,12 @@ def test_openmetrics_exports_latency_and_retry_metrics_without_labels():
     assert "shuddho_core_agent_model_latency_p50_ms 25" in text
     assert "shuddho_core_agent_tool_latency_p95_ms 10" in text
     assert "shuddho_core_agent_retry_rate 0" in text
+    assert "shuddho_core_agent_dispatch_retry_attempts 2" in text
+    assert "shuddho_core_agent_input_token_consumption 30" in text
+    assert "shuddho_core_agent_output_token_consumption 70" in text
+    assert "shuddho_core_agent_token_direction_coverage 1" in text
     assert "{" not in text
     assert "run_id" not in text
-
-
 
 def test_unknown_cost_rate_propagates_as_unavailable_not_zero():
     settings = Settings(
@@ -306,8 +309,6 @@ def test_unknown_cost_rate_propagates_as_unavailable_not_zero():
     assert dashboard["runs"]["average_cost_microusd"] is None
     text = render_openmetrics({"dashboard": dashboard})
     assert "shuddho_core_agent_average_cost_microusd NaN" in text
-
-
 
 def test_snapshot_includes_persisted_planner_inference_latency(tmp_path):
     container = make_container(
@@ -349,7 +350,141 @@ def test_snapshot_includes_persisted_planner_inference_latency(tmp_path):
     assert record["model_latency_coverage"] == 1.0
     assert snapshot["dashboard"]["models"]["p95_latency_ms"] == 37
 
+def test_v3_planner_preserves_provider_token_directions():
+    import asyncio
+    import httpx
 
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner, PlannerFailure
+
+    settings = Settings(
+        database_url="sqlite://",
+        auth_issuer=ISSUER,
+        environment="development",
+        storage_backend="local",
+        deepseek_api_key="test-only-placeholder",
+    )
+    response_body = {
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"content": json.dumps({"decision": "wait", "wait_seconds": 1})},
+        }],
+        "usage": {"total_tokens": 50, "prompt_tokens": 30, "completion_tokens": 20},
+    }
+    planner = DeepSeekAgentPlanner(
+        settings,
+        httpx.MockTransport(lambda _: httpx.Response(200, json=response_body)),
+    )
+    decision, total, _latency, evidence = asyncio.run(planner.decide(
+        "Prepare a bounded project report.",
+        [],
+        [],
+        remaining_budget={},
+        dependencies={},
+    ))
+    assert decision.decision == "wait"
+    assert total == 50
+    assert evidence["input_tokens"] == 30
+    assert evidence["output_tokens"] == 20
+
+    invalid_body = {
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"content": json.dumps({"decision": "next_step"})},
+        }],
+        "usage": {"total_tokens": 50, "prompt_tokens": 30, "completion_tokens": 20},
+    }
+    invalid = DeepSeekAgentPlanner(
+        settings,
+        httpx.MockTransport(lambda _: httpx.Response(200, json=invalid_body)),
+    )
+    with pytest.raises(PlannerFailure) as failure:
+        asyncio.run(invalid.decide(
+            "Prepare a bounded project report.",
+            [],
+            [],
+            remaining_budget={},
+            dependencies={},
+        ))
+    assert failure.value.input_tokens == 30
+    assert failure.value.output_tokens == 20
+
+def test_snapshot_directional_usage_sums_complete_calls(tmp_path):
+    container = make_container(tmp_path)
+    account_id = owner(container, "token-directions")
+    run = create_run(container, account_id, "token-directions-run")
+
+    planner = container.agent.reserve_planner(run["id"], 100)
+    container.agent.settle_planner_capacity(
+        run["id"], planner["call"], 50,
+        input_tokens=30, output_tokens=20,
+    )
+    task, _ = container.repository.create_task(
+        account_id,
+        TaskCreate(
+            instruction="Draft the bounded output.",
+            notes="Directional usage persistence test.",
+            output_language="en",
+        ),
+        "token-directions-child",
+        enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=None,
+    )
+    attempt = container.repository.reserve_model(task["id"], 100)
+    container.repository.settle_model(
+        task["id"], attempt, 40, 12, "completed",
+        input_tokens=25, output_tokens=15,
+    )
+
+    snapshot = collect_snapshot(container.settings)
+    record = next(item for item in snapshot["records"] if item["run_id"] == run["id"])
+    assert record["input_tokens"] == 55
+    assert record["output_tokens"] == 35
+    assert record["token_direction_breakdown_available"] is True
+    assert record["token_direction_missing_components"] == []
+
+def test_snapshot_missing_planner_tokens_stay_unknown(tmp_path):
+    container = make_container(tmp_path)
+    account_id = owner(container, "token-directions-missing")
+    run = create_run(container, account_id, "token-directions-missing-run")
+    planner = container.agent.reserve_planner(run["id"], 100)
+    container.agent.settle_planner_capacity(
+        run["id"], planner["call"], 50,
+        input_tokens=30, output_tokens=None,
+    )
+
+    snapshot = collect_snapshot(container.settings)
+    record = next(item for item in snapshot["records"] if item["run_id"] == run["id"])
+    assert record["input_tokens"] is None
+    assert record["output_tokens"] is None
+    assert record["token_direction_breakdown_available"] is False
+    assert record["token_direction_missing_components"] == ["planner"]
+
+def test_snapshot_missing_child_tokens_stay_unknown(tmp_path):
+    container = make_container(tmp_path)
+    account_id = owner(container, "child-token-directions-missing")
+    run = create_run(container, account_id, "child-token-directions-missing-run")
+    task, _ = container.repository.create_task(
+        account_id,
+        TaskCreate(
+            instruction="Draft the bounded output.",
+            notes="Missing child usage test.",
+            output_language="en",
+        ),
+        "child-token-directions-missing-task",
+        enqueue=False,
+        agent_run_id=run["id"],
+        agent_step_id=None,
+    )
+    attempt = container.repository.reserve_model(task["id"], 100)
+    container.repository.settle_model(task["id"], attempt, 40, 12, "completed")
+
+    snapshot = collect_snapshot(container.settings)
+    record = next(item for item in snapshot["records"] if item["run_id"] == run["id"])
+    assert record["input_tokens"] is None
+    assert record["output_tokens"] is None
+    assert record["token_direction_breakdown_available"] is False
+    assert record["token_direction_missing_components"] == ["child_model_attempts"]
 
 def _day8_fixture():
     """Four ten-task development cells and independently referenced outcomes."""
@@ -399,7 +534,6 @@ def _day8_fixture():
         }
     return suite, make("baseline", 20), make("bounded_context_compact_observations", 15)
 
-
 def test_day8_selects_measured_least_cost_profile_with_receipts_and_freeze_hashes():
     suite, baseline, candidate = _day8_fixture()
     comparison = compare_day8_development(baseline, candidate, suite)
@@ -418,7 +552,6 @@ def test_day8_selects_measured_least_cost_profile_with_receipts_and_freeze_hashe
     assert first["baseline"]["accepted_outcome_ref"].startswith("review:")
     assert first["measured_cost_savings_microusd"] == 5
 
-
 def test_day8_missing_cost_or_token_direction_blocks_choice_without_invented_savings():
     suite, baseline, candidate = _day8_fixture()
     candidate["results"][0]["input_tokens"] = None
@@ -430,7 +563,6 @@ def test_day8_missing_cost_or_token_direction_blocks_choice_without_invented_sav
     assert any(item["bounded_context_compact_observations"]["input_tokens"] is None
                for item in comparison["per_task_comparison"])
     assert comparison["freeze"] is None
-
 
 def test_day8_does_not_claim_quality_retention_when_one_language_cell_regresses():
     suite, baseline, candidate = _day8_fixture()
@@ -444,7 +576,6 @@ def test_day8_does_not_claim_quality_retention_when_one_language_cell_regresses(
     assert comparison["measured_cost_savings_microusd"] is None
     assert comparison["profile_summaries"]["bounded_context_compact_observations"]["by_cell"]["research_brief/bn"] == 8
 
-
 def test_day8_rejects_unpaired_model_setting_and_unreferenced_accepted_outcome():
     suite, baseline, candidate = _day8_fixture()
     candidate["configuration"]["model_settings_sha256"] = "a" * 64
@@ -455,14 +586,12 @@ def test_day8_rejects_unpaired_model_setting_and_unreferenced_accepted_outcome()
     with pytest.raises(ValueError, match="accepted outcome lacks valid artifact"):
         compare_day8_development(baseline, candidate, suite)
 
-
 def test_day8_missing_independent_receipt_verification_blocks_freeze():
     suite, baseline, candidate = _day8_fixture()
     candidate["receipts_independently_verified"] = False
     result = compare_day8_development(baseline, candidate, suite)
     assert result["status"] == "BLOCKED"
     assert any("independently verified" in blocker for blocker in result["blockers"])
-
 
 def test_day8_operator_snapshot_does_not_infer_split_tokens_or_accepted_artifacts(tmp_path):
     container = make_container(tmp_path)
@@ -476,7 +605,6 @@ def test_day8_operator_snapshot_does_not_infer_split_tokens_or_accepted_artifact
     assert record["verified_artifact_references"] == []
     assert record["accepted_outcome_references"] == []
     assert "{" not in render_openmetrics(snapshot)
-
 
 def test_day8_cli_exit_code_fails_on_blocked_comparison(tmp_path, monkeypatch):
     suite, baseline, candidate = _day8_fixture()
@@ -496,7 +624,6 @@ def test_day8_cli_exit_code_fails_on_blocked_comparison(tmp_path, monkeypatch):
     assert main() == 1
     assert json.loads(report_file.read_text(encoding="utf-8"))["status"] == "BLOCKED"
 
-
 def test_day8_allows_nonaccepted_failed_tasks_to_lack_verified_artifacts():
     suite, baseline, candidate = _day8_fixture()
     for report in (baseline, candidate):
@@ -509,7 +636,6 @@ def test_day8_allows_nonaccepted_failed_tasks_to_lack_verified_artifacts():
     comparison = compare_day8_development(baseline, candidate, suite)
     assert comparison["status"] == "FROZEN_FOR_DAY9"
     assert comparison["profile_summaries"]["baseline"]["human_accepted"] == 36
-
 
 def test_day8_does_not_trade_away_a_previously_accepted_task_for_another():
     """Per-cell totals cannot hide a regression on a matched frozen task."""
@@ -529,7 +655,6 @@ def test_day8_does_not_trade_away_a_previously_accepted_task_for_another():
     assert comparison["selected_least_cost_qualified_profile"] == "baseline"
     assert comparison["measured_cost_savings_microusd"] is None
 
-
 def test_day8_rejects_reused_artifact_receipt_between_distinct_tasks():
     suite, baseline, candidate = _day8_fixture()
     candidate["results"][1]["verified_artifact_refs"] = candidate["results"][0]["verified_artifact_refs"]
@@ -543,7 +668,6 @@ def test_day8_rejects_zero_model_usage_for_accepted_output(field):
     candidate["results"][0][field] = 0
     with pytest.raises(ValueError, match="accepted outcome has zero"):
         compare_day8_development(baseline, candidate, suite)
-
 
 def test_day8_unsafe_candidate_does_not_claim_qualified_savings():
     """Safety failure can coexist with retained 39/40 accepted tasks."""
@@ -561,7 +685,6 @@ def test_day8_unsafe_candidate_does_not_claim_qualified_savings():
     assert comparison["candidate_exclusion_reason"] == "failed_quality_or_safety_gate"
     assert comparison["measured_cost_savings_microusd"] is None
     assert all(row["measured_cost_savings_microusd"] is None for row in comparison["per_task_comparison"])
-
 
 def test_day8_rejects_reused_human_review_receipt_between_tasks():
     """An acceptance receipt must identify one specific reviewed outcome."""

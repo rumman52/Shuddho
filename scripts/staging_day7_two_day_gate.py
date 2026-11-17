@@ -75,10 +75,15 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     require(isinstance(goal_id, str) and bool(goal_id.strip())
             and type(goal_revision) is int and goal_revision >= 1,
             "Daily briefing must identify one owner-approved goal and revision.")
+    project_id = first.get("project_id")
+    require(isinstance(project_id, str) and bool(project_id.strip()),
+            "Daily briefing must identify one owner-approved project.")
     identity = ("release", "owner_id", "automation_id", "synthetic_account_label",
-                "goal_id", "goal_revision", "authorized_document_ids")
+                "goal_id", "goal_revision", "project_id", "authorized_document_ids",
+                "expires_at")
     schedule_identity = ("timezone", "schedule", "automation_revision", "run_profile",
-                         "output_language", "quiet_hours")
+                         "output_language", "quiet_hours", "schedule_applied_revision",
+                         "schedule_applied_enabled")
     for index, item in enumerate((first, second), start=1):
         require(item.get("schema_version") == 1
                 and item.get("evidence_kind") == "pa10_scheduled_profile"
@@ -94,6 +99,12 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
         revision = item.get("automation_revision")
         require(type(revision) is int and revision >= 1,
                 f"Day {index} must identify a valid accepted automation revision.")
+        require(item.get("schedule_applied_revision") == revision
+                and item.get("schedule_applied_enabled") is True,
+                f"Day {index} must prove the current Temporal schedule revision is active.")
+        expiry = timestamp(item.get("expires_at"), f"Day {index} expires_at")
+        require(expiry > timestamp(item.get("due_at"), f"Day {index} due_at"),
+                f"Day {index} occurrence must precede the approved schedule expiry.")
         for field in (*identity, *schedule_identity):
             require(item.get(field) == first.get(field), f"Day {index} changed {field}.")
     # Two different lifecycle notices must have different persisted IDs, both
@@ -116,6 +127,9 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     require(paused.get("status") == "paused"
             and bool(paused.get("operator_case_reference")),
             "Pause evidence must confirm a paused synthetic automation.")
+    require(paused.get("schedule_applied_revision") == paused.get("paused_revision")
+            and paused.get("schedule_applied_enabled") is False,
+            "Pause evidence must prove Temporal applied the paused revision.")
     require(type(paused.get("previous_revision")) is int
             and paused["previous_revision"] == first["automation_revision"]
             and type(paused.get("paused_revision")) is int
@@ -167,12 +181,18 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
             "Day 7 original source versions changed or were not rechecked on Day 8.")
     require(set(pins_first) != set(pins_second),
             "No source version changed between the two days.")
-    require(verified_timestamps[1] <= timestamp(paused.get("paused_at"), "paused_at") <= now,
+    paused_at = timestamp(paused.get("paused_at"), "paused_at")
+    require(verified_timestamps[1] <= paused_at <= now,
             "Pause must be observed after Day 8 verification and by the current time.")
+    require(timestamp(first.get("expires_at"), "expires_at") > paused_at,
+            "The approved schedule expiry must remain after the Day 8 pause.")
     return {
         "status": "passed", "scenario": "day7_two_day_daily_briefing",
         "release": first["release"], "owner_id": first["owner_id"],
-        "automation_id": first["automation_id"], "timezone": first["timezone"],
+        "automation_id": first["automation_id"], "project_id": first["project_id"],
+        "expires_at": first["expires_at"],
+        "schedule_applied_revision": first["schedule_applied_revision"],
+        "timezone": first["timezone"],
         "scheduled_local_dates": [str(item) for item in local_dates],
         "first_occurrence_id": first["occurrence_id"],
         "second_occurrence_id": second["occurrence_id"],

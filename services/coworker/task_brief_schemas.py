@@ -22,7 +22,6 @@ class TaskBriefSnapshotTooLarge(ValueError):
     """The canonical review payload exceeds its UTF-8 byte budget."""
 
 
-
 class MemoryPin(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -49,7 +48,7 @@ class TaskBrief(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     objective: str = Field(min_length=3, max_length=4000)
     constraints: list[str] = Field(default_factory=list, max_length=12)
-    deliverables: list[str] = Field(min_length=1, max_length=8)
+    deliverables: list[str] = Field(min_length=1, max_length=10)
     source_ids: list[UUID] = Field(default_factory=list, max_length=5)
     output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
 

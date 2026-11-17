@@ -104,6 +104,10 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         AgentCheckpoint.kind == "tool_retry",
     )).all())
     outbox = db.get(AgentOutbox, run.id)
+    planner_settlements = list(db.scalars(select(AgentCheckpoint).where(
+        AgentCheckpoint.run_id == run.id,
+        AgentCheckpoint.kind == "planner_capacity_settled",
+    )).all())
 
     planner_failures = max(0, int(run.planner_calls or 0) - len(decisions))
     child_model_failures = sum(item.state in MODEL_FAILURE_STATES for item in model_attempts)
@@ -169,7 +173,50 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         attempts_by_task[item.task_id] = attempts_by_task.get(item.task_id, 0) + 1
     model_retries = sum(max(0, count - 1) for count in attempts_by_task.values())
     dispatch_retries = max(0, int(outbox.attempts or 0) - 1) if outbox is not None else 0
-    retries = planner_failures + model_retries + dispatch_retries + len(tool_retries)
+    # Execution retries and Temporal outbox delivery retries have different
+    # denominators; keep dispatch attempts visible without inflating execution rate.
+    retries = planner_failures + model_retries + len(tool_retries)
+
+    planner_call_count = int(run.planner_calls or 0)
+    planner_direction_complete = (
+        planner_call_count == 0
+        or (
+            len(planner_settlements) == planner_call_count
+            and type(run.planner_input_tokens) is int
+            and run.planner_input_tokens >= 0
+            and type(run.planner_output_tokens) is int
+            and run.planner_output_tokens >= 0
+        )
+    )
+    child_direction_complete = all(
+        type(item.input_tokens) is int and item.input_tokens >= 0
+        and type(item.output_tokens) is int and item.output_tokens >= 0
+        for item in model_attempts
+    )
+    model_call_count = planner_call_count + len(model_attempts)
+    planner_input = (
+        int(run.planner_input_tokens)
+        if planner_call_count and planner_direction_complete else 0
+    )
+    planner_output = (
+        int(run.planner_output_tokens)
+        if planner_call_count and planner_direction_complete else 0
+    )
+    child_input = sum(int(item.input_tokens) for item in model_attempts) if child_direction_complete else 0
+    child_output = sum(int(item.output_tokens) for item in model_attempts) if child_direction_complete else 0
+    token_directions_available = (
+        model_call_count > 0 and planner_direction_complete and child_direction_complete
+    )
+    input_tokens = planner_input + child_input if token_directions_available else None
+    output_tokens = planner_output + child_output if token_directions_available else None
+    token_direction_missing_components = []
+    if model_call_count == 0:
+        token_direction_missing_components.append("no_model_calls")
+    else:
+        if not planner_direction_complete:
+            token_direction_missing_components.append("planner")
+        if not child_direction_complete:
+            token_direction_missing_components.append("child_model_attempts")
 
     action_by_id = {item.id: item for item in actions}
     approval_wait_ms = 0
@@ -194,11 +241,13 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         "model": models[0] if len(models) == 1 else ("multiple" if models else None),
         "models": models,
         "tokens": accounted_tokens,
-        # The current persistence schema has aggregate/reserved tokens, not
-        # provider-verified per-direction usage; null means unknown, not zero.
-        "input_tokens": None,
-        "output_tokens": None,
-        "token_direction_breakdown_available": False,
+        # Direction totals are emitted only when every planner reservation is
+        # settled with both provider counts and every child attempt has both.
+        # Historical or incomplete calls remain unknown, never zero-filled.
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "token_direction_breakdown_available": token_directions_available,
+        "token_direction_missing_components": token_direction_missing_components,
         "token_accounting_basis": "planner max(reserved, actual) plus charged child attempts",
         "prompt_sha256s": sorted({item.prompt_sha256 for item in decisions if item.prompt_sha256}),
         "tool_schema_sha256s": sorted({item.tool_schema_sha256 for item in decisions if item.tool_schema_sha256}),
@@ -225,6 +274,7 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         "cost_estimate_available": cost_microusd is not None,
         "cost_rate_microusd_per_1k_tokens": max(0, int(settings.agent_v3_planner_cost_microusd_per_1k_tokens)),
         "retries": retries,
+        "dispatch_retries": dispatch_retries,
         "routing_decision": "agent_run",
         "routing_mode": run.planner_mode,
         "approval_waits": len(checkpoints),
@@ -235,7 +285,7 @@ def _run_record(db, run: AgentRun, settings: Settings, now: datetime) -> dict:
         "duplicate_attempts": duplicate_attempts,
         "outcome_unknown": sum(item.state == "outcome_unknown" for item in actions),
         "abandoned": abandoned,
-        "model_calls": int(run.planner_calls or 0) + len(model_attempts),
+        "model_calls": model_call_count,
         "model_failures": planner_failures + child_model_failures,
         "tool_failures": sum(item.state == "failed" for item in invocations),
         "planner_calls": int(run.planner_calls or 0),
@@ -260,7 +310,28 @@ def aggregate(records: list[dict], transactions: list[Transaction], settings: Se
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0
     ]
     retry_count = sum(max(0, int(item.get("retries", 0))) for item in records)
+    dispatch_retry_count = sum(max(0, int(item.get("dispatch_retries", 0))) for item in records)
     execution_attempts = model_calls + tool_calls
+    direction_complete = bool(records) and all(
+        item.get("token_direction_breakdown_available") is True
+        and type(item.get("input_tokens")) is int
+        and item["input_tokens"] >= 0
+        and type(item.get("output_tokens")) is int
+        and item["output_tokens"] >= 0
+        for item in records
+    )
+    input_token_total = (
+        sum(int(item["input_tokens"]) for item in records)
+        if direction_complete else None
+    )
+    output_token_total = (
+        sum(int(item["output_tokens"]) for item in records)
+        if direction_complete else None
+    )
+    direction_coverage = ratio(
+        sum(item.get("token_direction_breakdown_available") is True for item in records),
+        len(records),
+    )
     cost_complete = bool(records) and all(item.get("cost_microusd") is not None for item in records)
     total_cost = (
         sum(int(item["cost_microusd"]) for item in records)
@@ -291,6 +362,10 @@ def aggregate(records: list[dict], transactions: list[Transaction], settings: Se
             "provider_failures": sum(item["provider_failures"] for item in records),
             "retry_attempts": retry_count,
             "retry_rate": ratio(retry_count, execution_attempts),
+            "dispatch_retry_attempts": dispatch_retry_count,
+            "input_token_consumption": input_token_total,
+            "output_token_consumption": output_token_total,
+            "token_direction_coverage": direction_coverage,
         },
         "tools": {
             "calls": tool_calls,
@@ -387,6 +462,10 @@ def render_openmetrics(snapshot: dict) -> str:
         "shuddho_core_agent_tool_latency_samples": d["tools"]["latency_samples"],
         "shuddho_core_agent_retry_attempts": d["runs"]["retry_attempts"],
         "shuddho_core_agent_retry_rate": d["runs"]["retry_rate"],
+        "shuddho_core_agent_dispatch_retry_attempts": d["runs"]["dispatch_retry_attempts"],
+        "shuddho_core_agent_input_token_consumption": d["runs"]["input_token_consumption"],
+        "shuddho_core_agent_output_token_consumption": d["runs"]["output_token_consumption"],
+        "shuddho_core_agent_token_direction_coverage": d["runs"]["token_direction_coverage"],
         "shuddho_core_agent_cost_estimate_complete": d["runs"]["cost_estimate_complete"],
         "shuddho_core_agent_run_latency_p50_ms": d["runs"]["p50_latency_ms"],
         "shuddho_core_agent_run_latency_p95_ms": d["runs"]["p95_latency_ms"],

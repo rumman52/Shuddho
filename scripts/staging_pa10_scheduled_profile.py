@@ -30,6 +30,18 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def require_future_expiry(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ScheduledProfileProbeFailure("Recurring briefing must have an explicit expiry.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ScheduledProfileProbeFailure("Recurring briefing expiry is not a valid ISO timestamp.") from None
+    if parsed.tzinfo is None or parsed.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+        raise ScheduledProfileProbeFailure("Recurring briefing expiry must be a future timezone-aware timestamp.")
+    return value
+
+
 def require_guard() -> None:
     if os.environ.get("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "").lower() != "true":
         raise ScheduledProfileProbeFailure(
@@ -176,6 +188,11 @@ def load_authorized_daily_scope(client: httpx.Client, token: str, automation: di
     if (goal.get("id") != goal_id or goal.get("revision") != revision
             or goal.get("state") != "active"):
         raise ScheduledProfileProbeFailure("Owner-approved goal identity/revision/state changed.")
+    project_id = goal.get("project_id")
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ScheduledProfileProbeFailure(
+            "Day 7 goal must be bound to an explicit owner-owned project ID."
+        )
     resources = goal.get("authorized_resources")
     if (not isinstance(resources, list) or not 1 <= len(resources) <= 5
             or any(not isinstance(resource, dict)
@@ -188,7 +205,26 @@ def load_authorized_daily_scope(client: httpx.Client, token: str, automation: di
     documents = [resource["reference"] for resource in resources]
     if len(set(documents)) != len(documents):
         raise ScheduledProfileProbeFailure("Owner-approved goal contains duplicate documents.")
-    return {"goal_id": goal_id, "goal_revision": revision,
+    project = json_object(
+        client.get(f"/api/v1/projects/{project_id}", headers=auth(token)),
+        "owner-approved briefing project",
+    )
+    if project.get("id") != project_id:
+        raise ScheduledProfileProbeFailure("Owner-approved project identity changed.")
+    project_resources = project.get("resources")
+    if not isinstance(project_resources, list):
+        raise ScheduledProfileProbeFailure("Owner-approved project resources have an unexpected shape.")
+    linked_documents = {
+        resource.get("resource_id")
+        for resource in project_resources
+        if isinstance(resource, dict) and resource.get("resource_type") == "document"
+        and isinstance(resource.get("resource_id"), str)
+    }
+    if not set(documents).issubset(linked_documents):
+        raise ScheduledProfileProbeFailure(
+            "Every approved briefing document must remain linked to the selected project."
+        )
+    return {"goal_id": goal_id, "goal_revision": revision, "project_id": project_id,
             "authorized_document_ids": documents}
 
 
@@ -244,6 +280,16 @@ def load_owned(
             f"Automation does not match the {scenario} profile/schedule contract."
         )
 
+    if scenario in {"daily_coworker", "weekly_coworker"}:
+        require_future_expiry(automation.get("expires_at"))
+        if (
+            automation.get("schedule_applied_revision") != automation.get("revision")
+            or automation.get("schedule_applied_enabled") is not True
+            or automation.get("schedule_error_code")
+        ):
+            raise ScheduledProfileProbeFailure(
+                "Temporal worker has not applied the active automation revision."
+            )
     daily_scope = (
         load_authorized_daily_scope(client, token, automation)
         if scenario == "daily_coworker" else {}
@@ -294,6 +340,9 @@ def prepare(args: argparse.Namespace) -> dict:
         "run_profile": current["automation"]["run_profile"],
         "output_language": current["automation"]["output_language"],
         "quiet_hours": current["automation"].get("quiet_hours"),
+        "expires_at": current["automation"].get("expires_at"),
+        "schedule_applied_revision": current["automation"].get("schedule_applied_revision"),
+        "schedule_applied_enabled": current["automation"].get("schedule_applied_enabled"),
         **current["daily_scope"],
         "baseline_occurrence_ids": sorted(
             str(item.get("occurrence_id"))
@@ -349,7 +398,7 @@ def verify(args: argparse.Namespace) -> dict:
                 if scenario == "daily_coworker":
                     if (not daily_scope
                             or any(state.get(field) != daily_scope.get(field) for field in (
-                                "goal_id", "goal_revision", "authorized_document_ids"
+                                "goal_id", "goal_revision", "project_id", "authorized_document_ids"
                             ))):
                         raise ScheduledProfileProbeFailure(
                             "Owner-approved goal or selected document scope changed since preparation."
@@ -357,6 +406,14 @@ def verify(args: argparse.Namespace) -> dict:
                 if int(current["automation"]["revision"]) != int(state["automation_revision"]):
                     raise ScheduledProfileProbeFailure(
                         "Automation revision changed during the scenario."
+                    )
+                if (
+                    current["automation"].get("expires_at") != state.get("expires_at")
+                    or current["automation"].get("schedule_applied_revision") != state.get("schedule_applied_revision")
+                    or current["automation"].get("schedule_applied_enabled") is not True
+                ):
+                    raise ScheduledProfileProbeFailure(
+                        "Automation expiry or Temporal applied schedule state changed during the scenario."
                     )
                 history = [
                     item for item in current["history"]
@@ -428,7 +485,7 @@ def verify(args: argparse.Namespace) -> dict:
                                 or prior.get("owner_id") != state.get("owner_id")
                                 or prior.get("automation_id") != state.get("automation_id")
                                 or any(prior.get(field) != daily_scope.get(field) for field in (
-                                    "goal_id", "goal_revision", "authorized_document_ids"
+                                    "goal_id", "goal_revision", "project_id", "authorized_document_ids"
                                 ))
                                 or not isinstance(prior.get("input_version_ids"), list)
                                 or not prior["input_version_ids"]):
@@ -466,6 +523,9 @@ def verify(args: argparse.Namespace) -> dict:
                     "run_profile": state["run_profile"],
                     "output_language": state["output_language"],
                     "quiet_hours": state["quiet_hours"],
+                    "expires_at": state["expires_at"],
+                    "schedule_applied_revision": state["schedule_applied_revision"],
+                    "schedule_applied_enabled": state["schedule_applied_enabled"],
                     "prepared_at": state["prepared_at"],
                     "verified_at": utcnow_iso(),
                     "occurrence_id": occurrence_id,
@@ -525,7 +585,9 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         if (not daily_scope
                 or any(item.get(field) != daily_scope.get(field)
                        for item in (state, first, second)
-                       for field in ("goal_id", "goal_revision", "authorized_document_ids"))):
+                       for field in ("goal_id", "goal_revision", "project_id", "authorized_document_ids"))
+                or any(item.get("expires_at") != current["automation"].get("expires_at")
+                       for item in (state, first, second))):
             raise ScheduledProfileProbeFailure(
                 "Live owner-approved goal scope changed before two-day pause."
             )
@@ -534,9 +596,16 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             "status": "paused", "release": release,
             "synthetic_account_label": state["synthetic_account_label"],
             "owner_id": state["owner_id"], "automation_id": state["automation_id"],
-            "previous_revision": revision, "paused_revision": revision + 1,
-            "paused_at": utcnow_iso(), "operator_case_reference": case_ref,
+            "expires_at": current["automation"].get("expires_at"),
+            "previous_revision": revision,
+            "operator_case_reference": case_ref,
         }
+        # This temporary object is only a preflight placeholder and is never
+        # written as evidence. Actual pause time/revision are read back below.
+        evidence["paused_revision"] = revision + 1
+        evidence["paused_at"] = utcnow_iso()
+        evidence["schedule_applied_revision"] = revision + 1
+        evidence["schedule_applied_enabled"] = False
         try:
             verify_two_day(first, second, evidence)
         except GateFailure as error:
@@ -549,17 +618,36 @@ def pause_two_day(args: argparse.Namespace) -> dict:
                 headers=auth(token), json={"expected_revision": revision},
             ), "pause synthetic automation",
         )
-        observed = json_object(
-            client.get(f'/api/v1/automations/{state["automation_id"]}', headers=auth(token)),
-            "read back paused automation",
-        )
-        if (paused.get("state") != "paused" or observed.get("state") != "paused"
-                or int(paused.get("revision", -1)) != int(observed.get("revision", -2))
-                or int(observed.get("revision", -1)) <= revision
-                or observed.get("id") != state["automation_id"]):
+        if (paused.get("state") != "paused"
+                or int(paused.get("revision", -1)) <= revision):
             raise ScheduledProfileProbeFailure(
                 "Pause did not persist the expected synthetic automation transition."
             )
+        observed = None
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            observed = json_object(
+                client.get(f'/api/v1/automations/{state["automation_id"]}', headers=auth(token)),
+                "read back paused automation",
+            )
+            if (
+                observed.get("state") == "paused"
+                and int(observed.get("revision", -1)) > revision
+                and observed.get("schedule_applied_revision") == observed.get("revision")
+                and observed.get("schedule_applied_enabled") is False
+                and not observed.get("schedule_error_code")
+                and observed.get("id") == state["automation_id"]
+            ):
+                break
+            time.sleep(2)
+        else:
+            raise ScheduledProfileProbeFailure(
+                "Temporal worker did not apply the paused automation revision before timeout."
+            )
+        if int(paused.get("revision", -1)) != int(observed.get("revision", -2)):
+            raise ScheduledProfileProbeFailure("Pause response and readback revisions disagree.")
+        evidence["schedule_applied_revision"] = observed.get("schedule_applied_revision")
+        evidence["schedule_applied_enabled"] = observed.get("schedule_applied_enabled")
         evidence["paused_revision"] = int(observed["revision"])
         evidence["paused_at"] = utcnow_iso()
         try:
