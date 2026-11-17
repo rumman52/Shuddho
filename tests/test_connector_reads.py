@@ -1174,7 +1174,9 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             overlap_policy="skip",
             catchup_window_seconds=3600,
             quiet_hours=None,
-            expires_at=None,
+            # Recurring project briefings must have a bounded future expiry.
+            # Do not weaken the production expiry gate to satisfy this fixture.
+            expires_at=utcnow() + timedelta(days=7),
         ),
         "briefing-connected-automation-" + str(uuid4()),
     )
