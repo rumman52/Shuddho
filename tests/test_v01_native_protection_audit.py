@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.v01_native_protection_audit import assess_native_policy
 
 JOBS = ('test-and-build', 'ci-merge-gate', 'coworker')
@@ -203,3 +205,53 @@ def test_day1_coworker_branch_protection_must_be_pinned_to_actions_app():
     result = assess_native_policy(branch_protection=untrusted)
     assert result['classification'] == 'blocked'
     assert 'required_check_source_unpinned:coworker' in result['findings']
+
+
+def test_live_inventory_requests_100_and_loads_rule_details(monkeypatch):
+    from scripts import v01_native_protection_audit as audit
+
+    urls = []
+
+    def fake_fetch(url, token):
+        assert token == "placeholder-token"
+        urls.append(url)
+        if url.endswith("/branches/main/protection"):
+            return protection()
+        if url.endswith("/rulesets?includes_parents=true&per_page=100"):
+            return [{"id": 100}]
+        if url.endswith("/rulesets/100"):
+            return ruleset()
+        pytest.fail(f"unexpected endpoint: {url}")
+
+    monkeypatch.setattr(audit, "_fetch_json", fake_fetch)
+    native_branch, native_rules = audit._live_evidence("rumman52/Shuddho", "placeholder-token")
+    assert native_branch == protection()
+    assert native_rules == [ruleset()]
+    assert len(urls) == 3
+
+
+def test_live_inventory_refuses_potentially_truncated_page(monkeypatch):
+    from scripts import v01_native_protection_audit as audit
+
+    def fake_fetch(url, token):
+        if url.endswith("/branches/main/protection"):
+            return protection()
+        if url.endswith("/rulesets?includes_parents=true&per_page=100"):
+            return [{"id": index + 1} for index in range(100)]
+        pytest.fail("a truncated inventory must not request individual details")
+
+    monkeypatch.setattr(audit, "_fetch_json", fake_fetch)
+    with pytest.raises(ValueError, match="possibly truncated"):
+        audit._live_evidence("rumman52/Shuddho", "placeholder-token")
+
+
+@pytest.mark.parametrize("invalid_repo", ["../Shuddho", "rumman52/..", "./Shuddho", "rumman52/."])
+def test_live_inventory_rejects_path_traversal_repository_selector(monkeypatch, invalid_repo):
+    from scripts import v01_native_protection_audit as audit
+
+    monkeypatch.setattr(
+        audit, "_fetch_json",
+        lambda *args: pytest.fail("invalid repository must fail before any request"),
+    )
+    with pytest.raises(ValueError, match="invalid repository selector"):
+        audit._live_evidence(invalid_repo, "placeholder-token")
