@@ -41,7 +41,9 @@ def _revision_metadata(path: Path) -> tuple[str, tuple[str, ...]]:
     except (OSError, SyntaxError, ValueError, TypeError, RecursionError) as error:
         raise MigrationAlignmentError("Cannot safely parse Alembic metadata.") from error
 
-    revision, parents = values.get("revision"), values.get("down_revision")
+    if set(values) != {"revision", "down_revision"}:
+        raise MigrationAlignmentError("Missing Alembic metadata field.")
+    revision, parents = values["revision"], values["down_revision"]
     if not isinstance(revision, str) or not REVISION.fullmatch(revision):
         raise MigrationAlignmentError("Migration revision is absent or invalid.")
     if parents is None:
