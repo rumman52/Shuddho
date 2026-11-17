@@ -398,3 +398,12 @@ def test_operator_ruleset_template_satisfies_both_configuration_auditors():
     result = assess_native_policy(rulesets=[candidate])
     assert result["classification"] == "configuration_candidate"
     assert result["enforcement_verified"] is False
+
+def test_day1_coworker_is_required_by_native_ruleset_audit():
+    rule = approved_ruleset()
+    checks = rule["rules"][3]["parameters"]["required_status_checks"]
+    rule["rules"][3]["parameters"]["required_status_checks"] = [
+        entry for entry in checks if entry["context"] != "coworker"
+    ]
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
