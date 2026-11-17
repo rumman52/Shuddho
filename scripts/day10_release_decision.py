@@ -9,13 +9,23 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.cohort_release_gate import evaluate_release
-from scripts.ruke_pilot_eval import OPERATED, RUBRIC, operated_trace_ok, reviewer_identity
-from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+if __package__ in {None, ""}:
+    # Support the documented `python scripts/day10_release_decision.py` entrypoint.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.cohort_release_gate import evaluate_release  # noqa: E402
+from scripts.ruke_pilot_eval import OPERATED, RUBRIC, operated_trace_ok, reviewer_identity  # noqa: E402
+from scripts.staging_release_freeze import (  # noqa: E402
+    EXPECTED_ROLLBACK,
+    PA10_REQUIRED_FALSE,
+    PA10_REQUIRED_TRUE,
+    RUNTIME_CAPABILITY_KEYS,
+)
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -39,14 +49,38 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def time_ok(value: object) -> bool:
+def timestamp(value: object) -> datetime | None:
     if not isinstance(value, str):
-        return False
+        return None
     try:
         stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return stamp.tzinfo is not None and stamp.astimezone(timezone.utc) <= datetime.now(timezone.utc)
+        if stamp.tzinfo is None:
+            return None
+        stamp = stamp.astimezone(timezone.utc)
+        return stamp if stamp <= datetime.now(timezone.utc) else None
     except (ValueError, OverflowError):
+        return None
+
+
+def time_ok(value: object) -> bool:
+    return timestamp(value) is not None
+
+
+def ordered_times(row: dict, *keys: str, strict_after: frozenset[int] = frozenset()) -> bool:
+    stamps = [timestamp(row.get(key)) for key in keys]
+    if any(stamp is None for stamp in stamps):
         return False
+    for index, (left, right) in enumerate(zip(stamps, stamps[1:])):
+        if index in strict_after:
+            if left >= right:
+                return False
+        elif left > right:
+            return False
+    return True
+
+
+def nonempty_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def bound(row: object, release: str, revision: str, digest: str) -> bool:
@@ -133,24 +167,100 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
         return False
     if kind == "rollback":
         switches = value.get("kill_switches_verified")
-        return (isinstance(switches, list)
-                and all(isinstance(item, str) for item in switches)
-                and {"SHUDDHO_COWORKER_ENABLED=false", "SHUDDHO_AGENT_RUNTIME_ENABLED=false"}.issubset(set(switches))
-                and value.get("worker_stop_observed") is True
-                and value.get("restoration_verified") is True)
+        flags = value.get("capability_flags_after_rollback")
+        evidence_refs = (
+            "api_readback_evidence_ref",
+            "worker_readback_evidence_ref",
+            "worker_stop_evidence_ref",
+            "safe_state_procedure_ref",
+            "safe_state_deployment_reference",
+            "safe_state_evidence_ref",
+            "restored_data_probe_ref",
+        )
+        return (
+            isinstance(switches, list)
+            and all(isinstance(item, str) for item in switches)
+            and len(switches) == len(set(switches))
+            and set(EXPECTED_ROLLBACK.values()).issubset(set(switches))
+            and isinstance(flags, dict)
+            and set(flags) == RUNTIME_CAPABILITY_KEYS
+            and all(type(enabled) is bool for enabled in flags.values())
+            and all(
+                flags[key] is False
+                for key in PA10_REQUIRED_TRUE | PA10_REQUIRED_FALSE
+            )
+            and all(value.get(key) is True for key in (
+                "new_admissions_stopped",
+                "api_reload_verified",
+                "worker_reload_verified",
+                "outstanding_work_fenced",
+                "ledger_consistency_verified",
+                "worker_stop_observed",
+                "restoration_verified",
+                "restored_data_retrievable",
+            ))
+            and all(nonempty_text(value.get(key)) for key in evidence_refs)
+            and isinstance(value.get("safe_state_source_revision"), str)
+            and bool(SHA.fullmatch(value["safe_state_source_revision"]))
+            and ordered_times(
+                value,
+                "rollback_started_at",
+                "worker_stopped_at",
+                "safe_state_restored_at",
+                "verified_at",
+                strict_after=frozenset({0, 1}),
+            )
+        )
     if kind == "cancellation":
-        return (isinstance(value.get("cancelled_run_id"), str) and bool(value["cancelled_run_id"].strip())
-                and type(value.get("late_side_effects")) is int and value["late_side_effects"] == 0)
+        return (
+            nonempty_text(value.get("cancelled_run_id"))
+            and value.get("inference_active_at_cancel") is True
+            and value.get("terminal_state") == "cancelled"
+            and value.get("late_result_observed") is True
+            and value.get("terminal_state_after_late_result") == "cancelled"
+            and type(value.get("late_side_effects")) is int
+            and value["late_side_effects"] == 0
+            and ordered_times(
+                value,
+                "inference_started_at",
+                "cancelled_at",
+                "late_result_observed_at",
+                "verified_at",
+                strict_after=frozenset({0, 1}),
+            )
+        )
     if kind == "paused_schedule":
-        return (isinstance(value.get("schedule_id"), str) and bool(value["schedule_id"].strip())
-                and type(value.get("executions_while_paused")) is int and value["executions_while_paused"] == 0)
+        return (
+            nonempty_text(value.get("schedule_id"))
+            and type(value.get("executions_while_paused")) is int
+            and value["executions_while_paused"] == 0
+            and type(value.get("admitted_executions_while_paused")) is int
+            and value["admitted_executions_while_paused"] == 0
+            and ordered_times(
+                value,
+                "paused_at",
+                "next_due_at",
+                "observed_after_due_at",
+                "verified_at",
+                strict_after=frozenset({1}),
+            )
+        )
     if kind == "owner_isolation":
-        return (isinstance(value.get("owner_a_ref"), str) and bool(value["owner_a_ref"].strip())
-                and isinstance(value.get("owner_b_ref"), str) and bool(value["owner_b_ref"].strip())
-                and value["owner_a_ref"] != value["owner_b_ref"]
-                and value.get("cross_owner_denied") is True)
+        denied = value.get("denied_resource_types")
+        required_resources = {"documents", "memory", "artifacts", "activity"}
+        return (
+            nonempty_text(value.get("owner_a_ref"))
+            and nonempty_text(value.get("owner_b_ref"))
+            and value["owner_a_ref"] != value["owner_b_ref"]
+            and value.get("synthetic_owners_verified") is True
+            and value.get("cross_owner_denied") is True
+            and value.get("both_directions_verified") is True
+            and isinstance(denied, list)
+            and all(isinstance(item, str) for item in denied)
+            and len(denied) == len(set(denied))
+            and required_resources.issubset(set(denied))
+        )
     return False
-
 
 def recovery_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if not bound(value, release, revision, digest):
