@@ -31,6 +31,21 @@ owner has approved the exact migration path, retention decision, isolated
 backup/restore and API/worker/source SHA pairing. No database or worker
 was changed by this source patch.
 
+The standalone, offline diagnostic can be invoked **without** staging
+credentials or touching any infrastructure:
+
+```bash
+uv run python -m scripts.staging_migration_alignment --observed-revision 0070
+```
+
+For the current source, the command exits **1** and prints
+`migration_required` with the ordered pending revisions. Exit 0 indicates
+only an exact revision match; exit 2 indicates unreadable/ambiguous checked-in
+migration metadata. Every output explicitly sets
+`observation_authenticity_verified=false` and `release_qualified=false`.
+The supplied revision must be obtained and authenticated separately from an
+actual staging database readback; this offline tool is not that attestation.
+
 ## Immediate owners and blockers
 
 | Item | Current evidence / blocker | Owner and next concrete action |
