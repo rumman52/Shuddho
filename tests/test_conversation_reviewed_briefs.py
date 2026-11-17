@@ -9,6 +9,7 @@ from hashlib import sha256
 from uuid import UUID, uuid4
 
 import httpx
+from pydantic import ValidationError
 import pytest
 
 # The general baseline job intentionally does not install coworker extras.
@@ -24,7 +25,9 @@ from services.coworker.conversation_dispatch import ConversationDispatchService
 from services.coworker.conversation_repository import ConversationRepository
 from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
 from services.coworker.conversation_task_briefs import ConversationTaskBriefService
-from services.coworker.task_brief_schemas import TaskBrief, TaskBriefSuggestion
+from services.coworker.task_brief_schemas import (
+    TaskBrief, TaskBriefMemorySelection, TaskBriefSuggestion, canonical_brief_digest,
+)
 from services.coworker.errors import CoworkerError
 from services.coworker.models import AgentRun, AgentOutbox, Artifact, utcnow
 
@@ -59,6 +62,95 @@ def test_canonical_preview_digest_changes_on_edit(container):
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=brief())["canonical_digest"] == first["canonical_digest"]
     changed = brief().model_copy(update={"constraints": ["One page"]})
     assert service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=changed)["canonical_digest"] != first["canonical_digest"]
+
+
+def test_reviewed_task_brief_schema_enforces_documented_bounds_and_rejects_authority_fields():
+    base = brief().model_dump(mode="json")
+    maximum = TaskBrief.model_validate({
+        **base,
+        "objective": "x" * 4000,
+        "constraints": [f"constraint-{i}-" + "x" * (500 - len(f"constraint-{i}-")) for i in range(12)],
+        "deliverables": [f"Deliverable {i}" for i in range(10)],
+        "output_language": "en-GB",
+    })
+    assert len(maximum.objective) == 4000
+    assert len(maximum.constraints) == 12
+    assert all(len(item) == 500 for item in maximum.constraints)
+    assert len(maximum.deliverables) == 10
+
+    for payload in (
+        {**base, "objective": "xx"},
+        {**base, "objective": "x" * 4001},
+        {**base, "constraints": [f"Constraint {i}" for i in range(13)]},
+        {**base, "constraints": ["x" * 501]},
+        {**base, "deliverables": [f"Deliverable {i}" for i in range(11)]},
+        {**base, "output_language": "English (UK)"},
+        {**base, "source_ids": ["not-a-uuid"]},
+        {**base, "tool_permissions": ["email.send"]},
+    ):
+        with pytest.raises(ValidationError):
+            TaskBrief.model_validate(payload)
+
+    with pytest.raises(ValidationError):
+        TaskBriefMemorySelection.model_validate({
+            "memory_pins": [{"fact_id": "not-a-uuid", "expected_version": 1}],
+        })
+    with pytest.raises(ValidationError):
+        TaskBriefMemorySelection.model_validate({
+            "memory_pins": [{"fact_id": str(uuid4()), "expected_version": 0}],
+        })
+    with pytest.raises(ValidationError):
+        TaskBriefMemorySelection.model_validate({
+            "memory_pins": [{"fact_id": str(uuid4()), "expected_version": 1, "permission": "admin"}],
+        })
+    with pytest.raises(ValidationError):
+        TaskBriefSuggestion.model_validate({
+            "state": "ready", "brief": base, "approval": {"external_send": True},
+        })
+
+
+@pytest.mark.parametrize("entry_point", ["preview", "dispatch"])
+@pytest.mark.parametrize(("context_bytes", "characters", "constraints"), [
+    (4096, 1800, []),
+    (24_000, 3900, ["ক" * 495 + str(i) for i in range(4)]),
+])
+def test_reviewed_brief_rejects_oversized_canonical_utf8_snapshot(
+    container, entry_point, context_bytes, characters, constraints,
+):
+    owner, conversation, messages, service, dispatch = setup(container, "byte-limit")
+    item = append(messages, owner, conversation, "Create a project report.", "byte-limit")
+    service.settings = dispatch.settings = replace(service.settings, max_agent_context_bytes=context_bytes)
+    oversized = TaskBrief(objective="Create a project report. " + "ক" * characters,
+                          constraints=constraints, deliverables=["A report"])
+    digest = canonical_brief_digest(oversized, [], {}, owner_id=owner,
+                                   conversation_id=conversation["id"], message_id=item["id"], sequence=1)
+
+    with pytest.raises(CoworkerError) as denied:
+        if entry_point == "preview":
+            service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=oversized)
+        else:
+            dispatch.dispatch(owner, conversation["id"], item["id"], expected_sequence=1,
+                              reviewed_brief=oversized, expected_digest=digest)
+    assert denied.value.code == "task_brief_snapshot_too_large"
+    assert denied.value.status_code == 422
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
+
+
+def test_admitted_reviewed_brief_replays_after_context_budget_is_lowered(container):
+    owner, conversation, messages, service, dispatch = setup(container, "budget-replay")
+    item = append(messages, owner, conversation, "Create a project report.", "budget-replay")
+    reviewed = TaskBrief(objective="Create a project report. " + "ক" * 1100, deliverables=["A report"])
+    preview = service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=reviewed)
+    options = dict(expected_sequence=1, reviewed_brief=reviewed, expected_digest=preview["canonical_digest"])
+    run, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
+    assert created
+
+    dispatch.settings = replace(dispatch.settings, max_agent_context_bytes=1024)
+    result, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
+    assert not created and result["run_id"] == run["run_id"]
+    assert container.agent.worker_run(run["run_id"])["id"] == run["run_id"]
 
 
 @pytest.mark.parametrize("legacy_graph_enabled", [False, True])
@@ -157,6 +249,28 @@ def test_bangla_task_brief_keeps_recent_turns_within_provider_byte_limit(contain
     assert 1 < len(sent) < 9
     assert sent[-1]["text"] == latest["text"]
 
+
+
+def test_task_brief_proposal_uses_only_the_latest_twelve_server_selected_turns(container):
+    owner, conversation, messages, service, _ = setup(container, "brief-history-limit")
+    for turn in range(1, 15):
+        latest = append(messages, owner, conversation, f"Conversation turn {turn}.", f"turn-{turn}")
+    observed = {}
+
+    class Planner:
+        async def propose_task_brief(self, history, source_ids):
+            observed["history"] = history
+            observed["source_ids"] = source_ids
+            return TaskBriefSuggestion(state="ready", brief=brief()), 12
+
+    service.model = Planner()
+    result = asyncio.run(service.propose(
+        owner, conversation["id"], latest["id"], expected_sequence=14,
+    ))
+    assert result["state"] == "ready"
+    assert [turn["sequence"] for turn in observed["history"]] == list(range(3, 15))
+    assert all(set(turn) == {"sequence", "text", "source_ids"} for turn in observed["history"])
+    assert observed["source_ids"] == []
 
 def test_task_brief_rejects_capacity_before_call_when_prompt_exceeds_workspace_budget(container):
     owner, conversation, messages, service, _ = setup(container, "brief-reservation")

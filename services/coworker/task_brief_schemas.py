@@ -15,6 +15,11 @@ from .goal_schemas import _safe_text
 
 
 MEMORY_BOUND_BRIEF_VERSION = 2
+MAX_REVIEWED_TASK_BRIEF_BYTES = 16_000
+
+
+class TaskBriefSnapshotTooLarge(ValueError):
+    """The canonical review payload exceeds its UTF-8 byte budget."""
 
 
 class MemoryPin(BaseModel):
@@ -43,7 +48,7 @@ class TaskBrief(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     objective: str = Field(min_length=3, max_length=4000)
     constraints: list[str] = Field(default_factory=list, max_length=12)
-    deliverables: list[str] = Field(min_length=1, max_length=8)
+    deliverables: list[str] = Field(min_length=1, max_length=10)
     source_ids: list[UUID] = Field(default_factory=list, max_length=5)
     output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
 
@@ -94,7 +99,8 @@ class TaskBriefPreviewRequest(TaskBriefProposeRequest, TaskBriefMemorySelection)
 
 def canonical_brief_digest(brief: TaskBrief, pins: list[dict], project: dict, *,
                            owner_id: str, conversation_id: str, message_id: str, sequence: int,
-                           memory_pins: list[dict] | None = None) -> str:
+                           memory_pins: list[dict] | None = None,
+                           max_bytes: int | None = None) -> str:
     bounded_pins = [{"resource_type": p["resource_type"], "resource_id": p["resource_id"],
                      "sha256": p["sha256"], "document_id": p.get("document_id"),
                      "version": p.get("version")} for p in pins]
@@ -103,5 +109,8 @@ def canonical_brief_digest(brief: TaskBrief, pins: list[dict], project: dict, *,
             "message": message_id, "sequence": sequence}
     if memory_pins:
         data.update(schema_version=MEMORY_BOUND_BRIEF_VERSION, memory_pins=memory_pins)
-    return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False,
-                                      separators=(",", ":")).encode("utf-8")).hexdigest()
+    encoded = json.dumps(data, sort_keys=True, ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    if max_bytes is not None and len(encoded) > max_bytes:
+        raise TaskBriefSnapshotTooLarge
+    return hashlib.sha256(encoded).hexdigest()
