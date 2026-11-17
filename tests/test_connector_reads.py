@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 from dataclasses import replace
 from datetime import timedelta
@@ -48,7 +49,13 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import (
+    Account, AgentRun, Automation, AutomationOccurrence, Connection,
+    ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot,
+    ConnectorSubscription, Document, DocumentVersion, ExternalAction,
+    Notification, NotificationOutbox, PersonalGoal, Project,
+    ProjectResource, Workspace, utcnow,
+)
 
 
 class ReadGoogle:
@@ -1148,6 +1155,41 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
     asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
 
+    # Day 7 briefings now require a real owner-scoped project/document and
+    # explicit expiry. Keep the connected-read context test on that authorized
+    # path instead of weakening production briefing admission checks.
+    project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
+    document_body = b"Private project briefing scope for connected-read tests."
+    object_key = f"inputs/{document_id}/v1"
+    container.storage.put(object_key, document_body, "text/plain")
+    with container.repository.sessions.begin() as db:
+        workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
+        assert workspace_id is not None
+        now = utcnow()
+        db.add(Project(
+            id=project_id, owner_id=owner,
+            idempotency_key="connected-briefing-project-" + project_id,
+            fingerprint="a" * 64, name="Private connected briefing",
+            description="", revision=1, deleted=False,
+            created_at=now, updated_at=now,
+        ))
+        db.add(Document(
+            id=document_id, owner_id=owner, workspace_id=workspace_id,
+            filename="connected-briefing.txt",
+        ))
+        db.flush()
+        db.add(ProjectResource(
+            project_id=project_id, owner_id=owner,
+            resource_type="document", resource_id=document_id,
+        ))
+        db.add(DocumentVersion(
+            id=version_id, document_id=document_id, owner_id=owner, version=1,
+            kind="txt", byte_size=len(document_body),
+            sha256=hashlib.sha256(document_body).hexdigest(),
+            object_key=object_key, state="uploaded",
+            expires_at=now + timedelta(days=7),
+        ))
+
     goal, created = container.goals.create(
         owner,
         GoalCreate(
@@ -1155,6 +1197,8 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             success_criteria=["Create one concise private briefing."],
             constraints=["Do not send, publish, or mutate anything externally."],
             timezone="UTC",
+            project_id=project_id,
+            authorized_resources=[{"kind": "document", "reference": document_id}],
             state="active",
             budget={"max_runs": 10, "max_planner_tokens": 50000},
         ),
@@ -1174,11 +1218,14 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             overlap_policy="skip",
             catchup_window_seconds=3600,
             quiet_hours=None,
-            expires_at=None,
+            expires_at=utcnow() + timedelta(days=3),
         ),
         "briefing-connected-automation-" + str(uuid4()),
     )
     assert created is True
+    assert goal["project_id"] == project_id
+    assert goal["authorized_resources"] == [{"kind": "document", "reference": document_id}]
+    assert automation["expires_at"] is not None
 
     result = container.automations.accept_occurrence(
         automation["id"], automation["revision"], utcnow().replace(microsecond=0)
