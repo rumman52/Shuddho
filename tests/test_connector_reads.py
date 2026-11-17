@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from hashlib import sha256
 from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
@@ -1153,6 +1154,9 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     # project document and a finite expiry. Connected read permission alone
     # is not sufficient to schedule a project briefing.
     project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
+    document_body = b"Approved private project context."
+    document_key = f"{owner}/inputs/connected-briefing-fixture.txt"
+    container.storage.put(document_key, document_body, "text/plain")
     with container.repository.sessions.begin() as db:
         workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner))
         assert workspace is not None
@@ -1173,8 +1177,9 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         ))
         db.add(DocumentVersion(
             id=version_id, document_id=document_id, owner_id=owner,
-            version=1, kind="txt", byte_size=12, sha256="a" * 64,
-            object_key="inputs/connected-briefing-fixture-v1", state="uploaded",
+            version=1, kind="txt", byte_size=len(document_body),
+            sha256=sha256(document_body).hexdigest(), object_key=document_key,
+            state="uploaded",
             expires_at=now + timedelta(days=7),
         ))
 
@@ -1220,7 +1225,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         run = db.get(AgentRun, result["run_id"])
         assert run is not None
         assert run.connector_read_grant_ids == [grant["id"]]
-        assert run.document_ids == [document_id]
+        assert run.input_versions == [version_id]
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.action_ids == []
     context = container.context.for_run(owner, result["run_id"])
