@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 from dataclasses import replace
 from datetime import timedelta
@@ -48,7 +49,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Document, DocumentVersion, ExternalAction, Notification, NotificationOutbox, PersonalGoal, Project, ProjectResource, Workspace, utcnow
 
 
 class ReadGoogle:
@@ -1148,6 +1149,38 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
     asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
 
+    # Day 7 requires explicit project/document scope for *all* recurring
+    # briefings, including those with a selected connected-read grant. Seed
+    # the owned document with real locally verifiable bytes; don't weaken the
+    # production scope/expiry contract to keep this earlier regression green.
+    project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
+    body = b"Private project note: milestone review on Friday."
+    object_key = f"inputs/connected-briefing-{version_id}"
+    container.storage.put(object_key, body, "text/plain")
+    with container.repository.sessions.begin() as db:
+        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner))
+        now = utcnow()
+        db.add(Project(
+            id=project_id, owner_id=owner, idempotency_key=f"connected-{project_id}",
+            fingerprint="f" * 64, name="Selected briefing project",
+            description="", revision=1, deleted=False,
+            created_at=now, updated_at=now,
+        ))
+        db.add(Document(
+            id=document_id, owner_id=owner, workspace_id=workspace.id,
+            filename="briefing-project.txt",
+        ))
+        db.flush()
+        db.add(ProjectResource(
+            project_id=project_id, owner_id=owner,
+            resource_type="document", resource_id=document_id,
+        ))
+        db.add(DocumentVersion(
+            id=version_id, document_id=document_id, owner_id=owner,
+            version=1, kind="txt", byte_size=len(body),
+            sha256=hashlib.sha256(body).hexdigest(), object_key=object_key,
+            state="uploaded", expires_at=now + timedelta(days=7),
+        ))
     goal, created = container.goals.create(
         owner,
         GoalCreate(
@@ -1155,6 +1188,8 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             success_criteria=["Create one concise private briefing."],
             constraints=["Do not send, publish, or mutate anything externally."],
             timezone="UTC",
+            project_id=project_id,
+            authorized_resources=[{"kind": "document", "reference": document_id}],
             state="active",
             budget={"max_runs": 10, "max_planner_tokens": 50000},
         ),
@@ -1174,7 +1209,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             overlap_policy="skip",
             catchup_window_seconds=3600,
             quiet_hours=None,
-            expires_at=None,
+            expires_at=utcnow() + timedelta(days=3),
         ),
         "briefing-connected-automation-" + str(uuid4()),
     )
@@ -1188,6 +1223,8 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         run = db.get(AgentRun, result["run_id"])
         assert run is not None
         assert run.connector_read_grant_ids == [grant["id"]]
+        assert run.document_ids == [document_id]
+        assert run.input_versions == [version_id]
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.action_ids == []
     context = container.context.for_run(owner, result["run_id"])
