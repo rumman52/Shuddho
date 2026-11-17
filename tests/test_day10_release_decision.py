@@ -44,11 +44,20 @@ def evidence():
              "run_id": "day9-first", "scores": {"accepted": 28, "total": 40}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
-               "generation_identity_verified": True, "reviewers": ["human-D1", "human-D2"],
+               "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
+               "reviewers": ["human-D1", "human-D2"],
                "custody_receipt": {**proof(), "independent_d_controls_access": True,
                                    "developer_negative_read_denied": True},
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
                           "accepted": True, "reviewer_scores": [7, 8],
+                          "reviewer_rubrics": [
+                              {"reviewer_id": "human-D1", "scores": {
+                                  "factual_source_fidelity": 2, "constraint_compliance": 2,
+                                  "completeness_usefulness": 2, "language_quality": 1}},
+                              {"reviewer_id": "human-D2", "scores": {
+                                  "factual_source_fidelity": 2, "constraint_compliance": 2,
+                                  "completeness_usefulness": 2, "language_quality": 2}},
+                          ],
                           "security_passed": True}
                          for w, l in cells for i in range(10)]}
     recovery = {**proof(), "scenarios": [dict(
@@ -153,6 +162,25 @@ def test_bad_identity_or_missing_gate_blocks(monkeypatch, mutation, blocked):
     assert result["decision"] == ("STAGING_ONLY" if blocked == "separate_founder_and_C_pilot_authorization" else "SOURCE_ONLY")
     assert blocked in result["blockers"]
 
+
+
+
+def test_holdout_requires_independent_generation_identity_receipt_digest(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["holdout"].pop("generation_identity_receipt_sha256")
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+def test_rejected_case_can_preserve_zero_reviewer_total_but_accepted_case_cannot(monkeypatch):
+    rollout, artifacts = evidence()
+    row = artifacts["holdout"]["cases"][0]
+    row["accepted"] = False
+    row["reviewer_scores"] = [0, 8]
+    row["reviewer_rubrics"][0]["scores"] = {dimension: 0 for dimension in day10.RUBRIC}
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    row["accepted"] = True
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "SOURCE_ONLY"
 
 def test_cell_specific_threshold_is_not_only_global(monkeypatch):
     rollout, artifacts = evidence()
