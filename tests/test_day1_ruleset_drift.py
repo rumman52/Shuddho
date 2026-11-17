@@ -162,3 +162,26 @@ def test_reviewed_policy_rejects_untrusted_or_duplicate_additional_checks(bad_ch
     updated_policy["rules"][-1]["parameters"]["required_status_checks"].append(bad_check)
     with pytest.raises(EvidenceError, match="reviewed policy"):
         analyze(branch(), live(), updated_policy, expected_main_sha=SHA)
+
+@pytest.mark.parametrize("bad_branch_json", [
+    # A normal decoder would silently pick the last value, obscuring input
+    # that may have been tampered with or captured ambiguously.
+    '{"name":"wrong","name":"main","protected":true}',
+    '{"name":"main","protected":true,"commit":{"sha":"wrong","sha":"' + SHA + '"}}',
+    '{"name":"main","protected":true,"quality":NaN,"commit":{"sha":"' + SHA + '"}}',
+])
+def test_cli_rejects_duplicate_json_keys_and_nonfinite_values(
+    tmp_path, capsys, bad_branch_json
+):
+    (tmp_path / "branch.json").write_text(bad_branch_json)
+    (tmp_path / "ruleset.json").write_text(json.dumps(live()))
+    (tmp_path / "policy.json").write_text(json.dumps(policy()))
+    code = main([
+        "--branch-json", str(tmp_path / "branch.json"),
+        "--ruleset-json", str(tmp_path / "ruleset.json"),
+        "--policy-json", str(tmp_path / "policy.json"),
+        "--expected-main-sha", SHA,
+    ])
+    assert code == 2
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "blocked_input"
