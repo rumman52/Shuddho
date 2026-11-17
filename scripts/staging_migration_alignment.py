@@ -6,7 +6,9 @@ the latest API and worker revision.
 """
 from __future__ import annotations
 
+import argparse
 import ast
+import json
 from pathlib import Path
 import re
 
@@ -157,3 +159,29 @@ def source_schema_alignment(observed_revision: object, versions: Path = VERSIONS
         "source_is_current": current, "pending_migrations": pending,
         "release_qualified": False,
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Offline operator preflight: supplied revision is not live DB attestation."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--observed-revision", required=True,
+                        help="Exact migration revision independently observed on staging")
+    args = parser.parse_args(argv)
+    try:
+        alignment = source_schema_alignment(args.observed_revision)
+    except MigrationAlignmentError:
+        print(json.dumps({
+            "status": "migration_graph_unverified",
+            "source_revision": args.observed_revision,
+            "source_is_current": False,
+            "release_qualified": False,
+            "observation_authenticity_verified": False,
+        }, sort_keys=True))
+        return 2
+    alignment["observation_authenticity_verified"] = False
+    print(json.dumps(alignment, sort_keys=True))
+    return 0 if alignment["source_is_current"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
