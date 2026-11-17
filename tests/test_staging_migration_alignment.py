@@ -66,7 +66,7 @@ def test_branch_aware_alignment_remains_read_only_and_never_qualifies_release(
 
 
 @pytest.mark.parametrize(("file", "contents", "reason"), [
-    ("0071.py", "revision='0070'\ndown_revision='0070'\n", "Duplicate migration revision"),
+    ("0071.py", "revision='0070'\ndown_revision=None\n", "Duplicate migration revision"),
     ("0071.py", "revision='0071'\ndown_revision='missing'\n", "absent parent"),
     ("0071.py", "revision='0071'\ndown_revision=('0070','0070')\n", "duplicate or invalid parents"),
     ("0072_merge_0071_heads.py", "revision='0072_merge_0071_heads'\ndown_revision=None\n", "exactly one head"),
