@@ -27,7 +27,7 @@ import re
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-REQUIRED_JOBS = frozenset({'test-and-build', 'ci-merge-gate'})
+REQUIRED_JOBS = frozenset({'test-and-build', 'coworker', 'ci-merge-gate'})
 REPO_PATTERN = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
 BRANCH = 'main'
 GITHUB_ACTIONS_APP_ID = 15368  # GitHub Actions first-party app; pinned CI status source
