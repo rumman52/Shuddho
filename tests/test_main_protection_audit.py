@@ -18,7 +18,7 @@ import pytest
 from scripts.main_protection_audit import GovernanceAuditError, audit_governance, inspect_repository
 
 
-CHECKS = {"test-and-build", "ci-merge-gate"}
+CHECKS = {"test-and-build", "coworker", "ci-merge-gate"}
 
 
 def protected_branch() -> dict:
