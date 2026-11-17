@@ -1,10 +1,11 @@
 """Day 1: distinguish staging backup integrity from current Alembic identity."""
+import json
 from pathlib import Path
 
 import pytest
 
 from scripts.staging_migration_alignment import (
-    MigrationAlignmentError, migration_graph, source_schema_alignment,
+    MigrationAlignmentError, main, migration_graph, source_schema_alignment,
 )
 
 
@@ -111,3 +112,20 @@ def test_missing_directory_and_symlink_migrations_fail_closed(tmp_path):
     (versions / "link.py").symlink_to(versions / "0070.py")
     with pytest.raises(MigrationAlignmentError, match="regular file"):
         migration_graph(versions)
+
+
+def test_read_only_cli_reports_stale_migration_as_failure_without_claiming_access(capsys):
+    assert main(["--observed-revision", "0070"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "migration_required"
+    assert report["code_head"] == "0072_merge_0071_heads"
+    assert report["observation_authenticity_verified"] is False
+    assert report["release_qualified"] is False
+
+
+def test_read_only_cli_current_revision_does_not_imply_release_approval(capsys):
+    assert main(["--observed-revision", "0072_merge_0071_heads"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["source_is_current"] is True
+    assert report["observation_authenticity_verified"] is False
+    assert report["release_qualified"] is False
