@@ -16,7 +16,11 @@ import re
 REPOSITORY = "rumman52/Shuddho"
 RULESET_ID = 27324410
 ACTIONS_INTEGRATION_ID = 15368
-CHECKS = ("test-and-build", "ci-merge-gate")
+# The minimum source policy is preserved while the complete checked-in
+# first-party set is compared dynamically. In particular, a future Coworker
+# check must never disappear merely because this diagnostic was written
+# before the required-check template was strengthened.
+MINIMUM_CHECKS = frozenset(("test-and-build", "ci-merge-gate"))
 POLICY_PATH = Path(__file__).resolve().parents[1] / "infra" / "github" / "main-ruleset.json"
 MAX_READ_BYTES = 512_000
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
@@ -84,14 +88,31 @@ def validate_reviewed_policy(policy: object) -> dict:
     status = _parameters(p, "required_status_checks")
     if status.get("strict_required_status_checks_policy") is not True or status.get("do_not_enforce_on_create") is not False:
         raise EvidenceError("reviewed policy requires strict checks on created branches")
-    if any(
-        len(rows := _checks(status, context)) != 1
-        or not _typed_int(rows[0].get("integration_id"))
-        or rows[0]["integration_id"] != ACTIONS_INTEGRATION_ID
-        for context in CHECKS
-    ):
-        raise EvidenceError("reviewed policy must pin both first-party GitHub Actions checks")
+    _reviewed_check_contexts(status)
     return p
+
+
+def _reviewed_check_contexts(status: dict) -> tuple[str, ...]:
+    """Require every reviewed status context, not just a hardcoded subset."""
+    checks = status.get("required_status_checks")
+    if not isinstance(checks, list) or not checks:
+        raise EvidenceError("reviewed policy requires first-party status checks")
+    contexts: list[str] = []
+    for check in checks:
+        if (
+            not isinstance(check, dict)
+            or not isinstance(check.get("context"), str)
+            or not check["context"].strip()
+            or type(check.get("integration_id")) is not int
+            or check["integration_id"] != ACTIONS_INTEGRATION_ID
+        ):
+            raise EvidenceError("reviewed policy contains malformed or untrusted status check")
+        contexts.append(check["context"])
+    if len(set(contexts)) != len(contexts):
+        raise EvidenceError("reviewed policy contains duplicate status checks")
+    if not MINIMUM_CHECKS.issubset(contexts):
+        raise EvidenceError("reviewed policy is missing mandatory first-party checks")
+    return tuple(contexts)
 
 
 def analyze(branch: object, live_ruleset: object, policy: object, *, expected_main_sha: str, expected_ruleset_id: int = RULESET_ID) -> dict:
@@ -140,7 +161,9 @@ def analyze(branch: object, live_ruleset: object, policy: object, *, expected_ma
     check_params = _parameters(r, "required_status_checks")
     require(check_params.get("strict_required_status_checks_policy") is True, "checks.strict_current_head")
     require(check_params.get("do_not_enforce_on_create") is False, "checks.enforce_on_create")
-    for context in CHECKS:
+    # Track every check pinned by the current reviewed template, including
+    # later additions such as Coworker (PR #754).
+    for context in _reviewed_check_contexts(_parameters(reviewed, "required_status_checks")):
         rows = _checks(check_params, context)
         require(
             len(rows) == 1 and type(rows[0].get("integration_id")) is int
