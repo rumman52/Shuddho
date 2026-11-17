@@ -424,6 +424,8 @@ class ModelAttempt(Base):
     state: Mapped[str] = mapped_column(String(30), default="reserved")
     model: Mapped[str] = mapped_column(String(120))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -1833,6 +1835,10 @@ class AgentRun(Base):
     planner_mode: Mapped[str] = mapped_column(String(30), default="deterministic")
     runtime_version: Mapped[int] = mapped_column(Integer, default=0, index=True)
     planner_actual_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    # Provider-reported direction counts stay NULL until every planner attempt
+    # in the run has a measured prompt/completion pair.
+    planner_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    planner_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     planner_cost_microusd: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
