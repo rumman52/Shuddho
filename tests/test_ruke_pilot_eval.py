@@ -17,7 +17,7 @@ from scripts.ruke_pilot_eval import (
     day10_holdout_receipt, generation_identity_ok, immutable_write, main,
     position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews, source_checks_ok,
     validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
-    validate_manifest, verify_operations,
+    validate_manifest, verify_operations, read_jsonl, strict_json_loads,
 )
 
 
@@ -893,3 +893,32 @@ def test_fixture_is_not_a_production_operated_result():
     # operator-submitted and never independently verified.
     faults = verify_operations(operations(), "a" * 40)
     assert faults["evidence_level"].startswith("operator_submitted")
+
+
+@pytest.mark.parametrize("payload", [
+    '{"security_passed": true, "security_passed": false}',
+    '{"nested": {"status": "failed", "status": "passed"}}',
+    '{"security_passed": NaN}',
+    '{"security_passed": Infinity}',
+    '{"security_passed": -Infinity}',
+    '{"usage": 1e999}',
+])
+def test_pilot_evidence_json_rejects_duplicate_keys_and_nonfinite_numbers(payload):
+    with pytest.raises(EvidenceError):
+        strict_json_loads(payload)
+
+
+def test_pilot_jsonl_rejects_ambiguous_rows(tmp_path):
+    path = tmp_path / "ambiguous-evidence.jsonl"
+    path.write_text(
+        '{"case_id": "example", "security_passed": false, "security_passed": true}' + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(EvidenceError):
+        read_jsonl(path)
+
+
+def test_pilot_strict_json_retains_valid_bangla_and_boolean_data():
+    assert strict_json_loads('{"ভাষা": "বাংলা", "security_passed": true}') == {
+        "ভাষা": "বাংলা", "security_passed": True,
+    }
