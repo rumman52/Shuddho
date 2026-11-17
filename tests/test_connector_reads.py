@@ -48,7 +48,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Document, DocumentVersion, ExternalAction, Notification, NotificationOutbox, PersonalGoal, Project, ProjectResource, Workspace, utcnow
 
 
 class ReadGoogle:
@@ -1133,11 +1133,12 @@ def test_meeting_coworker_prepares_one_exact_upcoming_calendar_snapshot(containe
 
 def test_scheduled_briefing_uses_only_selected_connected_read_context(container):
     enable_reads(container)
-    settings = replace(container.settings, work_services_enabled=True)
+    settings = replace(container.settings, work_services_enabled=True, projects_enabled=True)
     settings.validate()
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
+    container.goals.settings = settings
     container.automations.settings = settings
     container.notifications.settings = settings
     container.context.settings = settings
@@ -1148,6 +1149,35 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
     asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
 
+    # The Day 7 briefing contract requires a current, explicitly approved
+    # project document and a finite expiry. Connected read permission alone
+    # is not sufficient to schedule a project briefing.
+    project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
+    with container.repository.sessions.begin() as db:
+        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner))
+        assert workspace is not None
+        now = utcnow()
+        db.add(Project(
+            id=project_id, owner_id=owner, idempotency_key="briefing-connected-project",
+            fingerprint="f" * 64, name="Connected briefing test project", description="",
+            revision=1, deleted=False, created_at=now, updated_at=now,
+        ))
+        db.add(Document(
+            id=document_id, owner_id=owner, workspace_id=workspace.id,
+            filename="approved-briefing-source.txt",
+        ))
+        db.flush()
+        db.add(ProjectResource(
+            project_id=project_id, owner_id=owner,
+            resource_type="document", resource_id=document_id,
+        ))
+        db.add(DocumentVersion(
+            id=version_id, document_id=document_id, owner_id=owner,
+            version=1, kind="txt", byte_size=12, sha256="a" * 64,
+            object_key="inputs/connected-briefing-fixture-v1", state="uploaded",
+            expires_at=now + timedelta(days=7),
+        ))
+
     goal, created = container.goals.create(
         owner,
         GoalCreate(
@@ -1156,6 +1186,8 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             constraints=["Do not send, publish, or mutate anything externally."],
             timezone="UTC",
             state="active",
+            project_id=project_id,
+            authorized_resources=[{"kind": "document", "reference": document_id}],
             budget={"max_runs": 10, "max_planner_tokens": 50000},
         ),
         "briefing-connected-goal-" + str(uuid4()),
@@ -1174,7 +1206,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             overlap_policy="skip",
             catchup_window_seconds=3600,
             quiet_hours=None,
-            expires_at=None,
+            expires_at=utcnow() + timedelta(days=3),
         ),
         "briefing-connected-automation-" + str(uuid4()),
     )
@@ -1188,6 +1220,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         run = db.get(AgentRun, result["run_id"])
         assert run is not None
         assert run.connector_read_grant_ids == [grant["id"]]
+        assert run.document_ids == [document_id]
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.action_ids == []
     context = container.context.for_run(owner, result["run_id"])
