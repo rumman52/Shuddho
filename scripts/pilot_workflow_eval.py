@@ -19,6 +19,9 @@ from services.coworker.schemas import parse_draft, source_references
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / 'tests/fixtures/pilot_workflows'
 # Code-review anchor: changing this requires an explicit corpus-version review.
 FROZEN_HOLDOUT_SHA256 = '18b856397a33f2cc0c9cafac8b60ef04b39abee313c769c68b9d21b6273a3ac4'
+# Exact source baseline: modifying the whole suite or changing its manifest needs
+# an explicit reviewed corpus-version update, not a local manifest re-hash.
+FROZEN_SUITE_MANIFEST_SHA256 = '72e0c27e3698b4835e7975889b31da5a48b675229caf4db500b8ca0fa71e2a9a'
 MAX_FILE_BYTES = 2_000_000
 MATRIX = {(w, l): 10 for w in ('research_brief', 'project_report_email') for l in ('bn', 'en')}
 
@@ -116,6 +119,8 @@ def load_suite(root: Path = FIXTURE_ROOT) -> dict:
     holdout = _json(heldout_path)
     if holdout.get('access_isolation_established') is not False:
         raise ValueError('same-checkout manifest cannot establish access isolation')
+    if sha256_file(root / 'suite_manifest.json') != FROZEN_SUITE_MANIFEST_SHA256:
+        raise ValueError('suite manifest fingerprint mismatch; reviewed corpus update required')
     source_entries = manifest['sources']
     source_ids = [s['id'] for s in source_entries]
     if len(source_ids) != 20 or len(set(source_ids)) != 20:
@@ -313,6 +318,7 @@ def evaluate(suite: dict, submissions: list[dict], *, split: str = 'development'
     return {'schema_version': 1, 'split': split, 'mode': 'offline_outputs_only',
             'evidence_level': 'offline_evaluator_calibration' if calibrated else 'offline_submitted_output_validation',
             'suite_id': suite['manifest']['suite_id'], 'source_revision': suite['manifest']['source_revision'],
+            'suite_manifest_sha256': FROZEN_SUITE_MANIFEST_SHA256,
             'case_file_sha256': suite['manifest']['files'][split]['sha256'],
             'holdout_integrity_sha256': FROZEN_HOLDOUT_SHA256, 'submission_sha256': submission_digest,
             'generation_identity_verified': False, 'by_check': by_check, 'cases': len(cases), 'evaluated_cases': len(by_id),
@@ -348,6 +354,7 @@ def main(argv=None) -> int:
         suite = load_suite(args.fixtures)
         if args.validate_only:
             report = {'valid': True, 'cases': 80, 'development': 40, 'holdout': 40,
+                      'suite_manifest_sha256': FROZEN_SUITE_MANIFEST_SHA256,
                       'holdout_integrity_sha256': FROZEN_HOLDOUT_SHA256, 'holdout_access_isolation_established': False}
         else:
             if args.calibrate == bool(args.outputs):
