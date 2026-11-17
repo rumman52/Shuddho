@@ -64,6 +64,33 @@ def test_verification_receipt_requires_identical_row_inventory(tmp_path):
     assert destination.stat().st_mode & 0o777 == 0o700
 
 
+
+def test_broken_checked_in_migration_graph_never_converts_backup_into_release_evidence(tmp_path):
+    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 0, "sha256": "fixture"}}}
+
+    def dump(_url, path, _pg_bin):
+        path.write_bytes(b"PGDMP-synthetic")
+        return source
+
+    output = tmp_path / "verified-older-schema"
+    with patch.object(backup, "dump_source", side_effect=dump), \
+         patch.object(backup, "restore_inventory", return_value=source), \
+         patch.object(backup, "source_schema_alignment", side_effect=backup.MigrationAlignmentError("untrusted graph")):
+        receipt = backup.run_backup(SOURCE, output)
+
+    assert receipt["status"] == "verified"
+    assert receipt["source"] == source
+    assert receipt["schema_alignment"] == {
+        "status": "migration_graph_unverified",
+        "source_revision": "0070",
+        "code_head": None,
+        "source_is_current": False,
+        "pending_migrations": None,
+        "release_qualified": False,
+    }
+    assert (output / "coworker.dump").exists()
+    assert (output / "verification.json").exists()
+
 def test_postgres_subprocess_hides_connection_secrets_and_output(monkeypatch, tmp_path):
     monkeypatch.setenv("PGHOST", "unrelated.example")
     monkeypatch.setenv("PGPASSWORD", "unrelated-password")
