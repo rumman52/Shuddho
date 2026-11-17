@@ -196,7 +196,9 @@ def _fetch_json(url: str, token: str) -> object:
 
 
 def _live_evidence(repository: str, token: str) -> tuple[object, object]:
-    if not REPO_PATTERN.fullmatch(repository):
+    if not REPO_PATTERN.fullmatch(repository) or any(
+        component in {'.', '..'} for component in repository.split('/')
+    ):
         raise ValueError('invalid repository selector')
     if not token:
         raise ValueError('GITHUB_TOKEN unavailable')
@@ -208,7 +210,14 @@ def _live_evidence(repository: str, token: str) -> tuple[object, object]:
     except (HTTPError, URLError, OSError, ValueError):
         pass
     try:
-        listings = _fetch_json(f'{base}/rulesets?includes_parents=true', token)
+        listings = _fetch_json(f'{base}/rulesets?includes_parents=true&per_page=100', token)
+    except (HTTPError, URLError, OSError, ValueError):
+        listings = None
+    # GitHub paginates even when the API response is otherwise well formed.
+    # Never treat a possibly truncated page as a complete policy inventory.
+    if isinstance(listings, list) and len(listings) >= 100:
+        raise ValueError('ruleset inventory possibly truncated')
+    try:
         if isinstance(listings, list):
             rulesets = []
             for listing in listings:
