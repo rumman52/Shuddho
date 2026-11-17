@@ -19,6 +19,7 @@ from .config import Settings
 from .conversation_context import require_admitted_conversation_run_sources
 from .errors import CoworkerError
 from .models import Account, ActionProposal, AgentCodeProposal, AgentCodeReview, AgentCheckpoint, AgentDecision, AgentEvent, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, BrowserCommand, BrowserSession, Connection, ConnectorReadGrant, ConnectorSnapshot, DailyUsage, Document, DocumentVersion, ExternalAction, ModelAttempt, PersonalGoal, SandboxExecution, SandboxSession, Step, Task, ToolInvocation, ToolReceipt, Workspace, utcnow
+from .project_scope import validate_project_document_scope
 from .repository import aware, iso, not_found
 from .reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 from .worker_claims import add_worker_claim, lock_running_worker
@@ -834,6 +835,17 @@ class AgentRepository:
                     raise CoworkerError("goal_revision_conflict", "This goal changed. Review the latest revision before starting more work.", 409)
                 if goal_row.state != "active":
                     raise CoworkerError("goal_not_active", "Only an active goal can start a new bounded run.", 409)
+                if goal_row.project_id and request.document_ids:
+                    approved_document_ids = validate_project_document_scope(
+                        db, owner, goal_row.project_id,
+                        list(goal_row.authorized_resources or []),
+                    )
+                    if not set(map(str, request.document_ids)).issubset(set(approved_document_ids)):
+                        raise CoworkerError(
+                            "goal_document_scope",
+                            "A project-bound goal can read only documents in its approved project scope.",
+                            409,
+                        )
                 if request.goal != goal_row.objective and not derived_goal:
                     raise CoworkerError("goal_revision_conflict", "The run objective no longer matches this goal revision.", 409)
                 max_runs = int((goal_row.budget if isinstance(goal_row.budget, dict) else {}).get("max_runs", 20))

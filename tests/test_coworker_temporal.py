@@ -1606,15 +1606,15 @@ def test_day7_real_temporal_schedule_triggers_once_and_pauses(automation_client,
     from services.coworker.automation_scheduler import AutomationScheduleReconciler, schedule_id
     from services.coworker.worker import AutomationActivities
     from services.coworker.workflow import AutomationOccurrenceWorkflow
-    from test_automations import _enable_briefings, automation_payload, goal_payload
+    from test_automations import _enable_briefings, briefing_automation_payload, create_project_document_goal
 
     client, headers = automation_client
     auth = headers()
     _enable_briefings(automation_container)
-    response = client.post("/api/v1/goals", headers=auth | {"Idempotency-Key": "day7-temporal-goal"}, json=goal_payload())
-    assert response.status_code == 201
-    body = automation_payload(response.json())
-    body["run_profile"] = "briefing"
+    goal, _project_id, _document_id, _version_id = create_project_document_goal(
+        client, auth, automation_container, key="day7-temporal-goal",
+    )
+    body = briefing_automation_payload(goal)
     body["quiet_hours"] = {"start": "22:00", "end": "07:00"}
     created = client.post("/api/v1/automations", headers=auth | {"Idempotency-Key": "day7-temporal-automation"}, json=body)
     assert created.status_code == 201
