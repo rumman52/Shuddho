@@ -186,6 +186,20 @@ def analyze(branch: object, live_ruleset: object, policy: object, *, expected_ma
     }
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    """Reject ambiguous JSON at every nested object level."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise EvidenceError("JSON input contains duplicate keys")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json_constant(_value: str) -> None:
+    raise EvidenceError("JSON input contains non-finite numeric constants")
+
+
 def _read_json(path: Path) -> tuple[dict, str]:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_READ_BYTES:
         raise EvidenceError("a JSON input is missing, symlinked, or exceeds the size ceiling")
@@ -193,7 +207,10 @@ def _read_json(path: Path) -> tuple[dict, str]:
     if len(raw) > MAX_READ_BYTES:
         raise EvidenceError("JSON input exceeds the size ceiling")
     try:
-        data = json.loads(raw)
+        data = json.loads(
+            raw, object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_nonfinite_json_constant,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise EvidenceError("invalid JSON input") from exc
     return _object(data, "JSON input"), hashlib.sha256(raw).hexdigest()
