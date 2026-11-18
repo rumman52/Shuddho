@@ -197,3 +197,66 @@ def test_first_access_report_is_immutable_and_contains_no_credentials(tmp_path):
     with pytest.raises(pilot.PilotVerificationFailure, match="already exists"):
         pilot.immutable_report(report, {"status": "failed"})
     assert json.loads(report.read_text(encoding="utf-8")) == payload
+
+
+def live_runtime(rollout, revision=REV, members=5):
+    capabilities = {key: False for key in pilot.RUNTIME_CAPABILITY_KEYS}
+    rollout.update(environment="production", capabilities=capabilities, action_providers=[])
+    return {
+        "schema_version": 2,
+        "source_revision": revision,
+        "environment": "production",
+        "capabilities": dict(capabilities),
+        "reviewed_skills": {},
+        "action_providers": [],
+        "cohort": {
+            "enforced": True,
+            "configured_members": members,
+            "max_users": rollout["cohort"]["max_users"],
+        },
+    }
+
+
+def test_live_runtime_matches_exact_source_flags_and_cohort():
+    rollout = {"cohort": {"max_users": 5}}
+    runtime = live_runtime(rollout)
+    client = Client([Response(200, runtime)])
+    pilot.verify_live_runtime(client, "synthetic-token", rollout, REV, 5)
+    assert client.headers == ["Bearer synthetic-token"]
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda runtime: runtime.update(source_revision="b" * 40),
+    lambda runtime: runtime.update(environment="staging"),
+    lambda runtime: runtime.update(schema_version=True),
+    lambda runtime: runtime["capabilities"].pop("coworker"),
+    lambda runtime: runtime["capabilities"].update(unknown_disabled=False),
+    lambda runtime: runtime["capabilities"].update(coworker=0),
+    lambda runtime: runtime["capabilities"].update(coworker=True),
+    lambda runtime: runtime.update(reviewed_skills=None),
+    lambda runtime: runtime.update(action_providers=["google"]),
+    lambda runtime: runtime["cohort"].update(enforced=False),
+    lambda runtime: runtime["cohort"].update(max_users=10),
+    lambda runtime: runtime["cohort"].update(configured_members=4),
+    lambda runtime: runtime["cohort"].update(configured_members=True),
+])
+def test_live_runtime_wrong_identity_or_flags_fails_closed(mutation):
+    rollout = {"cohort": {"max_users": 5}}
+    runtime = live_runtime(rollout)
+    mutation(runtime)
+    with pytest.raises(pilot.PilotVerificationFailure, match="Live API identity"):
+        pilot.verify_live_runtime(Client([Response(200, runtime)]), "synthetic", rollout, REV, 5)
+
+
+@pytest.mark.parametrize("response", [
+    Response(401),
+    Response(200, []),
+    Response(200, "not a runtime"),
+    Response(200, {"source_revision": REV}),
+])
+def test_live_runtime_unreadable_or_incomplete_fails_closed(response):
+    rollout = {"cohort": {"max_users": 5}}
+    live_runtime(rollout)
+    with pytest.raises(pilot.PilotVerificationFailure):
+        pilot.verify_live_runtime(Client([response]), "synthetic", rollout, REV, 5)
+
