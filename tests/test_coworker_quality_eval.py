@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -103,6 +104,10 @@ def test_research_forbidden_term_only_inside_source_quote_is_not_an_authored_cla
     case = deepcopy(next(c for c in loaded() if c["id"] == "research-en-exact-evidence"))
     quote = "An incorrect report had once stated 150 records."
     case["sources"][0]["text"] += " " + quote
+    # An intentionally amended fixture is a new source: update its provenance.
+    case["sources"][0]["sha256"] = hashlib.sha256(
+        case["sources"][0]["text"].encode("utf-8")
+    ).hexdigest()
     case["draft"]["findings"][0]["citations"].append(
         {"source_id": "web-1", "quote": quote}
     )
@@ -110,6 +115,15 @@ def test_research_forbidden_term_only_inside_source_quote_is_not_an_authored_cla
     assert result["checks"]["citation_validation"]
     assert result["checks"]["forbidden_claim_absence"]
     assert result["passed"]
+
+
+def test_quality_evaluator_rejects_research_with_stale_source_digest():
+    case = deepcopy(next(c for c in loaded() if c["id"] == "research-en-exact-evidence"))
+    case["sources"][0]["text"] += " Additional evidence not in the frozen fixture."
+    result = score(case, case["draft"])
+    assert result["checks"]["schema_valid"]
+    assert not result["checks"]["citation_validation"]
+    assert not result["passed"]
 
 
 def test_rejects_a_research_quote_not_present_in_the_source():
