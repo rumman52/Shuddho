@@ -23,6 +23,7 @@ from scripts.day10_release_decision import read_json
 from scripts.ruke_pilot_eval import sha256 as file_sha256, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_cohort_admission import (
+    CohortAdmissionFailure,
     assert_denied_unprovisioned,
     token_account_id,
 )
@@ -183,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         immutable_report(args.output, report)
         print(json.dumps(report, sort_keys=True, indent=2))
         return 0
-    except (PilotVerificationFailure, httpx.HTTPError, OSError, ValueError) as exc:
+    except (CohortAdmissionFailure, PilotVerificationFailure, httpx.HTTPError, OSError, ValueError) as exc:
         # Never include token values, subjects or response payloads.
         print(json.dumps({"status": "failed", "error": str(exc)}))
         return 1
