@@ -181,10 +181,6 @@ def test_orphan_scan_preserves_checkpoint_committed_during_inventory(container, 
             container.storage.get(orphan_key, 1024)
 
 
-def _crash_test_renderer(_draft, _sources, **_options):
-    return [("crash-boundary.txt", "text/plain", b"written before hard worker loss")]
-
-
 def _export_worker_blocked_after_put(settings, task_id, put_ready, release):
     """Child-process target: persist one blob, then wait to be SIGKILLed."""
     import asyncio
@@ -207,7 +203,8 @@ def _export_worker_blocked_after_put(settings, task_id, put_ready, release):
 
     value.storage = BlockingStore()
     try:
-        asyncio.run(DocumentRunner(value, renderer=_crash_test_renderer).phase(task_id, "export"))
+        # Use the production native renderer so the worker reaches the first PUT.
+        asyncio.run(DocumentRunner(value).phase(task_id, "export"))
     finally:
         value.repository.sessions.kw["bind"].dispose()
 
@@ -288,7 +285,9 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         process.join(10)
         assert not process.is_alive()
         assert process.exitcode == -signal.SIGKILL
-        assert container.storage.get(orphan_key, 1024) == b"written before hard worker loss"
+        orphan_body = container.storage.get(orphan_key, 16 * 1024 * 1024)
+        assert orphan_body
+        assert f"/{hashlib.sha256(orphan_body).hexdigest()}/" in orphan_key
 
         # Simulate the object becoming eligible for the existing age-bounded sweep.
         old_time = time.time() - 7200
