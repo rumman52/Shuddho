@@ -2485,10 +2485,19 @@ class AgentRepository:
             # before the deadline never authorizes a late *new* decision;
             # duplicate committed planner calls returned above stay replayable.
             self._assert_within_deadline(run)
-            # Inference may outlive the selected document or original message
-            # binding. Recheck the admission pins before retaining fresh model
-            # output; already-committed decisions above remain replayable.
+            # Inference may outlive the selected document, original message,
+            # or explicitly pinned memory version. Recheck before retaining a
+            # *new* model decision; already-committed decisions replay above.
             require_admitted_conversation_run_sources(db, run)
+            project_context = run.project_context or {}
+            if "memory_pins" in project_context:
+                # Import locally to preserve the existing repository dependency
+                # direction. Empty selections remain valid with memory disabled.
+                from .memory_repository import require_current_memory_pins
+                require_current_memory_pins(
+                    db, run.owner_id, run.workspace_id,
+                    project_context["memory_pins"], self.settings,
+                )
             sequence = db.scalar(select(func.count()).select_from(AgentDecision).where(
                 AgentDecision.run_id == run.id,
             )) + 1
