@@ -193,6 +193,24 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      # This is source-only and must not read the independent D-held corpus.
+      # Keep the Day 9 registry and exact-head preflight explicit in mandatory
+      # Coworker CI rather than relying on incidental full-suite collection.
+      - name: Verify Day 9 development registry and source preflight
+        run: |
+          uv run --extra coworker python -m scripts.ruke_pilot_eval validate-registry
+          uv run --extra coworker python -m scripts.ruke_pilot_eval preflight
+      - name: Verify Day 9 Runtime v3 qualification helpers without skips
+        run: |
+          uv run --extra coworker pytest tests/test_runtime_v3_qualification_helpers.py -q -rs --junitxml=/tmp/day9-runtime-v3-helpers.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day9-runtime-v3-helpers.xml --required-module tests.test_runtime_v3_qualification_helpers
+      - name: Keep Day 9 source qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day9-runtime-v3-source-helpers
+          path: /tmp/day9-runtime-v3-helpers.xml
+          if-no-files-found: warn
       - name: Verify Day 8 economics comparisons and telemetry without skips
         run: |
           uv run --extra coworker pytest tests/test_core_agent_observability.py -q -rs --junitxml=/tmp/day8-economics.xml
