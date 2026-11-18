@@ -181,7 +181,17 @@ def validate_evidence(draft: ResearchPackage, sources: list[dict]) -> None:
         for citation in finding.citations:
             source = by_id.get(citation.source_id)
             quote = " ".join(unicodedata.normalize("NFC", citation.quote).split())
-            if not source or quote not in " ".join(source["text"].split()):
+            if not source:
+                raise ValueError("A citation does not match the retrieved evidence")
+            # Research results carry an excerpt digest from retrieval. Recheck it
+            # immediately before accepting evidence so modified persisted text
+            # cannot satisfy a real quote with a stale provenance hash.
+            excerpt, digest = source.get("text"), source.get("sha256")
+            if (not isinstance(excerpt, str) or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                or hashlib.sha256(excerpt.encode("utf-8")).hexdigest() != digest):
+                raise ValueError("Research source content hash mismatch")
+            if quote not in " ".join(excerpt.split()):
                 raise ValueError("A citation does not match the retrieved evidence")
             if public_source_url(source["url"]) != source["url"]:
                 raise ValueError("Invalid source URL")
