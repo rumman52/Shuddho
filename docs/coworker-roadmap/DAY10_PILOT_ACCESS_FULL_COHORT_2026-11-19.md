@@ -144,7 +144,7 @@ uv run --extra coworker pytest -q tests/test_pilot_admission_verify.py \
 uv run --extra coworker python -m scripts.pilot_admission_verify --help
 ```
 
-These tests are synthetic **source-level** checks only. They do not create
+These tests are explicitly mandatory with **zero skips** in the existing Coworker CI job; a JUnit receipt is retained for each exact PR head. These tests are synthetic **source-level** checks only. They do not create
 pilot users, operate fault scenarios, call a model or close any day. A fresh
 exact-PR-head CI and independent review are still required; this document
 must not be cited as a live acceptance result.
