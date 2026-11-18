@@ -55,10 +55,15 @@ class DraftResult:
 
 
 class DraftFailure(CoworkerError):
-    def __init__(self, code, message, *, retryable=False, total_tokens=None):
+    def __init__(
+        self, code, message, *, retryable=False, total_tokens=None,
+        input_tokens=None, output_tokens=None,
+    ):
         super().__init__(code, message, 502)
         self.retryable = retryable
         self.total_tokens = total_tokens
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 class DraftModel(Protocol):
@@ -169,7 +174,13 @@ class DeepSeekDraftModel:
             if not source_references(draft).issubset(source_ids):
                 raise ValueError()
         except (ValueError, TypeError, KeyError, IndexError, AttributeError, ValidationError):
-            raise DraftFailure("invalid_draft", "The AI draft was incomplete or could not be verified. Please try again.", total_tokens=total_tokens) from None
+            raise DraftFailure(
+                "invalid_draft",
+                "The AI draft was incomplete or could not be verified. Please try again.",
+                total_tokens=total_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            ) from None
         return DraftResult(
             draft,
             total_tokens,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -61,6 +62,7 @@ class GoalCreate(GoalModel):
     constraints: list[str] = Field(default_factory=list, max_length=10)
     deadline_at: datetime | None = None
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
+    project_id: UUID | None = None
     state: Literal["draft", "active"] = "active"
     milestones: list[GoalMilestone] = Field(default_factory=list, max_length=20)
     budget: GoalBudget = Field(default_factory=GoalBudget)

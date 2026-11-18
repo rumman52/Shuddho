@@ -15,6 +15,14 @@ These are simulated pilot tasks about actual recorded repository evidence;
 they are not user/customer source documents or fresh operational observations.
 Historical test counts and capability states must remain explicitly historical.
 
+The full checked-in suite manifest is now pinned in the evaluator to SHA-256
+`72e0c27e3698b4835e7975889b31da5a48b675229caf4db500b8ca0fa71e2a9a`. The `--validate-only` receipt and development
+scoring receipts carry this digest. This prevents quietly rewriting both a
+development fixture and its own manifest hash without a reviewed code change.
+It does **not** establish independent holdout custody or quality acceptance;
+that remains blocked by issue #665. Any legitimate corpus revision must be
+reviewed, versioned and requalified against the original frozen source bytes.
+
 Each scenario contains three known expected facts, localized expected meanings,
 bounded lexical assertions, exact supporting quote, source hash and original
 line citation. Validation checks every quote and line against frozen bytes.

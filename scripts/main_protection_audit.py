@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-CHECKS = frozenset({"test-and-build", "ci-merge-gate"})
+CHECKS = frozenset({"test-and-build", "coworker", "ci-merge-gate"})
 
 
 class GovernanceAuditError(ValueError):
@@ -54,8 +54,18 @@ def _has_required_rules(rule: dict) -> bool:
     rules = rule.get("rules")
     if not isinstance(rules, list):
         return False
-    present = {entry.get("type") for entry in rules if isinstance(entry, dict)}
-    if not {"deletion", "non_fast_forward", "pull_request", "required_status_checks"}.issubset(present):
+    # Reject malformed or duplicate rules instead of allowing one strong
+    # version to mask a second weaker/ambiguous entry of the same type.
+    # The local native-policy auditor already applies this rule; keep both
+    # Day 1 governance checks consistent and fail closed.
+    types = []
+    for entry in rules:
+        if not isinstance(entry, dict) or not isinstance(entry.get("type"), str):
+            return False
+        types.append(entry["type"])
+    if len(set(types)) != len(types):
+        return False
+    if not {"deletion", "non_fast_forward", "pull_request", "required_status_checks"}.issubset(types):
         return False
 
     reviews = [

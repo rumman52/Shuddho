@@ -1,8 +1,10 @@
 """Release decision must reject unsigned, simulated and mismatched evidence."""
 from __future__ import annotations
 
+import subprocess
+import sys
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from scripts import day10_release_decision as day10
@@ -11,6 +13,9 @@ from scripts.ruke_pilot_eval import OPERATED
 REV = "a" * 40
 HASH = "b" * 64
 RELEASE = "rukh-pilot-001"
+STARTED = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+STOPPED = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+RESTORED = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
 NOW = datetime.now(timezone.utc).isoformat()
 
 
@@ -44,11 +49,20 @@ def evidence():
              "run_id": "day9-first", "scores": {"accepted": 28, "total": 40}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
-               "generation_identity_verified": True, "reviewers": ["human-D1", "human-D2"],
+               "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
+               "reviewers": ["human-D1", "human-D2"],
                "custody_receipt": {**proof(), "independent_d_controls_access": True,
                                    "developer_negative_read_denied": True},
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
                           "accepted": True, "reviewer_scores": [7, 8],
+                          "reviewer_rubrics": [
+                              {"reviewer_id": "human-D1", "scores": {
+                                  "factual_source_fidelity": 2, "constraint_compliance": 2,
+                                  "completeness_usefulness": 2, "language_quality": 1}},
+                              {"reviewer_id": "human-D2", "scores": {
+                                  "factual_source_fidelity": 2, "constraint_compliance": 2,
+                                  "completeness_usefulness": 2, "language_quality": 2}},
+                          ],
                           "security_passed": True}
                          for w, l in cells for i in range(10)]}
     recovery = {**proof(), "scenarios": [dict(
@@ -67,11 +81,56 @@ def evidence():
                  "staging": {}, "quality": {**proof(), "provider_model": "model-r"},
                  "model": {**proof(), "provider_model": "model-r"}, "approval": approval}
     artifacts.update({key: proof() for key in day10.PROOFS})
-    artifacts["rollback"].update(kill_switches_verified=["SHUDDHO_COWORKER_ENABLED=false",
-         "SHUDDHO_AGENT_RUNTIME_ENABLED=false"], worker_stop_observed=True, restoration_verified=True)
-    artifacts["cancellation"].update(cancelled_run_id="run-cancelled", late_side_effects=0)
-    artifacts["paused_schedule"].update(schedule_id="schedule-paused", executions_while_paused=0)
-    artifacts["owner_isolation"].update(owner_a_ref="synthetic-A", owner_b_ref="synthetic-B", cross_owner_denied=True)
+    artifacts["rollback"].update(
+        kill_switches_verified=list(day10.EXPECTED_ROLLBACK.values()),
+        capability_flags_after_rollback={**{key: False for key in day10.RUNTIME_CAPABILITY_KEYS}, "memory": True},
+        new_admissions_stopped=True,
+        api_reload_verified=True,
+        api_readback_evidence_ref="https://evidence.example.test/api-readback",
+        worker_reload_verified=True,
+        worker_readback_evidence_ref="https://evidence.example.test/worker-readback",
+        outstanding_work_fenced=True,
+        ledger_consistency_verified=True,
+        worker_stop_observed=True,
+        worker_stop_evidence_ref="https://evidence.example.test/worker-stop",
+        restoration_verified=True,
+        safe_state_procedure_ref="https://evidence.example.test/safe-state-procedure",
+        safe_state_source_revision="c" * 40,
+        safe_state_deployment_reference="render:known-safe-deployment",
+        safe_state_evidence_ref="https://evidence.example.test/safe-state",
+        restored_data_retrievable=True,
+        restored_data_probe_ref="https://evidence.example.test/restore-probe",
+        rollback_started_at=STARTED,
+        worker_stopped_at=STOPPED,
+        safe_state_restored_at=RESTORED,
+    )
+    artifacts["cancellation"].update(
+        cancelled_run_id="run-cancelled",
+        inference_active_at_cancel=True,
+        inference_started_at=STARTED,
+        cancelled_at=STOPPED,
+        terminal_state="cancelled",
+        late_result_observed=True,
+        late_result_observed_at=RESTORED,
+        terminal_state_after_late_result="cancelled",
+        late_side_effects=0,
+    )
+    artifacts["paused_schedule"].update(
+        schedule_id="schedule-paused",
+        paused_at=STARTED,
+        next_due_at=STOPPED,
+        observed_after_due_at=RESTORED,
+        executions_while_paused=0,
+        admitted_executions_while_paused=0,
+    )
+    artifacts["owner_isolation"].update(
+        owner_a_ref="synthetic-A",
+        owner_b_ref="synthetic-B",
+        synthetic_owners_verified=True,
+        cross_owner_denied=True,
+        both_directions_verified=True,
+        denied_resource_types=["documents", "memory", "artifacts", "activity"],
+    )
     return rollout, artifacts
 
 
@@ -153,6 +212,25 @@ def test_bad_identity_or_missing_gate_blocks(monkeypatch, mutation, blocked):
     assert result["decision"] == ("STAGING_ONLY" if blocked == "separate_founder_and_C_pilot_authorization" else "SOURCE_ONLY")
     assert blocked in result["blockers"]
 
+
+
+
+def test_holdout_requires_independent_generation_identity_receipt_digest(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["holdout"].pop("generation_identity_receipt_sha256")
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+def test_rejected_case_can_preserve_zero_reviewer_total_but_accepted_case_cannot(monkeypatch):
+    rollout, artifacts = evidence()
+    row = artifacts["holdout"]["cases"][0]
+    row["accepted"] = False
+    row["reviewer_scores"] = [0, 8]
+    row["reviewer_rubrics"][0]["scores"] = {dimension: 0 for dimension in day10.RUBRIC}
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    row["accepted"] = True
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "SOURCE_ONLY"
 
 def test_cell_specific_threshold_is_not_only_global(monkeypatch):
     rollout, artifacts = evidence()
@@ -267,3 +345,136 @@ def test_day10_security_failure_is_absolute_nogo_with_39_human_accepted(monkeypa
     assert result["decision"] == "SOURCE_ONLY"
     assert "independent_day9_holdout_36_of_40" in result["blockers"]
     assert result["pilot_activated"] is False
+
+
+@pytest.mark.parametrize("mutation", [
+    pytest.param(lambda a: a["rollback"].pop("new_admissions_stopped"), id="missing-admission-stop"),
+    pytest.param(lambda a: a["rollback"].update(new_admissions_stopped=False), id="admissions-still-open"),
+    pytest.param(lambda a: a["rollback"].pop("capability_flags_after_rollback"), id="missing-capability-readback"),
+    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(coworker=True), id="pilot-capability-still-enabled"),
+    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(conversations=True), id="required-off-capability-enabled"),
+    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(memory="true"), id="non-boolean-capability-readback"),
+    pytest.param(lambda a: a["rollback"]["capability_flags_after_rollback"].update(unreviewed=False), id="extra-capability"),
+    pytest.param(lambda a: a["rollback"].update(api_reload_verified=False), id="api-reload-unverified"),
+    pytest.param(lambda a: a["rollback"].pop("api_readback_evidence_ref"), id="api-readback-missing"),
+    pytest.param(lambda a: a["rollback"].update(worker_reload_verified=False), id="worker-reload-unverified"),
+    pytest.param(lambda a: a["rollback"].pop("worker_readback_evidence_ref"), id="worker-readback-missing"),
+    pytest.param(lambda a: a["rollback"].update(outstanding_work_fenced=False), id="work-not-fenced"),
+    pytest.param(lambda a: a["rollback"].update(ledger_consistency_verified=False), id="ledger-unverified"),
+    pytest.param(lambda a: a["rollback"].pop("worker_stop_evidence_ref"), id="worker-stop-receipt-missing"),
+    pytest.param(lambda a: a["rollback"]["kill_switches_verified"].remove(day10.EXPECTED_ROLLBACK["browser_push_kill_switch"]), id="browser-push-kill-switch-missing"),
+    pytest.param(lambda a: a["rollback"]["kill_switches_verified"].remove(day10.EXPECTED_ROLLBACK["personal_goals_kill_switch"]), id="personal-goals-kill-switch-missing"),
+    pytest.param(lambda a: a["rollback"].pop("safe_state_procedure_ref"), id="safe-state-procedure-missing"),
+    pytest.param(lambda a: a["rollback"].pop("safe_state_source_revision"), id="safe-state-revision-missing"),
+    pytest.param(lambda a: a["rollback"].update(safe_state_source_revision="not-a-sha"), id="safe-state-revision-invalid"),
+    pytest.param(lambda a: a["rollback"].pop("safe_state_deployment_reference"), id="safe-state-deployment-missing"),
+    pytest.param(lambda a: a["rollback"].update(restored_data_retrievable=False), id="restored-data-not-retrievable"),
+    pytest.param(lambda a: a["rollback"].pop("restored_data_probe_ref"), id="restore-probe-missing"),
+    pytest.param(lambda a: a["rollback"].update(worker_stopped_at="9999-01-01T00:00:00Z"), id="future-worker-stop"),
+    pytest.param(lambda a: a["rollback"].update(safe_state_restored_at="2026-11-16T00:00:00Z"), id="restore-before-worker-stop"),
+])
+def test_day10_rollback_requires_complete_operated_restore_receipt(monkeypatch, mutation):
+    rollout, artifacts = evidence()
+    mutation(artifacts)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "operated_rollback" in result["blockers"]
+
+
+@pytest.mark.parametrize("mutation", [
+    pytest.param(lambda a: a["cancellation"].pop("inference_active_at_cancel"), id="missing-inference-state"),
+    pytest.param(lambda a: a["cancellation"].update(inference_active_at_cancel=False), id="cancelled-outside-inference"),
+    pytest.param(lambda a: a["cancellation"].pop("inference_started_at"), id="missing-inference-start"),
+    pytest.param(lambda a: a["cancellation"].update(terminal_state="running"), id="not-terminal-cancelled"),
+    pytest.param(lambda a: a["cancellation"].pop("late_result_observed"), id="missing-late-result"),
+    pytest.param(lambda a: a["cancellation"].update(late_result_observed=False), id="late-result-not-observed"),
+    pytest.param(lambda a: a["cancellation"].update(terminal_state_after_late_result="running"), id="late-result-revived-run"),
+    pytest.param(lambda a: a["cancellation"].update(late_result_observed_at="2026-11-16T00:00:00Z"), id="late-result-before-cancel"),
+    pytest.param(lambda a: a["cancellation"].update(
+        inference_started_at="2026-11-16T00:00:00Z",
+        cancelled_at="2026-11-15T00:00:00Z"), id="cancel-before-inference"),
+])
+def test_day10_cancellation_requires_real_inference_and_terminal_receipt(monkeypatch, mutation):
+    rollout, artifacts = evidence()
+    mutation(artifacts)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "operated_cancellation" in result["blockers"]
+
+
+@pytest.mark.parametrize("mutation", [
+    pytest.param(lambda a: a["paused_schedule"].pop("next_due_at"), id="missing-next-due"),
+    pytest.param(lambda a: a["paused_schedule"].pop("observed_after_due_at"), id="missing-after-due-observation"),
+    pytest.param(lambda a: a["paused_schedule"].update(
+        paused_at="2026-11-16T00:00:00Z",
+        next_due_at="2026-11-15T00:00:00Z"), id="pause-after-next-due"),
+    pytest.param(lambda a: a["paused_schedule"].update(
+        next_due_at="2026-11-16T00:00:00Z",
+        observed_after_due_at="2026-11-15T23:59:00Z"), id="observation-before-next-due"),
+    pytest.param(lambda a: a["paused_schedule"].update(admitted_executions_while_paused=1), id="admitted-while-paused"),
+])
+def test_day10_paused_schedule_requires_observed_due_time_and_zero_admissions(monkeypatch, mutation):
+    rollout, artifacts = evidence()
+    mutation(artifacts)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "operated_paused_schedule" in result["blockers"]
+
+
+@pytest.mark.parametrize("mutation", [
+    pytest.param(lambda a: a["owner_isolation"].pop("synthetic_owners_verified"), id="synthetic-owners-unverified"),
+    pytest.param(lambda a: a["owner_isolation"].update(synthetic_owners_verified=False), id="real-owner-fixtures"),
+    pytest.param(lambda a: a["owner_isolation"].pop("both_directions_verified"), id="missing-reverse-direction"),
+    pytest.param(lambda a: a["owner_isolation"].update(both_directions_verified=False), id="one-way-only"),
+    pytest.param(lambda a: a["owner_isolation"].update(
+        denied_resource_types=["documents", "artifacts", "activity"]), id="memory-not-tested"),
+    pytest.param(lambda a: a["owner_isolation"].update(
+        denied_resource_types=["documents", "memory", "activity"]), id="artifacts-not-tested"),
+])
+def test_day10_owner_isolation_requires_all_resource_classes_and_both_directions(monkeypatch, mutation):
+    rollout, artifacts = evidence()
+    mutation(artifacts)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "operated_owner_isolation" in result["blockers"]
+
+
+def test_day10_release_decision_cli_help_runs_without_evidence_files():
+    result = subprocess.run(
+        [sys.executable, "scripts/day10_release_decision.py", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "usage:" in result.stdout.lower()
+    assert "--rollout" in result.stdout
+
+
+@pytest.mark.parametrize("payload", [
+    '{"status": "failed", "status": "passed"}',
+    '{"cancellation": {"security_passed": false, "security_passed": true}}',
+    '{"provider_usage": NaN}',
+    '{"provider_usage": Infinity}',
+    '{"provider_usage": 1e999}',
+])
+def test_day10_cli_evidence_input_rejects_ambiguous_or_nonfinite_json(tmp_path, payload):
+    path = tmp_path / "untrusted.json"
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(ValueError, match="Cannot read untrusted.json"):
+        day10.read_json(path)
+
+
+def test_day10_cli_evidence_input_rejects_links_and_oversized_files(tmp_path):
+    target = tmp_path / "safe.json"
+    target.write_text('{"release_id": "synthetic"}', encoding="utf-8")
+    assert day10.read_json(target) == {"release_id": "synthetic"}
+    link = tmp_path / "linked.json"
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="Cannot read linked.json"):
+        day10.read_json(link)
+
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b" " * 4_000_001)
+    with pytest.raises(ValueError, match="Cannot read oversized.json"):
+        day10.read_json(oversized)

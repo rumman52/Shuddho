@@ -424,6 +424,8 @@ class ModelAttempt(Base):
     state: Mapped[str] = mapped_column(String(30), default="reserved")
     model: Mapped[str] = mapped_column(String(120))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -778,6 +780,7 @@ class PersonalGoal(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey("cw_accounts.id"), index=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("cw_workspaces.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(128))
     fingerprint: Mapped[str] = mapped_column(String(64))
     objective: Mapped[str] = mapped_column(Text)
@@ -795,8 +798,14 @@ class PersonalGoal(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (
         UniqueConstraint("owner_id", "idempotency_key", name="uq_cw_personal_goals_owner_idempotency"),
+        ForeignKeyConstraint(
+            ["project_id", "owner_id"],
+            ["cw_projects.id", "cw_projects.owner_id"],
+            name="fk_cw_personal_goals_project_owner",
+        ),
         Index("cw_personal_goals_owner_created", "owner_id", "created_at"),
         Index("cw_personal_goals_workspace_state", "workspace_id", "state"),
+        Index("cw_personal_goals_owner_project_state", "owner_id", "project_id", "state"),
     )
 
 
@@ -1833,6 +1842,10 @@ class AgentRun(Base):
     planner_mode: Mapped[str] = mapped_column(String(30), default="deterministic")
     runtime_version: Mapped[int] = mapped_column(Integer, default=0, index=True)
     planner_actual_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    # Provider-reported direction counts stay NULL until every planner attempt
+    # in the run has a measured prompt/completion pair.
+    planner_input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    planner_output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     planner_cost_microusd: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

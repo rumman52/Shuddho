@@ -35,29 +35,54 @@ Manifest JSON fields:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "split": "holdout",
-  "candidate_revision": "<exact 40-character Git SHA>",
+  "release_id": "<frozen staging release ID>",
+  "run_id": "<unique immutable first-run ID>",
+  "candidate_revision": "<exact 40-character API/worker Git SHA>",
   "corpus_sha256": "<sha256 of independent tasks JSONL>",
   "source_set_sha256": "<sha256 of exactly comparable permitted sources>",
+  "rollout_manifest_sha256": "<sha256 of frozen staging rollout manifest>",
+  "answer_key_sha256": "<sha256 of frozen answers outside developer checkout>",
+  "rubric_sha256": "<sha256 of frozen scoring rubric outside developer checkout>",
   "candidate_product_version": "<actual product release version>",
   "candidate_model": "<exact model ID>",
   "prompt_version": "<frozen prompt identity>",
   "tool_version": "<frozen tool and permissions identity>",
   "run_started_at": "<UTC timestamp>",
-  "time_limit_seconds": 120
+  "time_limit_seconds": 120,
+  "candidate_identity": {
+    "api_source_revision": "<same exact candidate SHA>",
+    "worker_source_revision": "<same exact candidate SHA>",
+    "api_build_digest": "sha256:<64 lowercase hex>",
+    "worker_build_digest": "sha256:<64 lowercase hex>",
+    "alembic_revision": "<exact migration revision>",
+    "provider_id": "<provider ID>",
+    "model_id": "<same exact model ID>",
+    "prompt_registry_sha256": "<64 lowercase hex>",
+    "tool_registry_sha256": "<64 lowercase hex>",
+    "context_budget_bytes": 12288,
+    "runtime_capabilities": {"<exactly 43 keys from scripts.staging_release_freeze.RUNTIME_CAPABILITY_KEYS>": false},
+    "api_readback_sha256": "<canonical API readback digest>",
+    "worker_readback_sha256": "<canonical worker readback digest>",
+    "schema_readback_sha256": "<canonical schema readback digest>"
+  }
 }
 ```
 
+
+The block above is a **schema sketch**, not a usable manifest. The capability placeholder is shorthand only: a real manifest must contain all 43 keys exactly once with their exact runtime boolean values, including false values. Replace the illustrative context-budget integer with the authenticated runtime value. The CLI rejects placeholders, missing/extra flags, non-boolean flags and inconsistent readback digests. Schema-v1 manifests remain readable only through the explicit legacy-read helper and are rejected for new qualification runs.
+
+The `candidate_readbacks.api` and `candidate_readbacks.worker` objects each contain exactly `release_id`, `source_revision`, `build_digest`, `alembic_revision`, `provider_id`, `model_id`, `prompt_registry_sha256`, `tool_registry_sha256`, `context_budget_bytes`, `rollout_manifest_sha256`, `runtime_capabilities` and `readback_sha256`. The `schema` object contains exactly `release_id`, `source_revision`, `migration_revision`, `api_revision`, `worker_revision`, `rollout_manifest_sha256` and `readback_sha256`. Each readback digest is SHA-256 over canonical UTF-8 JSON with the `readback_sha256` field omitted. These are composite readback envelopes: source revision/capabilities come from the authenticated runtime manifest; build digests from the deployed image/build record; provider/model and context budget from live runtime configuration; prompt/tool hashes from the deployed registries; and the schema tuple from a live Alembic/database readback. Do not fill them from source defaults or a nearby deployment. C/D must independently authenticate each underlying source and preserve its access/observation receipt.
 Generate actual candidate outputs once with the frozen model, prompts, permissions, sources and per-task time/usage limits. Record output artifact SHA-256 plus deterministic/security check results **for all 40 IDs**; no missing task may disappear from the denominator. Store source links/claims and signed or human-controlled first-run evidence outside the development surface.
 
-Each independent reviewer D1/D2 scores **four** rubric dimensions `factual_source_fidelity`, `constraint_compliance`, `completeness_usefulness`, `language_quality`, each an integer 0, 1 or 2 (failed, minor correction, usable as delivered). A task is accepted only if sum ≥7, all four nonzero, source-supported and deterministic/security checks pass. Both reviewers must provide per-task source-supported booleans and evidence-based notes; disagreement requires a **separate adjudicator's** reconciled rubric and rationale. Fluency, verbosity and polished wording never cure unsupported claims.
+Each independent reviewer D1/D2 scores **four** rubric dimensions `factual_source_fidelity`, `constraint_compliance`, `completeness_usefulness`, `language_quality`, each an integer 0, 1 or 2 (failed, minor correction, usable as delivered). For an accepted task, **each original reviewer** must independently score at least 7/8 with no zero dimension; the final adjudicated rubric must also meet that floor, be source-supported and pass deterministic/security checks. Adjudication resolves disagreement but never erases or overwrites either original rating. Both reviewers must provide per-task source-supported booleans and evidence-based notes; disagreement requires a **separate adjudicator's** reconciled rubric and rationale. Fluency, verbosity and polished wording never cure unsupported claims.
 
 Required gate: **at least 36/40 accepted, and at least 9/10 in each cell.** Costs: calculate actual/estimated spend per accepted task only from recorded provider usage and independently approved pricing; missing usage is unavailable, not zero. Preserve source revision, output hashes, model and competitor versions, timestamps and time budgets.
 
 ## D — blinded competitor comparison
 
-Use at least one **actually available** competitor. Its run records must specify product, exact version, model, recorded UTC run time, same `source_set_sha256` and same `time_limit_seconds`. If access is unavailable, submit an explicit comparison gap; do not fill it with an imaginary model or present a winner.
+Use at least one **actually available** competitor. Its run records must specify product, exact version, model, recorded UTC run time, same `source_set_sha256` and same `time_limit_seconds`. If access is unavailable, submit an explicit comparison gap; do not fill it with an imaginary model or present a winner. A clearly recorded access gap is an acceptable Day 9 report outcome; it is not a competitor win/loss result and must not be presented as a superiority comparison.
 
 The D custodian must generate a **fresh 32-byte cryptographic blinding key**, keep it in a restricted (mode 0600/0400) file outside the repository, and never expose it to either reviewer. A public task ID or corpus hash is **not** a secret blinding seed. For example, from D's independently permissioned workspace:
 
@@ -116,25 +141,45 @@ The external `evidence.json` has these keys:
 - `reviews`: 80 rows, 2 fixed reviewer IDs; each row contains `case_id`, `reviewer_id`, `scores` (four rubric dimensions), `source_supported` (bool), `evidence_note`.
 - `adjudications`: one row for each disagreement, with `case_id`, third `adjudicator_id`, `scores`, `source_supported`, `evidence_note`.
 - `deterministic`: 40 rows with `case_id`, `passed`, `security_passed`, `output_sha256`. Hash each actual candidate output using UTF-8 JSON with sorted keys, compact separators and no NaN; a mismatch blocks evaluation.
-- `candidate-outputs.jsonl`: 40 rows with `case_id` and the full `output` draft JSON object; optional nonnegative integer `telemetry` with exactly `tokens`, `latency_ms`, `cost_microusd`. Incomplete telemetry yields unknown aggregate cost and cost-per-accepted-task, **not zero**.
-- `operations`: 20 rows with `row` (1..20), exact `scenario` from `OPERATED`, `candidate_revision`, `execution`, `status`, `unauthorized_access`, `unauthorized_mutation`, `observed_at`, `trace_sha256`, and `boundaries` keyed by required component. Each boundary contains `mode=real`, `instance`, `trace_sha256`.
-- `competitor`: identity fields and comparable limits described above (or omitted, with gap disclosed).
+- `candidate-outputs.jsonl`: 40 rows with `case_id`, `manifest_sha256`, `release_id`, `source_revision`, `rollout_manifest_sha256`, `source_set_sha256`, unique `run_id`, exact `provider_id`/`model_id`, `prompt_registry_sha256`, `tool_registry_sha256`, `context_budget_bytes`, `time_limit_seconds`, exact `source_refs` list and the full `output` draft JSON object; optional nonnegative integer `telemetry` with exactly `tokens`, `latency_ms`, `cost_microusd`. Incomplete telemetry yields unknown aggregate cost and cost-per-accepted-task, **not zero**.
+- `competitor-outputs.jsonl`: 40 same-task output rows, each carrying the same `manifest_sha256`; competitor metadata in `evidence.json` also carries the same `release_id` and `rollout_manifest_sha256`.
+- `operations`: 20 rows with `row` (1..20), exact `scenario` from `OPERATED`, `candidate_revision`, `release_id`, `rollout_manifest_sha256`, `manifest_sha256`, `execution`, `status`, `unauthorized_access`, `unauthorized_mutation`, `observed_at`, `verified_at`, `trace_sha256`, `evidence_ref=sha256:<trace_sha256>`, and `boundaries` keyed by required component. Each boundary contains `mode=real`, `instance`, `trace_sha256`. `verified_at` must be timezone-aware and not precede `observed_at`; `evidence_ref` must equal `sha256:<trace_sha256>` and be unique across all 20 scenarios. Boundary `instance` values must be non-sensitive staging labels, never raw user/account identifiers.
+- `manifest_sha256`: exact SHA-256 of the frozen manifest file.
+- `generation_identity_verified=true` plus `generation_identity_receipt_sha256`: independent D/C verification that the 40 unique run IDs, output hashes, source references, provider/model, prompt/tool registries, context budget and candidate deployment match the frozen candidate. A syntactically valid digest is not authentication; the independent reviewer must inspect the underlying provider/runtime receipts.
+- `required_repository_checks=passed` and `canonical_release_contract=passed` from the exact candidate SHA; the CLI refuses to read holdout bytes until both are present alongside custody and readback receipts.
+- `candidate_readbacks`: exact `api`, `worker` and `schema` readback objects. Each includes a canonical `readback_sha256` computed over that object with the digest field omitted; API/worker objects must agree with every identity field and all 43 boolean capability keys in the manifest. The CLI checks digest consistency, not source-system authenticity; C/D must independently authenticate the readbacks.
+- `competitor`: identity fields and comparable limits described above plus the same `manifest_sha256`, `release_id` and `rollout_manifest_sha256`; if access is unavailable, omit competitor/comparison rows and provide a nonempty `competitor_access_gap` explanation. A missing judgment file when a competitor was available is incomplete evidence, not an access gap.
 - `comparisons`: 160 blinded judgment records described above (or omitted, with gap disclosed).
 - `comparison_adjudications`: independent third-reviewer A/B decisions with source rationales for every unresolved comparative disagreement.
-- `custody`: external transfer receipt SHA, independent operator review=`verified`, developer negative read test=`denied`, replacement of exposed cases=`true`, custodian identity; these are **unverified operator statements to this CLI**, not cryptographic attestations.
-- `required_repository_checks` and `canonical_release_contract`: both `passed` only with independently inspected exact-head evidence; `unresolved_high_severity_failures` is a required array.
+- `custody`: three distinct pseudonymous IDs `custodian_id`, `developer_id`, `corpus_author_id`; independent operator review=`verified`; custodian positive-read test=`allowed`; developer negative-read test=`denied`; exposure-history review=`true`; replacement of exposed cases=`true`; timezone-aware `verified_at`; and SHA-256 digests for frozen inputs, frozen answers, rubric, exposure history, access log and custody receipt. These are **unverified operator statements to this CLI**, not cryptographic attestations.
+
+The CLI requires this complete receipt and the candidate readbacks before it reads any holdout bytes. The frozen-input, answer-key and rubric digests in the custody receipt must exactly match the corresponding manifest digests. Both `evaluate` and `prepare-blind` require the external custody/readback evidence JSON. C/D must independently authenticate the human identities, positive/negative access tests, source access logs and isolated storage; the CLI's digest checks are not proof of custody.
+- `required_repository_checks`: exact map containing `test-and-build`, `Frontend tests and builds`, `coworker`, `browser-qualification`, `PostgreSQL 18 staging compatibility`, `governance-audit` and `ci-merge-gate`, each `success`; `ci_source_revision` must equal the manifest candidate SHA and `ci_evidence_sha256` must identify the exact-head workflow evidence.
+- `canonical_release_contract=passed`, `release_contract_source_revision` equal to the same candidate SHA, and a valid `release_contract_evidence_sha256`; `unresolved_high_severity_failures` is a required array.
 
 ```bash
+# Create the reviewer-facing packet. The packet file contains no candidate identity.
+uv run --extra coworker python -m scripts.ruke_pilot_eval prepare-blind \
+  --manifest /secure/d/day9/manifest.json \
+  --heldout /secure/d/day9/tasks.jsonl \
+  --candidate /secure/d/day9/candidate-outputs.jsonl \
+  --competitor-outputs /secure/d/day9/competitor-outputs.jsonl \
+  --blinding-key /secure/d/day9/blind.key \
+  --evidence /secure/d/day9/custody-and-generation-evidence.json \
+  --report /secure/d/day9/blind-review-packet.json
+
+# Evaluate after the independent reviewers and all 20 operated receipts are complete.
 uv run --extra coworker python -m scripts.ruke_pilot_eval evaluate \
   --manifest /secure/d/day9/manifest.json \
   --heldout /secure/d/day9/tasks.jsonl \
   --candidate /secure/d/day9/candidate-outputs.jsonl \
-  --blinding-key /secure/d/day9/blind.key \
   --evidence /secure/d/day9/evidence.json \
-  --report /secure/d/day9/first-run-result.json
+  --report /secure/d/day9/first-run-result.json \
+  --holdout-report /secure/d/day9/day10-holdout.json \
+  --recovery-report /secure/d/day9/day10-recovery.json
 ```
 
-The report uses an exclusive create (`O_EXCL`), never clobbering a previous result. **A malformed or incomplete first run also writes a failure report** (when the supplied report path is valid) so failure evidence is not lost. Evaluation and blind-packet inputs and reports must be outside the repository; the run manifest's exact candidate revision must match the checkout HEAD. A later attempt uses a **different** filename and `--regression-rerun` to classify the evidence honestly. No script may change these labels to claim new independent measurements. Exit 0 means submitted **operator evidence** passes mechanical gates, *not* that release is authorized. Exit 1 means incomplete/failed gate, exit 2 malformed or missing evidence.
+The report uses an exclusive create (`O_EXCL`), never clobbering a previous result. It emits a Day 10 `day10_holdout` artifact (export with `--holdout-report`) carrying the independently verified generation identity, D custody receipt, two reviewers and all 40 security-scored outcomes; this is the exact input shape expected by `scripts/day10_release_decision.py`. It also emits a `day10_recovery` object with all 20 uniquely referenced, release-bound scenario receipts in the exact shape consumed by `scripts/day10_release_decision.py`. Pass `--recovery-report <external-path>` to write that object as a separate immutable artifact directly consumable as the Day 10 `recovery` input, and `--holdout-report <external-path>` to export the independent holdout/custody artifact directly consumable as the Day 10 `holdout` input. Its per-case run receipts preserve unique AgentRun IDs, output hashes, source references, provider/model identity, prompt/tool registry hashes, context budget, time budget and token/cost telemetry. Its first-run receipt also emits the exact Day 10 handoff fields `release_id`, `source_revision`, `rollout_manifest_sha256`, `run_id`, `run_kind=first_run` and per-case `scores` with both reviewers' 0–8 totals and a strict boolean security verdict. The blind reviewer packet contains only task IDs, randomized positions and response A/B. Do not place release IDs, source SHAs, manifest digests, run IDs or the candidate/competitor mapping in the reviewer-facing packet. The operator records the packet SHA-256 and its manifest binding separately in the private evidence log. **A malformed or incomplete first run also writes a failure report** (when the supplied report path is valid) so failure evidence is not lost. Evaluation and blind-packet inputs and reports must be outside the repository; the run manifest's exact candidate revision must match the checkout HEAD. A later attempt uses a **different** filename and `--regression-rerun` to classify the evidence honestly. No script may change these labels to claim new independent measurements. Exit 0 means submitted **operator evidence** passes mechanical gates, *not* that release is authorized. Exit 1 means incomplete/failed gate, exit 2 malformed or missing evidence.
 
 **Important:** No document written in this repository, no developer-authored test fixture, no self-declared D identity, and no SHA alone proves access isolation, two actual human reviewers or 20 genuinely operated scenarios. The script emits `custody_independently_verified_by_this_program=false` and `release_authorization=false` even when operator inputs are mechanically complete. Human review plus the canonical cohort release gate remain required.
 

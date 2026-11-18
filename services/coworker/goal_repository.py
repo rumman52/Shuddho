@@ -10,6 +10,7 @@ from .config import Settings
 from .errors import CoworkerError
 from .goal_schemas import GoalCreate, GoalPatch
 from .models import Account, AgentRun, AuditEvent, PersonalGoal, PersonalGoalRevision, Workspace, utcnow
+from .project_scope import validate_project_document_scope
 from .repository import iso, not_found
 
 
@@ -53,6 +54,7 @@ class GoalRepository:
             "constraints": list(row.constraints),
             "deadline_at": iso(row.deadline_at) if row.deadline_at else None,
             "timezone": row.timezone,
+            "project_id": row.project_id,
             "state": row.state,
             "milestones": list(row.milestones),
             "budget": dict(row.budget),
@@ -74,6 +76,7 @@ class GoalRepository:
             "constraints": list(row.constraints),
             "deadline_at": iso(row.deadline_at) if row.deadline_at else None,
             "timezone": row.timezone,
+            "project_id": row.project_id,
             "revision": row.revision,
             "state": row.state,
             "milestones": list(row.milestones),
@@ -88,6 +91,9 @@ class GoalRepository:
     def create(self, owner: str, request: GoalCreate, idempotency_key: str) -> tuple[dict, bool]:
         self._require_enabled()
         payload = request.model_dump(mode="json")
+        # Keep pre-project idempotency keys replayable for legacy clients.
+        if request.project_id is None:
+            payload.pop("project_id", None)
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.sessions.begin() as db:
             if db.scalar(select(Account.id).where(Account.id == owner).with_for_update()) is None:
@@ -100,15 +106,23 @@ class GoalRepository:
             count = db.scalar(select(func.count()).select_from(PersonalGoal).where(PersonalGoal.owner_id == owner))
             if count >= self.settings.max_personal_goals:
                 raise CoworkerError("goal_limit", "This workspace reached its persistent goal limit.", 429)
+            project_id = str(request.project_id) if request.project_id is not None else None
+            authorized_resources = [
+                item.model_dump(mode="json") for item in request.authorized_resources
+            ]
+            validate_project_document_scope(
+                db, owner, project_id, authorized_resources,
+            )
             now = utcnow()
             row = PersonalGoal(
                 id=str(uuid4()), owner_id=owner, workspace_id=self._workspace(db, owner),
+                project_id=project_id,
                 idempotency_key=idempotency_key, fingerprint=fingerprint, objective=request.objective,
                 success_criteria=list(request.success_criteria), constraints=list(request.constraints),
                 deadline_at=request.deadline_at, timezone=request.timezone, revision=1, state=request.state,
                 milestones=[item.model_dump(mode="json") for item in request.milestones],
                 budget=request.budget.model_dump(mode="json"),
-                authorized_resources=[item.model_dump(mode="json") for item in request.authorized_resources],
+                authorized_resources=authorized_resources,
                 next_review_at=request.next_review_at, created_at=now, updated_at=now,
             )
             db.add(row); db.flush()
@@ -155,6 +169,10 @@ class GoalRepository:
                 row.budget = request.budget.model_dump(mode="json") if request.budget else {}
             if "authorized_resources" in fields:
                 row.authorized_resources = [item.model_dump(mode="json") for item in (request.authorized_resources or [])]
+            if row.project_id and "authorized_resources" in fields:
+                validate_project_document_scope(
+                    db, owner, row.project_id, list(row.authorized_resources or []),
+                )
             row.revision += 1; row.updated_at = utcnow()
             self._record_revision(db, row)
             self._audit(db, owner, row.id, "personal_goal_updated")

@@ -208,16 +208,28 @@ class DocumentRunner:
                 ):
                     raise ValueError()
             except (ValueError, TypeError, AttributeError):
-                raise DraftFailure("invalid_draft", "The draft did not match the requested service or sources. Please try again.", total_tokens=result.total_tokens) from None
+                raise DraftFailure(
+                    "invalid_draft",
+                    "The draft did not match the requested service or sources. Please try again.",
+                    total_tokens=result.total_tokens,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                ) from None
         except DraftFailure as error:
-            await asyncio.to_thread(self.repo.settle_model, task["id"], attempt, error.total_tokens, None, "failed")
+            await asyncio.to_thread(
+                self.repo.settle_model, task["id"], attempt, error.total_tokens, None, "failed",
+                input_tokens=error.input_tokens, output_tokens=error.output_tokens,
+            )
             raise
         except BaseException:
             # Cancellation/worker loss has an unknown provider outcome. A lost
             # process leaves the same conservative reservation in the database.
             await asyncio.shield(asyncio.to_thread(self.repo.settle_model, task["id"], attempt, None, None, "unknown"))
             raise
-        await asyncio.to_thread(self.repo.settle_model, task["id"], attempt, result.total_tokens, result.latency_ms, "completed")
+        await asyncio.to_thread(
+            self.repo.settle_model, task["id"], attempt, result.total_tokens, result.latency_ms, "completed",
+            input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+        )
         manifest = [{key: value for key, value in source.items() if key != "text"} for source in sources]
         from .calculations import table_values
         preview = table_values(validated) if skill.id == "spreadsheet" else None

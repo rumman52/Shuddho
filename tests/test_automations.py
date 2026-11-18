@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect, select
+from sqlalchemy import delete, inspect, select
 
 pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
@@ -26,7 +26,7 @@ from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.errors import CoworkerError
 from services.coworker.migrate import upgrade
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, BrowserPushDelivery, BrowserPushSubscription, Document, DocumentVersion, Notification, NotificationOutbox, PersonalGoal, Workspace, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, AutomationScheduleOutbox, BrowserPushDelivery, BrowserPushSubscription, Document, DocumentVersion, Notification, NotificationOutbox, PersonalGoal, Project, ProjectResource, Workspace, utcnow
 from services.coworker.web_push import WebPushSender, WebPushSubscriptionVault, b64url_encode, endpoint_fingerprint
 
 ISSUER = "https://identity.example.test/auth/v1"
@@ -225,6 +225,51 @@ def automation_payload(goal):
         "output_language": "en", "overlap_policy": "skip", "catchup_window_seconds": 3600,
         "quiet_hours": None, "expires_at": None,
     }
+
+
+def briefing_automation_payload(goal):
+    payload = automation_payload(goal)
+    payload["run_profile"] = "briefing"
+    payload["expires_at"] = (utcnow() + timedelta(days=3)).isoformat()
+    return payload
+
+
+def create_project_document_goal(client, auth, container, *, key="day7-project-goal"):
+    """Create a real owner/project/document scope for controlled briefing tests."""
+    assert client.get("/api/v1/goals", headers=auth).status_code == 200
+    project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
+    with container.repository.sessions.begin() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner.id))
+        now = utcnow()
+        db.add(Project(
+            id=project_id, owner_id=owner.id, idempotency_key=f"{key}-project",
+            fingerprint="f" * 64, name="Day 7 pilot", description="",
+            revision=1, deleted=False, created_at=now, updated_at=now,
+        ))
+        db.add(Document(
+            id=document_id, owner_id=owner.id, workspace_id=workspace.id,
+            filename="project-briefing.txt",
+        ))
+        db.flush()
+        db.add(ProjectResource(
+            project_id=project_id, owner_id=owner.id,
+            resource_type="document", resource_id=document_id,
+        ))
+        db.add(DocumentVersion(
+            id=version_id, document_id=document_id, owner_id=owner.id, version=1,
+            kind="txt", byte_size=10, sha256="a" * 64,
+            object_key=f"inputs/{key}-v1", state="uploaded",
+            expires_at=now + timedelta(days=7),
+        ))
+    payload = goal_payload()
+    payload["project_id"] = project_id
+    payload["authorized_resources"] = [{"kind": "document", "reference": document_id}]
+    response = client.post(
+        "/api/v1/goals", headers=auth | {"Idempotency-Key": key}, json=payload,
+    )
+    assert response.status_code == 201, response.text
+    return response.json(), project_id, document_id, version_id
 
 
 def create_goal_and_automation(client, auth):
@@ -1175,6 +1220,19 @@ def test_catchup_window_and_expiry_skip_late_occurrences(automation_client, auto
     )
     assert expired["state"] == "skipped" and expired["reason"] == "expired"
 
+    # A due time inside the catch-up window is still unauthorized once the
+    # automation itself has expired. Expiry is evaluated against both due_at
+    # and admission time, not only against the historical due timestamp.
+    expired_at = utcnow().replace(microsecond=0) - timedelta(seconds=2)
+    with automation_container.repository.sessions.begin() as db:
+        db.get(Automation, automation["id"]).expires_at = expired_at
+    due_before_expiry = expired_at - timedelta(seconds=10)
+    expired_catchup = automation_container.automations.accept_occurrence(
+        automation["id"], 1, due_before_expiry
+    )
+    assert expired_catchup["state"] == "skipped"
+    assert expired_catchup["reason"] == "expired"
+
 
 def test_quiet_hours_delay_notification_visibility():
     from services.coworker.automation_repository import AutomationRepository
@@ -1298,6 +1356,91 @@ def _enable_briefings(container):
     return settings
 
 
+def test_project_goal_persists_owner_project_and_revision_scope(automation_client, automation_container):
+    client, headers = automation_client
+    auth = headers()
+    goal, project_id, document_id, _version_id = create_project_document_goal(
+        client, auth, automation_container, key="project-bound-goal",
+    )
+    assert goal["project_id"] == project_id
+    assert goal["authorized_resources"] == [{"kind": "document", "reference": document_id}]
+    revisions = client.get(f'/api/v1/goals/{goal["id"]}/revisions', headers=auth)
+    assert revisions.status_code == 200
+    assert revisions.json()["revisions"][0]["snapshot"]["project_id"] == project_id
+
+
+def test_project_goal_rejects_documents_not_linked_to_the_selected_project(
+    automation_client, automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    assert client.get("/api/v1/goals", headers=auth).status_code == 200
+    project_id, document_id = str(uuid4()), str(uuid4())
+    with automation_container.repository.sessions.begin() as db:
+        owner = db.scalar(select(Account).where(Account.subject == "alice"))
+        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner.id))
+        now = utcnow()
+        db.add(Project(
+            id=project_id, owner_id=owner.id, idempotency_key="unlinked-project",
+            fingerprint="e" * 64, name="Unlinked project", description="",
+            revision=1, deleted=False, created_at=now, updated_at=now,
+        ))
+        db.add(Document(
+            id=document_id, owner_id=owner.id, workspace_id=workspace.id,
+            filename="not-linked.txt",
+        ))
+        db.flush()
+        db.add(DocumentVersion(
+            id=str(uuid4()), document_id=document_id, owner_id=owner.id, version=1,
+            kind="txt", byte_size=10, sha256="b" * 64, object_key="inputs/unlinked",
+            state="uploaded", expires_at=now + timedelta(days=7),
+        ))
+    payload = goal_payload()
+    payload["project_id"] = project_id
+    payload["authorized_resources"] = [{"kind": "document", "reference": document_id}]
+    response = client.post(
+        "/api/v1/goals", headers=auth | {"Idempotency-Key": "unlinked-goal"}, json=payload,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "project_document_unlinked"
+
+
+def test_briefing_requires_an_owned_project_and_one_to_five_current_documents(
+    automation_client, automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    goal = client.post(
+        "/api/v1/goals", headers=auth | {"Idempotency-Key": "unprojected-briefing-goal"},
+        json=goal_payload(),
+    ).json()
+    body = briefing_automation_payload(goal)
+    response = client.post(
+        "/api/v1/automations", headers=auth | {"Idempotency-Key": "unprojected-briefing"},
+        json=body,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "briefing_project_required"
+
+
+def test_briefing_requires_explicit_future_expiry(automation_client, automation_container):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    goal, _project_id, _document_id, _version_id = create_project_document_goal(
+        client, auth, automation_container, key="briefing-expiry-goal",
+    )
+    body = automation_payload(goal)
+    body["run_profile"] = "briefing"
+    response = client.post(
+        "/api/v1/automations", headers=auth | {"Idempotency-Key": "briefing-no-expiry"},
+        json=body,
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "briefing_expiry_required"
+
+
 def test_daily_briefing_requires_runtime_v3_planner_and_work_services(
     automation_client,
 ):
@@ -1326,13 +1469,11 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
     client, headers = automation_client
     auth = headers()
     _enable_briefings(automation_container)
-    goal = client.post(
-        "/api/v1/goals",
-        headers=auth | {"Idempotency-Key": "briefing-goal"},
-        json=goal_payload(),
-    ).json()
-    body = automation_payload(goal)
-    body["run_profile"] = "briefing"
+    goal, project_id, document_id, version_id = create_project_document_goal(
+        client, auth, automation_container, key="briefing-goal",
+    )
+    assert goal["project_id"] == project_id
+    body = briefing_automation_payload(goal)
     response = client.post(
         "/api/v1/automations",
         headers=auth | {"Idempotency-Key": "briefing-automation"},
@@ -1360,6 +1501,12 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.connector_read_grant_ids == []
         assert run.action_ids == []
+        # AgentRun stores immutable document-version pins, not document_ids.
+        assert run.input_versions == [version_id]
+        persisted_version = db.get(DocumentVersion, run.input_versions[0])
+        assert persisted_version is not None
+        assert persisted_version.document_id == document_id
+        assert persisted_version.owner_id == run.owner_id
         started = db.scalars(select(Notification).where(
             Notification.automation_id == automation["id"],
             Notification.kind == "automation_started",
@@ -1383,31 +1530,52 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         assert "daily/weekly briefing" in completed[0].message
 
 
+def test_day7_occurrence_blocks_when_a_selected_document_is_unlinked_from_its_project(
+    automation_client, automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    _enable_briefings(automation_container)
+    goal, project_id, document_id, _version_id = create_project_document_goal(
+        client, auth, automation_container, key="revoked-project-goal",
+    )
+    body = briefing_automation_payload(goal)
+    response = client.post(
+        "/api/v1/automations", headers=auth | {"Idempotency-Key": "revoked-project-automation"},
+        json=body,
+    )
+    assert response.status_code == 201
+    automation = response.json()
+    with automation_container.repository.sessions.begin() as db:
+        db.execute(delete(ProjectResource).where(
+            ProjectResource.project_id == project_id,
+            ProjectResource.owner_id == db.scalar(
+                select(Account.id).where(Account.subject == "alice")
+            ),
+            ProjectResource.resource_type == "document",
+            ProjectResource.resource_id == document_id,
+        ))
+    occurrence = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], utcnow().replace(microsecond=0),
+    )
+    assert occurrence["state"] == "blocked"
+    assert occurrence["reason"] == "project_document_unlinked"
+    assert occurrence["run_id"] is None
+
+
 def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation_client, automation_container):
     """Controlled daily due timestamps; real daily wake-up needs operated staging."""
     client, headers = automation_client
     auth = headers()
     settings = _enable_briefings(automation_container)
-    seed = client.post("/api/v1/goals", headers=auth | {"Idempotency-Key": "day7-seed"}, json=goal_payload())
-    assert seed.status_code == 201
-    document_id, v1, v2 = (str(uuid4()) for _ in range(3))
-    with automation_container.repository.sessions.begin() as db:
-        owner = db.scalar(select(Account).where(Account.subject == "alice"))
-        workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner.id))
-        db.add(Document(id=document_id, owner_id=owner.id, workspace_id=workspace.id, filename="progress.txt"))
-        db.flush()
-        db.add(DocumentVersion(
-            id=v1, document_id=document_id, owner_id=owner.id, version=1,
-            kind="txt", byte_size=10, sha256="a" * 64,
-            object_key="inputs/progress-1", state="uploaded", expires_at=utcnow() + timedelta(days=7),
-        ))
-    payload = goal_payload()
-    payload["authorized_resources"] = [{"kind": "document", "reference": document_id}]
-    created = client.post("/api/v1/goals", headers=auth | {"Idempotency-Key": "day7-goal"}, json=payload)
-    assert created.status_code == 201
-    goal = created.json()
-    body = automation_payload(goal)
-    body["run_profile"] = "briefing"
+    goal, project_id, document_id, v1 = create_project_document_goal(
+        client, auth, automation_container, key="day7-goal",
+    )
+    assert goal["project_id"] == project_id
+    v2 = str(uuid4())
+    with automation_container.repository.sessions() as db:
+        owner_id = db.scalar(select(Account.id).where(Account.subject == "alice"))
+    body = briefing_automation_payload(goal)
     body["schedule"] = {"kind": "daily", "hour": 23, "minute": 10, "weekdays": []}
     body["quiet_hours"] = {"start": "22:00", "end": "07:00"}
     response = client.post("/api/v1/automations", headers=auth | {"Idempotency-Key": "day7-briefing"}, json=body)
@@ -1431,7 +1599,7 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
     automation_container.automations.notify_run_completed(first["run_id"])
     with automation_container.repository.sessions.begin() as db:
         db.add(DocumentVersion(
-            id=v2, document_id=document_id, owner_id=owner.id, version=2,
+            id=v2, document_id=document_id, owner_id=owner_id, version=2,
             kind="txt", byte_size=12, sha256="b" * 64,
             object_key="inputs/progress-2", state="uploaded", expires_at=utcnow() + timedelta(days=7),
         ))

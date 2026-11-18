@@ -18,7 +18,7 @@ import pytest
 from scripts.main_protection_audit import GovernanceAuditError, audit_governance, inspect_repository
 
 
-CHECKS = {"test-and-build", "ci-merge-gate"}
+CHECKS = {"test-and-build", "coworker", "ci-merge-gate"}
 
 
 def protected_branch() -> dict:
@@ -108,6 +108,30 @@ def test_duplicate_required_check_with_untrusted_source_must_fail():
     rule = approved_ruleset()
     checks = rule["rules"][3]["parameters"]["required_status_checks"]
     checks.append({"context": "test-and-build", "integration_id": 98765})
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+@pytest.mark.parametrize(
+    "rule_type",
+    ["pull_request", "required_status_checks", "deletion", "non_fast_forward"],
+)
+def test_duplicate_ruleset_type_cannot_mask_a_weaker_policy(rule_type):
+    rule = approved_ruleset()
+    duplicate = deepcopy(next(row for row in rule["rules"] if row["type"] == rule_type))
+    if rule_type == "pull_request":
+        duplicate["parameters"]["required_approving_review_count"] = 0
+    if rule_type == "required_status_checks":
+        duplicate["parameters"]["strict_required_status_checks_policy"] = False
+    rule["rules"].append(duplicate)
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+@pytest.mark.parametrize("malformed", [None, {}, {"type": None}, {"type": 7}])
+def test_malformed_ruleset_entries_fail_closed(malformed):
+    rule = approved_ruleset()
+    rule["rules"].append(malformed)
     with pytest.raises(GovernanceAuditError, match="ruleset"):
         audit_governance(protected_branch(), [rule])
 
@@ -398,3 +422,12 @@ def test_operator_ruleset_template_satisfies_both_configuration_auditors():
     result = assess_native_policy(rulesets=[candidate])
     assert result["classification"] == "configuration_candidate"
     assert result["enforcement_verified"] is False
+
+def test_day1_coworker_is_required_by_native_ruleset_audit():
+    rule = approved_ruleset()
+    checks = rule["rules"][3]["parameters"]["required_status_checks"]
+    rule["rules"][3]["parameters"]["required_status_checks"] = [
+        entry for entry in checks if entry["context"] != "coworker"
+    ]
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])

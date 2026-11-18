@@ -11,6 +11,33 @@ from scripts.pilot_workflow_eval import (
 )
 
 
+
+def test_coordinated_development_fixture_rehash_cannot_redefine_the_frozen_suite(tmp_path):
+    """A locally edited manifest must not be able to self-approve a new corpus."""
+    import hashlib
+    copied = tmp_path / 'fixtures'
+    shutil.copytree(FIXTURE_ROOT, copied)
+    cases = copied / 'development.jsonl'
+    # A byte-level edit leaves the scenario count and semantics unchanged.
+    cases.write_bytes(cases.read_bytes() + b'\n')
+    manifest_path = copied / 'suite_manifest.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest['files']['development']['sha256'] = hashlib.sha256(cases.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest) + '\n', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='suite manifest fingerprint mismatch'):
+        load_suite(copied)
+
+
+def test_validation_receipt_binds_exact_frozen_manifest_bytes(capsys):
+    from scripts.pilot_workflow_eval import FROZEN_SUITE_MANIFEST_SHA256, main, sha256_file
+    assert sha256_file(FIXTURE_ROOT / 'suite_manifest.json') == FROZEN_SUITE_MANIFEST_SHA256
+    assert main(['--validate-only']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['suite_manifest_sha256'] == FROZEN_SUITE_MANIFEST_SHA256
+    assert report['holdout_access_isolation_established'] is False
+
+
 def test_frozen_suite_has_80_grounded_balanced_scenarios():
     suite = load_suite()
     assert len(suite['cases']) == 80
