@@ -19,7 +19,9 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.cohort_release_gate import evaluate_release  # noqa: E402
-from scripts.ruke_pilot_eval import OPERATED, RUBRIC, operated_trace_ok, reviewer_identity  # noqa: E402
+from scripts.ruke_pilot_eval import (  # noqa: E402
+    OPERATED, RUBRIC, operated_trace_ok, read_json as read_bounded_json, reviewer_identity,
+)
 from scripts.staging_release_freeze import (  # noqa: E402
     EXPECTED_ROLLBACK,
     PA10_REQUIRED_FALSE,
@@ -37,7 +39,7 @@ def read_json(path: Path | None) -> dict | None:
     if path is None:
         return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = read_bounded_json(path)
         if not isinstance(value, dict):
             raise ValueError("expected JSON object")
         return value
