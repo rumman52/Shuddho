@@ -2455,3 +2455,13 @@ PR #649 inverted this behavior by initializing `projectCreateMode` from `?view=p
 The Figma MCP context request was rate-limited, so visual comparison used the supplied screenshot and the repository's exported `design.json` / `design-tokens.json`. The project layout CSS already matches the exported 1440×900 geometry and Rukh palette; this correction changes route state, not the design system.
 
 Frontend test/build CI passed on the implementation head (web-editor: 238 passed, 0 failed; standalone Coworker and Writing Assistant checks passed). The Vercel GitHub integration reported the branch preview Ready. Broader Coworker qualification CI is tracked separately. No production migration, backend flag, database record, or production deployment was changed. See [task contract](PROJECTS_ENTRY_SCREEN_2026-11-08.md).
+
+---
+
+## Day 6 evidence and acceptance gates — 18 November 2026
+
+- **Current main checkpoint:** `aa705726f4c76cbb819a62211b7743aa44c59b17` merged Day 1 recovery fixture repair [#774](https://github.com/rumman52/Shuddho/pull/774), superseding an overlapping isolated Day 6 test-fix [#775](https://github.com/rumman52/Shuddho/pull/775). Production validators are unchanged.
+- **Source and CI:** original `c8aa7cf...` had 1,628 Coworker pass / 2 fail / 4 skip; the parallel #775 focused Day 6 JUnit is 107/107 with 14/14 **offline** quality calibration, not the two original regression cases nor a live 40-case model run. Full new-main verification and independent review must not be inferred from concurrent PR status.
+- **Live preflight (read only):** Supabase staging 1 private bucket but 0 Auth users, 0 Coworker accounts/runs/tasks/artifacts/objects, and outbox 0; migration at `0070`, source ahead. Render staging API deploy is from 14 November, with no workflow registered; connected Vercel has no Shuddho project.
+- **Day 6 verdict:** **NO-GO**: approved owner A/B, source-complete bilingual golden run, native owner retrieval/SHA-256, cross-owner denial, “Draft ready” UI/no-send provider receipt, reconnect/restart, and D-reviewed 40 development first-run versus regression are not demonstrated. No production deploy, schema mutation, paid resource or send performed.
+- **Traceable handoff and owner next steps:** [DAY6_EVIDENCE_2026-11-18.md](DAY6_EVIDENCE_2026-11-18.md), tracker [#732](https://github.com/rumman52/Shuddho/issues/732). C approves/prepares staging, A/B run the golden research/report-email workflow, D independently verifies actual files/citations/language/retrieval and scores, Founder+C own release/spend gates.
