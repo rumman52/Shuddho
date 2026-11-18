@@ -6,17 +6,17 @@ holdout custody: [#665](https://github.com/rumman52/Shuddho/issues/665).
 
 ## Verified read-only baseline
 
-At source review-base commit \`cebe322d88d2120e6c78c6755b70445eedf8c39f\`,
-Supabase staging's connected Alembic ledger was \`0070\` with **0 Auth users,
+At source review-base commit `cebe322d88d2120e6c78c6755b70445eedf8c39f`,
+Supabase staging's connected Alembic ledger was `0070` with **0 Auth users,
 0 Coworker accounts, and 0 AgentRuns**. The source migration head is newer
-(\`0072_merge_0071_heads\`); no staging migration was applied. The Render
+(`0072_merge_0071_heads`); no staging migration was applied. The Render
 workspace lists the historical Shuddho staging API and production API but
 **no Shuddho persistent worker**. The historical staging deployment's build
 is not a matching source/worker release. The connected Vercel inventory did
 not return a matching Shuddho project. These are observations, not operated
 Day 9/10 receipts.
 
-An earlier reviewed head \`79329732285a9a188ee495e66d326cd05382fb62\`
+An earlier reviewed head `79329732285a9a188ee495e66d326cd05382fb62`
 had five passed CI test jobs but failed the governance audit and merge gate.
 **Do not transfer that verdict to this PR head or to a frozen release.**
 No independently reviewed D corpus, first-run 40-case scores, twenty C-operated
@@ -29,27 +29,27 @@ No pilot was admitted.
 
 ## Gap closed by this source PR
 
-The existing \`scripts/staging_cohort_admission.py\` checks **one invited**
+The existing `scripts/staging_cohort_admission.py` checks **one invited**
 staging identity and **one denied** identity. This is a useful preflight,
 not evidence that *every* member of a 5–10-user pilot can access their account.
-The new \`scripts/pilot_admission_verify.py\` is a separate **post-admission
+The new `scripts/pilot_admission_verify.py` is a separate **post-admission
 observation** tool, not an allowlist writer or user provisioner.
 
 It fails closed unless all of these are true:
 
-1. The actual canonical rollout manifest passes \`validate_rollout\` and
+1. The actual canonical rollout manifest passes `validate_rollout` and
    declares a maximum of **5–10** users.
 2. The unmodified Day 10 decision receipt is bound to the **exact byte hash**
    of that rollout and the exact source revision, has canonical
-   \`GO_CONTROLLED_COHORT\`, decision \`READY_FOR_OWNER_CONTROLLED_PILOT\`,
+   `GO_CONTROLLED_COHORT`, decision `READY_FOR_OWNER_CONTROLLED_PILOT`,
    no blockers and no claimed activation by the decision CLI.
 3. An independently owner-controlled, private (0600), non-symlink JSON file
    supplies **5–10 distinct signed member credentials**; they map to
    **exactly** the configured backend cohort accounts (no extras and no
    duplicate subjects); enforcement is enabled and the configured maximum
    exactly matches the release manifest.
-4. Every member's actual HTTPS \`/api/v1/me\` response is **200**; a fresh,
-   nonmember's response is **403** with \`cohort_not_enabled\`.
+4. Every member's actual HTTPS `/api/v1/me` response is **200**; a fresh,
+   nonmember's response is **403** with `cohort_not_enabled`.
 5. The nonmember account was not provisioned either **before or after**
    the probes, checked through the existing database access boundary.
 6. A uniquely named output receipt is created exclusively and is never
@@ -71,14 +71,14 @@ release ID / exact API+worker Git SHA / rollout manifest SHA-256.
 - Independent D controls an external fresh 40-task holdout, proves developer
   negative-read and D positive-read, obtains D1/D2 blinded reviews, and
   preserves the first-run outputs/results unchanged. Run
-  \`scripts.ruke_pilot_eval evaluate\` only after authentic receipts exist,
+  `scripts.ruke_pilot_eval evaluate` only after authentic receipts exist,
   requiring >=36/40, >=9/10 in each of four cells, and 40/40 security checks.
 - C operates all 20 native recovery boundaries and records the actual
   observations. A/B/C/D independently operate rollback/restore, in-flight
   cancellation, paused scheduling, owner isolation both ways and multi-turn
   deliverable; D runs the live planner and quality gates.
-- Execute \`scripts/cohort_release_gate.py\` and
-  \`scripts/day10_release_decision.py\` on **actual independently reviewed**
+- Execute `scripts/cohort_release_gate.py` and
+  `scripts/day10_release_decision.py` on **actual independently reviewed**
   receipts. A successful unit test, test fixture or handwritten JSON is
   not an operated receipt.
 - The **Founder** and **platform owner C** must authenticate *distinct*
@@ -90,29 +90,29 @@ release ID / exact API+worker Git SHA / rollout manifest SHA-256.
   member accounts and fresh nonmember denial with the command below.
 
 Store the user tokens in a file **outside the checkout and CI artifacts**,
-e.g. \`/secure/operator/pilot-members.json\`, containing a JSON array of the
-five-to-ten bearer token strings, permissions \`0600\`. Do not include the
+e.g. `/secure/operator/pilot-members.json`, containing a JSON array of the
+five-to-ten bearer token strings, permissions `0600`. Do not include the
 real credentials in a shell command, repository, ticket or PR. Provide the
-backend operator's own \`SHUDDHO_DATABASE_URL\`, authentication settings and
-\`SHUDDHO_COWORKER_COHORT_*\` settings via approved protected environment,
+backend operator's own `SHUDDHO_DATABASE_URL`, authentication settings and
+`SHUDDHO_COWORKER_COHORT_*` settings via approved protected environment,
 along with these **protected environment secrets**:
 
-- \`SHUDDHO_PILOT_API_BASE_URL\`: verified HTTPS endpoint for the
+- `SHUDDHO_PILOT_API_BASE_URL`: verified HTTPS endpoint for the
   **admitted exact pilot deployment**; do not substitute an older API.
-- \`SHUDDHO_PILOT_NONMEMBER_TOKEN\`: freshly issued, signed credential for
+- `SHUDDHO_PILOT_NONMEMBER_TOKEN`: freshly issued, signed credential for
   a nonmember whose account is not provisioned.
 
 After external authorization, run (placeholders below are paths, never fake
 values to feed the gate):
 
-\`\`\`bash
+```bash
 uv run --extra coworker python -m scripts.pilot_admission_verify \
   --rollout /secure/operator/rollout-frozen.json \
   --decision /secure/operator/day10-decision.json \
   --source-revision "$VERIFIED_EXACT_RELEASE_SHA" \
   --member-tokens-file /secure/operator/pilot-members.json \
   --output /secure/operator/pilot-access-first-observation.json
-\`\`\`
+```
 
 Exit 0 means the **submitted release prerequisite and access probes** passed
 mechanically; it **does not** mean this CLI admitted users, confirmed real
@@ -123,19 +123,19 @@ HTTPS and DB observations separately with bounded, privacy-approved
 retention, not the tokens themselves.
 
 After an actual admitted pilot and sufficient observation, use
-\`scripts/cohort_health_gate.py\`, \`scripts/cohort_canary_progression.py\`,
-\`scripts/cohort_scale_review.py\` and the documented canary thresholds
+`scripts/cohort_health_gate.py`, `scripts/cohort_canary_progression.py`,
+`scripts/cohort_scale_review.py` and the documented canary thresholds
 against observed provider usage, failures, queue age, latency, cost, quality,
 security and expansion-window telemetry. **No canary expansion now.**
 
 ## Source verification
 
-\`\`\`bash
+```bash
 uv run --extra coworker pytest -q tests/test_pilot_admission_verify.py \
     tests/test_staging_cohort_admission.py \
     tests/test_day10_release_decision.py
 uv run --extra coworker python -m scripts.pilot_admission_verify --help
-\`\`\`
+```
 
 These tests are synthetic **source-level** checks only. They do not create
 pilot users, operate fault scenarios, call a model or close any day. A fresh
