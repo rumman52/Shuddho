@@ -1,3 +1,35 @@
+## Day 8 measurement freeze integrity — 18 November 2026 (PR #779)
+
+**Scope:** source/test-only comparator decision gate. Test-only SHA
+81d1af2fb97258901df6ad4a7c5844d6d71ba139 reproduced eight missing
+acceptance checks on [CI #44287548874](https://github.com/rumman52/Shuddho/actions/runs/44287548874)
+(31 prior tests passed). The PR adds end-to-end p50/p95 and owner-policy
+gating, per-case/cell denominators with model/tool/provider failure and
+execution/dispatch retry types, reconciled all-in cost components and exact
+cost-per-accepted selection. The freeze additionally pins source schema,
+flags, budgets, rubric, pricing approval and model/prompt/tool fingerprints.
+Full test, code review and staging qualifications must be recorded against
+the **final exact head**; synthetic fixtures are not provider receipts.
+
+**Levels:** implemented in draft PR #779; repository verification pending
+final-head CI; staging evidence blocked (no authorized Day 7 first/second
+natural fire, zero staged run records); production qualified **NO**;
+activated **NO**. Existing telemetry is not enabled and no PostHog domain,
+retention or consent settings were changed. No paid provider run, persistent
+worker deployment, source/model switch, migration, database index or external
+customer send was initiated.
+
+**Owners and next action:** C + Founder approve exact PostHog/privacy
+scope and spend ceilings; A pins runtime/model/context; D independently
+scores the 40 paired development tasks and authenticates private receipts;
+C + D run the two real local-date schedule/pause checks once the worker and
+owner documents are approved. See
+[task contract](DAY8_MEASUREMENT_FREEZE_TASK_2026-11-18.md),
+[#734](https://github.com/rumman52/Shuddho/issues/734), and
+[PR #779](https://github.com/rumman52/Shuddho/pull/779).
+
+---
+
 ## Day 10 CTO handoff and live blockers — 17 November 2026 (Asia/Dhaka)
 
 The current Day 10 disposition remains **SOURCE_ONLY / NO-GO**. The exact main
