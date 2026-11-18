@@ -334,8 +334,13 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
     for key in ("worker_before_id", "worker_after_id", "worker_replacement_receipt_ref",
                 "reconnect_receipt_ref"):
         referenced(reconnect.get(key), "day6.reconnect." + key)
+    run_started = when(reconnect.get("run_started_at"), "day6.reconnect.run_started_at")
+    disconnected = when(reconnect.get("browser_disconnected_at"), "day6.reconnect.browser_disconnected_at")
     restarted = when(reconnect.get("worker_restarted_at"), "day6.worker_restarted_at")
-    need(frozen < restarted < completed, "day6 worker restart not within exercise")
+    reconnected = when(reconnect.get("browser_reconnected_at"), "day6.reconnect.browser_reconnected_at")
+    run_finished = when(reconnect.get("run_finished_at"), "day6.reconnect.run_finished_at")
+    need(frozen <= run_started < disconnected < restarted < reconnected < run_finished <= completed,
+         "day6 browser reconnect/worker replacement did not occur within the same active run")
     count(reconnect.get("additional_agent_runs"), "day6.additional_agent_runs", 0)
     count(reconnect.get("additional_outbox_effects"), "day6.additional_outbox_effects", 0)
     send = obj(day.get("provider_send_audit"), "day6.provider_send_audit")
