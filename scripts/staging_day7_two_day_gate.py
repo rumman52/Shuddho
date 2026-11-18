@@ -179,8 +179,16 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     require(pins_first == strings(second.get("prior_run_input_version_ids"),
                                   "Day 8 recheck of Day 7 source pins"),
             "Day 7 original source versions changed or were not rechecked on Day 8.")
-    require(set(pins_first) != set(pins_second),
-            "No source version changed between the two days.")
+    # Version vectors are aligned to each day's document order, which may
+    # differ. Only one owner-authorized document may change between firings.
+    first_versions = dict(zip(docs_first, pins_first))
+    second_versions = dict(zip(docs_second, pins_second))
+    changed_document_ids = [
+        document_id for document_id in docs_first
+        if first_versions[document_id] != second_versions[document_id]
+    ]
+    require(len(changed_document_ids) == 1,
+            "Exactly one authorized document must have a changed pinned version.")
     paused_at = timestamp(paused.get("paused_at"), "paused_at")
     require(verified_timestamps[1] <= paused_at <= now,
             "Pause must be observed after Day 8 verification and by the current time.")
@@ -199,6 +207,7 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
         "first_run_id": first["run_id"], "second_run_id": second["run_id"],
         "document_ids": docs_first,
         "first_input_version_ids": pins_first, "second_input_version_ids": pins_second,
+        "changed_document_id": changed_document_ids[0],
         "paused_revision": paused["paused_revision"],
         "operator_case_references": [first["operator_case_reference"],
                                      second["operator_case_reference"],

@@ -520,7 +520,7 @@ DAY8_FREEZE_MATCH_FIELDS = (
     "schema_sha256", "flags_sha256", "budgets_sha256", "prompt_template_sha256",
 )
 DAY8_CONFIGURATION_FIELDS = (
-    "profile", "provider", "model", *DAY8_SHA_FIELDS, *DAY8_FREEZE_MATCH_FIELDS,
+    "profile", "provider", "model", "time_limit_seconds", *DAY8_SHA_FIELDS, *DAY8_FREEZE_MATCH_FIELDS,
 )
 DAY8_CASE_FIELDS = (
     "input_tokens", "output_tokens", "model_time_ms", "tool_time_ms",
@@ -712,6 +712,15 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     candidate_cases = _day8_cases(candidate, expected, "bounded_context_compact_observations")
     base_config = baseline["configuration"]
     candidate_config = candidate["configuration"]
+    # Both arms must have the same explicitly bounded execution budget.
+    # A missing legacy value remains readable, but cannot qualify a freeze.
+    time_limits_complete = all(
+        type(config.get("time_limit_seconds")) is int
+        and 1 <= config["time_limit_seconds"] <= 3600
+        for config in (base_config, candidate_config)
+    )
+    if time_limits_complete and base_config["time_limit_seconds"] != candidate_config["time_limit_seconds"]:
+        raise ValueError("paired context experiment must preserve the same time limit")
     if any(base_config[key] != candidate_config[key] for key in (
         "provider", "model", "model_settings_sha256", "tool_sha256",
     )):
@@ -907,6 +916,8 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     blockers = []
     if not freeze_hashes_complete:
         blockers.append("missing shared prompt-template/schema/flags/budgets configuration fingerprints")
+    if not time_limits_complete:
+        blockers.append("missing or invalid fixed per-task time limit in both profiles")
     if not policy_complete:
         blockers.append("missing or invalid owner-approved latency, rubric and pricing decision policy")
     if not a["metrics_complete"] or not b["metrics_complete"]:

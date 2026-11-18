@@ -517,6 +517,7 @@ def _day8_fixture():
                 "profile": profile,
                 "provider": "deepseek",
                 "model": "deepseek-flash",
+                "time_limit_seconds": 60,
                 "model_settings_sha256": "1" * 64,
                 "behavior_sha256": ("2" if profile == "baseline" else "3") * 64,
                 "prompt_sha256": ("4" if profile == "baseline" else "5") * 64,
@@ -903,6 +904,32 @@ def test_day8_rejects_private_config_fields_before_freeze_output():
     with pytest.raises(ValueError, match="unexpected configuration property") as exc:
         compare_day8_development(baseline, candidate, suite)
     assert secret not in str(exc.value)
+
+
+def test_day8_rejects_different_task_time_budgets():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["configuration"]["time_limit_seconds"] = 120
+    with pytest.raises(ValueError, match="same time limit"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+@pytest.mark.parametrize("bad_limit", [None, 0, True, 3601, "60"])
+def test_day8_missing_or_invalid_time_limit_blocks_freeze(bad_limit):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["configuration"]["time_limit_seconds"] = bad_limit
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert any("time limit" in blocker for blocker in result["blockers"])
+
+
+def test_day8_legacy_missing_time_limits_never_freezes():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    del baseline["configuration"]["time_limit_seconds"]
+    del candidate["configuration"]["time_limit_seconds"]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
 
 
 def test_day8_rejects_reused_usage_receipt_across_baseline_and_candidate():
