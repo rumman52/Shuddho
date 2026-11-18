@@ -25,7 +25,7 @@ In `conversation_grounding.py` at the pinned main baseline, the incomplete-sourc
 
 1. **RED:** local isolated Python harness faithfully copying the pinned validator from `conversation_grounding.py`, `python -m pytest -q test_citation_validator.py`: **4 failed (unexpected acceptance)**, exit 1, before editing the implementation. Its copy is not a full repository test.
 2. Regression committed **before** the fix in `tests/test_conversation_citation_markers.py`: four validator cases, the service allowlist, and a synthetic TXT grounded SSE test asserting **no displayed delta, no committed answer and no AgentRun**.
-3. **GREEN (isolated harness):** widen only the incomplete source-prefix regex to `r"\\[\\[\\s*src"`; rerunning the same harness: **4 passed**, plus normal repeated valid-ID and forged/unknown-ID smoke cases. The real repository tests must be verified separately in GitHub CI.
+3. **GREEN (isolated harness):** widen only the incomplete source-prefix regex to `r"\[\[\s*src"`; rerunning the same harness: **4 passed**, plus normal repeated valid-ID and forged/unknown-ID smoke cases. The real repository tests must be verified separately in GitHub CI.
 4. No API, identity, storage, provider, frontend, schema, Writing Assistant or production configuration was changed.
 
 ## Synthetic fixture hashes (NOT staging document-version receipts)
