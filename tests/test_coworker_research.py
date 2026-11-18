@@ -166,6 +166,12 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
         memory_pins=[selected_pin],
     )
     assert created and run["run_id"]
+    replay, retried = container.conversation_dispatch.dispatch(
+        owner, conversation["id"], turn["id"], expected_sequence=1,
+        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        memory_pins=[selected_pin],
+    )
+    assert not retried and replay["run_id"] == run["run_id"]
     run = {"id": run["run_id"]}
     request = TaskCreate(skill_id="report_email",
                          instruction="Summarize three approaches in English; retain the reviewed limitation and prepare an unsent email.",
@@ -227,6 +233,36 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
                 assert manifest["delivery_status"] == "needs_input" and manifest["output_language"] == "en"
             with pytest.raises(CoworkerError):
                 container.repository.artifact(account(container, "bob"), artifact["id"])
+
+    # A corrected fact cannot enter a new v1 decision. An already admitted
+    # historical request still replays without another run or outbox effect.
+    from services.coworker.memory_schemas import MemoryFactUpdate
+    from services.coworker.models import AgentOutbox
+    from sqlalchemy import func, select
+
+    corrected = container.memory.update(owner, selected["id"], MemoryFactUpdate(
+        expected_version=selected["version"],
+        value="Preserve the corrected limitation: all three methods establish associations, not causality.",
+    ))
+    assert corrected["version"] == selected["version"] + 1
+    with pytest.raises(CoworkerError) as stale:
+        container.memory.context_for_run(owner, run["id"])
+    assert stale.value.code == "memory_pins_changed"
+    replay, created = container.conversation_dispatch.dispatch(
+        owner, conversation["id"], turn["id"], expected_sequence=1,
+        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        memory_pins=[selected_pin],
+    )
+    assert not created and replay["run_id"] == run["id"]
+    with pytest.raises(CoworkerError) as changed:
+        container.conversation_dispatch.dispatch(
+            owner, conversation["id"], turn["id"], expected_sequence=1,
+            reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+            memory_pins=[MemoryPin(fact_id=selected["id"], expected_version=corrected["version"])],
+        )
+    assert changed.value.code == "idempotency_conflict"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentOutbox).where(AgentOutbox.run_id == run["id"])) == 1
 
 
 def test_research_catalog_request_idempotency_isolation_and_flag_rollback(container, signed_client):
