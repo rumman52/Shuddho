@@ -1,3 +1,53 @@
+## Day 5 Runtime v3 memory correction race — 18 November 2026 (Asia/Dhaka)
+
+Review base: `main` `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`.
+Draft [PR #776](https://github.com/rumman52/Shuddho/pull/776) addresses a
+fresh-decision race, without replacing merged #723, #740 or #742.
+
+**RED reproduced before production-code changes.** The new delayed-planner
+regression corrected a selected synthetic memory from version 1 to version 2
+after context assembly, while the planner was in flight. The unpatched commit
+path accepted that stale decision: exact-head [CI #44287313414](https://github.com/rumman52/Shuddho/actions/runs/44287313414),
+mandatory Day 5 gate, **80 passed / 1 failed / zero skipped**, with
+`Failed: DID NOT RAISE CoworkerError`. Its JUnit artifact was preserved.
+
+The bounded correction rechecks explicit memory pins in
+`AgentRepository.record_v3_decision` before a **new** planner decision is
+persisted. It reuses `require_current_memory_pins`, preserving current
+owner/workspace/version/expiry/deletion/feature-gate checks and maintaining
+the existing early return for committed-decision replay. No migration,
+provider, external action or production toggle was added. A second regression
+retains committed replay but denies a new planner call after correction.
+
+A **non-LLM deterministic** three-arm integration regression now holds the
+task source/prompt, synthetic renderer and context budget fixed, exercising
+no-memory, selected v1 and corrected v2 via the real preview, dispatch and
+worker-context methods. It records SHA-256 references and per-arm rubric
+scores in the Day 5 JUnit artifact, plus a second-owner normal-read denial.
+These synthetic outputs demonstrate wiring only and **do not** qualify a
+live DeepSeek model or the golden task. Corrected-head CI/independent
+review and operated staging output comparison remain separate requirements.
+
+Fresh read-only staging inventory on 18 November: Supabase Alembic `0070`
+with zero Auth identities, application accounts, workspaces, memory facts,
+Agent runs and registered workers. Render exposes the Shuddho staging API
+but no persistent worker. The connected Vercel account has no Shuddho-linked
+project; PostHog and Linear do not expose a matching Shuddho project. Staging
+identity, Temporal/worker, S3 custody and authorized fixed-budget inference
+must be supplied before a real three-arm run. The private database schema
+has RLS disabled, but `anon` and `authenticated` currently lack schema
+USAGE and memory-table SELECT; no policy or privilege change was made.
+
+Owners: B selects/corrects and scores real outputs; A independently
+revalidates; D verifies run receipts, security denial and evidence custody.
+Keep pilot/production activation disabled, do not provision paid compute or
+send external messages without explicit owner authorization. The next
+executable step is to verify exact final PR-head Day 5 and broader CI, then
+arrange approved nonproduction synthetic Auth users, persistent worker,
+Temporal/S3 configuration and three fixed-model output receipts.
+
+---
+
 ## Day 9 historical provenance CI repair — 18 November 2026 (Asia/Dhaka)
 
 **Status: SOURCE ONLY / NO-GO; exact-head CI and independent review pending.**
@@ -2490,3 +2540,13 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - **Live preflight (read only):** Supabase staging 1 private bucket but 0 Auth users, 0 Coworker accounts/runs/tasks/artifacts/objects, and outbox 0; migration at `0070`, source ahead. Render staging API deploy is from 14 November, with no workflow registered; connected Vercel has no Shuddho project.
 - **Day 6 verdict:** **NO-GO**: approved owner A/B, source-complete bilingual golden run, native owner retrieval/SHA-256, cross-owner denial, “Draft ready” UI/no-send provider receipt, reconnect/restart, and D-reviewed 40 development first-run versus regression are not demonstrated. No production deploy, schema mutation, paid resource or send performed.
 - **Traceable handoff and owner next steps:** [DAY6_EVIDENCE_2026-11-18.md](DAY6_EVIDENCE_2026-11-18.md), tracker [#732](https://github.com/rumman52/Shuddho/issues/732). C approves/prepares staging, A/B run the golden research/report-email workflow, D independently verifies actual files/citations/language/retrieval and scores, Founder+C own release/spend gates.
+
+
+## 2026-11-18 — Day 7 (#733): credential-safe scheduled-profile probe (source-only)
+
+- **Candidate pinned:** merged main `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`. PRs #709/#721/#747/#759 are already merged; no duplicate goal, automation, Temporal, occurrence or notification subsystem was introduced. Draft review branch: `fix/day7-staging-probe-https-origin-20261118`.
+- **Reproduction before editing:** the existing `clean_origin` code accepted `https://localhost`, `https://127.0.0.1`, a tab-suffixed origin, an out-of-range port and multiple trailing slashes. The scheduled-profile probe passes the synthetic owner's bearer token to that configured origin. New parameterized regression cases cover these and other invalid shapes.
+- **Bounded patch:** reuse the existing `staging_prerequisite_preflight._validate_https_endpoint` public HTTPS validation; require a path-free origin with no query or fragment marker; retain a single optional trailing slash and valid HTTPS port. Updated the controlled-staging runbook. No production logic, credential, deployment, governance or billed-resource change.
+- **Verification:** reproduced the baseline behavior using the exact pre-patch function in an isolated Python invocation (five invalid origins accepted). Focused source tests and exact-head CI are **not yet certified**; required: `uv run --extra coworker pytest tests/test_staging_pa10_scheduled_profile.py tests/test_automations.py tests/test_coworker_temporal.py -q -rs` and the repository's full PR checks. Record the final PR SHA and CI jobs before merging.
+- **Live staging readback (read-only):** Supabase migration `0070`, with zero Auth users, automations, occurrences and Agent runs; Render has the staging web API but **no persistent coworker worker**; Vercel has no linked Shuddho project. Day 2 #728 is not approved/complete, and the prior worker-billing approval is expired. **SOURCE_ONLY / NO-GO:** no real owner-approved goal/schedule, Temporal firing, immutable source or notification receipt, natural-fire proof, Day 8 second fire or next local-fire time can be claimed.
+- **Owners / next executable step:** C + Founder approve the exact no-/paid-resource staging boundary, secure worker/Temporal/S3/model credentials, migrate only after backup/release authorization and restore proof, and pair API/worker/schema. B + A then create and read back the approved daily goal/schedule. C + D witness natural Temporal history without manual trigger; B + D update an authorized document before Day 8. Keep primary schedule eligible through Day 8; use a separate synthetic schedule for destructive/quiet-hour tests.
