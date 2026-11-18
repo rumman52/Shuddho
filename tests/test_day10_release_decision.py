@@ -33,14 +33,18 @@ def evidence():
                "capabilities": capabilities,
                "cohort": {"max_users": 5}}
     api = {"schema_version": 2, "source_revision": REV, "environment": "production",
+           "build_digest": "sha256:" + "1" * 64,
            "capabilities": dict(capabilities),
            "action_providers": [], "reviewed_skills": {},
            "cohort": {"enforced": True, "max_users": 5, "configured_members": 0}}
-    worker = {**proof(), "deployment_reference": "worker-image-sha256:abc"}
+    worker = {**proof(), "deployment_reference": "worker-image-sha256:abc",
+              "schema_version": 2, "environment": "production",
+              "build_digest": "sha256:" + "2" * 64,
+              "capabilities": dict(capabilities), "action_providers": []}
     schema = {**proof(), "migration_revision": "0069", "api_revision": "0069", "worker_revision": "0069"}
     ci = {**proof(), "required_checks": {name: "success" for name in
-          ("test-and-build", "frontend", "coworker", "browser-qualification",
-           "postgres-18-qualification", "governance-audit", "ci-merge-gate")},
+          ("test-and-build", "Frontend tests and builds", "coworker", "browser-qualification",
+           "PostgreSQL 18 staging compatibility", "governance-audit", "ci-merge-gate")},
           "workflow_run_url": "https://github.com/rumman52/Shuddho/actions/runs/123"}
     golden = {**proof(), "scenario": "integrated_multi_turn", "run_id": "golden-final",
               "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True, "provider_model": "model-r"}
@@ -165,6 +169,51 @@ def test_incomplete_or_unreviewed_capability_inventory_fails_closed(monkeypatch,
     assert "api_runtime_manifest_v2_exact_sha_and_flags" in result["blockers"]
 
 
+@pytest.mark.parametrize("mutation, blocker", [
+    pytest.param(lambda a: a["api"].pop("build_digest"), "api_runtime_manifest_v2_exact_sha_and_flags",
+                 id="api-build-omitted"),
+    pytest.param(lambda a: a["api"].update(build_digest="sha256:invalid"),
+                 "api_runtime_manifest_v2_exact_sha_and_flags", id="api-build-invalid"),
+    pytest.param(lambda a: a["worker"].pop("build_digest"), "worker_exact_sha_and_deployment_receipt",
+                 id="worker-build-omitted"),
+    pytest.param(lambda a: a["worker"].update(build_digest="sha256:invalid"),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-build-invalid"),
+    pytest.param(lambda a: a["worker"].update(schema_version=1),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-manifest-v1"),
+    pytest.param(lambda a: a["worker"].update(environment="staging"),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-wrong-environment"),
+    pytest.param(lambda a: a["worker"]["capabilities"].pop("memory"),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-missing-disabled-flag"),
+    pytest.param(lambda a: a["worker"]["capabilities"].update(memory=True),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-enabled-disabled-flag"),
+    pytest.param(lambda a: a["worker"]["capabilities"].update(unreviewed_disabled=False),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-extra-flag"),
+    pytest.param(lambda a: a["worker"]["capabilities"].update(memory=0),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-nonboolean-flag"),
+    pytest.param(lambda a: a["worker"].update(action_providers=["microsoft"]),
+                 "worker_exact_sha_and_deployment_receipt", id="worker-provider-drift"),
+])
+def test_exact_build_identity_and_worker_runtime_manifest_required(monkeypatch, mutation, blocker):
+    rollout, artifacts = evidence()
+    mutation(artifacts)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert blocker in result["blockers"]
+
+
+@pytest.mark.parametrize("canonical, old_alias", [
+    ("Frontend tests and builds", "frontend"),
+    ("PostgreSQL 18 staging compatibility", "postgres-18-qualification"),
+])
+def test_required_ci_requires_actual_github_check_names(monkeypatch, canonical, old_alias):
+    rollout, artifacts = evidence()
+    artifacts["ci"]["required_checks"].pop(canonical)
+    artifacts["ci"]["required_checks"][old_alias] = "success"
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "final_head_ci" in result["blockers"]
+
+
 def test_missing_evidence_fails_closed(monkeypatch):
     rollout, _ = evidence()
     result = decision(monkeypatch, rollout, {})
@@ -186,7 +235,7 @@ def test_missing_evidence_fails_closed(monkeypatch):
     (lambda a: a["worker"].update(source_revision="c" * 40), "worker_exact_sha_and_deployment_receipt"),
     (lambda a: a["ci"]["required_checks"].update(coworker="skipped"), "final_head_ci"),
     (lambda a: a["ci"]["required_checks"].update(**{"browser-qualification": "skipped"}), "final_head_ci"),
-    (lambda a: a["ci"]["required_checks"].update(**{"postgres-18-qualification": "failure"}), "final_head_ci"),
+    (lambda a: a["ci"]["required_checks"].update(**{"PostgreSQL 18 staging compatibility": "failure"}), "final_head_ci"),
     (lambda a: a["rollback"].update(status="pending"), "operated_rollback"),
     (lambda a: a["rollback"].update(worker_stop_observed=False), "operated_rollback"),
     (lambda a: a["cancellation"].update(late_side_effects=1), "operated_cancellation"),
