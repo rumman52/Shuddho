@@ -893,3 +893,22 @@ def test_day8_shared_prompt_template_is_pinned_while_generated_prompts_may_vary(
     candidate["configuration"]["prompt_template_sha256"] = "f" * 64
     with pytest.raises(ValueError, match="paired context experiment"):
         compare_day8_development(baseline, candidate, suite)
+
+
+
+def test_day8_rejects_private_config_fields_before_freeze_output():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    secret = "synthetic-private@example.invalid fake-token-ONLY-FOR-TEST"
+    baseline["configuration"]["raw_prompt_and_token"] = secret
+    with pytest.raises(ValueError, match="unexpected configuration property") as exc:
+        compare_day8_development(baseline, candidate, suite)
+    assert secret not in str(exc.value)
+
+
+def test_day8_rejects_reused_usage_receipt_across_baseline_and_candidate():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["provider_usage_case_receipt_sha256"] = (
+        baseline["results"][0]["provider_usage_case_receipt_sha256"]
+    )
+    with pytest.raises(ValueError, match="reused provider usage receipt across profiles"):
+        compare_day8_development(baseline, candidate, suite)
