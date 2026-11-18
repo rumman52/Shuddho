@@ -181,8 +181,10 @@ def test_orphan_scan_preserves_checkpoint_committed_during_inventory(container, 
             container.storage.get(orphan_key, 1024)
 
 
-def _crash_test_renderer(_draft, _sources, **_options):
-    return [("crash-boundary.txt", "text/plain", b"written before hard worker loss")]
+def _crash_test_renderer(draft, sources, **options):
+    from services.coworker.exports import render_in_subprocess
+
+    return render_in_subprocess(draft, sources, **options)
 
 
 def _export_worker_blocked_after_put(settings, task_id, put_ready, release):
@@ -281,6 +283,12 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         stored = container.storage.inventory(prefix=prefix)
         assert len(stored) == 1
         orphan_key = stored[0].key
+        # The first native artifact is a DOCX. Capture the exact persisted
+        # bytes before SIGKILL so the crash assertion tests durability.
+        assert orphan_key.endswith("/report.docx")
+        orphan_body = container.storage.get(orphan_key, stored[0].byte_size)
+        assert orphan_body.startswith(b"PK\x03\x04")
+        assert hashlib.sha256(orphan_body).hexdigest() in orphan_key
         assert container.repository.step(task["id"], "export") is None
 
         # SIGKILL bypasses the export exception handler and its best-effort cleanup.
@@ -288,7 +296,7 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         process.join(10)
         assert not process.is_alive()
         assert process.exitcode == -signal.SIGKILL
-        assert container.storage.get(orphan_key, 1024) == b"written before hard worker loss"
+        assert container.storage.get(orphan_key, len(orphan_body)) == orphan_body
 
         # Simulate the object becoming eligible for the existing age-bounded sweep.
         old_time = time.time() - 7200
