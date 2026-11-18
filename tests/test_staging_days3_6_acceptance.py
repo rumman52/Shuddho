@@ -204,7 +204,7 @@ def test_consistent_synthetic_receipts_are_not_automatically_a_hosted_pass():
     (4, ("cases", 0, "native_files", 0, "owner_b_http_status"), 200),
     (4, ("cases", 0, "native_files", 0, "owner_a_hash_verified"), False),
     (4, ("cases", 0, "native_files", 1, "mime"), "application/pdf_wrong"),
-    (4, ("cases", 0, "citations", 0, "quote_verified"), False),
+    (4, ("cases", 2, "citations", 0, "quote_verified"), False),
     (4, ("reconnect", "worker_after_id"), "worker-A"),
     (4, ("reconnect", "additional_agent_runs"), 1),
     (4, ("provider_send_audit", "after"), 1),
