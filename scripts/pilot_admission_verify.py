@@ -234,8 +234,23 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, sort_keys=True, indent=2))
         return 0
     except (CohortAdmissionFailure, PilotVerificationFailure, httpx.HTTPError, OSError, ValueError) as exc:
-        # Never include token values, subjects or response payloads.
-        print(json.dumps({"status": "failed", "error": str(exc)}))
+        # Preserve the *first* failed attempt without disclosing response bodies,
+        # credentials, local secret paths, user IDs or exception messages.
+        failure = {
+            "schema_version": 1,
+            "status": "failed",
+            "check": "post_admission_complete_cohort_access",
+            "failure_type": type(exc).__name__,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "admission_performed_by_cli": False,
+            "human_approvals_authenticated_by_cli": False,
+        }
+        try:
+            immutable_report(args.output, failure)
+        except (PilotVerificationFailure, OSError):
+            # An existing receipt must never be replaced, even on failure.
+            pass
+        print(json.dumps(failure, sort_keys=True))
         return 1
 
 
