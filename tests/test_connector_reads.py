@@ -1234,10 +1234,15 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         for item in context["items"]
     )
 
-    assert any(
-        item["provenance"].get("document_id") == document_id
-        for item in context["items"]
-    )
+    # Bind the provenance to the *exact* verified document version and bytes,
+    # not merely any document with the right ID in an otherwise mixed context.
+    selected_versions = [
+        item for item in context["items"]
+        if item["provenance"].get("document_id") == document_id
+    ]
+    assert len(selected_versions) == 1
+    assert selected_versions[0]["provenance"]["version_id"] == version_id
+    assert selected_versions[0]["sha256"] == hashlib.sha256(document_body).hexdigest()
 
 def _create_email_coworker(container, owner, grant):
     goal, created = container.goals.create(
