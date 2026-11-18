@@ -97,7 +97,7 @@ def load_member_tokens(path: Path) -> list[str]:
 
 
 def require_exact_pilot_members(settings: Settings, tokens: list[str],
-                                denied_token: str, maximum: int) -> str:
+                                denied_token: str, maximum: int) -> tuple[list[str], str]:
     """Compare *every* token's issuer/subject mapping to the exact backend allowlist."""
     if not settings.cohort_enforced:
         raise PilotVerificationFailure("Backend cohort enforcement is disabled.")
@@ -114,15 +114,27 @@ def require_exact_pilot_members(settings: Settings, tokens: list[str],
             or set(member_ids) != set(configured)
             or denied_id in configured):
         raise PilotVerificationFailure("Pilot member tokens do not exactly match the backend allowlist.")
-    return denied_id
+    return member_ids, denied_id
 
 
-def probe_access(client: httpx.Client, member_tokens: list[str], denied_token: str) -> None:
-    """Check all members, then a fresh nonmember, without recording identities or payloads."""
-    for token in member_tokens:
+def probe_access(client: httpx.Client, member_tokens: list[str], denied_token: str,
+                 member_ids: list[str]) -> None:
+    """Bind each successful live account read to its prevalidated member token."""
+    if (not isinstance(member_ids, list)
+            or len(member_ids) != len(member_tokens)
+            or any(not isinstance(owner, str) or not owner for owner in member_ids)
+            or len(set(member_ids)) != len(member_ids)):
+        raise PilotVerificationFailure("Pilot member identity list was not verified.")
+    for token, expected_id in zip(member_tokens, member_ids):
         response = client.get("/api/v1/me", headers={"Authorization": "Bearer " + token})
         if response.status_code != 200:
             raise PilotVerificationFailure("A pilot member was not admitted by the live API.")
+        try:
+            account = response.json()
+        except ValueError:
+            raise PilotVerificationFailure("Pilot member identity was not verified.") from None
+        if not isinstance(account, dict) or account.get("account_id") != expected_id:
+            raise PilotVerificationFailure("Pilot member identity was not verified.")
     denied = client.get("/api/v1/me", headers={"Authorization": "Bearer " + denied_token})
     if denied.status_code != 403:
         raise PilotVerificationFailure("The live API did not deny the nonmember with HTTP 403.")
@@ -203,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         settings = Settings.from_env()
         denied_token = env_secret("SHUDDHO_PILOT_NONMEMBER_TOKEN")
         base_url = require_https_base(env_secret("SHUDDHO_PILOT_API_BASE_URL"))
-        denied_id = require_exact_pilot_members(
+        member_ids, denied_id = require_exact_pilot_members(
             settings, member_tokens, denied_token, rollout["cohort"]["max_users"],
         )
         assert_denied_unprovisioned(settings, denied_id)
@@ -211,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
                           trust_env=False) as client:
             verify_live_runtime(client, member_tokens[0], rollout,
                                 args.source_revision, len(member_tokens))
-            probe_access(client, member_tokens, denied_token)
+            probe_access(client, member_tokens, denied_token, member_ids)
         assert_denied_unprovisioned(settings, denied_id)
         report = {
             "schema_version": 1,
