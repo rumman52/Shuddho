@@ -349,9 +349,18 @@ jobs:
         with:
           name: cw10-code-proposal-tests
           path: /tmp/cw10-code-proposals.xml
+      # Day 1 workbook, Task 1: run the original capacity/sandbox/Fly baseline
+      # in one exact-SHA suite. Reuse the existing Fly job rather than adding
+      # another invocation of its test module or weakening any required check.
       - name: Verify Fly repository coding contracts without skips
         run: |
-          uv run --extra coworker pytest tests/test_fly_repository_coding.py -q -rs --junitxml=/tmp/fly-repository-coding.xml
+          uv run --extra coworker pytest \
+            tests/test_coworker.py::test_provider_capacity_settings_fail_closed \
+            tests/test_sandbox_control_plane.py::test_sandbox_worker_command_is_networkless_minimal_and_fail_closed \
+            tests/test_fly_repository_coding.py \
+            -q -rs --junitxml=/tmp/fly-repository-coding.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/fly-repository-coding.xml --required-module tests.test_coworker
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/fly-repository-coding.xml --required-module tests.test_sandbox_control_plane
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/fly-repository-coding.xml --required-module tests.test_fly_repository_coding
       - name: Keep Fly repository coding test evidence
         if: always()
