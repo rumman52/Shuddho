@@ -3,6 +3,49 @@
 **Observed:** 10 November 2026, approximately 10:35–10:50 UTC.  
 **Disposition:** **BLOCKED_EXTERNAL / NOT RELEASE-QUALIFIED.** Production API automatic deployment was disabled later in this session and confirmed by API readback. Database preservation, isolated restore and native GitHub enforcement remain unverified. The initial inventory below is historical where the later checkpoint supersedes it.
 
+## 17 November 2026 — explicit schema-readiness annotation
+
+Current source includes the Alembic merge head `0072_merge_0071_heads`,
+which retains both independent `0071` branches. The latest connected
+Supabase staging inventory reports private-schema revision `0070`.
+That is an **older source database**, not a current API/worker schema.
+
+`scripts/staging_postgres_backup.py` now appends a
+`schema_alignment` object to its existing private, immutable backup
+verification receipt. It parses only literal revision metadata in the
+checked-in migration DAG, without running migrations. For revision
+`0070` on this exact source graph, it reports
+`status=migration_required` and pending parents
+`0071`, `0071_project_scoped_goals`, followed by
+`0072_merge_0071_heads`. If the source revision is unknown or the
+graph is malformed, alignment is explicitly unverified; a verified
+source/restored archive still remains valuable.
+
+**Separate evidence:** `status=verified` on the backup means the private
+schema archive survived a real isolated restore with matching inventory.
+It does **not** mean the schema is ready for the latest application,
+that migrations were operated, that storage objects were backed up, or
+that release approval exists. All alignment outcomes contain
+`release_qualified=false`. Do not run migrations on Supabase until the
+owner has approved the exact migration path, retention decision, isolated
+backup/restore and API/worker/source SHA pairing. No database or worker
+was changed by this source patch.
+
+The standalone, offline diagnostic can be invoked **without** staging
+credentials or touching any infrastructure:
+
+```bash
+uv run python -m scripts.staging_migration_alignment --observed-revision 0070
+```
+
+For the current source, the command exits **1** and prints
+`migration_required` with the ordered pending revisions. Exit 0 indicates
+only an exact revision match; exit 2 indicates unreadable/ambiguous checked-in
+migration metadata. Every output explicitly sets
+`observation_authenticity_verified=false` and `release_qualified=false`.
+The supplied revision must be obtained and authenticated separately from an
+actual staging database readback; this offline tool is not that attestation.
+
 ## Immediate owners and blockers
 
 | Item | Current evidence / blocker | Owner and next concrete action |
