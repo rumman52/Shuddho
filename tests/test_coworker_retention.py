@@ -181,8 +181,12 @@ def test_orphan_scan_preserves_checkpoint_committed_during_inventory(container, 
             container.storage.get(orphan_key, 1024)
 
 
-def _crash_test_renderer(_draft, _sources, **_options):
-    return [("crash-boundary.txt", "text/plain", b"written before hard worker loss")]
+def _crash_test_renderer(draft, sources, **options):
+    # Exercise a genuine post-validation object-store PUT; partial TXT
+    # fixtures are rejected before reaching the SIGKILL boundary.
+    from services.coworker.exports import render_in_subprocess
+
+    return render_in_subprocess(draft, sources, **options)
 
 
 def _export_worker_blocked_after_put(settings, task_id, put_ready, release):
@@ -288,7 +292,9 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         process.join(10)
         assert not process.is_alive()
         assert process.exitcode == -signal.SIGKILL
-        assert container.storage.get(orphan_key, 1024) == b"written before hard worker loss"
+        orphan_body = container.storage.get(orphan_key, 16 * 1024 * 1024)
+        assert orphan_body
+        assert hashlib.sha256(orphan_body).hexdigest() == orphan_key.split("/")[-2]
 
         # Simulate the object becoming eligible for the existing age-bounded sweep.
         old_time = time.time() - 7200
