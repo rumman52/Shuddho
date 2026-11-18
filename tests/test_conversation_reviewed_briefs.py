@@ -26,7 +26,7 @@ from services.coworker.conversation_repository import ConversationRepository
 from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
 from services.coworker.conversation_task_briefs import ConversationTaskBriefService
 from services.coworker.task_brief_schemas import (
-    TaskBrief, TaskBriefMemorySelection, TaskBriefSuggestion, canonical_brief_digest,
+    TaskBrief, TaskBriefMemorySelection, TaskBriefSuggestion, TaskBriefSnapshotTooLarge, canonical_brief_digest,
 )
 from services.coworker.errors import CoworkerError
 from services.coworker.models import AgentRun, AgentOutbox, Artifact, utcnow
@@ -107,50 +107,6 @@ def test_reviewed_task_brief_schema_enforces_documented_bounds_and_rejects_autho
         TaskBriefSuggestion.model_validate({
             "state": "ready", "brief": base, "approval": {"external_send": True},
         })
-
-
-@pytest.mark.parametrize("entry_point", ["preview", "dispatch"])
-@pytest.mark.parametrize(("context_bytes", "characters", "constraints"), [
-    (4096, 1800, []),
-    (24_000, 3900, ["ক" * 495 + str(i) for i in range(4)]),
-])
-def test_reviewed_brief_rejects_oversized_canonical_utf8_snapshot(
-    container, entry_point, context_bytes, characters, constraints,
-):
-    owner, conversation, messages, service, dispatch = setup(container, "byte-limit")
-    item = append(messages, owner, conversation, "Create a project report.", "byte-limit")
-    service.settings = dispatch.settings = replace(service.settings, max_agent_context_bytes=context_bytes)
-    oversized = TaskBrief(objective="Create a project report. " + "ক" * characters,
-                          constraints=constraints, deliverables=["A report"])
-    digest = canonical_brief_digest(oversized, [], {}, owner_id=owner,
-                                   conversation_id=conversation["id"], message_id=item["id"], sequence=1)
-
-    with pytest.raises(CoworkerError) as denied:
-        if entry_point == "preview":
-            service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=oversized)
-        else:
-            dispatch.dispatch(owner, conversation["id"], item["id"], expected_sequence=1,
-                              reviewed_brief=oversized, expected_digest=digest)
-    assert denied.value.code == "task_brief_snapshot_too_large"
-    assert denied.value.status_code == 422
-    with dispatch.sessions() as db:
-        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
-        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
-
-
-def test_admitted_reviewed_brief_replays_after_context_budget_is_lowered(container):
-    owner, conversation, messages, service, dispatch = setup(container, "budget-replay")
-    item = append(messages, owner, conversation, "Create a project report.", "budget-replay")
-    reviewed = TaskBrief(objective="Create a project report. " + "ক" * 1100, deliverables=["A report"])
-    preview = service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=reviewed)
-    options = dict(expected_sequence=1, reviewed_brief=reviewed, expected_digest=preview["canonical_digest"])
-    run, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
-    assert created
-
-    dispatch.settings = replace(dispatch.settings, max_agent_context_bytes=1024)
-    result, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
-    assert not created and result["run_id"] == run["run_id"]
-    assert container.agent.worker_run(run["run_id"])["id"] == run["run_id"]
 
 
 @pytest.mark.parametrize("legacy_graph_enabled", [False, True])
@@ -239,6 +195,120 @@ def test_admitted_reviewed_brief_replays_after_context_budget_is_lowered(contain
     result, created = dispatch.dispatch(owner, conversation["id"], item["id"], **options)
     assert not created and result["run_id"] == run["run_id"]
     assert container.agent.worker_run(run["run_id"])["id"] == run["run_id"]
+
+
+
+@pytest.mark.parametrize(("byte_limit", "bangla_chars", "constraint_count"), [
+    (4096, 1000, 0),
+    (16_000, 3000, 4),
+])
+def test_exact_multibyte_bangla_snapshot_boundary_and_atomic_admission(
+    container, byte_limit, bangla_chars, constraint_count,
+):
+    """The exact UTF-8 ceiling succeeds; the next byte fails before admission."""
+    owner, conversation, messages, service, dispatch = setup(container, f"bangla-boundary-{byte_limit}")
+    item = append(messages, owner, conversation, "Prepare a report in Bangla.", "boundary")
+    service.settings = dispatch.settings = replace(service.settings, max_agent_context_bytes=byte_limit)
+    seed = TaskBrief(
+        objective="Create a report: " + "ক" * bangla_chars,
+        constraints=[f"পিন {i}: " + "ক" * 480 for i in range(constraint_count)],
+        deliverables=["A report"],
+    )
+    binding = dict(owner_id=owner, conversation_id=conversation["id"],
+                   message_id=item["id"], sequence=1)
+
+    def fits(padding: int) -> bool:
+        candidate = seed.model_copy(update={"objective": seed.objective + "x" * padding})
+        try:
+            canonical_brief_digest(candidate, [], {}, **binding, max_bytes=byte_limit)
+        except TaskBriefSnapshotTooLarge:
+            return False
+        return True
+
+    assert fits(0)
+    low, high = 0, 4000 - len(seed.objective)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if fits(mid):
+            low = mid
+        else:
+            high = mid - 1
+    assert low < 4000 - len(seed.objective)
+    exact = TaskBrief.model_validate({
+        **seed.model_dump(mode="json"), "objective": seed.objective + "x" * low,
+    })
+    assert fits(low)
+    # A one-byte reduction in the limit must reject the same canonical JSON,
+    # proving the accepted snapshot actually occupies the exact byte boundary.
+    with pytest.raises(TaskBriefSnapshotTooLarge):
+        canonical_brief_digest(exact, [], {}, **binding, max_bytes=byte_limit - 1)
+
+    oversized = TaskBrief.model_validate({
+        **exact.model_dump(mode="json"), "objective": exact.objective + "x",
+    })
+    oversized_digest = canonical_brief_digest(oversized, [], {}, **binding)
+    for entry_point in ("preview", "dispatch"):
+        with pytest.raises(CoworkerError) as denied:
+            if entry_point == "preview":
+                service.validate(owner, conversation["id"], item["id"],
+                                 expected_sequence=1, brief=oversized)
+            else:
+                dispatch.dispatch(owner, conversation["id"], item["id"],
+                                  expected_sequence=1, reviewed_brief=oversized,
+                                  expected_digest=oversized_digest)
+        assert denied.value.code == "task_brief_snapshot_too_large"
+        assert denied.value.status_code == 422
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
+
+    preview = service.validate(owner, conversation["id"], item["id"], expected_sequence=1, brief=exact)
+    assert preview["canonical_digest"] == canonical_brief_digest(exact, [], {}, **binding, max_bytes=byte_limit)
+    run, created = dispatch.dispatch(owner, conversation["id"], item["id"],
+                                    expected_sequence=1, reviewed_brief=exact,
+                                    expected_digest=preview["canonical_digest"])
+    assert created
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 1
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 1
+        assert db.get(AgentRun, run["run_id"]).reviewed_brief["canonical_digest"] == preview["canonical_digest"]
+
+
+def test_changed_source_digest_rejects_preview_and_dispatch_without_admission(container):
+    owner, conversation, messages, service, dispatch = setup(container, "changed-source-hash")
+    service.settings = dispatch.settings = replace(service.settings, context_retrieval_enabled=True)
+    original = b"Approved milestone summary."
+    source = Artifact(id=str(uuid4()), owner_id=owner, filename="milestones.txt",
+                      content_type="text/plain", object_key="reviewed-milestone",
+                      sha256=sha256(original).hexdigest(), byte_size=len(original),
+                      expires_at=utcnow() + timedelta(days=1))
+    with dispatch.sessions.begin() as db:
+        db.add(source)
+    messages.append_message(owner, conversation["id"], MessageCreate(
+        text="Use the milestone reference.", client_request_key="source-revision-1",
+        selected_resource_ids=[UUID(source.id)],
+    ))
+    latest = append(messages, owner, conversation, "Write the report.", "source-revision-2")
+    reviewed = brief().model_copy(update={"source_ids": [UUID(source.id)]})
+    validated = service.validate(owner, conversation["id"], latest["id"],
+                                 expected_sequence=2, brief=reviewed)
+    with dispatch.sessions.begin() as db:
+        db.get(Artifact, source.id).sha256 = sha256(b"Changed milestone summary.").hexdigest()
+
+    for path in ("preview", "dispatch"):
+        with pytest.raises(CoworkerError) as denied:
+            if path == "preview":
+                service.validate(owner, conversation["id"], latest["id"],
+                                 expected_sequence=2, brief=reviewed)
+            else:
+                dispatch.dispatch(owner, conversation["id"], latest["id"], expected_sequence=2,
+                                  output_language="en-GB", reviewed_brief=reviewed,
+                                  expected_digest=validated["canonical_digest"])
+        assert denied.value.code == "context_sources_changed"
+        assert denied.value.status_code == 409
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
 
 
 def test_review_and_repreview_never_dispatch_before_explicit_confirmation(container):
