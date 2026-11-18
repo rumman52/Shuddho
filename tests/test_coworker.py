@@ -3675,9 +3675,15 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
         task = new_task(container, owner)
         delegate = container.storage
 
+        native_outputs = None
+
         def render(draft, sources, **options):
-            # Exercise PUT-loss recovery only after the real native-export validator passes.
-            return render_in_subprocess(draft, sources, **options)
+            nonlocal native_outputs
+            # Freeze valid native bytes across the retry: DOCX/PDF metadata can vary
+            # between renders, but PUT replay must use the same content-addressed keys.
+            if native_outputs is None:
+                native_outputs = render_in_subprocess(draft, sources, **options)
+            return native_outputs
 
         class FaultingStore:
             def __init__(self, wrapped):
