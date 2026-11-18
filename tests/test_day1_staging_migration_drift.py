@@ -1,6 +1,8 @@
 """Offline Day 1 source/readback tests; never imply migration or staging succeeded."""
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -104,24 +106,28 @@ def test_duplicate_metadata_and_missing_parent_fail_closed(tmp_path):
         migration_graph(path)
 
 
-def test_readback_reader_rejects_symlinks_oversize_and_ambiguous_json(tmp_path):
-    good = tmp_path / "proof.json"
-    good.write_text(json.dumps(receipt()), encoding="utf-8")
-    assert read_readback(good) == receipt()
-    link = tmp_path / "link.json"
-    link.symlink_to(good)
-    with pytest.raises(MigrationDriftError):
-        read_readback(link)
-    good.write_text('{"revision":"0070","revision":"0072"}', encoding="utf-8")
-    with pytest.raises(MigrationDriftError):
-        read_readback(good)
-    good.write_text('{"value": 1e999}', encoding="utf-8")
-    with pytest.raises(MigrationDriftError):
-        read_readback(good)
-    good.write_bytes(b" " * 32769)
-    with pytest.raises(MigrationDriftError):
-        read_readback(good)
-
+def test_readback_reader_rejects_symlinks_oversize_and_ambiguous_json():
+    # CI's pytest --basetemp lives inside the checkout. Use an independently
+    # placed temporary folder so the valid fixture respects the production
+    # rule that operator readbacks must never be developer-checkout files.
+    with TemporaryDirectory(prefix="shuddho-day1-readback-") as directory:
+        external = Path(directory)
+        good = external / "proof.json"
+        good.write_text(json.dumps(receipt()), encoding="utf-8")
+        assert read_readback(good) == receipt()
+        link = external / "link.json"
+        link.symlink_to(good)
+        with pytest.raises(MigrationDriftError):
+            read_readback(link)
+        good.write_text('{"revision":"0070","revision":"0072"}', encoding="utf-8")
+        with pytest.raises(MigrationDriftError):
+            read_readback(good)
+        good.write_text('{"value": 1e999}', encoding="utf-8")
+        with pytest.raises(MigrationDriftError):
+            read_readback(good)
+        good.write_bytes(b" " * 32769)
+        with pytest.raises(MigrationDriftError):
+            read_readback(good)
 
 def test_real_migration_graph_has_both_parents_of_unified_head():
     graph = migration_graph()
