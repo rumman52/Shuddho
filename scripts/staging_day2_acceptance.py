@@ -30,7 +30,8 @@ _BASE_FIELDS = (
 _RECOVERY = ("temporal", "parallel_restart", "fan_in")
 _CHECKS = [
     "model", "owner_isolation", "artifact_retrieval", "temporal",
-    "worker_heartbeat", "parallel_restart", "fan_in", "backup_restore",
+    "worker_heartbeat", "parallel_restart", "fan_in", "outbox_once",
+    "worker_replaced", "backup_restore",
 ]
 
 
@@ -141,6 +142,32 @@ def validate_evidence(
         if digest != rollout_digest:
             raise Day2AcceptanceFailure(f"Recovery {stage} does not match the frozen rollout manifest.")
         recovery_times.append(verified)
+    effect = _object(rec.get("recovery_outbox"), "recovery.recovery_outbox")
+    if restore.get("recovery_outbox") != effect:
+        raise Day2AcceptanceFailure("Restore did not carry forward the same recovery outbox evidence.")
+    agent_run_id = _nonempty(effect.get("agent_run_id"), "recovery_outbox.agent_run_id")
+    if (effect.get("workflow_id") != "shuddho-agent-" + agent_run_id
+            or effect.get("source_revision") != expected_revision):
+        raise Day2AcceptanceFailure("Outbox proof belongs to a different Agent run or source revision.")
+    if (type(effect.get("agent_outbox_effect_count")) is not int
+            or effect["agent_outbox_effect_count"] != 1
+            or type(effect.get("child_task_outbox_count")) is not int
+            or effect["child_task_outbox_count"] != 3
+            or effect.get("child_task_outbox_all_delivered") is not True):
+        raise Day2AcceptanceFailure("Recovery has not proved one AgentRun outbox effect and three delivered child outboxes.")
+    worker_before_id = _nonempty(effect.get("worker_before_id"), "recovery_outbox.worker_before_id")
+    worker_after_id = _nonempty(effect.get("worker_after_id"), "recovery_outbox.worker_after_id")
+    if worker_before_id == worker_after_id:
+        raise Day2AcceptanceFailure("Recovery has no distinct replacement worker identity.")
+    started = _time(effect.get("run_started_at"), "recovery_outbox.run_started_at")
+    finished = _time(effect.get("run_finished_at"), "recovery_outbox.run_finished_at")
+    restarted = _time(effect.get("restart_at"), "recovery_outbox.restart_at")
+    replacement_started = _time(effect.get("worker_after_started_at"), "recovery_outbox.worker_after_started_at")
+    _nonempty(effect.get("restart_reference"), "recovery_outbox.restart_reference")
+    if not (started <= restarted <= finished
+            and started <= replacement_started <= finished
+            and abs((replacement_started - restarted).total_seconds()) <= 300):
+        raise Day2AcceptanceFailure("Recovery did not replace a worker during the same active Agent run.")
     digest, restored_at = _stage(restore.get("backup_restore"), "restored.backup_restore",
                                  release_id=release_id, revision=expected_revision)
     if digest != rollout_digest:
@@ -160,6 +187,9 @@ def validate_evidence(
         "artifact_id": run["artifact_id"],
         "artifact_sha256": run["artifact_sha256"],
         "worker_id": worker["id"],
+        "recovered_agent_run_id": agent_run_id,
+        "recovered_agent_workflow_id": effect["workflow_id"],
+        "logical_agent_outbox_effect_count": 1,
         "required_live_checks": list(_CHECKS),
         "caveat": "Only operator-supplied evidence consistency; independent live/platform verification remains mandatory.",
     }
