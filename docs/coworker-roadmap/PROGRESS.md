@@ -1,3 +1,11 @@
+## Day 4 reviewed delegation: exact-byte and UI qualification tests — 18 November 2026 (Asia/Dhaka)
+
+Pinned base `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`. Source change is **tests/evidence only**: removed two shadowed duplicate pytest definitions (same-name imports hid earlier versions), added exact 4,096/16,000-byte Bangla boundary tests with pre-admission 422 and one-run/one-outbox positive cases, source SHA revocation and per-field React preview invalidation tests. Reuses the merged #719/#738/#743/#745 transaction/runtime implementation and does **not** patch production source.
+
+Read-only staging: PostgreSQL 17.11, ledger `0070` versus source Alembic head `0072_merge_0071_heads`; before/after counts all zero for conversations/runs/outbox/artifacts. The digest, sanitized staging transaction/worker IDs, provider result and artifact remain **unavailable**; no dispatch or deployment was attempted. On pinned-main CI, Day 4's existing focused gate passed but the full Coworker and governance/merge checks failed. New branch checks and independent review are separate pending gates. See [Day 4 acceptance evidence](DAY4_REVIEWED_DELEGATION_ACCEPTANCE_2026-11-18.md) and [#730](https://github.com/rumman52/Shuddho/issues/730). Keep production activation, external sends and paid worker provisioning unapproved. Next: inspect exact PR head CI, then owner-authorized C preflight and B/A/D operated same-SHA staging journey.
+
+---
+
 ## Day 10 CTO handoff and live blockers — 17 November 2026 (Asia/Dhaka)
 
 The current Day 10 disposition remains **SOURCE_ONLY / NO-GO**. The exact main
