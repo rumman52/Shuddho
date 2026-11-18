@@ -24,6 +24,15 @@ staging access before calling the pilot ready.
 
 ---
 
+## Day 9 source preflight CI enforcement — 18 November 2026 (Asia/Dhaka)
+
+**Level: source-only PR; exact-head CI pending; Day 9 NO-GO.**
+Main `aa705726f4c76cbb819a62211b7743aa44c59b17` has merged [#774](https://github.com/rumman52/Shuddho/pull/774), which fixed the native export fault-fixture failures reproduced in [CI #44278207003](https://github.com/rumman52/Shuddho/actions/runs/44278207003). Do not duplicate that patch. A separate, directly observed acceptance gap remains: the required Coworker CI workflow does not invoke the Day 9 `validate-registry` or `preflight` commands or separately gate the Runtime v3 helper tests. Branch `codex/day9-source-preflight-ci-20261118` adds precisely those source-only mandatory steps, preserving immutable D-held inputs and all opt-in live provider tests; the helper suite has an explicit zero-skip gate and CI artifact. See [task contract](DAY9_SOURCE_PREFLIGHT_CI_2026-11-18.md).
+
+No new API, worker, model, storage, database, permission or feature flag is activated. This is **not** an independent freeze, D custody authentication, 40-case first run or 20 C-operated recovery receipts. Actual Supabase staging is PostgreSQL 17.11 / Alembic 0070 vs source 0072 head; required main governance still fails on missing App client ID and policy drift. Await exact final-head CI and independent GitHub review. C/owner administer governance and authorize staging operations; human D privately establishes #665 custody; reviewers and C carry out observed evaluations and operations. No owner-authorized billed resources or external sends were performed.
+
+---
+
 ## Day 1 native export fault-fixture repair — 18 November 2026 (Asia/Dhaka)
 
 Status: **TEST-SOURCE CANDIDATE / NO-GO**, in [draft PR #774](https://github.com/rumman52/Shuddho/pull/774), based on main `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`. This does not claim a merged fix, green final-head CI, hosted qualification, or production activation.
@@ -2481,3 +2490,10 @@ PR #649 inverted this behavior by initializing `projectCreateMode` from `?view=p
 The Figma MCP context request was rate-limited, so visual comparison used the supplied screenshot and the repository's exported `design.json` / `design-tokens.json`. The project layout CSS already matches the exported 1440×900 geometry and Rukh palette; this correction changes route state, not the design system.
 
 Frontend test/build CI passed on the implementation head (web-editor: 238 passed, 0 failed; standalone Coworker and Writing Assistant checks passed). The Vercel GitHub integration reported the branch preview Ready. Broader Coworker qualification CI is tracked separately. No production migration, backend flag, database record, or production deployment was changed. See [task contract](PROJECTS_ENTRY_SCREEN_2026-11-08.md).
+
+## Day 10 source identity and CI gate correction — 18 November 2026 (Asia/Dhaka)
+
+- **Base:** main `aa705726f4c76cbb819a62211b7743aa44c59b17` (includes #774); branch `codex/day10-exact-readback-ci-20261118` for [#736](https://github.com/rumman52/Shuddho/issues/736). The main's positive Day 10 fixture passed even with no API/worker image digest and no worker 43-flag readback, and the release gate expected aliases `frontend`/`postgres-18-qualification` rather than the real GitHub job names.
+- **Bounded proposed source fix:** enforce lowercase SHA-256 build digests in API and worker evidence; exact schema-v2 worker environment/43 boolean flags (including false values) and provider list; use Day 9's canonical seven exact-head GitHub contexts. Preserve canonical release/quality gates and all current production defaults. Add 13 parameterized rejection cases. See [contract](DAY10_IDENTITY_CI_EVIDENCE_GUARD_2026-11-18.md) and [operator snapshot](DAY10_NO_GO_OPERATOR_HANDOFF_2026-11-18.md).
+- **Source vs operations:** previous main Coworker CI was red on two unrelated export test fixtures fixed in now-merged [#774](https://github.com/rumman52/Shuddho/pull/774); governance/merge controls also red. Read-only Render staging API remains on `0e0b662fad0a02817a79a4514abba8f94e0ad022` and lacks worker; Supabase schema ledger remains `0070` vs source head `0072_merge_0071_heads`; Vercel connected Shuddho project absent. No live evidence, migration, provider spend, flag change, rollout freeze, signoff or pilot admission was made. **SOURCE_ONLY / NO-GO**.
+- **Repository verification:** pending focused tests, final-head mandatory CI and independent reviewer signoff. Do not claim live or production qualification from mock-positive unit tests. **Next:** run focused Day 10 suite and inspect immutable PR-head GitHub checks; C fixes controls; after explicit owner authorization operate staging and genuine receipts.
