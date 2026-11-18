@@ -386,6 +386,35 @@ def heartbeat_advanced(container: Container, before: dict, revision: str) -> dic
         time.sleep(1)
 
 
+def document_outbox_receipt(task_id: str, rows: list) -> dict:
+    """Prove the selected PDF task has one persisted, delivered dispatch row."""
+    if not isinstance(task_id, str) or not task_id:
+        raise Day2Failure("Private task id is missing before outbox verification.")
+    if len(rows) != 1 or rows[0].task_id != task_id:
+        raise Day2Failure("Private document task does not have exactly one durable outbox effect.")
+    row = rows[0]
+    if row.delivered is not True or type(row.attempts) is not int or row.attempts < 1:
+        raise Day2Failure("Private document task outbox was not delivered by a real worker.")
+    return {"task_id": task_id, "effect_count": 1, "delivered": True,
+            "dispatch_attempts": row.attempts}
+
+
+def persisted_document_outbox(container, task_id: str) -> dict:
+    """Read the real database ledger, never infer outbox delivery from HTTP 200."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+    from services.coworker.models import Outbox
+
+    try:
+        with container.repository.sessions() as db:
+            rows = list(db.scalars(select(Outbox).where(Outbox.task_id == task_id)).all())
+    except SQLAlchemyError:
+        # Avoid printing a driver exception with SQL, network details or secrets
+        # into a staging operator log or shared issue evidence.
+        raise Day2Failure("Private document outbox could not be independently verified.") from None
+    return document_outbox_receipt(task_id, rows)
+
+
 async def temporal_completed(settings: Settings, workflow_id: str) -> None:
     from temporalio.client import Client
 
@@ -442,6 +471,7 @@ def main() -> None:
                 timeout_seconds=args.timeout, trusted_storage_host=endpoint.hostname,
             )
         asyncio.run(temporal_completed(settings, result["workflow_id"]))
+        result["document_outbox"] = persisted_document_outbox(container, result["task_id"])
         after = heartbeat_advanced(container, before, release["source_revision"])
         result["worker"] = {
             "id": before["id"], "task_queue": settings.task_queue,
@@ -453,7 +483,7 @@ def main() -> None:
         print(json.dumps({"status": "passed", "written": str(args.output),
                           "checks": {"model": "passed", "artifact": "passed",
                                      "owner_isolation": "passed", "temporal": "passed",
-                                     "worker_heartbeat": "passed"}}, indent=2))
+                                     "worker_heartbeat": "passed", "document_outbox": "passed"}}, indent=2))
     except (Day2Failure, ValueError, KeyError, OSError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "failed", "error": str(error) if isinstance(error, Day2Failure)
                           else type(error).__name__}, indent=2))

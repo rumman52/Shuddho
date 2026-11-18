@@ -25,11 +25,11 @@ _BASE_FIELDS = (
     "document_id", "document_version_id", "document_sha256",
     "task_id", "workflow_id", "artifact_id", "artifact_sha256",
     "artifact_bytes", "model_attempts", "accounted_tokens",
-    "owner_isolation", "artifact_retrieval", "worker",
+    "owner_isolation", "artifact_retrieval", "worker", "document_outbox",
 )
 _RECOVERY = ("temporal", "parallel_restart", "fan_in")
 _CHECKS = [
-    "model", "owner_isolation", "artifact_retrieval", "temporal",
+    "model", "owner_isolation", "artifact_retrieval", "temporal", "document_outbox",
     "worker_heartbeat", "parallel_restart", "fan_in", "outbox_once",
     "worker_replaced", "backup_restore",
 ]
@@ -115,6 +115,13 @@ def validate_evidence(
         _digest(run.get(key), "execution." + key)
     for key in ("artifact_bytes", "model_attempts", "accounted_tokens"):
         _positive(run.get(key), "execution." + key)
+    document_outbox = _object(run.get("document_outbox"), "execution.document_outbox")
+    if (document_outbox.get("task_id") != run["task_id"]
+            or type(document_outbox.get("effect_count")) is not int
+            or document_outbox["effect_count"] != 1
+            or document_outbox.get("delivered") is not True):
+        raise Day2AcceptanceFailure("Private PDF task does not have exactly one delivered outbox effect.")
+    _positive(document_outbox.get("dispatch_attempts"), "document_outbox.dispatch_attempts")
     if run.get("workflow_id") != "shuddho-task-" + run["task_id"]:
         raise Day2AcceptanceFailure("Document execution has an unrelated Temporal workflow id.")
     if run.get("owner_isolation") != "passed" or run.get("artifact_retrieval") != "passed":
@@ -190,6 +197,8 @@ def validate_evidence(
         "recovered_agent_run_id": agent_run_id,
         "recovered_agent_workflow_id": effect["workflow_id"],
         "logical_agent_outbox_effect_count": 1,
+        "logical_document_outbox_effect_count": 1,
+        "document_outbox_dispatch_attempts": document_outbox["dispatch_attempts"],
         "required_live_checks": list(_CHECKS),
         "caveat": "Only operator-supplied evidence consistency; independent live/platform verification remains mandatory.",
     }

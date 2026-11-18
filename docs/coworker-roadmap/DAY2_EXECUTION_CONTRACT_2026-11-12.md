@@ -34,6 +34,7 @@ The merged Day 2 source includes:
 - The operator script reads a **fresh, running worker on the same SHA and task
   queue**, requires a progressing database heartbeat, and directly describes
   `shuddho-task-<task_id>` in Temporal as `completed`.
+- After Temporal confirms the private `report_email` workflow completed, the Day 2 operator reads the actual `cw_outbox` row keyed by that **same PDF task ID**. Exactly one row, `delivered=true` and positive dispatch attempts are required; `document_outbox` travels unchanged with the task identity through recovery and isolated restore acceptance. This proves one logical task-dispatch ledger effect, not provider-side exactly-once execution.
 - The output contains only nonsecret release/worker/document/task/artifact IDs,
   hashes, sizes, model accounting and pass labels. It does not log tokens,
   user text, signed URLs, passwords, or the synthetic source contents.
