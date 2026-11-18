@@ -29,6 +29,15 @@ owner documents are approved. See
 [PR #779](https://github.com/rumman52/Shuddho/pull/779).
 
 ---
+## Day 9 historical provenance CI repair — 18 November 2026 (Asia/Dhaka)
+
+**Status: SOURCE ONLY / NO-GO; exact-head CI and independent review pending.**
+Main `d1bed1e0f65703df67a740b94e2768fdf69abb49` already contains the Day 9 CI preflight from merged [PR #784](https://github.com/rumman52/Shuddho/pull/784); that PR was merged at its **failing** earlier head `91769b122d7aa3cc38b615c009efdeb7170ee33b` without a submitted independent review (confirmed via API), notwithstanding its recorded 109-pass/1-fail preflight. The red failure was caused by the Coworker job using a depth-one checkout for a valid, Git-authenticated historical source fixture. Main `test-and-build` already fetches full history. This work branch adds only the matching full-history checkout to Coworker, preserves the provenance assertion and records red evidence in [Day 9 task contract](DAY9_SOURCE_PREFLIGHT_CI_2026-11-18.md). The first CI run and any later repaired CI are distinct. **The unreviewed red-CI merge is a governance blocker requiring admin audit; never use it to qualify Day 9 or Day 10.**
+
+No held-out data, model calls, stage migration, external send, credentials, live C fault operations, or paid resource was accessed/changed. Day 9 remains NO-GO pending C-authenticated runtime freeze and 20 operations, D custody/replacement and 40 first-run outputs, two blinded reviewers, and main governance/CI restoration.
+
+---
+
 ## Day 9 source preflight CI enforcement — 18 November 2026 (Asia/Dhaka)
 
 **Level: source-only PR; exact-head CI pending; Day 9 NO-GO.**
@@ -2502,3 +2511,13 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - **Bounded proposed source fix:** enforce lowercase SHA-256 build digests in API and worker evidence; exact schema-v2 worker environment/43 boolean flags (including false values) and provider list; use Day 9's canonical seven exact-head GitHub contexts. Preserve canonical release/quality gates and all current production defaults. Add 13 parameterized rejection cases. See [contract](DAY10_IDENTITY_CI_EVIDENCE_GUARD_2026-11-18.md) and [operator snapshot](DAY10_NO_GO_OPERATOR_HANDOFF_2026-11-18.md).
 - **Source vs operations:** previous main Coworker CI was red on two unrelated export test fixtures fixed in now-merged [#774](https://github.com/rumman52/Shuddho/pull/774); governance/merge controls also red. Read-only Render staging API remains on `0e0b662fad0a02817a79a4514abba8f94e0ad022` and lacks worker; Supabase schema ledger remains `0070` vs source head `0072_merge_0071_heads`; Vercel connected Shuddho project absent. No live evidence, migration, provider spend, flag change, rollout freeze, signoff or pilot admission was made. **SOURCE_ONLY / NO-GO**.
 - **Repository verification:** pending focused tests, final-head mandatory CI and independent reviewer signoff. Do not claim live or production qualification from mock-positive unit tests. **Next:** run focused Day 10 suite and inspect immutable PR-head GitHub checks; C fixes controls; after explicit owner authorization operate staging and genuine receipts.
+
+---
+
+## Day 6 evidence and acceptance gates — 18 November 2026
+
+- **Current main checkpoint:** `aa705726f4c76cbb819a62211b7743aa44c59b17` merged Day 1 recovery fixture repair [#774](https://github.com/rumman52/Shuddho/pull/774), superseding an overlapping isolated Day 6 test-fix [#775](https://github.com/rumman52/Shuddho/pull/775). Production validators are unchanged.
+- **Source and CI:** original `c8aa7cf...` had 1,628 Coworker pass / 2 fail / 4 skip; the parallel #775 focused Day 6 JUnit is 107/107 with 14/14 **offline** quality calibration, not the two original regression cases nor a live 40-case model run. Full new-main verification and independent review must not be inferred from concurrent PR status.
+- **Live preflight (read only):** Supabase staging 1 private bucket but 0 Auth users, 0 Coworker accounts/runs/tasks/artifacts/objects, and outbox 0; migration at `0070`, source ahead. Render staging API deploy is from 14 November, with no workflow registered; connected Vercel has no Shuddho project.
+- **Day 6 verdict:** **NO-GO**: approved owner A/B, source-complete bilingual golden run, native owner retrieval/SHA-256, cross-owner denial, “Draft ready” UI/no-send provider receipt, reconnect/restart, and D-reviewed 40 development first-run versus regression are not demonstrated. No production deploy, schema mutation, paid resource or send performed.
+- **Traceable handoff and owner next steps:** [DAY6_EVIDENCE_2026-11-18.md](DAY6_EVIDENCE_2026-11-18.md), tracker [#732](https://github.com/rumman52/Shuddho/issues/732). C approves/prepares staging, A/B run the golden research/report-email workflow, D independently verifies actual files/citations/language/retrieval and scores, Founder+C own release/spend gates.
