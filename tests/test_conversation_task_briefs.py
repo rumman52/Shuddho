@@ -136,6 +136,14 @@ def test_http_preview_carries_selected_memory_into_the_review_digest(container, 
     facts = [pin(saved.json()).model_dump(mode="json")]
     msg_path = path + "/messages/" + added.json()["id"]
     draft = TaskBrief(objective=text, deliverables=["A customer report"]).model_dump(mode="json")
+    implicit = client.post(msg_path + "/task-brief/preview", json={
+        "expected_sequence": 1, "brief": draft,
+    }, headers=headers())
+    explicit_empty = client.post(msg_path + "/task-brief/preview", json={
+        "expected_sequence": 1, "brief": draft, "memory_pins": [],
+    }, headers=headers())
+    assert implicit.status_code == 200 and explicit_empty.status_code == 200
+    assert implicit.json()["canonical_digest"] != explicit_empty.json()["canonical_digest"]
     preview = client.post(msg_path + "/task-brief/preview", json={
         "expected_sequence": 1, "brief": draft, "memory_pins": facts,
     }, headers=headers())
@@ -160,6 +168,66 @@ def test_one_selected_project_fact_enters_planner_context_unselected_never_enter
     with dispatch.sessions() as db:
         run = db.get(AgentRun, created["run_id"])
         assert run.memory_namespaces == []
+
+
+def test_explicit_empty_reviewed_selection_has_distinct_digest_and_one_admission(container):
+    alice, _, conv, conversations, dispatch, _, _, _ = seeded(container)
+    msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+    brief = TaskBrief(objective=msg["text"], deliverables=["A customer report"])
+    service = ConversationTaskBriefService(dispatch.sessions, dispatch.settings)
+    legacy = service.validate(alice, conv["id"], msg["id"], expected_sequence=1, brief=brief)
+    empty = service.validate(alice, conv["id"], msg["id"], expected_sequence=1,
+                             brief=brief, memory_pins=[])
+    assert legacy["canonical_digest"] != empty["canonical_digest"]
+    options = dict(expected_sequence=1, reviewed_brief=brief, memory_pins=[])
+
+    with pytest.raises(CoworkerError) as denied:
+        dispatch.dispatch(alice, conv["id"], msg["id"], **options,
+                          expected_digest=legacy["canonical_digest"])
+    assert denied.value.code == "task_brief_digest_mismatch"
+    created, first = dispatch.dispatch(alice, conv["id"], msg["id"], **options,
+                                       expected_digest=empty["canonical_digest"])
+    assert first
+    replay, again = dispatch.dispatch(alice, conv["id"], msg["id"], **options,
+                                      expected_digest=empty["canonical_digest"])
+    assert not again and replay["run_id"] == created["run_id"]
+    with dispatch.sessions() as db:
+        run = db.get(AgentRun, created["run_id"])
+        assert run.reviewed_brief["schema_version"] == 2
+        assert run.project_context["memory_pins"] == []
+        assert run.memory_namespaces == []
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 1
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 1
+    with pytest.raises(CoworkerError) as denied:
+        dispatch.dispatch(alice, conv["id"], msg["id"], expected_sequence=1,
+                          reviewed_brief=brief, memory_pins=None,
+                          expected_digest=empty["canonical_digest"])
+    assert denied.value.code == "idempotency_conflict"
+
+
+def test_historical_v1_empty_selection_still_replays(container):
+    alice, _, conv, conversations, dispatch, _, _, _ = seeded(container)
+    msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+    brief = TaskBrief(objective=msg["text"], deliverables=["A customer report"])
+    service = ConversationTaskBriefService(dispatch.sessions, dispatch.settings)
+    legacy = service.validate(alice, conv["id"], msg["id"], expected_sequence=1, brief=brief)
+    admitted, _ = dispatch.dispatch(
+        alice, conv["id"], msg["id"], expected_sequence=1, reviewed_brief=brief,
+        expected_digest=legacy["canonical_digest"], memory_pins=None,
+    )
+    # Earlier code wrote v1 snapshots even when an empty selection was supplied.
+    with dispatch.sessions.begin() as db:
+        run = db.get(AgentRun, admitted["run_id"])
+        run.project_context = {**run.project_context, "memory_pins": []}
+        run.fingerprint = dispatch._dispatch_fingerprint(
+            AgentRunCreate(goal=brief.objective, output_language=brief.output_language),
+            [], run.project_context, reviewed_digest=legacy["canonical_digest"],
+        )
+    replay, created = dispatch.dispatch(
+        alice, conv["id"], msg["id"], expected_sequence=1, reviewed_brief=brief,
+        expected_digest=legacy["canonical_digest"], memory_pins=[],
+    )
+    assert not created and replay["run_id"] == admitted["run_id"]
 
 
 def test_explicit_empty_selection_never_falls_back_to_project_namespace(container):
