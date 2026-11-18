@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 from dataclasses import replace
 from datetime import timedelta
@@ -48,7 +49,7 @@ from services.coworker.google_actions import (
     USERINFO_URL,
 )
 from services.coworker.permission_gateway import PermissionGateway
-from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, ExternalAction, Notification, NotificationOutbox, PersonalGoal, utcnow
+from services.coworker.models import Account, AgentRun, Automation, AutomationOccurrence, Connection, ConnectorCursor, ConnectorEvent, ConnectorReadGrant, ConnectorSnapshot, ConnectorSubscription, Document, DocumentVersion, ExternalAction, Notification, NotificationOutbox, PersonalGoal, Project, ProjectResource, Workspace, utcnow
 
 
 class ReadGoogle:
@@ -1148,13 +1149,49 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
     asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
 
+    # Day 7 now requires an owner-owned project and an explicit current
+    # document. Keep this connected-read test positive without weakening the
+    # new admission boundary or bypassing source-version integrity.
+    project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
+    source = b"Daily project briefing: the rollout review is ready."
+    digest = hashlib.sha256(source).hexdigest()
+    object_key = f"{owner}/inputs/{version_id}/{digest}"
+    with container.repository.sessions.begin() as db:
+        workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == owner))
+        assert workspace_id is not None
+        db.add(Project(
+            id=project_id, owner_id=owner,
+            idempotency_key="briefing-connected-project-" + str(uuid4()),
+            fingerprint="a" * 64, name="Connected briefing pilot",
+            description="", revision=1, deleted=False,
+            created_at=utcnow(), updated_at=utcnow(),
+        ))
+        db.add(Document(
+            id=document_id, owner_id=owner, workspace_id=workspace_id,
+            filename="briefing-source.txt",
+        ))
+        db.flush()
+        db.add(ProjectResource(
+            project_id=project_id, owner_id=owner,
+            resource_type="document", resource_id=document_id,
+        ))
+        db.add(DocumentVersion(
+            id=version_id, document_id=document_id, owner_id=owner,
+            version=1, kind="txt", byte_size=len(source), sha256=digest,
+            object_key=object_key, state="uploaded",
+            expires_at=utcnow() + timedelta(days=3),
+        ))
+    container.storage.put(object_key, source, "text/plain")
+
     goal, created = container.goals.create(
         owner,
         GoalCreate(
-            objective="Prepare my private daily briefing from this approved inbox context.",
+            objective="Prepare my private project briefing from this file and approved inbox context.",
             success_criteria=["Create one concise private briefing."],
             constraints=["Do not send, publish, or mutate anything externally."],
             timezone="UTC",
+            project_id=project_id,
+            authorized_resources=[{"kind": "document", "reference": document_id}],
             state="active",
             budget={"max_runs": 10, "max_planner_tokens": 50000},
         ),
@@ -1174,7 +1211,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             overlap_policy="skip",
             catchup_window_seconds=3600,
             quiet_hours=None,
-            expires_at=None,
+            expires_at=utcnow() + timedelta(days=3),
         ),
         "briefing-connected-automation-" + str(uuid4()),
     )
@@ -1188,11 +1225,17 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         run = db.get(AgentRun, result["run_id"])
         assert run is not None
         assert run.connector_read_grant_ids == [grant["id"]]
+        assert run.document_ids == [document_id]
+        assert run.input_versions == [version_id]
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.action_ids == []
     context = container.context.for_run(owner, result["run_id"])
     assert any(
         item["provenance"].get("grant_id") == grant["id"]
+        for item in context["items"]
+    )
+    assert any(
+        item["provenance"].get("document_id") == document_id
         for item in context["items"]
     )
 
