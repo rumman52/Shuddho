@@ -248,26 +248,23 @@ def test_validate_persisted_recovery_rejects_restart_after_final_step_finished(o
 def _outbox_fixture():
     _, run, _, tasks = completed_fixture()
     parent = [SimpleNamespace(run_id=run.id, delivered=True, attempts=0)]
-    children = [
-        SimpleNamespace(task_id=task.id, delivered=True, attempts=1)
-        for task in tasks
-    ]
+    # AgentRuntime creates each child with enqueue=False; no cw_outbox rows.
+    children = []
     return run, tasks, parent, children
 
 
-def test_recovery_requires_one_logical_agent_outbox_and_three_delivered_task_outboxes():
+def test_recovery_requires_one_logical_agent_outbox_and_no_child_task_outboxes():
     run, tasks, parent, children = _outbox_fixture()
     assert recovery.validate_outbox_effects(run, tasks, parent, children) == {
         "agent_outbox_effect_count": 1,
-        "child_task_outbox_count": 3,
-        "child_task_outbox_all_delivered": True,
+        "child_task_outbox_count": 0,
+        "child_task_outbox_expected_absent": True,
     }
 
 
 @pytest.mark.parametrize("failure", [
     "no_parent", "duplicate_parent", "foreign_parent", "parent_undelivered",
-    "missing_child", "duplicate_child", "foreign_child", "child_undelivered",
-    "child_unattempted",
+    "unexpected_child_outbox", "duplicate_task_identity",
 ])
 def test_recovery_refuses_missing_or_duplicate_logical_outbox_effects(failure):
     run, tasks, parent, children = _outbox_fixture()
@@ -279,17 +276,11 @@ def test_recovery_refuses_missing_or_duplicate_logical_outbox_effects(failure):
         parent[0].run_id = "foreign"
     elif failure == "parent_undelivered":
         parent[0].delivered = False
-    elif failure == "missing_child":
-        children.pop()
-    elif failure == "duplicate_child":
-        children[2].task_id = children[1].task_id
-    elif failure == "foreign_child":
-        children[0].task_id = "unrelated"
-    elif failure == "child_undelivered":
-        children[0].delivered = False
-    elif failure == "child_unattempted":
-        children[0].attempts = 0
-    with pytest.raises(recovery.RecoveryFailure, match="outbox"):
+    elif failure == "unexpected_child_outbox":
+        children.append(SimpleNamespace(task_id=tasks[0].id, delivered=True, attempts=1))
+    elif failure == "duplicate_task_identity":
+        tasks[2].id = tasks[1].id
+    with pytest.raises(recovery.RecoveryFailure, match="outbox|identities"):
         recovery.validate_outbox_effects(run, tasks, parent, children)
 
 
