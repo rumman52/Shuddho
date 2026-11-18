@@ -112,6 +112,30 @@ def test_duplicate_required_check_with_untrusted_source_must_fail():
         audit_governance(protected_branch(), [rule])
 
 
+@pytest.mark.parametrize(
+    "rule_type",
+    ["pull_request", "required_status_checks", "deletion", "non_fast_forward"],
+)
+def test_duplicate_ruleset_type_cannot_mask_a_weaker_policy(rule_type):
+    rule = approved_ruleset()
+    duplicate = deepcopy(next(row for row in rule["rules"] if row["type"] == rule_type))
+    if rule_type == "pull_request":
+        duplicate["parameters"]["required_approving_review_count"] = 0
+    if rule_type == "required_status_checks":
+        duplicate["parameters"]["strict_required_status_checks_policy"] = False
+    rule["rules"].append(duplicate)
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+@pytest.mark.parametrize("malformed", [None, {}, {"type": None}, {"type": 7}])
+def test_malformed_ruleset_entries_fail_closed(malformed):
+    rule = approved_ruleset()
+    rule["rules"].append(malformed)
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
 def test_redacted_bypass_actors_fails_closed_with_actionable_reason():
     # GitHub's documented GET response withholds bypass_actors when the
     # caller lacks ruleset write access; missing does not prove an empty list.
