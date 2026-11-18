@@ -47,7 +47,8 @@ def frozen(manifest=None):
 
 
 class Day2API:
-    def __init__(self, *, attempts=1, foreign_download=404, document_grounded=True, cites_document=True):
+    def __init__(self, *, attempts=1, foreign_download=404, document_grounded=True, cites_document=True,
+                 source=SOURCE):
         self.calls = []
         self.uploaded = None
         self.task_payload = None
@@ -56,6 +57,7 @@ class Day2API:
         self.document_grounded = document_grounded
         self.cites_document = cites_document
         self.manifest = runtime()
+        self.source = source
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         method, path = request.method, request.url.path
@@ -70,7 +72,7 @@ class Day2API:
                              "workspace_id": "workspace-a" if user == "token-a" else "workspace-b"})
         if method == "POST" and path == "/api/v1/documents":
             value = json.loads(request.content)
-            assert value["sha256"] == hashlib.sha256(SOURCE).hexdigest()
+            assert value["sha256"] == hashlib.sha256(self.source).hexdigest()
             self.document_filename = value["filename"]
             return res(201, {"id": DOC_ID, "state": "pending"})
         if method == "PUT" and path == f"/api/v1/documents/{DOC_ID}/content":
@@ -96,7 +98,7 @@ class Day2API:
                                      "sections": [{"source_ids": [VERSION_ID if self.cites_document else "notes"]}]}},
                 "sources": [{"id": VERSION_ID, "document_id": DOC_ID,
                              "label": self.document_filename,
-                             "sha256": hashlib.sha256(SOURCE).hexdigest()}] if self.document_grounded else [],
+                             "sha256": hashlib.sha256(self.source).hexdigest()}] if self.document_grounded else [],
                 "usage": {"model_attempts": self.attempts, "accounted_tokens": 80 if self.attempts else 0},
                 "artifacts": [{"id": ART_ID, "filename": "report.pdf",
                                "byte_size": len(ARTIFACT), "sha256": hashlib.sha256(ARTIFACT).hexdigest()}],
@@ -130,6 +132,45 @@ def test_day2_real_document_artifact_and_owner_denial_contract(monkeypatch):
     assert api.task_payload["output_language"] == "en"
     assert any(c == ("GET", f"/api/v1/artifacts/{ART_ID}/download", "token-b") for c in api.calls)
     assert any(c == ("GET", f"/api/v1/documents/{DOC_ID}/content", "token-b") for c in api.calls)
+
+
+def test_day2_pdf_source_uses_pdf_extension_and_original_bytes(monkeypatch):
+    # The transport is synthetic; load_private_pdf separately validates the
+    # real PDF before the operator runner can call this API path.
+    source = b"%PDF-1.7\\nprivate synthetic PDF protocol fixture"
+    api = Day2API(source=source)
+    monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
+        200, content=ARTIFACT, request=httpx.Request("GET", url)))
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        result = day2.run_probe(client, "token-a", "token-b", frozen(api.manifest), source, timeout_seconds=5)
+    assert result["document_sha256"] == hashlib.sha256(source).hexdigest()
+    assert api.uploaded == source
+    assert api.document_filename.endswith(".pdf")
+    assert api.task_payload["output_language"] == "en"
+
+
+def test_day2_pdf_operator_path_requires_private_real_text_pdf(tmp_path):
+    source_path = tmp_path / "selected.pdf"
+    source_path.write_bytes(b"%PDF-1.7\\nnot a real PDF")
+    source_path.chmod(0o644)
+    with pytest.raises(day2.Day2Failure, match="owner-only"):
+        day2.load_private_pdf(source_path)
+    source_path.chmod(0o600)
+    with pytest.raises(day2.Day2Failure, match="invalid or unreadable"):
+        day2.load_private_pdf(source_path)
+    link = tmp_path / "linked.pdf"
+    link.symlink_to(source_path)
+    with pytest.raises(day2.Day2Failure, match="nonsymlink"):
+        day2.load_private_pdf(link)
+
+
+def test_day2_pdf_operator_path_accepts_text_based_pdf(tmp_path):
+    weasyprint = pytest.importorskip("weasyprint")
+    source = weasyprint.HTML(string="<p>Day 2 synthetic private English source text.</p>").write_pdf()
+    path = tmp_path / "selected.pdf"
+    path.write_bytes(source)
+    path.chmod(0o600)
+    assert day2.load_private_pdf(path) == source
 
 
 @pytest.mark.parametrize("change", ["unfrozen", "revision", "digest", "production"])
