@@ -76,6 +76,7 @@ def evidence():
         "approved_at": "2026-11-18T02:40:00Z",
         "start_at": "2026-11-18T02:45:00Z",
         "agent_run_id": "run-day4-A", "start_receipt_ref": "start-event-A",
+        "owner_b_denied": True, "owner_b_denial_ref": "day4-B-denial",
         "agent_runs_before": 3, "agent_runs_after": 4,
         "outbox_before": 7, "outbox_after": 8,
         "retry": {"same_run_id": "run-day4-A", "http_status": 202,
@@ -103,6 +104,11 @@ def evidence():
             "kind": name, "http_status": 409, "model_calls_after_denial": 0,
             "evidence_ref": f"denial-{name}",
         } for name in sorted(gate.NEGATIVES)],
+        "unselected_memory": {
+            "unselected_fact_id": "unselected-same-category",
+            "absent_from_all_model_inputs": True,
+            "evidence_ref": "provider-context-digest-attestation",
+        },
         "historical_replay": {
             "agent_run_id": "run-v1", "output_sha256": D4,
             "new_outbox_effects": 0, "evidence_ref": "replay-v1",
@@ -130,7 +136,8 @@ def evidence():
             if workflow == "research":
                 row["citations"] = [{
                     "source_id": f"source-{i}", "url": f"https://example.org/study-{i}",
-                    "sha256": D2, "quote_verified": True,
+                    "title": f"Synthetic study {i}",
+                    "sha256": D2, "retrieved_at": T5, "quote_verified": True,
                 } for i in (1, 2, 3)]
             else:
                 row["email_draft"] = {
@@ -140,6 +147,15 @@ def evidence():
             cases.append(row)
     day6 = {
         **stamp(freeze, T5, T7), "cases": cases,
+        "development_cases": [{
+            "id": f"{workflow}-{language}-{n}",
+            "workflow": workflow, "language": language,
+            "provider_request_id": f"development-model-{workflow}-{language}-{n}",
+            "factual_check": True, "owner_isolation": True,
+            "citation_check": True, "no_send": True,
+            "quality_score": 8, "evidence_ref": f"dev-case-{workflow}-{language}-{n}",
+        } for workflow in sorted(gate.WORKFLOWS)
+          for language in sorted(gate.LANGUAGES) for n in range(10)],
         "reconnect": {
             "run_id_before": "run-research-bn", "run_id_after": "run-research-bn",
             "worker_before_id": "worker-A", "worker_after_id": "worker-B",
@@ -195,6 +211,8 @@ def test_consistent_synthetic_receipts_are_not_automatically_a_hosted_pass():
     (2, ("outbox_after",), 9),
     (2, ("retry", "additional_runs"), 1),
     (2, ("start_edit_race", "http_status"), 200),
+    (2, ("owner_b_denied",), False),
+    (3, ("unselected_memory", "absent_from_all_model_inputs"), False),
     (3, ("arms", 2, "fact_version"), 3),
     (3, ("arms", 2, "provider"), "different-provider"),
     (3, ("arms", 1, "prompt_sha256"), D4),
@@ -205,6 +223,9 @@ def test_consistent_synthetic_receipts_are_not_automatically_a_hosted_pass():
     (4, ("cases", 0, "native_files", 0, "owner_a_hash_verified"), False),
     (4, ("cases", 0, "native_files", 1, "mime"), "application/pdf_wrong"),
     (4, ("cases", 2, "citations", 0, "quote_verified"), False),
+    (4, ("cases", 2, "citations", 0, "retrieved_at"), "2026-11-18T09:00:00Z"),
+    (4, ("development_cases", 0, "quality_score"), 0),
+    (4, ("development_cases", 1, "no_send"), False),
     (4, ("reconnect", "worker_after_id"), "worker-A"),
     (4, ("reconnect", "additional_agent_runs"), 1),
     (4, ("provider_send_audit", "after"), 1),
