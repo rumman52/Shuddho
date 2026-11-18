@@ -234,10 +234,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, help="optional NEW private report file; never overwrite")
     args = parser.parse_args(argv)
     try:
-        branch, _branch_digest = _read_json(args.branch_json)
-        ruleset, _ruleset_digest = _read_json(args.ruleset_json)
+        branch, branch_digest = _read_json(args.branch_json)
+        ruleset, ruleset_digest = _read_json(args.ruleset_json)
         policy, policy_digest = _read_json(args.policy_json)
         report = analyze(branch, ruleset, policy, expected_main_sha=args.expected_main_sha, expected_ruleset_id=args.ruleset_id)
+        # Bind the diagnostic to the exact captured input bytes. Hashes are
+        # reproducibility references, not proof of administrator identity.
+        report["branch_readback_sha256"] = branch_digest
+        report["ruleset_readback_sha256"] = ruleset_digest
         report["reviewed_policy_sha256"] = policy_digest
         rendered = json.dumps(report, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
         if args.output:
