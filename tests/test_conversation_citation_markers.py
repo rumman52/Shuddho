@@ -5,9 +5,10 @@ Synthetic owned TXT fixture only; no provider/network/AgentRun side effects.
 import asyncio
 
 import pytest
-from sqlalchemy import select
 
+pytest.importorskip("sqlalchemy")
 pytest.importorskip("temporalio")
+from sqlalchemy import select
 
 from test_coworker import container
 from test_conversation_replies import _attached_chat_source, setup
