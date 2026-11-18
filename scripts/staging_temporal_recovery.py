@@ -44,6 +44,8 @@ class RecoveryFailure(RuntimeError):
 
 def parse_utc(value: str) -> datetime:
     try:
+        if not isinstance(value, str):
+            raise ValueError("missing timestamp")
         result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         raise RecoveryFailure("Restart time must be an ISO-8601 timestamp with a timezone.") from None
@@ -240,8 +242,8 @@ def validate_worker_replacement(
     heartbeat = parse_utc(after["heartbeat_at"])
     if not active_start <= started_at <= active_finish:
         raise RecoveryFailure("Replacement worker did not register while the Agent run was active.")
-    if abs((started_at - restart_at).total_seconds()) > 300:
-        raise RecoveryFailure("Replacement worker registration is not correlated with the platform restart event.")
+    if not 0 <= (started_at - restart_at).total_seconds() <= 300:
+        raise RecoveryFailure("Replacement worker registration must follow the platform restart event within five minutes.")
     if heartbeat <= started_at:
         raise RecoveryFailure("Replacement worker did not advance its heartbeat after registration.")
     return {
@@ -311,6 +313,8 @@ def validate_persisted_recovery(
     finish = _utc(ordered[2].finished_at)
     if not active_start <= restart_at <= finish:
         raise RecoveryFailure("Recorded worker restart did not occur after agent execution started and before the recovery run finished.")
+    if not any(_utc(item.started_at) <= restart_at <= _utc(item.finished_at) for item in ordered):
+        raise RecoveryFailure("Recorded worker restart did not interrupt an actively executing child task.")
     return {
         "fan_in_started_at": _utc(ordered[2].started_at).isoformat(),
         "branch_finished_at": [_utc(ordered[0].finished_at).isoformat(), _utc(ordered[1].finished_at).isoformat()],
