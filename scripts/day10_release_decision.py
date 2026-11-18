@@ -28,6 +28,7 @@ from scripts.staging_release_freeze import (  # noqa: E402
     PA10_REQUIRED_FALSE,
     PA10_REQUIRED_TRUE,
     RUNTIME_CAPABILITY_KEYS,
+    api_runtime_capabilities_match_rollout,
 )
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -319,15 +320,9 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
         and isinstance(api.get("build_digest"), str)
         and BUILD_DIGEST.fullmatch(api["build_digest"]) is not None
         and api.get("environment") == rollout.get("environment")
-        and isinstance(api.get("capabilities"), dict)
-        and isinstance(capabilities, dict)
-        # Match the complete v2 API capability inventory, including disabled flags.
-        # A partial rollout or an unreviewed extra disabled flag is not a freeze.
-        and set(api["capabilities"]) == RUNTIME_CAPABILITY_KEYS
-        and set(capabilities) == RUNTIME_CAPABILITY_KEYS
-        and all(type(v) is bool for v in capabilities.values())
-        and all(type(v) is bool for v in api["capabilities"].values())
-        and api["capabilities"] == capabilities
+        # Check all 43 frozen authority flags and the additional API-only
+        # UI-derived field. Any unreviewed keys or unexpected drift fail closed.
+        and api_runtime_capabilities_match_rollout(api.get("capabilities"), capabilities)
         and isinstance(api.get("reviewed_skills"), dict)
         and api.get("action_providers") == rollout.get("action_providers", [])
         and isinstance(api.get("cohort"), dict)
