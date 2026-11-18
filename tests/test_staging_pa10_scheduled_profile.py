@@ -46,6 +46,30 @@ def test_clean_origin_rejects_non_https_or_path():
             probe.clean_origin(value)
 
 
+
+@pytest.mark.parametrize("unsafe_origin", [
+    "https://localhost",
+    "https://127.0.0.1",
+    "https://10.0.0.1",
+    "https://192.168.1.1",
+    "https://stage.example.test\t",
+    "https://stage.example.test\n",
+    "https://stage.example.test:99999",
+    "https://stage.example.test///",
+    "https://stage.example.test?",
+    "https://stage.example.test#",
+])
+def test_clean_origin_rejects_unsafe_credential_destinations(unsafe_origin):
+    # The daily briefing probe sends SHUDDHO_STAGING_TOKEN_A to this origin.
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="SHUDDHO_STAGING_API_BASE_URL"):
+        probe.clean_origin(unsafe_origin)
+
+
+def test_clean_origin_accepts_single_slash_and_valid_tls_port():
+    assert probe.clean_origin("https://stage.example.test/") == "https://stage.example.test"
+    assert probe.clean_origin("https://stage.example.test:443/") == "https://stage.example.test:443"
+
+
 def test_simple_reminder_is_not_misclassified_as_agent_backed_goal_run():
     assert "scheduled_reminder" not in probe.SCENARIOS
 
