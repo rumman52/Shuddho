@@ -34,7 +34,7 @@ def evidence():
                "cohort": {"max_users": 5}}
     api = {"schema_version": 2, "source_revision": REV, "environment": "production",
            "build_digest": "sha256:" + "1" * 64,
-           "capabilities": dict(capabilities),
+           "capabilities": {**capabilities, "grounded_conversation_replies": capabilities["conversation_replies"]},
            "action_providers": [], "reviewed_skills": {},
            "cohort": {"enforced": True, "max_users": 5, "configured_members": 0}}
     worker = {**proof(), "deployment_reference": "worker-image-sha256:abc",
@@ -159,6 +159,9 @@ def test_not_a_production_activation_even_when_qualified(monkeypatch):
     lambda rollout, artifacts: rollout["capabilities"].pop("projects"),
     lambda rollout, artifacts: rollout["capabilities"].update(unreviewed_disabled=False),
     lambda rollout, artifacts: artifacts["api"]["capabilities"].update(projects=0),
+    lambda rollout, artifacts: artifacts["api"]["capabilities"].pop("grounded_conversation_replies"),
+    lambda rollout, artifacts: artifacts["api"]["capabilities"].update(grounded_conversation_replies=True),
+    lambda rollout, artifacts: artifacts["api"]["capabilities"].update(grounded_conversation_replies=0),
     lambda rollout, artifacts: rollout["capabilities"].update(projects=0),
 ])
 def test_incomplete_or_unreviewed_capability_inventory_fails_closed(monkeypatch, mutation):
@@ -527,3 +530,16 @@ def test_day10_cli_evidence_input_rejects_links_and_oversized_files(tmp_path):
     oversized.write_bytes(b" " * 4_000_001)
     with pytest.raises(ValueError, match="Cannot read oversized.json"):
         day10.read_json(oversized)
+
+
+def test_43_frozen_flags_and_derived_api_field_remain_separate_from_worker(monkeypatch):
+    rollout, artifacts = evidence()
+    assert len(rollout["capabilities"]) == 43
+    assert len(artifacts["worker"]["capabilities"]) == 43
+    assert len(artifacts["api"]["capabilities"]) == 44
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+
+    artifacts["worker"]["capabilities"]["grounded_conversation_replies"] = False
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "worker_exact_sha_and_deployment_receipt" in result["blockers"]
