@@ -25,6 +25,8 @@ def proofs():
         'artifact_id': 'artifact-a', 'artifact_sha256': '2' * 64, 'artifact_bytes': 220,
         'model_attempts': 1, 'accounted_tokens': 62,
         'owner_isolation': 'passed', 'artifact_retrieval': 'passed',
+        'document_outbox': {'task_id': 'task-a', 'effect_count': 1,
+                            'delivered': True, 'dispatch_attempts': 1},
         'worker': {'id': 'worker-a', 'task_queue': 'staging-temporal', 'source_revision': SHA,
                    'heartbeat_before': '2026-11-12T11:00:00+00:00',
                    'heartbeat_after': '2026-11-12T11:01:00+00:00'},
@@ -72,8 +74,9 @@ def test_valid_proofs_are_consistent_without_claiming_platform_verification():
     assert result['task_id'] == 'task-a'
     assert result['artifact_sha256'] == '2' * 64
     assert result['logical_agent_outbox_effect_count'] == 1
+    assert result['logical_document_outbox_effect_count'] == 1
     assert result['recovered_agent_workflow_id'] == 'shuddho-agent-agent-run-1'
-    assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'outbox_once', 'worker_replaced', 'backup_restore']
+    assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'document_outbox', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'outbox_once', 'worker_replaced', 'backup_restore']
 
 
 @pytest.mark.parametrize('target, field, value', [
@@ -83,6 +86,7 @@ def test_valid_proofs_are_consistent_without_claiming_platform_verification():
     (1, 'owner_isolation', 'failed'),
     (1, 'artifact_retrieval', 'failed'),
     (1, 'model_attempts', 0),
+    (1, 'document_outbox', None),
     (1, 'document_version_id', ''),
     (1, 'workflow_id', 'unrelated-agent-task'),
     (2, 'task_id', 'other-task'),
@@ -193,4 +197,21 @@ def test_rejects_replaced_restore_receipt_or_absent_recovery_proof():
     del proof_set[2]['recovery_outbox']
     del proof_set[3]['recovery_outbox']
     with pytest.raises(gate.Day2AcceptanceFailure, match='recovery_outbox'):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize('field, invalid', [
+    ('task_id', 'other-task'),
+    ('effect_count', 0),
+    ('effect_count', 2),
+    ('effect_count', True),
+    ('delivered', False),
+    ('dispatch_attempts', 0),
+])
+def test_pdf_task_requires_exactly_one_delivered_persisted_outbox(field, invalid):
+    proof_set = list(proofs())
+    proof_set[1]['document_outbox'][field] = invalid
+    proof_set[2]['document_outbox'][field] = invalid
+    proof_set[3]['document_outbox'][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure, match='outbox'):
         check(*proof_set)
