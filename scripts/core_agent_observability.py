@@ -515,7 +515,9 @@ def atomic_write(path: Path, content: str) -> None:
 DAY8_PROFILES = {"baseline", "bounded_context_compact_observations"}
 DAY8_SHA_FIELDS = (
     "model_settings_sha256", "behavior_sha256", "prompt_sha256", "tool_sha256",
-    "schema_sha256", "flags_sha256", "budgets_sha256",
+)
+DAY8_FREEZE_MATCH_FIELDS = (
+    "schema_sha256", "flags_sha256", "budgets_sha256", "prompt_template_sha256",
 )
 DAY8_CASE_FIELDS = (
     "input_tokens", "output_tokens", "model_time_ms", "tool_time_ms",
@@ -591,6 +593,8 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
     by_id = {}
     seen_accepted_artifact_refs = set()
     seen_accepted_review_refs = set()
+    seen_run_ids = set()
+    seen_usage_receipts = set()
     for row in results:
         if not isinstance(row, dict):
             raise ValueError(f"{label}: invalid task evidence")
@@ -599,6 +603,22 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
             raise ValueError(f"{label}: unknown or duplicated development task ID")
         if (row.get("workflow"), row.get("language")) != expected[case_id]:
             raise ValueError(f"{label}: task workflow/language differs from frozen corpus")
+        run_id = row.get("run_id")
+        if run_id is not None:
+            if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
+                raise ValueError(f"{label}: malformed run identity")
+            if run_id in seen_run_ids:
+                raise ValueError(f"{label}: reused run identity across cases")
+            seen_run_ids.add(run_id)
+        usage_receipt = row.get("provider_usage_case_receipt_sha256")
+        if usage_receipt is not None:
+            if not _day8_digest(usage_receipt):
+                raise ValueError(f"{label}: malformed provider usage receipt digest")
+            if usage_receipt in seen_usage_receipts:
+                raise ValueError(f"{label}: reused provider usage receipt across cases")
+            seen_usage_receipts.add(usage_receipt)
+        if row.get("output_sha256") is not None and not _day8_digest(row["output_sha256"]):
+            raise ValueError(f"{label}: malformed output digest")
         for field in ("passed", "human_accepted", "safety_passed"):
             if type(row.get(field)) is not bool:
                 raise ValueError(f"{label}: {field} must be an explicit reviewed boolean")
@@ -687,9 +707,24 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     candidate_config = candidate["configuration"]
     if any(base_config[key] != candidate_config[key] for key in (
         "provider", "model", "model_settings_sha256", "tool_sha256",
-        "schema_sha256", "flags_sha256", "budgets_sha256",
     )):
         raise ValueError("paired context experiment must preserve provider, model, parameters and tool surface")
+    freeze_hashes_complete = all(
+        _day8_digest(config.get(field))
+        for config in (base_config, candidate_config)
+        for field in DAY8_FREEZE_MATCH_FIELDS
+    )
+    if freeze_hashes_complete and any(
+        base_config[field] != candidate_config[field]
+        for field in DAY8_FREEZE_MATCH_FIELDS
+    ):
+        raise ValueError("paired context experiment must preserve shared prompt template, schema, flags and budgets")
+    base_run_ids = {row["run_id"] for row in base_cases.values()
+                    if isinstance(row.get("run_id"), str)}
+    candidate_run_ids = {row["run_id"] for row in candidate_cases.values()
+                         if isinstance(row.get("run_id"), str)}
+    if base_run_ids & candidate_run_ids:
+        raise ValueError("reused run identity across profiles is not an independent generation")
     policy = baseline.get("evaluation_policy")
     candidate_policy = candidate.get("evaluation_policy")
     policy_complete = _day8_policy_valid(policy) and _day8_policy_valid(candidate_policy)
@@ -702,6 +737,9 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             and _day8_counts(row.get("retry_breakdown"), DAY8_RETRY_TYPES)
             and _day8_counts(row.get("failure_breakdown"), DAY8_FAILURE_TYPES)
             and _day8_counts(row.get("cost_components_microusd"), DAY8_COST_COMPONENTS)
+            and isinstance(row.get("run_id"), str) and bool(row["run_id"].strip())
+            and _day8_digest(row.get("provider_usage_case_receipt_sha256"))
+            and (not row["human_accepted"] or _day8_digest(row.get("output_sha256")))
             for row in rows
         )
 
@@ -797,6 +835,18 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
                 field: sum(_day8_uint(r.get(field)) for r in records)
                 for field in DAY8_CASE_FIELDS
             },
+            "run_identity_coverage": sum(
+                isinstance(r.get("run_id"), str) and bool(r["run_id"].strip())
+                for r in records
+            ),
+            "provider_usage_receipt_coverage": sum(
+                _day8_digest(r.get("provider_usage_case_receipt_sha256"))
+                for r in records
+            ),
+            "accepted_output_digest_coverage": sum(
+                r["human_accepted"] and _day8_digest(r.get("output_sha256"))
+                for r in records
+            ),
             "retries_by_type": {
                 name: sum(r["retry_breakdown"][name] for r in records)
                 for name in DAY8_RETRY_TYPES
@@ -838,12 +888,14 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         )
     )
     blockers = []
+    if not freeze_hashes_complete:
+        blockers.append("missing shared prompt-template/schema/flags/budgets configuration fingerprints")
     if not policy_complete:
         blockers.append("missing or invalid owner-approved latency, rubric and pricing decision policy")
     if not a["metrics_complete"] or not b["metrics_complete"]:
         blockers.append(
-            "missing measured input/output tokens, end-to-end latency, model/tool time, "
-            "failure/retry breakdown or verified all-in cost components"
+            "missing run/output/usage receipts, measured input/output tokens, end-to-end latency, "
+            "model/tool time, failure/retry breakdown or verified all-in cost components"
         )
     # Regressed candidate is excluded; a qualified baseline may still be frozen.
     if not (a["quality_gate_passed"] or b["quality_gate_passed"]):
@@ -915,7 +967,8 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     # JSON report. This data is intentionally never rendered to OpenMetrics.
     per_task = []
     task_fields = (
-        *DAY8_CASE_FIELDS, "retry_breakdown", "failure_breakdown",
+        *DAY8_CASE_FIELDS, "run_id", "provider_usage_case_receipt_sha256",
+        "output_sha256", "retry_breakdown", "failure_breakdown",
         "cost_components_microusd", "passed", "human_accepted",
         "safety_passed", "verified_artifact_refs", "accepted_outcome_ref",
     )
