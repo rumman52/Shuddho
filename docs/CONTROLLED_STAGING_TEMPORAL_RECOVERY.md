@@ -48,7 +48,7 @@ The script:
 4. starts `shuddho_agent_run_v2` in the configured Temporal namespace;
 5. writes only run/workflow identifiers and timestamps to the state file.
 
-No customer content is used.
+No customer content is used. The prepare phase also captures the pre-restart registered worker ID; it refuses to create the run if exactly one matching live poller is not available.
 
 ## Phase 2 — replace the worker
 
@@ -83,11 +83,17 @@ The verifier promotes `temporal`, `parallel_restart`, and `fan_in` to `passed` o
 - persisted dependencies remain `[], [], [1,2]`;
 - every step has start/finish timing evidence;
 - step 3 started only after both research branches finished;
+- exactly one fresh, reviewed-SHA worker is registered on the target queue before the run;
+- a distinct replacement worker registers **while the same Agent run is active**, near the actual platform restart timestamp, advances its heartbeat and remains the only fresh poller on the queue;
+- the recovered AgentRun has exactly **one delivered `cw_agent_outbox` ledger row**;
+- each of its three child tasks has exactly one delivered `cw_outbox` ledger row with a real dispatch attempt;
 - exactly three child tasks exist for the Agent run;
 - each child task maps to one distinct Agent step;
 - child task idempotency keys are exactly `agent:{run_id}:1..3`;
 - the recorded worker replacement occurred after Agent execution started and before the recovery run finished;
 - a non-empty deployment/restart evidence reference is supplied.
+
+The verifier includes a redacted `recovery_outbox` receipt with run/workflow IDs, one parent outbox effect, three child outboxes, before/after worker IDs, heartbeat-backed replacement timing and the real platform restart reference. The Day 2 reconciliation now requires that receipt and the exact same receipt to be carried into restored evidence. Because outbox entries are keyed by run/task, this proves one *logical ledger effect*; it does not independently prove that a third-party provider never executed a retried side effect.
 
 ## What this proves
 
