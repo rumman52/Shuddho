@@ -1,3 +1,12 @@
+## Day 9 native export recovery test continuation — 18 November 2026 (Asia/Dhaka)
+
+**Level: implemented on a review branch; repository CI pending; staging and production NOT QUALIFIED.**
+At base `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`, [required CI #44278207003](https://github.com/rumman52/Shuddho/actions/runs/44278207003) failed two pre-storage native export test fixtures (1,628 Coworker pass / 2 fail / 4 skip) and separately failed governance/merge gate. The minimal [review branch](https://github.com/rumman52/Shuddho/tree/codex/day9-native-export-recovery-tests-20261118) replaces stale text-only test fixtures with the canonical native renderer, keeps lost-PUT cleanup and SIGKILL byte-preservation tests, and leaves production source unchanged. See [task contract](DAY9_NATIVE_EXPORT_RECOVERY_FIX_2026-11-18.md).
+
+No local checkout of this repository is present in this execution environment; passing focused tests has not been claimed. New exact-head CI, independent review, a live API/worker/schema release readback, D-held custody proof, 40 fresh reviewed holdout cases and 20 C-operated scenarios remain required; the original exposed corpus in [#665](https://github.com/rumman52/Shuddho/issues/665) remains disallowed. No billed resources, production changes, external sends or credentials were altered. **Day 9 NO-GO.**
+
+---
+
 ## Day 10 CTO handoff and live blockers — 17 November 2026 (Asia/Dhaka)
 
 The current Day 10 disposition remains **SOURCE_ONLY / NO-GO**. The exact main
