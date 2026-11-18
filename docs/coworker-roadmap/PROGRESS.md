@@ -1,3 +1,53 @@
+## Day 5 Runtime v3 memory correction race — 18 November 2026 (Asia/Dhaka)
+
+Review base: `main` `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`.
+Draft [PR #776](https://github.com/rumman52/Shuddho/pull/776) addresses a
+fresh-decision race, without replacing merged #723, #740 or #742.
+
+**RED reproduced before production-code changes.** The new delayed-planner
+regression corrected a selected synthetic memory from version 1 to version 2
+after context assembly, while the planner was in flight. The unpatched commit
+path accepted that stale decision: exact-head [CI #44287313414](https://github.com/rumman52/Shuddho/actions/runs/44287313414),
+mandatory Day 5 gate, **80 passed / 1 failed / zero skipped**, with
+`Failed: DID NOT RAISE CoworkerError`. Its JUnit artifact was preserved.
+
+The bounded correction rechecks explicit memory pins in
+`AgentRepository.record_v3_decision` before a **new** planner decision is
+persisted. It reuses `require_current_memory_pins`, preserving current
+owner/workspace/version/expiry/deletion/feature-gate checks and maintaining
+the existing early return for committed-decision replay. No migration,
+provider, external action or production toggle was added. A second regression
+retains committed replay but denies a new planner call after correction.
+
+A **non-LLM deterministic** three-arm integration regression now holds the
+task source/prompt, synthetic renderer and context budget fixed, exercising
+no-memory, selected v1 and corrected v2 via the real preview, dispatch and
+worker-context methods. It records SHA-256 references and per-arm rubric
+scores in the Day 5 JUnit artifact, plus a second-owner normal-read denial.
+These synthetic outputs demonstrate wiring only and **do not** qualify a
+live DeepSeek model or the golden task. Corrected-head CI/independent
+review and operated staging output comparison remain separate requirements.
+
+Fresh read-only staging inventory on 18 November: Supabase Alembic `0070`
+with zero Auth identities, application accounts, workspaces, memory facts,
+Agent runs and registered workers. Render exposes the Shuddho staging API
+but no persistent worker. The connected Vercel account has no Shuddho-linked
+project; PostHog and Linear do not expose a matching Shuddho project. Staging
+identity, Temporal/worker, S3 custody and authorized fixed-budget inference
+must be supplied before a real three-arm run. The private database schema
+has RLS disabled, but `anon` and `authenticated` currently lack schema
+USAGE and memory-table SELECT; no policy or privilege change was made.
+
+Owners: B selects/corrects and scores real outputs; A independently
+revalidates; D verifies run receipts, security denial and evidence custody.
+Keep pilot/production activation disabled, do not provision paid compute or
+send external messages without explicit owner authorization. The next
+executable step is to verify exact final PR-head Day 5 and broader CI, then
+arrange approved nonproduction synthetic Auth users, persistent worker,
+Temporal/S3 configuration and three fixed-model output receipts.
+
+---
+
 ## Day 10 CTO handoff and live blockers — 17 November 2026 (Asia/Dhaka)
 
 The current Day 10 disposition remains **SOURCE_ONLY / NO-GO**. The exact main
