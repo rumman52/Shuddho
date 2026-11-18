@@ -1134,11 +1134,12 @@ def test_meeting_coworker_prepares_one_exact_upcoming_calendar_snapshot(containe
 
 def test_scheduled_briefing_uses_only_selected_connected_read_context(container):
     enable_reads(container)
-    settings = replace(container.settings, work_services_enabled=True)
+    settings = replace(container.settings, work_services_enabled=True, projects_enabled=True)
     settings.validate()
     container.settings = settings
     container.repository.settings = settings
     container.agent.settings = settings
+    container.goals.settings = settings
     container.automations.settings = settings
     container.notifications.settings = settings
     container.context.settings = settings
@@ -1149,26 +1150,25 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
     asyncio.run(container.connector_reads.subscribe(owner, grant["id"]))
 
-    # Day 7 requires explicit project/document scope for *all* recurring
-    # briefings, including those with a selected connected-read grant. Seed
-    # the owned document with real locally verifiable bytes; don't weaken the
-    # production scope/expiry contract to keep this earlier regression green.
+    # The Day 7 briefing contract requires a current, explicitly approved
+    # project document and a finite expiry. Connected read permission alone
+    # is not sufficient to schedule a project briefing.
     project_id, document_id, version_id = (str(uuid4()) for _ in range(3))
-    body = b"Private project note: milestone review on Friday."
-    object_key = f"inputs/connected-briefing-{version_id}"
-    container.storage.put(object_key, body, "text/plain")
+    document_body = b"Approved private project context."
+    document_key = f"{owner}/inputs/connected-briefing-fixture.txt"
+    container.storage.put(document_key, document_body, "text/plain")
     with container.repository.sessions.begin() as db:
         workspace = db.scalar(select(Workspace).where(Workspace.owner_id == owner))
+        assert workspace is not None
         now = utcnow()
         db.add(Project(
-            id=project_id, owner_id=owner, idempotency_key=f"connected-{project_id}",
-            fingerprint="f" * 64, name="Selected briefing project",
-            description="", revision=1, deleted=False,
-            created_at=now, updated_at=now,
+            id=project_id, owner_id=owner, idempotency_key="briefing-connected-project",
+            fingerprint="f" * 64, name="Connected briefing test project", description="",
+            revision=1, deleted=False, created_at=now, updated_at=now,
         ))
         db.add(Document(
             id=document_id, owner_id=owner, workspace_id=workspace.id,
-            filename="briefing-project.txt",
+            filename="approved-briefing-source.txt",
         ))
         db.flush()
         db.add(ProjectResource(
@@ -1177,10 +1177,12 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         ))
         db.add(DocumentVersion(
             id=version_id, document_id=document_id, owner_id=owner,
-            version=1, kind="txt", byte_size=len(body),
-            sha256=hashlib.sha256(body).hexdigest(), object_key=object_key,
-            state="uploaded", expires_at=now + timedelta(days=7),
+            version=1, kind="txt", byte_size=len(document_body),
+            sha256=hashlib.sha256(document_body).hexdigest(), object_key=document_key,
+            state="uploaded",
+            expires_at=now + timedelta(days=7),
         ))
+
     goal, created = container.goals.create(
         owner,
         GoalCreate(
@@ -1188,9 +1190,9 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
             success_criteria=["Create one concise private briefing."],
             constraints=["Do not send, publish, or mutate anything externally."],
             timezone="UTC",
+            state="active",
             project_id=project_id,
             authorized_resources=[{"kind": "document", "reference": document_id}],
-            state="active",
             budget={"max_runs": 10, "max_planner_tokens": 50000},
         ),
         "briefing-connected-goal-" + str(uuid4()),
@@ -1223,7 +1225,6 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         run = db.get(AgentRun, result["run_id"])
         assert run is not None
         assert run.connector_read_grant_ids == [grant["id"]]
-        # AgentRun persists the exact selected versions, not document IDs.
         assert run.input_versions == [version_id]
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.action_ids == []
@@ -1233,10 +1234,15 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         for item in context["items"]
     )
 
-    assert any(
-        item["provenance"].get("document_id") == document_id
-        for item in context["items"]
-    )
+    # Bind the provenance to the *exact* verified document version and bytes,
+    # not merely any document with the right ID in an otherwise mixed context.
+    selected_versions = [
+        item for item in context["items"]
+        if item["provenance"].get("document_id") == document_id
+    ]
+    assert len(selected_versions) == 1
+    assert selected_versions[0]["provenance"]["version_id"] == version_id
+    assert selected_versions[0]["sha256"] == hashlib.sha256(document_body).hexdigest()
 
 def _create_email_coworker(container, owner, grant):
     goal, created = container.goals.create(
