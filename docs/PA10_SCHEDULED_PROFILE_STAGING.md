@@ -15,6 +15,8 @@ This does **not** turn one happy-path run into complete qualification. Repeat wi
 
 Required guards are `SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES=true`, `SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true`, the standard staging API/token/account label, exact expected environment and deployment reference.
 
+**Credentialed API-origin boundary:** `SHUDDHO_STAGING_API_BASE_URL` must be a single public HTTPS origin (one optional trailing slash, optional valid port). The scheduled-profile probe rejects local/IP destinations, whitespace or control characters, path suffixes, query/fragment markers and malformed ports before using the synthetic bearer token. This is only a static URL-shape gate; it does **not** prove DNS control, TLS identity, ownership or permission to send a token. Keep the token in approved secret storage and the staging execution guards disabled until the owner authorizes the exercise.
+
 Example:
 
 ```bash
