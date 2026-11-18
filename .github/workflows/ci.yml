@@ -231,10 +231,13 @@ jobs:
           name: day9-runtime-v3-source-helpers
           path: /tmp/day9-runtime-v3-helpers.xml
           if-no-files-found: warn
-      - name: Verify Day 8 economics comparisons and telemetry without skips
+      - name: Verify Day 7–8 economics, natural-day gate, and default-off telemetry without skips
         run: |
-          uv run --extra coworker pytest tests/test_core_agent_observability.py -q -rs --junitxml=/tmp/day8-economics.xml
+          uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_task_economics_evidence.py tests/test_staging_day7_two_day_gate.py tests/test_operational_telemetry.py -q -rs --junitxml=/tmp/day8-economics.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_core_agent_observability
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_task_economics_evidence
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_staging_day7_two_day_gate
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_operational_telemetry
       - name: Keep Day 8 economics evidence
         if: always()
         uses: actions/upload-artifact@v4
