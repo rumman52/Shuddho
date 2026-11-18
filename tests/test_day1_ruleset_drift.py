@@ -1,5 +1,6 @@
 """Pure, offline Day 1 diagnostics: no GitHub mutations and no test credentials."""
 import copy
+import hashlib
 import json
 
 import pytest
@@ -112,10 +113,42 @@ def test_cli_writes_one_private_report_and_will_not_overwrite(tmp_path, capsys):
     ]
     assert main(argv) == 0
     data = json.loads((tmp_path / "evidence.json").read_text())
+    # The receipt must identify the exact captured bytes, not just a decoded
+    # object which could have changed whitespace, order, or provenance.
+    for filename, field in (
+        ("branch", "branch_readback_sha256"),
+        ("ruleset", "ruleset_readback_sha256"),
+        ("policy", "reviewed_policy_sha256"),
+    ):
+        expected = hashlib.sha256((tmp_path / f"{filename}.json").read_bytes()).hexdigest()
+        assert data[field] == expected
     assert data["qualified"] is False
     assert (tmp_path / "evidence.json").stat().st_mode & 0o777 == 0o600
     assert main(argv) == 2
     assert "blocked_input" in capsys.readouterr().out
+
+
+def test_ruleset_report_hash_changes_for_same_meaning_different_bytes(tmp_path, capsys):
+    for name, body in (("branch", branch()), ("ruleset", live()), ("policy", policy())):
+        (tmp_path / f"{name}.json").write_text(json.dumps(body), encoding="utf-8")
+    argv = [
+        "--branch-json", str(tmp_path / "branch.json"),
+        "--ruleset-json", str(tmp_path / "ruleset.json"),
+        "--policy-json", str(tmp_path / "policy.json"),
+        "--expected-main-sha", SHA,
+    ]
+    assert main(argv) == 0
+    first = json.loads(capsys.readouterr().out)
+    (tmp_path / "ruleset.json").write_text(json.dumps(live(), indent=2), encoding="utf-8")
+    assert main(argv) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert first["status"] == second["status"] == "configuration_candidate"
+    assert first["drift"] == second["drift"] == []
+    assert first["ruleset_readback_sha256"] != second["ruleset_readback_sha256"]
+    assert first["branch_readback_sha256"] == second["branch_readback_sha256"]
+    assert first["reviewed_policy_sha256"] == second["reviewed_policy_sha256"]
+    assert second["qualified"] is False
 
 
 def test_cli_rejects_symlinked_input(tmp_path):
