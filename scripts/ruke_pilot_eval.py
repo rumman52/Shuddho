@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -85,9 +86,24 @@ def pairs_unique(pairs):
     return value
 
 
+def strict_json_loads(content: str):
+    """Reject ambiguous or non-finite JSON in release and holdout evidence."""
+    def reject_constant(value: str):
+        raise EvidenceError("non-finite JSON constant: " + value)
+
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise EvidenceError("non-finite JSON number")
+        return number
+
+    return json.loads(content, object_pairs_hook=pairs_unique,
+                      parse_constant=reject_constant, parse_float=finite_float)
+
+
 def read_json(path: Path):
     sha256(path)
-    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs_unique)
+    return strict_json_loads(path.read_text(encoding="utf-8"))
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -95,7 +111,7 @@ def read_jsonl(path: Path) -> list[dict]:
     rows = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            obj = json.loads(line, object_pairs_hook=pairs_unique)
+            obj = strict_json_loads(line)
             if not isinstance(obj, dict):
                 raise EvidenceError("JSONL rows must be objects")
             rows.append(obj)

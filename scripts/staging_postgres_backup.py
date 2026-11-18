@@ -16,6 +16,7 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from urllib.parse import unquote, urlsplit
 
 from scripts.staging_prerequisite_preflight import PreflightFailure, _validate_postgresql_url
+from scripts.staging_migration_alignment import MigrationAlignmentError, source_schema_alignment
 from scripts.staging_release_evidence import write_private_json
 
 
@@ -325,9 +326,22 @@ def run_backup(url: str, directory: Path, pg_bin: Path | None = None) -> dict:
     restored = restore_inventory(archive, pg_bin)
     if restored != source:
         raise BackupError("Restored migration revision or table contents differ from the source snapshot.")
+    # Backup integrity and application-schema readiness are separate checks.
+    # Never block preserving an older valid backup just because the current
+    # source graph is newer (or unreadable); fail closed on release readiness.
+    try:
+        schema_alignment = source_schema_alignment(source["revision"])
+    except MigrationAlignmentError:
+        schema_alignment = {
+            "status": "migration_graph_unverified",
+            "source_revision": source["revision"], "code_head": None,
+            "source_is_current": False, "pending_migrations": None,
+            "release_qualified": False,
+        }
     result = {
         "status": "verified", "verified_at": datetime.now(timezone.utc).isoformat(),
         "archive_sha256": file_hash(archive), "source": source,
+        "schema_alignment": schema_alignment,
     }
     write_private_json(directory / "verification.json", result)
     return result
@@ -347,6 +361,9 @@ def main() -> None:
     except Exception as error:
         parser.exit(1, f"Database backup verification failed ({type(error).__name__}).\n")
     print(f"Verified {len(receipt['source']['tables'])} private tables at migration {receipt['source']['revision']}.")
+    alignment = receipt["schema_alignment"]
+    print(f"Source/schema alignment: {alignment['status']} (code head: {alignment['code_head'] or 'unverified'}). "
+          "Backup verification is not release authorization.")
 
 
 if __name__ == "__main__":

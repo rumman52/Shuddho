@@ -1233,6 +1233,10 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         for item in context["items"]
     )
 
+    assert any(
+        item["provenance"].get("document_id") == document_id
+        for item in context["items"]
+    )
 
 def _create_email_coworker(container, owner, grant):
     goal, created = container.goals.create(

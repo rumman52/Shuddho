@@ -449,3 +449,32 @@ def test_day10_release_decision_cli_help_runs_without_evidence_files():
     assert result.returncode == 0
     assert "usage:" in result.stdout.lower()
     assert "--rollout" in result.stdout
+
+
+@pytest.mark.parametrize("payload", [
+    '{"status": "failed", "status": "passed"}',
+    '{"cancellation": {"security_passed": false, "security_passed": true}}',
+    '{"provider_usage": NaN}',
+    '{"provider_usage": Infinity}',
+    '{"provider_usage": 1e999}',
+])
+def test_day10_cli_evidence_input_rejects_ambiguous_or_nonfinite_json(tmp_path, payload):
+    path = tmp_path / "untrusted.json"
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(ValueError, match="Cannot read untrusted.json"):
+        day10.read_json(path)
+
+
+def test_day10_cli_evidence_input_rejects_links_and_oversized_files(tmp_path):
+    target = tmp_path / "safe.json"
+    target.write_text('{"release_id": "synthetic"}', encoding="utf-8")
+    assert day10.read_json(target) == {"release_id": "synthetic"}
+    link = tmp_path / "linked.json"
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="Cannot read linked.json"):
+        day10.read_json(link)
+
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b" " * 4_000_001)
+    with pytest.raises(ValueError, match="Cannot read oversized.json"):
+        day10.read_json(oversized)
