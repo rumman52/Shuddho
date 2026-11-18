@@ -59,6 +59,7 @@ No staging account was created, no PDF/TXT uploaded, no real provider called, an
 
 - **Local narrow RED/GREEN:** isolated exact-source validator copy, 4 failed before / 4 passed after. **Not equivalent to full repository tests.**
 - **Real Python scope:** `uv run --extra coworker pytest tests/test_conversation_citation_markers.py tests/test_conversation_replies.py tests/test_conversation_context.py -q -rs`.
+- **Mandatory focused CI coverage:** `.github/workflows/ci.yml` explicitly includes `tests/test_conversation_citation_markers.py` alongside the existing conversation/API/PostgreSQL suite and checks `tests.test_conversation_citation_markers` with `scripts.mandatory_test_gate` (zero skips/failures/errors required).
 - **Broader API/grounding:** `uv run --extra coworker pytest tests/test_conversations.py tests/test_conversation_dispatch.py tests/test_coworker_projects.py tests/test_coworker_postgres.py -q -rs`.
 - **Web editor:** `npm run test --workspace @shuddho/web-editor` and `npm run build --workspace @shuddho/web-editor` (verify package scripts before executing).
 - **Browser:** GitHub Actions `browser-qualification`; fixture evidence is not a substitute for staging with actual owner Auth/storage.
