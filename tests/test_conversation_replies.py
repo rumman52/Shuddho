@@ -1017,3 +1017,58 @@ def test_source_instructions_stay_untrusted_and_bangla_answer_is_grounded(contai
     with container.repository.sessions() as db:
         assert db.scalar(select(AgentRun.id)) is None
         assert db.scalar(select(AgentOutbox)) is None
+
+# Day 3: a valid citation cannot conceal unclosed source-lookalike provenance.
+@pytest.mark.parametrize("unfinished", [
+    "[[src_999",
+    "[[src—999",
+    "[[sRc:999",
+    "[[ src _ 999",
+])
+def test_valid_citation_cannot_mask_unclosed_source_lookalike(unfinished):
+    from services.coworker.conversation_grounding import check_grounded_citations
+
+    source_map = {"src-1": {"resource_type": "document_version", "resource_id": "redacted-version"}}
+    with pytest.raises(ValueError, match="Malformed source citation"):
+        check_grounded_citations(
+            "Renewal date: 17 March 2027. [[src-1]] " + unfinished, source_map,
+        )
+
+
+def test_server_reply_rejects_unclosed_source_lookalike():
+    source_reply = {"sources": [{
+        "source_id": "src-1", "label": "redacted.txt",
+        "resource_type": "document_version",
+    }]}
+    with pytest.raises(ValueError, match="Malformed source citation"):
+        ConversationReplyService.validate_grounded_text(
+            "Supported answer [[src-1]] but source [[src_999", source_reply,
+        )
+
+
+def test_grounded_stream_never_displays_or_saves_unclosed_source_lookalike(container):
+    from services.coworker.models import AgentRun
+
+    data = setup(container, question="What is the renewal date?")
+    service, _model, owner, conversation, message = data
+    _attached_chat_source(container, data, b"Renewal date: 17 March 2027.")
+
+    class ForgedStream:
+        async def stream(self, _messages):
+            yield "The renewal is 17 March 2027. [[src-1]]"
+            yield " More proof [[src_999"
+
+    service.model = ForgedStream()
+
+    async def collect():
+        claim, queue = await service.prepare_stream(owner, conversation["id"], message["id"], 1)
+        return [event async for event in service.stream_events(claim, queue)]
+
+    events = asyncio.run(collect())
+    assert [event for event, _payload in events] == ["snapshot", "final"]
+    assert events[-1][1]["state"] == "failed" and events[-1][1]["text"] == ""
+    saved = container.conversations.messages(owner, conversation["id"])["items"][0]["assistant_reply"]
+    assert saved["state"] == "failed" and saved["text"] == ""
+    with container.repository.sessions() as db:
+        assert db.scalar(select(AgentRun)) is None
+        assert db.get(ConversationMessage, message["id"]).assistant_reply["text"] == ""
