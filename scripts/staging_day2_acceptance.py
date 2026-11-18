@@ -152,9 +152,9 @@ def validate_evidence(
     if (type(effect.get("agent_outbox_effect_count")) is not int
             or effect["agent_outbox_effect_count"] != 1
             or type(effect.get("child_task_outbox_count")) is not int
-            or effect["child_task_outbox_count"] != 3
-            or effect.get("child_task_outbox_all_delivered") is not True):
-        raise Day2AcceptanceFailure("Recovery has not proved one AgentRun outbox effect and three delivered child outboxes.")
+            or effect["child_task_outbox_count"] != 0
+            or effect.get("child_task_outbox_expected_absent") is not True):
+        raise Day2AcceptanceFailure("Recovery has not proved one AgentRun outbox effect and zero direct-child outbox effects.")
     worker_before_id = _nonempty(effect.get("worker_before_id"), "recovery_outbox.worker_before_id")
     worker_after_id = _nonempty(effect.get("worker_after_id"), "recovery_outbox.worker_after_id")
     if worker_before_id == worker_after_id:
