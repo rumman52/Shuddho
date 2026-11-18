@@ -54,10 +54,37 @@ def valid_pair():
     return first, second, pause_evidence()
 
 
+def test_two_day_gate_rejects_multiple_document_changes():
+    first, second, paused = valid_pair()
+    for item in (first, second, paused):
+        item["authorized_document_ids"] = ["doc-1", "doc-2"]
+    first["document_ids"] = ["doc-1", "doc-2"]
+    second["document_ids"] = ["doc-1", "doc-2"]
+    first["input_version_ids"] = ["v1", "other-v1"]
+    second["prior_run_input_version_ids"] = ["v1", "other-v1"]
+    second["input_version_ids"] = ["v2", "other-v2"]
+    with pytest.raises(GateFailure, match="Exactly one authorized document"):
+        verify_two_day(first, second, paused)
+
+
+def test_two_day_gate_tracks_changed_document_across_reordered_sources():
+    first, second, paused = valid_pair()
+    for item in (first, second, paused):
+        item["authorized_document_ids"] = ["doc-1", "doc-2"]
+    first["document_ids"] = ["doc-1", "doc-2"]
+    first["input_version_ids"] = ["v1", "other-v1"]
+    second["document_ids"] = ["doc-2", "doc-1"]
+    second["prior_run_input_version_ids"] = ["v1", "other-v1"]
+    second["input_version_ids"] = ["other-v1", "v2"]
+    result = verify_two_day(first, second, paused)
+    assert result["changed_document_id"] == "doc-1"
+
+
 def test_two_day_gate_accepts_unchanged_scope_fresh_pins_and_pause():
     first, second, paused = valid_pair()
     report = verify_two_day(first, second, paused)
     assert report["status"] == "passed"
+    assert report["changed_document_id"] == "doc-1"
     assert report["first_input_version_ids"] == ["v1"]
     assert report["second_input_version_ids"] == ["v2"]
     assert report["scheduled_local_dates"] == ["2026-11-12", "2026-11-13"]
