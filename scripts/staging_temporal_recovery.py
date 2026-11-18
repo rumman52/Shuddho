@@ -26,7 +26,7 @@ from scripts.staging_release_evidence import (
 from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
 from services.coworker.container import Container
-from services.coworker.models import AgentRun, AgentStep, Artifact, Task
+from services.coworker.models import AgentOutbox, AgentRun, AgentStep, Artifact, Outbox, Task
 from services.coworker.workflow import AgentWorkflowV2
 
 REQUIRED_FLAGS = (
@@ -44,6 +44,8 @@ class RecoveryFailure(RuntimeError):
 
 def parse_utc(value: str) -> datetime:
     try:
+        if not isinstance(value, str):
+            raise ValueError("missing timestamp")
         result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         raise RecoveryFailure("Restart time must be an ISO-8601 timestamp with a timezone.") from None
@@ -140,6 +142,10 @@ async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> d
     container = Container.create(settings)
     key = "staging-temporal-recovery-" + uuid.uuid4().hex
     try:
+        worker_before = require_active_worker(
+            container.repository.worker_inventory(task_queue=settings.task_queue),
+            revision=settings.source_revision, task_queue=settings.task_queue,
+        )
         run, _created = container.agent.create(
             owner,
             AgentRunCreate(
@@ -173,6 +179,10 @@ async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> d
             "owner_id": owner,
             "created_at": run["created_at"],
             "prepared_at": datetime.now(timezone.utc).isoformat(),
+            "worker_before": {
+                key: worker_before[key]
+                for key in ("id", "task_queue", "source_revision", "started_at", "heartbeat_at")
+            },
         }
         write_private_json(state_path, state)
         return state
@@ -182,6 +192,88 @@ async def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> d
 
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+
+
+def require_active_worker(workers: list[dict], *, revision: str, task_queue: str) -> dict:
+    """Require one fresh real poller, not an orphan or another SHA on the queue."""
+    live = [
+        row for row in workers
+        if row.get("task_queue") == task_queue
+        and row.get("state") == "running"
+        and row.get("heartbeat_fresh") is True
+    ]
+    if len(live) != 1 or live[0].get("source_revision") != revision:
+        raise RecoveryFailure("Expected exactly one fresh running worker on the reviewed SHA and queue.")
+    row = live[0]
+    if not isinstance(row.get("id"), str) or not row["id"]:
+        raise RecoveryFailure("Live worker registration has no identity.")
+    parse_utc(row.get("started_at", ""))
+    parse_utc(row.get("heartbeat_at", ""))
+    return row
+
+
+def validate_worker_replacement(
+    before: dict,
+    current: list[dict],
+    *,
+    revision: str,
+    task_queue: str,
+    restart_at: datetime,
+    active_start: datetime,
+    active_finish: datetime,
+) -> dict:
+    """Corroborate the platform event with a *new* registered worker during work."""
+    if not isinstance(before, dict) or before.get("source_revision") != revision or before.get("task_queue") != task_queue:
+        raise RecoveryFailure("Pre-restart worker identity is missing or belongs to a different release.")
+    previous_id = before.get("id")
+    if not isinstance(previous_id, str) or not previous_id:
+        raise RecoveryFailure("Pre-restart worker ID is missing.")
+    before_started = parse_utc(before.get("started_at", ""))
+    before_heartbeat = parse_utc(before.get("heartbeat_at", ""))
+    if before_heartbeat < before_started or before_started >= restart_at:
+        raise RecoveryFailure("Pre-restart worker was not registered before the restart event.")
+
+    after = require_active_worker(current, revision=revision, task_queue=task_queue)
+    if after["id"] == previous_id:
+        raise RecoveryFailure("No distinct worker registration appeared after the restart.")
+    started_at = parse_utc(after["started_at"])
+    heartbeat = parse_utc(after["heartbeat_at"])
+    if not active_start <= started_at <= active_finish:
+        raise RecoveryFailure("Replacement worker did not register while the Agent run was active.")
+    if not 0 <= (started_at - restart_at).total_seconds() <= 300:
+        raise RecoveryFailure("Replacement worker registration must follow the platform restart event within five minutes.")
+    if heartbeat <= started_at:
+        raise RecoveryFailure("Replacement worker did not advance its heartbeat after registration.")
+    return {
+        "worker_before_id": previous_id,
+        "worker_after_id": after["id"],
+        "worker_after_started_at": started_at.isoformat(),
+    }
+
+
+def validate_outbox_effects(
+    run: AgentRun,
+    tasks: list[Task],
+    agent_outbox: list[AgentOutbox],
+    task_outbox: list[Outbox],
+) -> dict:
+    """Verify a single parent dispatch effect and no duplicate child outbox writes.
+
+    The Agent runtime creates child tasks with enqueue=False because Temporal
+    executes their activities directly. A cw_outbox row for any child is an
+    unexpected second dispatch path, not proof of correct recovery. The parent
+    cw_agent_outbox is the only logical dispatch effect for this AgentRun.
+    """
+    if len(agent_outbox) != 1 or agent_outbox[0].run_id != run.id or agent_outbox[0].delivered is not True:
+        raise RecoveryFailure("Recovery AgentRun does not have exactly one delivered outbox effect.")
+    if len({task.id for task in tasks}) != 3:
+        raise RecoveryFailure("Recovered child task identities are not distinct.")
+    if task_outbox:
+        raise RecoveryFailure("Direct Agent child tasks unexpectedly generated task outbox effects.")
+    return {"agent_outbox_effect_count": 1, "child_task_outbox_count": 0,
+            "child_task_outbox_expected_absent": True}
 
 
 def validate_persisted_recovery(
@@ -206,6 +298,8 @@ def validate_persisted_recovery(
 
     if len(tasks) != 3:
         raise RecoveryFailure(f"Expected exactly three child tasks for the run; found {len(tasks)}.")
+    if any(item.state != "completed" for item in tasks):
+        raise RecoveryFailure("Recovered child tasks did not all complete.")
     step_ids = {item.id for item in ordered}
     task_step_ids = [item.agent_step_id for item in tasks]
     if len(set(task_step_ids)) != 3 or set(task_step_ids) != step_ids:
@@ -220,10 +314,14 @@ def validate_persisted_recovery(
     finish = _utc(ordered[2].finished_at)
     if not active_start <= restart_at <= finish:
         raise RecoveryFailure("Recorded worker restart did not occur after agent execution started and before the recovery run finished.")
+    if not any(_utc(item.started_at) <= restart_at <= _utc(item.finished_at) for item in ordered):
+        raise RecoveryFailure("Recorded worker restart did not interrupt an actively executing child task.")
     return {
         "fan_in_started_at": _utc(ordered[2].started_at).isoformat(),
         "branch_finished_at": [_utc(ordered[0].finished_at).isoformat(), _utc(ordered[1].finished_at).isoformat()],
         "child_tasks": len(tasks),
+        "active_start": active_start.isoformat(),
+        "active_finish": finish.isoformat(),
     }
 
 
@@ -271,6 +369,19 @@ async def verify(
                 Artifact.owner_id == owner,
             )).all())) if tasks else 0
             facts = validate_persisted_recovery(run, steps, tasks, restart_at)
+            agent_outbox = list(db.scalars(select(AgentOutbox).where(AgentOutbox.run_id == run_id)).all())
+            task_outbox = list(db.scalars(select(Outbox).where(
+                Outbox.task_id.in_([task.id for task in tasks]),
+            )).all())
+            outbox = validate_outbox_effects(run, tasks, agent_outbox, task_outbox)
+
+        worker = validate_worker_replacement(
+            state.get("worker_before"),
+            container.repository.worker_inventory(task_queue=settings.task_queue),
+            revision=settings.source_revision, task_queue=settings.task_queue,
+            restart_at=restart_at, active_start=parse_utc(facts["active_start"]),
+            active_finish=parse_utc(facts["active_finish"]),
+        )
 
         client = await temporal_client(settings)
         description = await client.get_workflow_handle(workflow_id).describe()
@@ -287,13 +398,25 @@ async def verify(
         concise_ref = restart_reference.strip()[:240]
         verified_at = datetime.now(timezone.utc)
         base.update({
+            "recovery_outbox": {
+                "agent_run_id": run_id, "workflow_id": workflow_id,
+                "source_revision": settings.source_revision,
+                "run_started_at": facts["active_start"],
+                "run_finished_at": facts["active_finish"],
+                "restart_at": restart_at.isoformat(),
+                "restart_reference": concise_ref,
+                **worker, **outbox,
+            },
             "temporal": passed(
                 f"AgentWorkflow v2 completed across controlled worker restart; restart_ref={concise_ref}; workflow={workflow_id}",
                 context,
                 now=verified_at,
             ),
             "parallel_restart": passed(
-                f"post-restart run completed with exactly {facts['child_tasks']} server-idempotent child tasks and {artifact_count} persisted artifacts; restart_ref={concise_ref}",
+                f"post-restart run completed with exactly {facts['child_tasks']} server-idempotent child tasks, "
+                f"{outbox['agent_outbox_effect_count']} AgentRun outbox effect, "
+                f"{outbox['child_task_outbox_count']} child-task outbox dispatches and "
+                f"{artifact_count} persisted artifacts; restart_ref={concise_ref}",
                 context,
                 now=verified_at,
             ),
@@ -304,7 +427,8 @@ async def verify(
             ),
         })
         write_private_json(evidence_path, base)
-        return {"checks": {"temporal": "passed", "parallel_restart": "passed", "fan_in": "passed"}}
+        return {"checks": {"temporal": "passed", "parallel_restart": "passed",
+                            "fan_in": "passed", "outbox_once": "passed", "worker_replaced": "passed"}}
     finally:
         container.repository.sessions.kw["bind"].dispose()
 
