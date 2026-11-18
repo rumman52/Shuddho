@@ -3727,6 +3727,9 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
         await runner.phase(task["id"], "export")
         saved = container.repository.step(task["id"], "export")
         assert saved is not None and len(saved["artifacts"]) == 4
+        assert {item["filename"] for item in saved["artifacts"]} == {
+            "report.docx", "report.pdf", "email-draft.txt", "source-manifest.json",
+        }
         assert {item["object_key"] for item in saved["artifacts"]} == set(storage.put_keys)
         for item in saved["artifacts"]:
             body = container.storage.get(item["object_key"], item["byte_size"])

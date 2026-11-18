@@ -15,7 +15,7 @@ release, task, artifact, worker and restore identities in private evidence.
 
 The merged Day 2 source includes:
 
-- `scripts/staging_day2_execution.py`: one selected **synthetic private TXT
+- `scripts/staging_day2_execution.py`: one operator-selected **synthetic private, text-based PDF
   document** is uploaded through the real authenticated API, read back by the
   owner, denied to a second owner, used by the existing `report_email`
   workflow with `output_language=en`, and must reach `completed` with
@@ -104,8 +104,18 @@ export SHUDDHO_STAGING_ALLOW_DAY2_EXECUTION=true
 # private S3, durable PostgreSQL, configured model and Temporal TLS credentials.
 uv run --extra coworker python scripts/staging_day2_execution.py \
   --freeze-evidence /secure/day2/release-frozen.json \
+  --source-pdf /secure/day2/approved-synthetic-source.pdf \
   --output /secure/day2/document-execution.json --timeout 180
 ```
+
+Place an owner-approved **synthetic**, text-based, unencrypted PDF (1–40 pages,
+at most 8 MiB, extractable text) in the operator's protected evidence location.
+Set its permissions to 0600, prohibit symlinks, and never commit, print or
+attach the private source to GitHub/Linear or shared logs. The operator script
+validates the PDF before uploading it and retains only redacted IDs and hashes
+in its private result receipt. The prior bounded TXT API-probe helper remains
+available for source-only regression tests; live CLI execution now requires the
+selected PDF.
 
 The script refuses to publish a pass artifact until it has verified the model
 usage, correct owner, source/artifact bytes, real Temporal workflow and live

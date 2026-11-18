@@ -288,6 +288,7 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         orphan_body = container.storage.get(orphan_key, 16 * 1024 * 1024)
         assert orphan_body
         assert f"/{hashlib.sha256(orphan_body).hexdigest()}/" in orphan_key
+        assert hashlib.sha256(orphan_body).hexdigest() == orphan_key.split("/")[-2]
 
         # Simulate the object becoming eligible for the existing age-bounded sweep.
         old_time = time.time() - 7200
