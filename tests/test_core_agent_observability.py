@@ -692,3 +692,133 @@ def test_day8_rejects_reused_human_review_receipt_between_tasks():
     candidate["results"][1]["accepted_outcome_ref"] = candidate["results"][0]["accepted_outcome_ref"]
     with pytest.raises(ValueError, match="reused accepted outcome reference"):
         compare_day8_development(baseline, candidate, suite)
+
+
+
+def _day8_complete_measurement_fixture():
+    """Synthetic only: inputs exercise validation, not operated provider receipts."""
+    suite, baseline, candidate = _day8_fixture()
+    for report in (baseline, candidate):
+        report["configuration"].update({
+            "schema_sha256": "7" * 64,
+            "flags_sha256": "8" * 64,
+            "budgets_sha256": "9" * 64,
+        })
+        report["evaluation_policy"] = {
+            "approved_p95_end_to_end_latency_ms": 1000,
+            "quality_rubric_sha256": "a" * 64,
+            "pricing_assumptions_sha256": "b" * 64,
+            "owner_approval_receipt_sha256": "c" * 64,
+        }
+        for row in report["results"]:
+            row["end_to_end_latency_ms"] = 300
+            row["retry_breakdown"] = {"model": 0, "tool": 0, "dispatch": 0}
+            row["failure_breakdown"] = {"provider": 0, "model": 0, "tool": 0}
+            row["cost_components_microusd"] = {
+                "provider": row["cost_microusd"],
+                "tools": 0,
+                "compute": 0,
+                "storage": 0,
+                "other": 0,
+            }
+    return suite, baseline, candidate
+
+
+def test_day8_no_freeze_on_missing_end_to_end_latency():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["end_to_end_latency_ms"] = None
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert any("latency" in item for item in result["blockers"])
+    assert result["profile_summaries"]["bounded_context_compact_observations"]["p95_end_to_end_latency_ms"] is None
+
+
+def test_day8_slower_cheaper_candidate_loses_approved_latency_gate():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    for row in candidate["results"]:
+        row["end_to_end_latency_ms"] = 1200
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "FROZEN_FOR_DAY9"
+    assert result["selected_least_cost_qualified_profile"] == "baseline"
+    assert result["profile_summaries"]["bounded_context_compact_observations"]["p95_end_to_end_latency_ms"] == 1200
+    assert result["candidate_exclusion_reason"] == "latency_slo_breached"
+    assert result["measured_cost_savings_microusd"] is None
+
+
+def test_day8_selects_cost_per_accepted_output_not_lower_raw_cohort_spend():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    for row in baseline["results"]:
+        if row["id"].endswith("-0"):
+            row["human_accepted"] = False
+            row["verified_artifact_refs"] = []
+            row["accepted_outcome_ref"] = None
+    for row in candidate["results"]:
+        row["cost_microusd"] = 21
+        row["cost_components_microusd"]["provider"] = 21
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["profile_summaries"]["baseline"]["human_accepted"] == 36
+    assert result["profile_summaries"]["baseline"]["total_cost_microusd"] == 800
+    assert result["profile_summaries"]["bounded_context_compact_observations"]["total_cost_microusd"] == 840
+    assert result["profile_summaries"]["baseline"]["cost_microusd_per_accepted_output"] == pytest.approx(800 / 36, abs=.01)
+    assert result["selected_least_cost_qualified_profile"] == "bounded_context_compact_observations"
+
+
+def test_day8_rejects_unpaired_price_policy_and_invalid_all_in_components():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["evaluation_policy"]["pricing_assumptions_sha256"] = "d" * 64
+    with pytest.raises(ValueError, match="decision policy"):
+        compare_day8_development(baseline, candidate, suite)
+    candidate["evaluation_policy"] = baseline["evaluation_policy"].copy()
+    candidate["results"][0]["cost_components_microusd"]["provider"] = 0
+    with pytest.raises(ValueError, match="cost components"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_emits_paired_cell_denominators_and_failure_retry_types():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["retry_count"] = 1
+    candidate["results"][0]["retry_breakdown"]["model"] = 1
+    candidate["results"][0]["failure_breakdown"]["provider"] = 1
+    result = compare_day8_development(baseline, candidate, suite)
+    cell = result["profile_summaries"]["bounded_context_compact_observations"]["cell_metrics"]["research_brief/bn"]
+    assert cell["cases"] == 10
+    assert cell["accepted"] == 10
+    assert cell["p50_end_to_end_latency_ms"] == 300
+    assert cell["p95_end_to_end_latency_ms"] == 300
+    assert cell["retries_by_type"] == {"model": 1, "tool": 0, "dispatch": 0}
+    assert cell["failures_by_type"] == {"provider": 1, "model": 0, "tool": 0}
+    assert cell["cost_microusd_per_accepted_output"] == 15
+    first = next(r for r in result["per_task_comparison"] if r["id"] == candidate["results"][0]["id"])
+    assert first["bounded_context_compact_observations"]["end_to_end_latency_ms"] == 300
+    assert first["bounded_context_compact_observations"]["retry_breakdown"]["model"] == 1
+
+
+def test_day8_rejects_incomplete_or_inconsistent_retry_accounting():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    del candidate["results"][0]["retry_breakdown"]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    candidate["results"][0]["retry_breakdown"] = {"model": 1, "tool": 0, "dispatch": 0}
+    with pytest.raises(ValueError, match="retry breakdown"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_freeze_manifest_pins_policy_schema_flags_budgets_and_code():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "FROZEN_FOR_DAY9"
+    freeze = result["freeze"]
+    assert freeze["evaluation_policy"] == baseline["evaluation_policy"]
+    assert freeze["configuration"]["schema_sha256"] == "7" * 64
+    assert freeze["configuration"]["flags_sha256"] == "8" * 64
+    assert freeze["configuration"]["budgets_sha256"] == "9" * 64
+    assert "services/coworker/models.py" in freeze["source_file_sha256"]
+
+
+def test_day8_unapproved_or_missing_pricing_policy_cannot_freeze():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    del candidate["evaluation_policy"]["owner_approval_receipt_sha256"]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
