@@ -123,7 +123,7 @@ def test_member_tokens_must_cover_exact_backend_cohort(monkeypatch):
     members = [f"member-{i}" for i in range(5)]
     cfg = SimpleNamespace(cohort_enforced=True, cohort_max_users=5,
                           cohort_account_ids=frozenset(members))
-    assert pilot.require_exact_pilot_members(cfg, members, "nonmember", 5) == "nonmember"
+    assert pilot.require_exact_pilot_members(cfg, members, "nonmember", 5) == (members, "nonmember")
     with pytest.raises(pilot.PilotVerificationFailure, match="exactly match"):
         pilot.require_exact_pilot_members(cfg, members[:-1] + ["outsider"], "nonmember", 5)
     with pytest.raises(pilot.PilotVerificationFailure, match="overlap"):
