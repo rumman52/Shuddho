@@ -1,3 +1,11 @@
+## Day 10 full-cohort post-admission verification — 19 November 2026 (Asia/Dhaka)
+
+**Status: source implementation on review branch; live Day 9–10 NO-GO.** Review base `cebe322d88d2120e6c78c6755b70445eedf8c39f`. The existing staging cohort smoke test exercises one invite and one denial; new `scripts/pilot_admission_verify.py` performs exact-release, complete 5–10-member HTTPS and fresh nonmember DB/API boundary verification **only after** manual authorized admission. It validates the actual rollout digest and Day 10 READY receipt, exact backend allowlist, private member tokens and immutable output. It does not change allowlists or activate a pilot. Synthetic regressions are in `tests/test_pilot_admission_verify.py` and explicitly mandatory (zero skips) in Coworker CI, with a retained JUnit artifact; executable operator contract: [DAY10_PILOT_ACCESS_FULL_COHORT_2026-11-19.md](DAY10_PILOT_ACCESS_FULL_COHORT_2026-11-19.md).
+
+**Read-only live blockers:** Supabase staging `0070`, zero Auth users, accounts and AgentRuns; no Render persistent Shuddho worker or matching API/worker release identity; no human D custody, blinded reviewers, forty operated first-run cases, twenty real recovery scenarios, live quality, distinct Founder/Owner-C approvals or admission. The previous ledger remains **17/100 task PASS, 5/54 exit PASS, 0/10 fully accepted days**. CI on this exact new branch and human review must be checked independently; none is claimed here. Owner C and Founder must authorize any billable/live environment actions before operation. **Pilot admission: NOT PERFORMED.** Day 9/10 remain open.
+
+---
+
 ## Day 8 — mandatory privacy/redaction CI qualification (19 November 2026)
 
 - **Source baseline:** `cebe322d88d2120e6c78c6755b70445eedf8c39f` includes merged telemetry schema/redaction PR #788. The mandatory Coworker Day 8 CI step ran only `tests/test_core_agent_observability.py`; the new `tests/test_day8_telemetry_privacy.py` was not explicitly protected by a required-module/no-skips gate. The general fast Python sweep is not sufficient evidence for the mandatory Coworker gate.

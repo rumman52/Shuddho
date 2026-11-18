@@ -152,23 +152,23 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
             text="Preserve three study methods and limitations in the English report and draft email.",
             client_request_key="day6-memory-message",
         ))
-    brief = TaskBrief(objective=turn["text"], output_language="en",
-                     deliverables=["An editable project report", "An unsent draft email"],
-                     constraints=["Preserve the reviewed no-causality limitation."])
+    reviewed_brief = TaskBrief(objective=turn["text"], output_language="en",
+                              deliverables=["An editable project report", "An unsent draft email"],
+                              constraints=["Preserve the reviewed no-causality limitation."])
     selected_pin = MemoryPin(fact_id=selected["id"], expected_version=selected["version"])
     preview = container.conversation_task_briefs.validate(
-        owner, conversation["id"], turn["id"], expected_sequence=1, brief=brief,
+        owner, conversation["id"], turn["id"], expected_sequence=1, brief=reviewed_brief,
         memory_pins=[selected_pin],
     )
     run, created = container.conversation_dispatch.dispatch(
         owner, conversation["id"], turn["id"], expected_sequence=1,
-        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        reviewed_brief=reviewed_brief, expected_digest=preview["canonical_digest"],
         memory_pins=[selected_pin],
     )
     assert created and run["run_id"]
     replay, retried = container.conversation_dispatch.dispatch(
         owner, conversation["id"], turn["id"], expected_sequence=1,
-        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        reviewed_brief=reviewed_brief, expected_digest=preview["canonical_digest"],
         memory_pins=[selected_pin],
     )
     assert not retried and replay["run_id"] == run["run_id"]
@@ -250,14 +250,14 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
     assert stale.value.code == "memory_pins_changed"
     replay, created = container.conversation_dispatch.dispatch(
         owner, conversation["id"], turn["id"], expected_sequence=1,
-        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        reviewed_brief=reviewed_brief, expected_digest=preview["canonical_digest"],
         memory_pins=[selected_pin],
     )
     assert not created and replay["run_id"] == run["id"]
     with pytest.raises(CoworkerError) as changed:
         container.conversation_dispatch.dispatch(
             owner, conversation["id"], turn["id"], expected_sequence=1,
-            reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+            reviewed_brief=reviewed_brief, expected_digest=preview["canonical_digest"],
             memory_pins=[MemoryPin(fact_id=selected["id"], expected_version=corrected["version"])],
         )
     assert changed.value.code == "idempotency_conflict"
