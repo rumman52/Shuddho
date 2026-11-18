@@ -155,7 +155,7 @@ class Client:
         self.headers = []
 
     def get(self, path, headers):
-        assert path == "/api/v1/me"
+        assert path in {"/api/v1/me", "/api/v1/runtime-manifest"}
         self.headers.append(headers["Authorization"])
         return next(self.responses)
 
