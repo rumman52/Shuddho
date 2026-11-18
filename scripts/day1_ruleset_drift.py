@@ -17,11 +17,10 @@ import re
 REPOSITORY = "rumman52/Shuddho"
 RULESET_ID = 27324410
 ACTIONS_INTEGRATION_ID = 15368
-# The minimum source policy is preserved while the complete checked-in
-# first-party set is compared dynamically. In particular, a future Coworker
-# check must never disappear merely because this diagnostic was written
-# before the required-check template was strengthened.
-MINIMUM_CHECKS = frozenset(("test-and-build", "ci-merge-gate"))
+# The Day 1 release contract requires all three first-party checks even if
+# the checked-in template is later weakened or the observed ruleset is stale.
+# Additional reviewed checks are still compared dynamically below.
+MINIMUM_CHECKS = frozenset(("test-and-build", "coworker", "ci-merge-gate"))
 POLICY_PATH = Path(__file__).resolve().parents[1] / "infra" / "github" / "main-ruleset.json"
 MAX_READ_BYTES = 512_000
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
