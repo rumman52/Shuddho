@@ -191,8 +191,6 @@ def test_explicit_empty_reviewed_selection_has_distinct_digest_and_one_admission
     replay, again = dispatch.dispatch(alice, conv["id"], msg["id"], **options,
                                       expected_digest=empty["canonical_digest"])
     assert not again and replay["run_id"] == created["run_id"]
-    assert container.agent.worker_run(created["run_id"])["id"] == created["run_id"]
-    assert container.memory.context_for_run(alice, created["run_id"])["facts"] == []
     with dispatch.sessions() as db:
         run = db.get(AgentRun, created["run_id"])
         assert run.reviewed_brief["schema_version"] == 2
@@ -200,6 +198,8 @@ def test_explicit_empty_reviewed_selection_has_distinct_digest_and_one_admission
         assert run.memory_namespaces == []
         assert db.scalar(select(func.count()).select_from(AgentRun)) == 1
         assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 1
+    assert container.agent.worker_run(created["run_id"])["id"] == created["run_id"]
+    assert container.memory.context_for_run(alice, created["run_id"])["facts"] == []
     with pytest.raises(CoworkerError) as denied:
         dispatch.dispatch(alice, conv["id"], msg["id"], expected_sequence=1,
                           reviewed_brief=brief, memory_pins=None,
