@@ -35,3 +35,39 @@
 2. C + Founder: write approved PostHog project ID, domains, environment, retention, consent, kill switch and current spend ceilings in #734/#584 in non-sensitive form. Do not provision a worker or enable telemetry based only on historical price discussions.
 3. With authorized synthetic owner/doc/Temporal worker, D + C capture first and second natural local-date schedule histories, version change, dedupe and paused zero admissions. Run existing staging_day7_two_day_gate.py on independently authenticated files.
 4. A + D record immutable model/prompt/tool/context/rubric/pricing/budget identities, run 40 paired tasks under explicit ceilings, verify all receipts privately and run the Day 8 comparator. Publish only redacted aggregate gaps; hold Day 9 freeze until qualified.
+
+---
+
+## PR-specific progress record (preserved from shared roadmap)
+
+## Day 8 measurement freeze integrity — 18 November 2026 (PR #779)
+
+**Scope:** source/test-only comparator decision gate. Test-only SHA
+81d1af2fb97258901df6ad4a7c5844d6d71ba139 reproduced eight missing
+acceptance checks on [CI #44287548874](https://github.com/rumman52/Shuddho/actions/runs/44287548874)
+(31 prior tests passed). The PR adds end-to-end p50/p95 and owner-policy
+gating, per-case/cell denominators with model/tool/provider failure and
+execution/dispatch retry types, reconciled all-in cost components and exact
+cost-per-accepted selection. The freeze additionally pins source schema,
+flags, budgets, rubric, pricing approval and model/prompt/tool fingerprints.
+Full test, code review and staging qualifications must be recorded against
+the **final exact head**; synthetic fixtures are not provider receipts.
+
+**Levels:** implemented in draft PR #779; repository verification pending
+final-head CI; staging evidence blocked (no authorized Day 7 first/second
+natural fire, zero staged run records); production qualified **NO**;
+activated **NO**. Existing telemetry is not enabled and no PostHog domain,
+retention or consent settings were changed. No paid provider run, persistent
+worker deployment, source/model switch, migration, database index or external
+customer send was initiated.
+
+**Owners and next action:** C + Founder approve exact PostHog/privacy
+scope and spend ceilings; A pins runtime/model/context; D independently
+scores the 40 paired development tasks and authenticates private receipts;
+C + D run the two real local-date schedule/pause checks once the worker and
+owner documents are approved. See
+[task contract](DAY8_MEASUREMENT_FREEZE_TASK_2026-11-18.md),
+[#734](https://github.com/rumman52/Shuddho/issues/734), and
+[PR #779](https://github.com/rumman52/Shuddho/pull/779).
+
+---
