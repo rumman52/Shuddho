@@ -260,3 +260,25 @@ def test_live_runtime_unreadable_or_incomplete_fails_closed(response):
     with pytest.raises(pilot.PilotVerificationFailure):
         pilot.verify_live_runtime(Client([response]), "synthetic", rollout, REV, 5)
 
+
+
+def test_first_failed_access_attempt_is_preserved_without_secret_leak(tmp_path, capsys):
+    report = tmp_path / "first-failure.json"
+    args = [
+        "--rollout", str(tmp_path / "missing-rollout.json"),
+        "--decision", str(tmp_path / "missing-decision.json"),
+        "--source-revision", REV,
+        "--member-tokens-file", str(tmp_path / "missing-member-tokens.json"),
+        "--output", str(report),
+    ]
+    assert pilot.main(args) == 1
+    first = report.read_bytes()
+    receipt = json.loads(first)
+    assert receipt["status"] == "failed"
+    assert receipt["admission_performed_by_cli"] is False
+    assert receipt["human_approvals_authenticated_by_cli"] is False
+    assert receipt["failure_type"] in {"ValueError", "EvidenceError"}
+    assert "missing-rollout.json" not in first.decode("utf-8")
+    assert pilot.main(args) == 1
+    assert report.read_bytes() == first
+    assert "missing-member-tokens.json" not in capsys.readouterr().out
