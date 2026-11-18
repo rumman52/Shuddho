@@ -9,6 +9,8 @@ Existing private Agent run/model/usage evidence (access-controlled)
     -> caller maps trusted structured counters/enums into the candidate allowlist
     -> EventPolicy gates: explicit feature enable AND approved privacy scope
        AND owner/user consent AND kill switch OFF AND staging only
+       AND reviewed project ID / destination region / retention match
+       AND a non-empty approval receipt fingerprint
        AND approved provider/model pair
     -> strict build_operational_event() (reject unknown keys, wrong types,
        free text, negative values; bucket elapsed time; unknown stays null)
@@ -16,7 +18,14 @@ Existing private Agent run/model/usage evidence (access-controlled)
     -> separately authorized and verified destination, NOT YET CONFIGURED
 ```
 
-The module is inert unless an explicit sink is injected. `emit_operational_event` catches validation and sink errors so no analytics failure can affect task execution; it does **not** log exception messages or raw inputs. This contract does not establish identity/authentication of a proposed sink, approval provenance, consent storage, or an approved deployment. Those require separate review before any runtime hook is installed.
+The module is inert unless an explicit sink is injected. Only
+`services/coworker/day8_telemetry.py` is the supported event contract; the
+incompatible experimental `operational_telemetry.py` was removed rather than
+risk two independently emitted event names or property dictionaries. `emit_operational_event` catches validation and sink errors so no analytics failure can affect task execution; it does **not** log exception messages or raw inputs. The extra policy fields bind an already-authenticated operator's exact project,
+region, retention days and approval digest; they are **not** an approval
+signature or cryptographic check of the connected service. This contract does
+not establish identity/authentication of a proposed sink, approval provenance,
+consent storage, or an approved deployment. Those require separate review before any runtime hook is installed.
 
 ## Fixed event and properties
 
@@ -31,9 +40,9 @@ The only candidate event name is `rukh_agent_run_operational_v1`. Its shape is s
 | `provider`, `model` | exact pair in administrator-reviewed configuration | Breakdown of outcomes/cost | Reject unapproved or arbitrary values | Pending approval |
 | `latency_bucket` | `lt_1s`, `1s_5s`, `5s_30s`, `30s_120s`, `gte_120s`, `unknown` | Coarse latency distribution | Derive from validated nonnegative integer ms; never emit exact timestamp or latency | Pending approval |
 | `error_category` | `none`, `provider_unavailable`, `provider_rate_limited`, `provider_timeout`, `tool_timeout`, `authorization`, `validation`, `cancelled`, `unknown` | Reliability diagnosis | Reject raw exception text and arbitrary error codes | Pending approval |
-| `input_tokens`, `output_tokens` | nonnegative integer or null | Aggregate usage | Unknown remains null; no raw text/tokens | Pending approval |
-| `retry_model`, `retry_tool`, `retry_dispatch` | nonnegative integer or null | Retry rates by type | Missing remains null, not zero | Pending approval |
-| `all_in_cost_microusd` | nonnegative integer or null | Estimated all-in cost | Caller must use reviewed rate/usage semantics; unknown remains null | Pending approval |
+| `input_tokens`, `output_tokens` | nonnegative signed-64-bit integer or null | Aggregate usage | Unknown remains null; no raw text/tokens | Pending approval |
+| `retry_model`, `retry_tool`, `retry_dispatch` | nonnegative signed-64-bit integer or null | Retry rates by type | Missing remains null, not zero | Pending approval |
+| `all_in_cost_microusd` | nonnegative signed-64-bit integer or null | Estimated all-in cost | Caller must use reviewed rate/usage semantics; unknown remains null | Pending approval |
 
 No other properties are accepted. Known-sensitive keys (`prompt`, `document_text`, `filename`, `account_id`, `run_id`, `email`, `recipient`, `url`, `access_token`, `connector_payload`, `raw_exception`, etc.) are rejected, not hashed, logged, or recursively scrubbed. Payload content does not become a PostHog `distinct_id`; downstream destination identity strategy is **not defined** and must be independently privacy-reviewed. Do not add frontend autocapture, pageviews, replays, or replay data.
 
