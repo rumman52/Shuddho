@@ -26,7 +26,7 @@ LANGUAGES = {"bn", "en"}
 NEGATIVES = {"foreign", "expired", "deleted", "stale", "wrong_version"}
 BOUND = (
     "release_id", "source_revision", "runtime_manifest_sha256",
-    "api_deployment_id", "worker_deployment_id", "database_revision",
+    "rollout_manifest_sha256", "api_deployment_id", "worker_deployment_id", "database_revision",
     "provider", "model_id", "owner_a_ref", "owner_b_ref",
 )
 MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
@@ -360,6 +360,7 @@ def validate(freeze: object, day3: object, day4: object, day5: object,
     need(release.get("source_revision") == expected_revision,
          "Requested source differs from frozen staging candidate")
     sha(release.get("runtime_manifest_sha256"), "freeze.runtime_manifest_sha256")
+    sha(release.get("rollout_manifest_sha256"), "freeze.rollout_manifest_sha256")
     release_id = text(release.get("release_id"), "freeze.release_id")
     frozen = when(release.get("frozen_at"), "freeze.frozen_at")
     for key in ("api_deployment_id", "worker_deployment_id", "database_revision",
@@ -368,6 +369,16 @@ def validate(freeze: object, day3: object, day4: object, day5: object,
     need(release["api_deployment_id"] != release["worker_deployment_id"],
          "API and worker deployments must be independently identified")
     need(release["owner_a_ref"] != release["owner_b_ref"], "Independent synthetic owners required")
+    source_db_revision = text(release.get("source_database_revision"), "freeze.source_database_revision")
+    need(source_db_revision == release["database_revision"],
+         "The staged database revision differs from the expected source migration")
+    for label in ("api_deployment_receipt_ref", "worker_deployment_receipt_ref",
+                  "database_revision_receipt_ref", "provider_budget_approval_ref",
+                  "source_ci_run_ref", "governance_audit_receipt_ref"):
+        referenced(release.get(label), "freeze." + label)
+    for label in ("api_deployed_at", "worker_deployed_at", "database_revision_verified_at"):
+        need(when(release.get(label), "freeze." + label) <= frozen,
+             "Release freeze predates an independently observed deployment/schema readback")
     count(release.get("budget_tokens"), "freeze.budget_tokens")
     need(release["budget_tokens"] > 0, "Model budget must be approved and nonzero")
     for key in ("api_source_revision", "worker_source_revision"):
@@ -401,6 +412,8 @@ def validate(freeze: object, day3: object, day4: object, day5: object,
         "release_id": release_id,
         "source_revision": expected_revision,
         "runtime_manifest_sha256": release["runtime_manifest_sha256"],
+        "rollout_manifest_sha256": release["rollout_manifest_sha256"],
+        "source_database_revision": source_db_revision,
         "workflow_days": sorted(times),
         "caveat": "Operator-provided receipts require direct, independent platform authentication; this script cannot certify hosted execution.",
     }
