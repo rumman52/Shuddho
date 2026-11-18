@@ -291,6 +291,23 @@ def test_truncated_source_quotes_and_reference_validation(container):
             validate_evidence(bad, result.sources)
 
 
+@pytest.mark.parametrize("mutation", ["missing_hash", "wrong_hash", "modified_excerpt"])
+def test_research_evidence_must_match_retrieved_sha256(mutation):
+    """A real quote cannot authorize evidence whose stored bytes changed."""
+    result = TavilyResearchProvider.parse(search_data(), ResearchOptions(query="test query"))
+    draft = work_draft("research")
+    validate_evidence(draft, result.sources)
+    original_hash = result.sources[0]["sha256"]
+    if mutation == "missing_hash":
+        del result.sources[0]["sha256"]
+    elif mutation == "wrong_hash":
+        result.sources[0]["sha256"] = "0" * 64 if original_hash != "0" * 64 else "1" * 64
+    else:
+        result.sources[0]["text"] += " This appended text is not in the original retrieval."
+    with pytest.raises(ValueError, match="source content hash mismatch"):
+        validate_evidence(draft, result.sources)
+
+
 @pytest.mark.parametrize("response,code", [
     (httpx.Response(302, headers={"Location": "http://169.254.169.254/private"}), "search_unavailable"),
     (httpx.Response(429, text="secret provider diagnostics"), "search_unavailable"),
