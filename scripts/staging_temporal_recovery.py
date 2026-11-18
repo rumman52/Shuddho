@@ -259,20 +259,21 @@ def validate_outbox_effects(
     agent_outbox: list[AgentOutbox],
     task_outbox: list[Outbox],
 ) -> dict:
-    """Verify one durable AgentRun dispatch effect and one delivered row per child task.
+    """Verify a single parent dispatch effect and no duplicate child outbox writes.
 
-    'Exactly once' here is a *logical ledger effect*, not proof that external
-    providers never repeated a side effect. Dispatch attempts may be retried.
+    The Agent runtime creates child tasks with enqueue=False because Temporal
+    executes their activities directly. A cw_outbox row for any child is an
+    unexpected second dispatch path, not proof of correct recovery. The parent
+    cw_agent_outbox is the only logical dispatch effect for this AgentRun.
     """
     if len(agent_outbox) != 1 or agent_outbox[0].run_id != run.id or agent_outbox[0].delivered is not True:
         raise RecoveryFailure("Recovery AgentRun does not have exactly one delivered outbox effect.")
-    task_ids = {task.id for task in tasks}
-    if len(task_ids) != 3 or len(task_outbox) != 3 or {row.task_id for row in task_outbox} != task_ids:
-        raise RecoveryFailure("Each of the three recovered child tasks must have exactly one outbox row.")
-    if any(row.delivered is not True or type(row.attempts) is not int or row.attempts < 1 for row in task_outbox):
-        raise RecoveryFailure("One or more recovered child-task outbox dispatches were not delivered.")
-    return {"agent_outbox_effect_count": 1, "child_task_outbox_count": 3,
-            "child_task_outbox_all_delivered": True}
+    if len({task.id for task in tasks}) != 3:
+        raise RecoveryFailure("Recovered child task identities are not distinct.")
+    if task_outbox:
+        raise RecoveryFailure("Direct Agent child tasks unexpectedly generated task outbox effects.")
+    return {"agent_outbox_effect_count": 1, "child_task_outbox_count": 0,
+            "child_task_outbox_expected_absent": True}
 
 
 def validate_persisted_recovery(
@@ -414,7 +415,7 @@ async def verify(
             "parallel_restart": passed(
                 f"post-restart run completed with exactly {facts['child_tasks']} server-idempotent child tasks, "
                 f"{outbox['agent_outbox_effect_count']} AgentRun outbox effect, "
-                f"{outbox['child_task_outbox_count']} delivered child outboxes and "
+                f"{outbox['child_task_outbox_count']} child-task outbox dispatches and "
                 f"{artifact_count} persisted artifacts; restart_ref={concise_ref}",
                 context,
                 now=verified_at,
