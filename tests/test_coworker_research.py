@@ -250,14 +250,14 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
     assert stale.value.code == "memory_pins_changed"
     replay, created = container.conversation_dispatch.dispatch(
         owner, conversation["id"], turn["id"], expected_sequence=1,
-        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        reviewed_brief=reviewed_brief, expected_digest=preview["canonical_digest"],
         memory_pins=[selected_pin],
     )
     assert not created and replay["run_id"] == run["id"]
     with pytest.raises(CoworkerError) as changed:
         container.conversation_dispatch.dispatch(
             owner, conversation["id"], turn["id"], expected_sequence=1,
-            reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+            reviewed_brief=reviewed_brief, expected_digest=preview["canonical_digest"],
             memory_pins=[MemoryPin(fact_id=selected["id"], expected_version=corrected["version"])],
         )
     assert changed.value.code == "idempotency_conflict"
