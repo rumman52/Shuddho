@@ -99,8 +99,49 @@ def test_require_https_base_rejects_credentials_and_non_https():
     "https://staging.example.test:bad",
 ])
 def test_require_https_base_rejects_non_origin_or_local_destinations(bad_base):
-    with pytest.raises(exercise.ExerciseFailure, match="clean HTTPS DNS origin"):
+    with pytest.raises(exercise.ExerciseFailure, match="clean public HTTPS origin"):
         exercise.require_https_base(bad_base)
+
+
+@pytest.mark.parametrize(
+    "untrusted_base",
+    [
+        "https://staging.example.test/api",
+        "https://staging.example.test//",
+        "https://staging.example.test?",
+        "https://staging.example.test#",
+        "https://staging.example.test/?token=secret",
+        "https://staging.example.test:443/api",
+        "https://127.0.0.1",
+        "https://127.1",
+        "https://[::1]",
+        "https://localhost",
+        "https://api.internal",
+        "https://api.localhost",
+        "https://api.home.arpa",
+        "https://192.168.0.1",
+        "https://staging.example.test:99999",
+        "https://staging.example.test:abc",
+        "https://staging.example.test\t",
+        "https://staging.example.test\n",
+        " https://staging.example.test",
+        "https://staging.example.test ",
+        "https://staging.example.test\r",
+        "https://bad..example.test",
+    ],
+)
+def test_staging_isolation_refuses_untrusted_api_base_before_using_bearer_tokens(untrusted_base):
+    with pytest.raises(exercise.ExerciseFailure, match="clean public HTTPS origin"):
+        exercise.require_https_base(untrusted_base)
+
+
+def test_staging_isolation_accepts_clean_public_https_origin_with_optional_port():
+    assert exercise.require_https_base("https://shuddho-api-staging.onrender.com") == (
+        "https://shuddho-api-staging.onrender.com"
+    )
+    assert exercise.require_https_base("https://staging.example.test:8443/") == (
+        "https://staging.example.test:8443"
+    )
 
 
 def test_merge_evidence_preserves_manual_checks():
