@@ -115,7 +115,7 @@ _REVIEWED_SCHEMA_GENERATORS = (
 _REVIEWED_SOURCE_BLOBS = (
     (WorkSkill, "035293bd732a78daba8d7a96dbce48260f6c26d8"),
     (ToolSpec, "72ba55683daf74f582b51e21649e1ec94070f4c8"),
-    (ResearchToolInput, "6d1933313e7a5abef1a6a35c36742623154f1a76"),
+    (ResearchToolInput, "234db36e732ec07007fed607209fca6bc2f8d914"),
 )
 
 
