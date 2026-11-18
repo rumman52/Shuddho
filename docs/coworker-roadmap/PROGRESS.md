@@ -6,6 +6,18 @@ Read-only staging: PostgreSQL 17.11, ledger `0070` versus source Alembic head `0
 
 ---
 
+## Day 1 native export fault-fixture repair — 18 November 2026 (Asia/Dhaka)
+
+Status: **TEST-SOURCE CANDIDATE / NO-GO**, in [draft PR #774](https://github.com/rumman52/Shuddho/pull/774), based on main `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`. This does not claim a merged fix, green final-head CI, hosted qualification, or production activation.
+
+Exact-base [CI #44278207003](https://github.com/rumman52/Shuddho/actions/runs/44278207003) reproduced two failures after merged #766 enforced four validated native Day 6 exports before storage. The original ambiguous-PUT test generated three fake plaintext files; the hard-worker-loss child generated one fake plaintext file. Neither could reach the intended fault boundary, and the full Coworker job reported **2 failed, 1,628 passed, 4 skipped**. The frozen #769 capacity/sandbox/Fly gate still passed **4 tests, 0 skips**.
+
+PR #774 changes only the two test fixtures: use the existing native renderer before injecting the second-PUT response loss or process SIGKILL; freeze the native bytes across ambiguous-PUT replay so content-addressed object names are stable despite DOCX/PDF metadata; assert four recoverable files and that a persisted orphan's bytes match its digest. Production `validate_day6_exports`, storage, cleanup and CI gate behavior remain unchanged.
+
+The exact-head CI URL and independent GitHub review must be attached to #727 after final completion. Do not relabel skipped governance on PR checks as a passing main governance audit. Current native ruleset 27324410 lacks required independent review and checks; C/admin own its approved repair and positive/negative controls. Supabase staging remains at Alembic `0070` vs source `0072_merge_0071_heads`, with no authenticated synthetic owners or verified isolated restore. D independently owns new heldout cases and read-denial/custody receipts (#665). Provider identity/spend and Founder approvals remain missing. No production deploy, paid provision, credentialed probe, external send or private case transfer occurred. Remain **NO-GO**.
+
+---
+
 ## Day 10 CTO handoff and live blockers — 17 November 2026 (Asia/Dhaka)
 
 The current Day 10 disposition remains **SOURCE_ONLY / NO-GO**. The exact main
