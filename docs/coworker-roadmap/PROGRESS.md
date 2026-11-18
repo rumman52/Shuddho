@@ -1,3 +1,11 @@
+## Day 8 — mandatory privacy/redaction CI qualification (19 November 2026)
+
+- **Source baseline:** `cebe322d88d2120e6c78c6755b70445eedf8c39f` includes merged telemetry schema/redaction PR #788. The mandatory Coworker Day 8 CI step ran only `tests/test_core_agent_observability.py`; the new `tests/test_day8_telemetry_privacy.py` was not explicitly protected by a required-module/no-skips gate. The general fast Python sweep is not sufficient evidence for the mandatory Coworker gate.
+- **Reproduced before patch:** a new source contract test against the exact baseline Day 8 workflow step failed because the privacy test and explicit required-module check were absent.
+- **Fix:** the mandatory Day 8 Coworker CI job runs economics and privacy tests into one JUnit report and checks both module names with `scripts.mandatory_test_gate` (rejects zero collection, skips, failures and errors). The new test guards the workflow against silently removing this coverage. No runtime code, event sink, credential, worker resource, release flag or DB schema was changed.
+- **Local checks:** CI-contract test 1 passed; privacy suite 39 passed, 0 skipped, JUnit classname `tests.test_day8_telemetry_privacy` verified. Full exact-PR-head CI, independent review and staging emission still require separate evidence.
+- **Status:** SOURCE PREPARED / STAGING NO-GO. D08.T04 still needs exact-head CI and D-reviewed independent privacy signoff. D08.T03 remains disabled without Founder/C approved destination, retention, consent and hosted delivery proof. Day 1 native ruleset `27324410` still requires an authorized administrator; no human-review/policy control outcome is claimed.
+
 ## Day 5 Runtime v3 memory correction race — 18 November 2026 (Asia/Dhaka)
 
 Review base: `main` `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`.
