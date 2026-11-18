@@ -520,6 +520,15 @@ def _day8_fixture():
                 "behavior_sha256": ("2" if profile == "baseline" else "3") * 64,
                 "prompt_sha256": ("4" if profile == "baseline" else "5") * 64,
                 "tool_sha256": "6" * 64,
+                "schema_sha256": "7" * 64,
+                "flags_sha256": "8" * 64,
+                "budgets_sha256": "9" * 64,
+            },
+            "evaluation_policy": {
+                "approved_p95_end_to_end_latency_ms": 1000,
+                "quality_rubric_sha256": "a" * 64,
+                "pricing_assumptions_sha256": "b" * 64,
+                "owner_approval_receipt_sha256": "c" * 64,
             },
             "results": [{
                 "id": case["id"], "workflow": case["workflow"],
@@ -530,6 +539,13 @@ def _day8_fixture():
                 "input_tokens": 100, "output_tokens": 20,
                 "model_time_ms": 100, "tool_time_ms": 50,
                 "retry_count": 0, "cost_microusd": unit_cost,
+                "end_to_end_latency_ms": 300,
+                "retry_breakdown": {"model": 0, "tool": 0, "dispatch": 0},
+                "failure_breakdown": {"provider": 0, "model": 0, "tool": 0},
+                "cost_components_microusd": {
+                    "provider": unit_cost, "tools": 0, "compute": 0,
+                    "storage": 0, "other": 0,
+                },
             } for case in cases],
         }
     return suite, make("baseline", 20), make("bounded_context_compact_observations", 15)
