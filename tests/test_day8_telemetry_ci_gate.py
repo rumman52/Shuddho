@@ -14,3 +14,9 @@ def test_day8_telemetry_privacy_is_part_of_mandatory_suite() -> None:
     assert "tests/test_core_agent_observability.py tests/test_day8_telemetry_privacy.py" in step
     assert "--required-module tests.test_core_agent_observability" in step
     assert "--required-module tests.test_day8_telemetry_privacy" in step
+    assert "--required-module tests.test_day8_telemetry_ci_gate" in step
+
+
+def test_only_the_canonical_private_operational_event_module_exists() -> None:
+    assert Path("services/coworker/day8_telemetry.py").is_file()
+    assert not Path("services/coworker/operational_telemetry.py").exists()
