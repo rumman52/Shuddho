@@ -137,7 +137,7 @@ def test_day2_real_document_artifact_and_owner_denial_contract(monkeypatch):
 def test_day2_pdf_source_uses_pdf_extension_and_original_bytes(monkeypatch):
     # The transport is synthetic; load_private_pdf separately validates the
     # real PDF before the operator runner can call this API path.
-    source = b"%PDF-1.7\\nprivate synthetic PDF protocol fixture"
+    source = b"%PDF-1.7\nprivate synthetic PDF protocol fixture"
     api = Day2API(source=source)
     monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
         200, content=ARTIFACT, request=httpx.Request("GET", url)))
@@ -151,20 +151,25 @@ def test_day2_pdf_source_uses_pdf_extension_and_original_bytes(monkeypatch):
 
 def test_day2_pdf_operator_path_requires_private_real_text_pdf(tmp_path):
     source_path = tmp_path / "selected.pdf"
-    source_path.write_bytes(b"%PDF-1.7\\nnot a real PDF")
+    source_path.write_bytes(b"%PDF-1.7\nnot a real PDF")
     source_path.chmod(0o644)
     with pytest.raises(day2.Day2Failure, match="owner-only"):
-        day2.load_private_pdf(source_path)
-    source_path.chmod(0o600)
-    with pytest.raises(day2.Day2Failure, match="invalid or unreadable"):
         day2.load_private_pdf(source_path)
     link = tmp_path / "linked.pdf"
     link.symlink_to(source_path)
     with pytest.raises(day2.Day2Failure, match="nonsymlink"):
         day2.load_private_pdf(link)
 
+    # The minimal test-and-build job omits the Coworker PDF parser extra;
+    # exercise format validation in the full Coworker job instead.
+    pytest.importorskip("pypdf")
+    source_path.chmod(0o600)
+    with pytest.raises(day2.Day2Failure, match="invalid or unreadable"):
+        day2.load_private_pdf(source_path)
+
 
 def test_day2_pdf_operator_path_accepts_text_based_pdf(tmp_path):
+    pytest.importorskip("pypdf")
     weasyprint = pytest.importorskip("weasyprint")
     source = weasyprint.HTML(string="<p>Day 2 synthetic private English source text.</p>").write_pdf()
     path = tmp_path / "selected.pdf"
