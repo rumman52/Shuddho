@@ -113,6 +113,33 @@ def test_validate_rejects_invalid_temporal_address(value):
         preflight.validate(env)
 
 
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "localhost:7233",
+        "127.0.0.1:7233",
+        "192.168.1.4:7233",
+        "0x7f.0.0.1:7233",
+        "[::1]:7233",
+        "temporal.internal:7233",
+        "temporal.localhost:7233",
+        "temporal.home.arpa:7233",
+        "bad..tmprl.cloud:7233",
+        "-bad.tmprl.cloud:7233",
+        "example.tmprl.cloud:7233 ",
+        " example.tmprl.cloud:7233",
+    ],
+)
+def test_validate_rejects_temporal_local_or_non_dns_staging_host(address):
+    # This preflight accepts a credential-bearing staging connection only to a
+    # public DNS-shaped endpoint. It does not resolve DNS or prove TLS identity.
+    env = valid_env()
+    env["SHUDDHO_TEMPORAL_ADDRESS"] = address
+    with pytest.raises(preflight.PreflightFailure, match="SHUDDHO_TEMPORAL_ADDRESS"):
+        preflight.validate(env)
+
+
 def test_validate_requires_exact_staging_queue_bucket_and_tls():
     env = valid_env()
     env["SHUDDHO_TEMPORAL_TASK_QUEUE"] = "other"
