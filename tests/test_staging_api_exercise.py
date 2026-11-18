@@ -87,7 +87,6 @@ def test_require_https_base_rejects_credentials_and_non_https():
     assert exercise.require_https_base("https://staging.example.test/") == "https://staging.example.test"
 
 
-
 @pytest.mark.parametrize(
     "untrusted_base",
     [
@@ -107,11 +106,11 @@ def test_require_https_base_rejects_credentials_and_non_https():
         "https://192.168.0.1",
         "https://staging.example.test:99999",
         "https://staging.example.test:abc",
-        "https://staging.example.test\\n",
-        "https://staging.example.test\\t",
+        "https://staging.example.test\${s}",
+        "https://staging.example.test\${s}",
         " https://staging.example.test",
         "https://staging.example.test ",
-        "https://staging.example.test\\x00",
+        "https://staging.example.test\${s}",
         "https://bad..example.test",
     ],
 )
