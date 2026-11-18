@@ -48,11 +48,16 @@ It fails closed unless all of these are true:
    **exactly** the configured backend cohort accounts (no extras and no
    duplicate subjects); enforcement is enabled and the configured maximum
    exactly matches the release manifest.
-4. Every member's actual HTTPS `/api/v1/me` response is **200**; a fresh,
+4. The admitted HTTPS API's authenticated `/api/v1/runtime-manifest` identifies
+   the exact candidate source revision, reviewed environment, complete **43**
+   boolean capability flags, action providers and enforced pilot cohort size.
+   The independent operator must also verify the deployed image/build digest;
+   the HTTP runtime manifest alone does not attest a build digest.
+5. Every member's actual HTTPS `/api/v1/me` response is **200**; a fresh,
    nonmember's response is **403** with `cohort_not_enabled`.
-5. The nonmember account was not provisioned either **before or after**
+6. The nonmember account was not provisioned either **before or after**
    the probes, checked through the existing database access boundary.
-6. A uniquely named output receipt is created exclusively and is never
+7. A uniquely named output receipt is created exclusively and is never
    overwritten. No bearer token, subject, account ID or response body is
    printed or persisted.
 
@@ -114,7 +119,8 @@ uv run --extra coworker python -m scripts.pilot_admission_verify \
   --output /secure/operator/pilot-access-first-observation.json
 ```
 
-Exit 0 means the **submitted release prerequisite and access probes** passed
+Exit 0 means the **submitted release prerequisite, authenticated API manifest
+and access probes** passed
 mechanically; it **does not** mean this CLI admitted users, confirmed real
 human approval, verified an image digest from a live runtime, or authorized
 expansion. Exit 1 means no pass; preserve any earlier receipt. A subsequent
