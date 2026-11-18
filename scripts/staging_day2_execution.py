@@ -402,11 +402,17 @@ def document_outbox_receipt(task_id: str, rows: list) -> dict:
 def persisted_document_outbox(container, task_id: str) -> dict:
     """Read the real database ledger, never infer outbox delivery from HTTP 200."""
     from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
     from services.coworker.models import Outbox
 
-    with container.repository.sessions() as db:
-        rows = list(db.scalars(select(Outbox).where(Outbox.task_id == task_id)).all())
-        return document_outbox_receipt(task_id, rows)
+    try:
+        with container.repository.sessions() as db:
+            rows = list(db.scalars(select(Outbox).where(Outbox.task_id == task_id)).all())
+    except SQLAlchemyError:
+        # Avoid printing a driver exception with SQL, network details or secrets
+        # into a staging operator log or shared issue evidence.
+        raise Day2Failure("Private document outbox could not be independently verified.") from None
+    return document_outbox_receipt(task_id, rows)
 
 
 async def temporal_completed(settings: Settings, workflow_id: str) -> None:
