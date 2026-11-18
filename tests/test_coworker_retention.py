@@ -181,14 +181,6 @@ def test_orphan_scan_preserves_checkpoint_committed_during_inventory(container, 
             container.storage.get(orphan_key, 1024)
 
 
-def _crash_test_renderer(draft, sources, **options):
-    # Exercise a genuine post-validation object-store PUT; partial TXT
-    # fixtures are rejected before reaching the SIGKILL boundary.
-    from services.coworker.exports import render_in_subprocess
-
-    return render_in_subprocess(draft, sources, **options)
-
-
 def _export_worker_blocked_after_put(settings, task_id, put_ready, release):
     """Child-process target: persist one blob, then wait to be SIGKILLed."""
     import asyncio
@@ -211,7 +203,8 @@ def _export_worker_blocked_after_put(settings, task_id, put_ready, release):
 
     value.storage = BlockingStore()
     try:
-        asyncio.run(DocumentRunner(value, renderer=_crash_test_renderer).phase(task_id, "export"))
+        # Use the production native renderer so the worker reaches the first PUT.
+        asyncio.run(DocumentRunner(value).phase(task_id, "export"))
     finally:
         value.repository.sessions.kw["bind"].dispose()
 
@@ -294,6 +287,7 @@ def test_hard_worker_loss_after_object_put_is_reconciled_without_deleting_checkp
         assert process.exitcode == -signal.SIGKILL
         orphan_body = container.storage.get(orphan_key, 16 * 1024 * 1024)
         assert orphan_body
+        assert f"/{hashlib.sha256(orphan_body).hexdigest()}/" in orphan_key
         assert hashlib.sha256(orphan_body).hexdigest() == orphan_key.split("/")[-2]
 
         # Simulate the object becoming eligible for the existing age-bounded sweep.
