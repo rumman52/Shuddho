@@ -126,7 +126,8 @@ class ConversationTaskBriefService:
 
     def validate(self, owner, conversation_id, message_id, *, expected_sequence, brief, project_id=None,
                  memory_pins: list[MemoryPin] | None = None):
-        selection = TaskBriefMemorySelection(memory_pins=memory_pins or []).model_dump(mode="json")["memory_pins"]
+        selection = (None if memory_pins is None else
+                     TaskBriefMemorySelection(memory_pins=memory_pins).model_dump(mode="json")["memory_pins"])
         with self.sessions() as db:
             result = self.validate_in_session(db, self.settings, owner, conversation_id,
                      message_id, expected_sequence, brief, project_id, memory_pins=selection)

@@ -107,7 +107,7 @@ def canonical_brief_digest(brief: TaskBrief, pins: list[dict], project: dict, *,
     data = {"schema_version": 1, "brief": brief.model_dump(mode="json"), "source_pins": bounded_pins,
             "project_context": project or {}, "owner": owner_id, "conversation": conversation_id,
             "message": message_id, "sequence": sequence}
-    if memory_pins:
+    if memory_pins is not None:
         data.update(schema_version=MEMORY_BOUND_BRIEF_VERSION, memory_pins=memory_pins)
     encoded = json.dumps(data, sort_keys=True, ensure_ascii=False,
                          separators=(",", ":")).encode("utf-8")

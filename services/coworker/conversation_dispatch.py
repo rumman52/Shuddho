@@ -301,7 +301,7 @@ class ConversationDispatchService:
                 input_artifacts=[pin["resource_id"] for pin in artifact_pins],
                 project_context=project_context,
                 reviewed_brief=({
-                    "schema_version": MEMORY_BOUND_BRIEF_VERSION if selection else 1,
+                    "schema_version": MEMORY_BOUND_BRIEF_VERSION if selection is not None else 1,
                     "brief": reviewed_brief.model_dump(mode="json"),
                     "source_pins": pins, "canonical_digest": expected_digest,
                     "message_sequence": expected_sequence,
