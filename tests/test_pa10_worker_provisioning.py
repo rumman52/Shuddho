@@ -53,7 +53,7 @@ class WorkerProvisioningTests(unittest.TestCase):
             "SHUDDHO_COWORKER_ENV": "staging",
             "SHUDDHO_AUTH_ISSUER": "https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1",
             "SHUDDHO_AUTH_AUDIENCE": "authenticated",
-            "SHUDDHO_TEMPORAL_ADDRESS": "example:7233",
+            "SHUDDHO_TEMPORAL_ADDRESS": "example.tmprl.cloud:7233",
             "SHUDDHO_TEMPORAL_NAMESPACE": "test-only", "SHUDDHO_TEMPORAL_API_KEY": "test-only-temporal",
             "SHUDDHO_STAGING_S3_ACCESS_KEY_ID": "test-only-access",
             "SHUDDHO_STAGING_S3_SECRET_ACCESS_KEY": "test-only-secret",
