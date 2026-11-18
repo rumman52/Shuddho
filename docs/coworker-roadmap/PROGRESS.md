@@ -1,3 +1,12 @@
+## Day 9 historical provenance CI repair — 18 November 2026 (Asia/Dhaka)
+
+**Status: SOURCE ONLY / NO-GO; exact-head CI and independent review pending.**
+Main `d1bed1e0f65703df67a740b94e2768fdf69abb49` already contains the Day 9 CI preflight from merged [PR #784](https://github.com/rumman52/Shuddho/pull/784); that PR was merged at its **failing** earlier head `91769b122d7aa3cc38b615c009efdeb7170ee33b` without a submitted independent review (confirmed via API), notwithstanding its recorded 109-pass/1-fail preflight. The red failure was caused by the Coworker job using a depth-one checkout for a valid, Git-authenticated historical source fixture. Main `test-and-build` already fetches full history. This work branch adds only the matching full-history checkout to Coworker, preserves the provenance assertion and records red evidence in [Day 9 task contract](DAY9_SOURCE_PREFLIGHT_CI_2026-11-18.md). The first CI run and any later repaired CI are distinct. **The unreviewed red-CI merge is a governance blocker requiring admin audit; never use it to qualify Day 9 or Day 10.**
+
+No held-out data, model calls, stage migration, external send, credentials, live C fault operations, or paid resource was accessed/changed. Day 9 remains NO-GO pending C-authenticated runtime freeze and 20 operations, D custody/replacement and 40 first-run outputs, two blinded reviewers, and main governance/CI restoration.
+
+---
+
 ## Day 9 source preflight CI enforcement — 18 November 2026 (Asia/Dhaka)
 
 **Level: source-only PR; exact-head CI pending; Day 9 NO-GO.**
