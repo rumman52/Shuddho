@@ -77,7 +77,7 @@ def api(monkeypatch):
                 "target": "branch",
                 "enforcement": "active",
             }]
-        if method == "GET" and url.endswith(f"/rulesets/{reconcile.RULESET_ID}"):
+        if method == "GET" and url.endswith(f"/rulesets/{state['current']['id']}"):
             return deepcopy(state["current"])
         if method == "PUT" and url.endswith(f"/rulesets/{reconcile.RULESET_ID}"):
             state["writes"].append(deepcopy(payload))
@@ -192,6 +192,7 @@ def test_current_main_rule_change_during_second_read_blocks_put(api, monkeypatch
         return result
 
     monkeypatch.setattr(reconcile, "_request_json", drift)
+    monkeypatch.setattr("scripts.apply_main_ruleset._request_json", drift)
     with pytest.raises(ApplyMainRulesetError, match="changed just before PUT"):
         call(
             apply=True, expected_current_ruleset_sha256=digest,
@@ -274,7 +275,7 @@ def test_rejects_unrelated_repository_and_invalid_main_sha_before_network(api):
             expected_main_sha=SHA,
         )
     with pytest.raises(ApplyMainRulesetError, match="exact 40-character"):
-        call.__globals__["reconcile"].reconcile_main_ruleset(
+        reconcile.reconcile_main_ruleset(
             REPO, "fake-admin-token", policy(), expected_main_sha="abc",
         )
     assert api["calls"] == []
