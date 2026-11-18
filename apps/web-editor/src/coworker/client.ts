@@ -802,7 +802,7 @@ export class CoworkerClient {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expected_sequence: sequence, brief,
           ...(projectId ? { project_id: identifier(projectId) } : {}),
-          ...(memoryPins?.length ? { memory_pins: memoryPins } : {}) }),
+          ...(memoryPins !== undefined ? { memory_pins: memoryPins } : {}) }),
       });
   }
   dispatchConversationMessage(id: string, messageId: string, sequence: number,
