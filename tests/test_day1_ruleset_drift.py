@@ -27,6 +27,7 @@ def policy():
                 "do_not_enforce_on_create": False,
                 "required_status_checks": [
                     {"context": "test-and-build", "integration_id": 15368},
+                    {"context": "coworker", "integration_id": 15368},
                     {"context": "ci-merge-gate", "integration_id": 15368},
                 ],
             }},
@@ -58,7 +59,7 @@ def test_live_day1_drift_is_explicit_and_never_qualified():
     for gap in ("reviews.independent_approval_count", "reviews.dismiss_stale_reviews_on_push",
                 "reviews.require_last_push_approval", "reviews.required_review_thread_resolution",
                 "ruleset.unique_required_status_checks", "checks.first_party_test-and-build",
-                "checks.first_party_ci-merge-gate"):
+                "checks.first_party_coworker", "checks.first_party_ci-merge-gate"):
         assert gap in report["drift"]
 
 
@@ -130,25 +131,37 @@ def test_cli_rejects_symlinked_input(tmp_path):
         "--expected-main-sha", SHA,
     ]) == 2
 
-def test_additional_reviewed_coworker_check_cannot_be_ignored():
-    updated_policy = policy()
-    status = updated_policy["rules"][-1]["parameters"]["required_status_checks"]
-    status.append({"context": "coworker", "integration_id": 15368})
+def test_missing_live_coworker_check_is_reported_and_never_qualified():
+    observed = live()
+    checks = observed["rules"][-1]["parameters"]["required_status_checks"]
+    observed["rules"][-1]["parameters"]["required_status_checks"] = [
+        row for row in checks if row["context"] != "coworker"
+    ]
 
-    # The observed ruleset still has the former two checks. The diagnostic
-    # must report the new reviewed requirement even before PR #754 merges.
-    report = analyze(branch(), live(), updated_policy, expected_main_sha=SHA)
+    report = analyze(branch(), observed, policy(), expected_main_sha=SHA)
     assert report["status"] == "blocked_configuration"
     assert "checks.first_party_coworker" in report["drift"]
     assert report["qualified"] is False
 
-    updated_live = live()
-    updated_live["rules"][-1]["parameters"]["required_status_checks"].append(
-        {"context": "coworker", "integration_id": 15368}
-    )
-    good = analyze(branch(), updated_live, updated_policy, expected_main_sha=SHA)
-    assert good["status"] == "configuration_candidate"
-    assert good["qualified"] is False
+    corrected = analyze(branch(), live(), policy(), expected_main_sha=SHA)
+    assert corrected["status"] == "configuration_candidate"
+    assert corrected["qualified"] is False
+
+
+def test_reviewed_template_cannot_drop_mandatory_coworker_check():
+    # Defense in depth: changing both the checked-in policy and the supplied
+    # observed ruleset must never redefine the minimum mandatory check set.
+    weakened_policy = policy()
+    weakened_checks = weakened_policy["rules"][-1]["parameters"]["required_status_checks"]
+    weakened_policy["rules"][-1]["parameters"]["required_status_checks"] = [
+        row for row in weakened_checks if row["context"] != "coworker"
+    ]
+    observed = copy.deepcopy(weakened_policy)
+    observed["id"] = 27324410
+    observed["conditions"]["ref_name"]["include"] = ["~DEFAULT_BRANCH"]
+
+    with pytest.raises(EvidenceError, match="mandatory first-party checks"):
+        analyze(branch(), observed, weakened_policy, expected_main_sha=SHA)
 
 
 @pytest.mark.parametrize("bad_check", [
