@@ -338,3 +338,9 @@ def test_ruleset_writer_never_replays_bearer_on_cross_origin_redirect():
                 _request_json("GET", origin + "/repos/owner/repo", "fake-token")
 
     assert recipient_auth == []
+
+def test_day1_policy_template_requires_first_party_coworker_job():
+    policy = candidate()
+    check_rule = next(rule for rule in policy["rules"] if rule["type"] == "required_status_checks")
+    checks = check_rule["parameters"]["required_status_checks"]
+    assert any(entry == {"context": "coworker", "integration_id": 15368} for entry in checks)
