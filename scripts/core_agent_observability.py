@@ -519,6 +519,9 @@ DAY8_SHA_FIELDS = (
 DAY8_FREEZE_MATCH_FIELDS = (
     "schema_sha256", "flags_sha256", "budgets_sha256", "prompt_template_sha256",
 )
+DAY8_CONFIGURATION_FIELDS = (
+    "profile", "provider", "model", *DAY8_SHA_FIELDS, *DAY8_FREEZE_MATCH_FIELDS,
+)
 DAY8_CASE_FIELDS = (
     "input_tokens", "output_tokens", "model_time_ms", "tool_time_ms",
     "retry_count", "cost_microusd", "end_to_end_latency_ms",
@@ -579,6 +582,10 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
         raise ValueError(f"{label}: missing bounded configuration identity")
     if config["profile"] != label:
         raise ValueError(f"{label}: mismatched profile")
+    # The selected configuration is copied into the freeze report. Fail closed
+    # on arbitrary properties rather than copying a prompt, token or raw ID.
+    if set(config) - set(DAY8_CONFIGURATION_FIELDS):
+        raise ValueError(f"{label}: unexpected configuration property")
     if config.get("provider") != "deepseek" or not isinstance(config.get("model"), str) or not config["model"].strip():
         raise ValueError(f"{label}: only the currently approved DeepSeek provider is supported")
     if any(not _day8_digest(config.get(key)) for key in DAY8_SHA_FIELDS):
@@ -725,6 +732,16 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
                          if isinstance(row.get("run_id"), str)}
     if base_run_ids & candidate_run_ids:
         raise ValueError("reused run identity across profiles is not an independent generation")
+    base_usage_receipts = {
+        row["provider_usage_case_receipt_sha256"] for row in base_cases.values()
+        if _day8_digest(row.get("provider_usage_case_receipt_sha256"))
+    }
+    candidate_usage_receipts = {
+        row["provider_usage_case_receipt_sha256"] for row in candidate_cases.values()
+        if _day8_digest(row.get("provider_usage_case_receipt_sha256"))
+    }
+    if base_usage_receipts & candidate_usage_receipts:
+        raise ValueError("reused provider usage receipt across profiles")
     policy = baseline.get("evaluation_policy")
     candidate_policy = candidate.get("evaluation_policy")
     policy_complete = _day8_policy_valid(policy) and _day8_policy_valid(candidate_policy)
