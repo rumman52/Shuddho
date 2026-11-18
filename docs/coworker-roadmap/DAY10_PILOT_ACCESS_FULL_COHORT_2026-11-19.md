@@ -93,7 +93,7 @@ Store the user tokens in a file **outside the checkout and CI artifacts**,
 e.g. `/secure/operator/pilot-members.json`, containing a JSON array of the
 five-to-ten bearer token strings, permissions `0600`. Do not include the
 real credentials in a shell command, repository, ticket or PR. Provide the
-backend operator's own `SHUDDHO_DATABASE_URL`, authentication settings and
+backend operator's own `SHUDDHO_COWORKER_DATABASE_URL`, authentication settings and
 `SHUDDHO_COWORKER_COHORT_*` settings via approved protected environment,
 along with these **protected environment secrets**:
 
