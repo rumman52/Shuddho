@@ -6,6 +6,7 @@ import json
 import math
 import os
 import tempfile
+from fractions import Fraction
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -512,9 +513,21 @@ def atomic_write(path: Path, content: str) -> None:
 # records are operator-controlled evidence, never telemetry or provider receipts
 # inferred from the model's output.
 DAY8_PROFILES = {"baseline", "bounded_context_compact_observations"}
-DAY8_SHA_FIELDS = ("model_settings_sha256", "behavior_sha256", "prompt_sha256", "tool_sha256")
-DAY8_CASE_FIELDS = ("input_tokens", "output_tokens", "model_time_ms", "tool_time_ms",
-                    "retry_count", "cost_microusd")
+DAY8_SHA_FIELDS = (
+    "model_settings_sha256", "behavior_sha256", "prompt_sha256", "tool_sha256",
+    "schema_sha256", "flags_sha256", "budgets_sha256",
+)
+DAY8_CASE_FIELDS = (
+    "input_tokens", "output_tokens", "model_time_ms", "tool_time_ms",
+    "retry_count", "cost_microusd", "end_to_end_latency_ms",
+)
+DAY8_RETRY_TYPES = ("model", "tool", "dispatch")
+DAY8_FAILURE_TYPES = ("provider", "model", "tool")
+DAY8_COST_COMPONENTS = ("provider", "tools", "compute", "storage", "other")
+DAY8_POLICY_HASH_FIELDS = (
+    "quality_rubric_sha256", "pricing_assumptions_sha256",
+    "owner_approval_receipt_sha256",
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -538,6 +551,22 @@ def _day8_digest(value: object) -> bool:
 
 def _day8_uint(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _day8_counts(value: object, fields: tuple[str, ...]) -> bool:
+    return isinstance(value, dict) and set(value) == set(fields) and all(
+        _day8_uint(value[field]) for field in fields
+    )
+
+
+def _day8_policy_valid(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"approved_p95_end_to_end_latency_ms", *DAY8_POLICY_HASH_FIELDS}
+        and type(value["approved_p95_end_to_end_latency_ms"]) is int
+        and value["approved_p95_end_to_end_latency_ms"] > 0
+        and all(_day8_digest(value.get(field)) for field in DAY8_POLICY_HASH_FIELDS)
+    )
 
 
 def _day8_cases(report: dict, expected: dict, label: str) -> dict:
@@ -576,6 +605,25 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
         for field in DAY8_CASE_FIELDS:
             if row.get(field) is not None and not _day8_uint(row[field]):
                 raise ValueError(f"{label}: {field} must be a measured nonnegative integer or null")
+        retries = row.get("retry_breakdown")
+        if retries is not None:
+            if not _day8_counts(retries, DAY8_RETRY_TYPES):
+                raise ValueError(f"{label}: invalid retry breakdown")
+            if row.get("retry_count") is not None and (
+                retries["model"] + retries["tool"] != row["retry_count"]
+            ):
+                raise ValueError(f"{label}: retry breakdown must match execution retries; dispatch is separate")
+        failures = row.get("failure_breakdown")
+        if failures is not None and not _day8_counts(failures, DAY8_FAILURE_TYPES):
+            raise ValueError(f"{label}: invalid failure breakdown")
+        costs = row.get("cost_components_microusd")
+        if costs is not None:
+            if not _day8_counts(costs, DAY8_COST_COMPONENTS):
+                raise ValueError(f"{label}: invalid all-in cost components")
+            if row.get("cost_microusd") is not None and (
+                sum(costs.values()) != row["cost_microusd"]
+            ):
+                raise ValueError(f"{label}: cost components must sum to all-in cost")
         for field in ("verified_artifact_refs",):
             if not isinstance(row.get(field), list) or any(
                 not isinstance(ref, str) or not ref.strip() for ref in row[field]
@@ -638,9 +686,62 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     base_config = baseline["configuration"]
     candidate_config = candidate["configuration"]
     if any(base_config[key] != candidate_config[key] for key in (
-        "provider", "model", "model_settings_sha256", "tool_sha256"
+        "provider", "model", "model_settings_sha256", "tool_sha256",
+        "schema_sha256", "flags_sha256", "budgets_sha256",
     )):
         raise ValueError("paired context experiment must preserve provider, model, parameters and tool surface")
+    policy = baseline.get("evaluation_policy")
+    candidate_policy = candidate.get("evaluation_policy")
+    policy_complete = _day8_policy_valid(policy) and _day8_policy_valid(candidate_policy)
+    if policy_complete and policy != candidate_policy:
+        raise ValueError("paired context experiment must preserve the approved decision policy")
+
+    def complete_metrics(rows: list[dict]) -> bool:
+        return all(
+            all(_day8_uint(row.get(field)) for field in DAY8_CASE_FIELDS)
+            and _day8_counts(row.get("retry_breakdown"), DAY8_RETRY_TYPES)
+            and _day8_counts(row.get("failure_breakdown"), DAY8_FAILURE_TYPES)
+            and _day8_counts(row.get("cost_components_microusd"), DAY8_COST_COMPONENTS)
+            for row in rows
+        )
+
+    def cell_summary(rows: list[dict]) -> dict:
+        count = len(rows)
+        accepted_count = sum(
+            r["human_accepted"] and r["passed"] and r["safety_passed"] for r in rows
+        )
+        complete = complete_metrics(rows)
+        times = [r["end_to_end_latency_ms"] for r in rows
+                 if _day8_uint(r.get("end_to_end_latency_ms"))]
+        # Never calculate a cohort percentile from a censored subset.
+        latency_complete = len(times) == count
+        cost = sum(r["cost_microusd"] for r in rows) if complete else None
+        return {
+            "cases": count,
+            "accepted": accepted_count,
+            "acceptance_rate": ratio(accepted_count, count),
+            "metrics_complete": complete,
+            "latency_samples": len(times),
+            "p50_end_to_end_latency_ms": percentile(times, 0.50) if latency_complete else None,
+            "p95_end_to_end_latency_ms": percentile(times, 0.95) if latency_complete else None,
+            "total_input_tokens": sum(r["input_tokens"] for r in rows) if complete else None,
+            "total_output_tokens": sum(r["output_tokens"] for r in rows) if complete else None,
+            "total_model_time_ms": sum(r["model_time_ms"] for r in rows) if complete else None,
+            "total_tool_time_ms": sum(r["tool_time_ms"] for r in rows) if complete else None,
+            "total_cost_microusd": cost,
+            "cost_microusd_per_accepted_output": (
+                round(cost / accepted_count, 2)
+                if cost is not None and accepted_count else None
+            ),
+            "retries_by_type": {
+                name: sum(r["retry_breakdown"][name] for r in rows)
+                for name in DAY8_RETRY_TYPES
+            } if complete else None,
+            "failures_by_type": {
+                name: sum(r["failure_breakdown"][name] for r in rows)
+                for name in DAY8_FAILURE_TYPES
+            } if complete else None,
+        }
 
     summaries = {}
     for label, report, items in (
@@ -650,21 +751,29 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         records = list(items.values())
         accepted = [r for r in records if r["human_accepted"] and r["passed"] and r["safety_passed"]]
         by_cell = {}
+        cell_metrics = {}
         for workflow in ("research_brief", "project_report_email"):
             for language in ("bn", "en"):
                 cell = [r for r in records if (r["workflow"], r["language"]) == (workflow, language)]
                 if len(cell) != 10:
                     raise ValueError("frozen corpus requires ten cases in each workflow/language cell")
-                by_cell[f"{workflow}/{language}"] = sum(
+                name = f"{workflow}/{language}"
+                by_cell[name] = sum(
                     r["human_accepted"] and r["passed"] and r["safety_passed"] for r in cell
                 )
-        metrics_complete = all(
-            all(_day8_uint(row.get(field)) for field in DAY8_CASE_FIELDS)
-            for row in records
-        )
+                cell_metrics[name] = cell_summary(cell)
+        metrics_complete = complete_metrics(records)
         safety_ok = all(r["safety_passed"] for r in records)
         artifact_coverage = all(r["verified_artifact_refs"] for r in accepted)
         quality_ok = len(accepted) >= 36 and all(n >= 9 for n in by_cell.values()) and safety_ok and artifact_coverage
+        latencies = [r["end_to_end_latency_ms"] for r in records
+                     if _day8_uint(r.get("end_to_end_latency_ms"))]
+        latency_complete = len(latencies) == 40
+        p95 = percentile(latencies, 0.95) if latency_complete else None
+        latency_ok = (
+            policy_complete and p95 is not None
+            and p95 <= policy["approved_p95_end_to_end_latency_ms"]
+        )
         totals = {
             field: sum(int(r[field]) for r in records) if metrics_complete else None
             for field in DAY8_CASE_FIELDS
@@ -673,9 +782,33 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "cases": 40,
             "human_accepted": len(accepted),
             "by_cell": by_cell,
+            "cell_metrics": cell_metrics,
             "quality_gate_passed": quality_ok,
             "safety_gate_passed": safety_ok,
             "metrics_complete": metrics_complete,
+            "end_to_end_latency_samples": len(latencies),
+            "p50_end_to_end_latency_ms": percentile(latencies, 0.50) if latency_complete else None,
+            "p95_end_to_end_latency_ms": p95,
+            "approved_p95_latency_ceiling_ms": (
+                policy["approved_p95_end_to_end_latency_ms"] if policy_complete else None
+            ),
+            "latency_gate_passed": latency_ok,
+            "metric_available_cases": {
+                field: sum(_day8_uint(r.get(field)) for r in records)
+                for field in DAY8_CASE_FIELDS
+            },
+            "retries_by_type": {
+                name: sum(r["retry_breakdown"][name] for r in records)
+                for name in DAY8_RETRY_TYPES
+            } if metrics_complete else None,
+            "failures_by_type": {
+                name: sum(r["failure_breakdown"][name] for r in records)
+                for name in DAY8_FAILURE_TYPES
+            } if metrics_complete else None,
+            "all_in_cost_components_microusd": {
+                name: sum(r["cost_components_microusd"][name] for r in records)
+                for name in DAY8_COST_COMPONENTS
+            } if metrics_complete else None,
             "total_input_tokens": totals["input_tokens"],
             "total_output_tokens": totals["output_tokens"],
             "total_model_time_ms": totals["model_time_ms"],
@@ -684,6 +817,10 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "total_cost_microusd": totals["cost_microusd"],
             "mean_cost_microusd_per_task": (
                 round(totals["cost_microusd"] / 40, 2) if totals["cost_microusd"] is not None else None
+            ),
+            "cost_microusd_per_accepted_output": (
+                round(totals["cost_microusd"] / len(accepted), 2)
+                if totals["cost_microusd"] is not None and accepted else None
             ),
             "configuration_sha256": _sha256_json(report["configuration"]),
             "evidence_sha256": _sha256_json(report),
@@ -701,8 +838,13 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         )
     )
     blockers = []
+    if not policy_complete:
+        blockers.append("missing or invalid owner-approved latency, rubric and pricing decision policy")
     if not a["metrics_complete"] or not b["metrics_complete"]:
-        blockers.append("missing measured input/output tokens, model/tool time, retries or cost")
+        blockers.append(
+            "missing measured input/output tokens, end-to-end latency, model/tool time, "
+            "failure/retry breakdown or verified all-in cost components"
+        )
     # Regressed candidate is excluded; a qualified baseline may still be frozen.
     if not (a["quality_gate_passed"] or b["quality_gate_passed"]):
         blockers.append("neither profile meets 36/40, 9/10-per-cell, safety and artifact gates")
@@ -716,16 +858,26 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     eligible = [
         (label, summary)
         for label, summary in summaries.items()
-        if summary["quality_gate_passed"]
+        if summary["quality_gate_passed"] and summary["latency_gate_passed"]
         and (label == "baseline" or retained_quality)
     ]
     if not blockers and len(eligible) > 0:
-        selected = min(eligible, key=lambda pair: (pair[1]["total_cost_microusd"], pair[0] != "baseline"))[0]
+        # Optimize cost per independently accepted output, not raw spend
+        # for a cohort with differing acceptance yields. Baseline wins a tie.
+        selected = min(eligible, key=lambda pair: (
+            Fraction(pair[1]["total_cost_microusd"], pair[1]["human_accepted"]),
+            pair[0] != "baseline",
+        ))[0]
     if selected is None and not blockers:
         blockers.append("no eligible candidate with retained quality")
     # Real token/cost differences from an unsafe or otherwise ineligible
     # candidate are not *qualified savings*. Do not surface them as such.
-    qualified_savings = a["quality_gate_passed"] and b["quality_gate_passed"] and retained_quality
+    qualified_savings = (
+        a["quality_gate_passed"] and b["quality_gate_passed"]
+        and a["latency_gate_passed"] and b["latency_gate_passed"]
+        and a["metrics_complete"] and b["metrics_complete"]
+        and retained_quality
+    )
     cost_delta = (
         a["total_cost_microusd"] - b["total_cost_microusd"]
         if qualified_savings
@@ -744,11 +896,13 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         files = (
             "services/coworker/agent_planning_model.py",
             "services/coworker/config.py",
+            "services/coworker/models.py",
             "scripts/core_agent_observability.py",
         )
         frozen = {
             "profile": selected,
             "configuration": (baseline if selected == "baseline" else candidate)["configuration"],
+            "evaluation_policy": policy,
             "source_file_sha256": {path: _sha256_file(root / path) for path in files},
             "baseline_evidence_sha256": a["evidence_sha256"],
             "candidate_evidence_sha256": b["evidence_sha256"],
@@ -760,8 +914,11 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     # Keep matched, numeric per-task economics in the access-controlled local
     # JSON report. This data is intentionally never rendered to OpenMetrics.
     per_task = []
-    task_fields = (*DAY8_CASE_FIELDS, "passed", "human_accepted",
-                   "safety_passed", "verified_artifact_refs", "accepted_outcome_ref")
+    task_fields = (
+        *DAY8_CASE_FIELDS, "retry_breakdown", "failure_breakdown",
+        "cost_components_microusd", "passed", "human_accepted",
+        "safety_passed", "verified_artifact_refs", "accepted_outcome_ref",
+    )
     for case_id in sorted(expected):
         record = {"id": case_id, "workflow": expected[case_id][0],
                   "language": expected[case_id][1]}
@@ -780,6 +937,16 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             not record["baseline"]["human_accepted"]
             or record["bounded_context_compact_observations"]["human_accepted"]
         )
+        record["paired_measured_deltas_candidate_minus_baseline"] = {
+            field: (
+                record["bounded_context_compact_observations"][field]
+                - record["baseline"][field]
+                if _day8_uint(record["baseline"].get(field))
+                and _day8_uint(record["bounded_context_compact_observations"].get(field))
+                else None
+            )
+            for field in DAY8_CASE_FIELDS
+        }
         record["measured_cost_savings_microusd"] = (
             record["baseline"]["cost_microusd"]
             - record["bounded_context_compact_observations"]["cost_microusd"]
@@ -802,6 +969,9 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         "candidate_exclusion_reason": (
             "quality_regression_vs_baseline" if not retained_quality
             else "failed_quality_or_safety_gate" if not b["quality_gate_passed"]
+            else "missing_operational_measurements_or_policy"
+            if not b["metrics_complete"] or not policy_complete
+            else "latency_slo_breached" if not b["latency_gate_passed"]
             else None
         ),
         "measured_cost_savings_microusd": cost_delta,
