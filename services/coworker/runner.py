@@ -168,7 +168,7 @@ class DocumentRunner:
                 }
             steering_instructions = [
                 {"revision": item["revision"], "instruction": item["instruction"]}
-                for item in (run_context.get("steering_instructions") or [])[-8:]
+                for item in (run_context.get("steering_instructions") or [])
                 if isinstance(item, dict)
                 and type(item.get("revision")) is int
                 and isinstance(item.get("instruction"), str)

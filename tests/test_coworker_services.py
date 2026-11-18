@@ -139,7 +139,10 @@ def test_day6_report_email_runner_forwards_verified_brief_and_steering(container
         source_ids=[],
         output_language="en",
     )
-    steering = [{"revision": 1, "instruction": "Use the second structure and emphasize sample-size limitations."}]
+    # Keep the entire existing bounded revision chain, not just its last eight turns.
+    steering = [{"revision": n, "instruction": f"Retain previously reviewed limitation {n}."}
+                for n in range(1, 9)]
+    steering.append({"revision": 9, "instruction": "Use the second structure and emphasize sample-size limitations."})
     monkeypatch.setattr(container.agent, "worker_run", lambda run_id: {
         "id": run_id, "owner_id": owner,
         "reviewed_brief": {"brief": brief.model_dump(mode="json")},
