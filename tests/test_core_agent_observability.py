@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -523,6 +524,7 @@ def _day8_fixture():
                 "schema_sha256": "7" * 64,
                 "flags_sha256": "8" * 64,
                 "budgets_sha256": "9" * 64,
+                "prompt_template_sha256": "0" * 64,
             },
             "evaluation_policy": {
                 "approved_p95_end_to_end_latency_ms": 1000,
@@ -539,6 +541,13 @@ def _day8_fixture():
                 "input_tokens": 100, "output_tokens": 20,
                 "model_time_ms": 100, "tool_time_ms": 50,
                 "retry_count": 0, "cost_microusd": unit_cost,
+                "run_id": f"synthetic:{profile}:{case['id']}",
+                "provider_usage_case_receipt_sha256": hashlib.sha256(
+                    (profile + case["id"] + ":usage").encode()
+                ).hexdigest(),
+                "output_sha256": hashlib.sha256(
+                    (profile + case["id"] + ":output").encode()
+                ).hexdigest(),
                 "end_to_end_latency_ms": 300,
                 "retry_breakdown": {"model": 0, "tool": 0, "dispatch": 0},
                 "failure_breakdown": {"provider": 0, "model": 0, "tool": 0},
@@ -838,3 +847,49 @@ def test_day8_unapproved_or_missing_pricing_policy_cannot_freeze():
     result = compare_day8_development(baseline, candidate, suite)
     assert result["status"] == "BLOCKED"
     assert result["freeze"] is None
+
+
+
+def test_day8_incomplete_legacy_v1_identity_blocks_without_crashing():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    del candidate["configuration"]["flags_sha256"]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert any("configuration" in blocker for blocker in result["blockers"])
+
+
+def test_day8_missing_or_reused_case_run_identity_cannot_freeze():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["run_id"] = None
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    candidate["results"][0]["run_id"] = candidate["results"][1]["run_id"]
+    with pytest.raises(ValueError, match="reused run identity"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_cross_profile_runs_cannot_use_same_generation_identity():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["run_id"] = baseline["results"][0]["run_id"]
+    with pytest.raises(ValueError, match="reused run identity across profiles"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_case_usage_receipt_hash_cannot_be_omitted_or_reused():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["provider_usage_case_receipt_sha256"] = None
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    candidate["results"][0]["provider_usage_case_receipt_sha256"] = (
+        candidate["results"][1]["provider_usage_case_receipt_sha256"]
+    )
+    with pytest.raises(ValueError, match="reused provider usage receipt"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_shared_prompt_template_is_pinned_while_generated_prompts_may_vary():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["configuration"]["prompt_template_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="paired context experiment"):
+        compare_day8_development(baseline, candidate, suite)
