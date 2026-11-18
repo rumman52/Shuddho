@@ -329,6 +329,7 @@ def test_worker_replacement_proves_new_identity_and_heartbeat_during_run():
 
 @pytest.mark.parametrize("broken", [
     "same_instance", "wrong_revision", "stale", "registered_before_work",
+    "registered_before_restart",
     "registered_after_completion", "no_heartbeat_advance", "late_platform_event",
     "wrong_previous_identity",
 ])
@@ -342,6 +343,8 @@ def test_worker_replacement_rejects_forged_or_nonactive_restart(broken):
         after["heartbeat_fresh"] = False
     elif broken == "registered_before_work":
         after["started_at"] = (base + timedelta(seconds=1)).isoformat()
+    elif broken == "registered_before_restart":
+        after["started_at"] = (base + timedelta(seconds=6)).isoformat()
     elif broken == "registered_after_completion":
         after["started_at"] = (base + timedelta(seconds=26)).isoformat()
     elif broken == "no_heartbeat_advance":
@@ -365,3 +368,18 @@ def test_worker_registry_never_accepts_concurrent_fresh_pollers():
             active_start=base + timedelta(seconds=2),
             active_finish=base + timedelta(seconds=25),
         )
+
+
+def test_restart_between_child_steps_cannot_pass_active_task_recovery():
+    base, run, steps, tasks = completed_fixture()
+    # Distinct phase gap: branches end at +12/+14 and fan-in starts +15.
+    with pytest.raises(recovery.RecoveryFailure, match="actively executing child task"):
+        recovery.validate_persisted_recovery(
+            run, steps, tasks, base + timedelta(seconds=14, milliseconds=500)
+        )
+
+
+def test_parse_utc_rejects_missing_or_wrong_type_without_unhandled_exception():
+    for malformed in (None, 1, False, [], {}):
+        with pytest.raises(recovery.RecoveryFailure, match="timezone"):
+            recovery.parse_utc(malformed)
