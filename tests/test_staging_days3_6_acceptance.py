@@ -234,7 +234,7 @@ def test_consistent_synthetic_receipts_are_not_automatically_a_hosted_pass():
     (4, ("cases", 0, "native_files", 1, "mime"), "application/pdf_wrong"),
     (4, ("cases", 2, "citations", 0, "quote_verified"), False),
     (4, ("cases", 2, "citations", 0, "retrieved_at"), "2026-11-18T09:00:00Z"),
-    (4, ("development_cases", 0, "quality_score"), 0),
+    (4, ("development_cases", 0, "quality_score"), 9),
     (4, ("development_cases", 1, "no_send"), False),
     (4, ("reconnect", "worker_after_id"), "worker-A"),
     (4, ("reconnect", "additional_agent_runs"), 1),
@@ -266,11 +266,21 @@ def test_no_receipts_no_pass_and_explicit_empty_selection_exclusions():
             validate(value)
     args = evidence()
     args[3]["exclusions"].pop()
-    with pytest.raises(gate.Days36EvidenceError, match="exclusion"):
+    with pytest.raises(gate.Days36EvidenceError, match="denial"):
         validate(args)
     args = evidence()
     args[3]["arms"][0]["fact_id"] = "unselected-fact"
     with pytest.raises(gate.Days36EvidenceError, match="none arm"):
+        validate(args)
+
+
+def test_day6_quality_fails_when_two_of_ten_cases_in_one_cell_fail():
+    args = evidence()
+    # 9/10 is acceptable, 8/10 is not. Keep the other 30 cases green.
+    args[4]["development_cases"][0]["quality_score"] = 0
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+    args[4]["development_cases"][1]["quality_score"] = 0
+    with pytest.raises(gate.Days36EvidenceError, match="quality"):
         validate(args)
 
 
