@@ -186,3 +186,11 @@ def test_cli_rejects_duplicate_json_keys_and_nonfinite_values(
     assert code == 2
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "blocked_input"
+
+
+def test_coworker_is_unconditionally_required_even_if_checked_in_template_is_weakened():
+    # A modified checked-in template cannot make the third Day 1 check
+    # disappear from BOTH the policy and a supplied live snapshot.
+    # The pre-fix policy() fixture intentionally has only two jobs.
+    with pytest.raises(EvidenceError, match="mandatory first-party checks"):
+        analyze(branch(), live(), policy(), expected_main_sha=SHA)
