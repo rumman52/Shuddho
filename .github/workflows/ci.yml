@@ -246,8 +246,9 @@ jobs:
           if-no-files-found: warn
       - name: Verify Day 8 economics comparisons and telemetry without skips
         run: |
-          uv run --extra coworker pytest tests/test_core_agent_observability.py -q -rs --junitxml=/tmp/day8-economics.xml
+          uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_day8_telemetry_privacy.py -q -rs --junitxml=/tmp/day8-economics.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_core_agent_observability
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_day8_telemetry_privacy
       - name: Keep Day 8 economics evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -38,6 +38,19 @@ def proofs():
                            'verified_at': '2026-11-12T11:05:00+00:00',
                            'evidence': 'real-worker-event-ref'}
         restore[label] = copy.deepcopy(recovery[label])
+    recovery['recovery_outbox'] = {
+        'agent_run_id': 'agent-run-1', 'workflow_id': 'shuddho-agent-agent-run-1',
+        'source_revision': SHA,
+        'agent_outbox_effect_count': 1, 'child_task_outbox_count': 0,
+        'child_task_outbox_expected_absent': True,
+        'worker_before_id': 'before-restart', 'worker_after_id': 'after-restart',
+        'worker_after_started_at': '2026-11-12T11:03:05+00:00',
+        'run_started_at': '2026-11-12T11:02:00+00:00',
+        'run_finished_at': '2026-11-12T11:04:00+00:00',
+        'restart_at': '2026-11-12T11:03:00+00:00',
+        'restart_reference': 'actual-platform-event-123',
+    }
+    restore['recovery_outbox'] = copy.deepcopy(recovery['recovery_outbox'])
     restore['backup_restore'] = {'status': 'passed', 'release_id': 'day2-001', 'source_revision': SHA,
                                  'rollout_manifest_sha256': '3' * 64,
                                  'exercise_started_at': '2026-11-12T11:06:00+00:00',
@@ -58,7 +71,9 @@ def test_valid_proofs_are_consistent_without_claiming_platform_verification():
     assert result['rollout_manifest_sha256'] == proof_set[0]['release']['rollout_manifest_sha256']
     assert result['task_id'] == 'task-a'
     assert result['artifact_sha256'] == '2' * 64
-    assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'backup_restore']
+    assert result['logical_agent_outbox_effect_count'] == 1
+    assert result['recovered_agent_workflow_id'] == 'shuddho-agent-agent-run-1'
+    assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'outbox_once', 'worker_replaced', 'backup_restore']
 
 
 @pytest.mark.parametrize('target, field, value', [
@@ -143,3 +158,39 @@ def test_rejects_forged_worker_or_source_digest():
     proof_set = list(proofs())
     with pytest.raises(gate.Day2AcceptanceFailure):
         gate.validate_evidence(*proof_set, expected_revision=SHA_OTHER)
+
+
+@pytest.mark.parametrize('field, invalid', [
+    ('agent_run_id', ''),
+    ('workflow_id', 'other-workflow'),
+    ('source_revision', SHA_OTHER),
+    ('agent_outbox_effect_count', 0),
+    ('agent_outbox_effect_count', True),
+    ('agent_outbox_effect_count', 2),
+    ('child_task_outbox_count', 1),
+    ('child_task_outbox_expected_absent', False),
+    ('worker_after_id', 'before-restart'),
+    ('worker_after_started_at', '2026-11-12T11:01:00+00:00'),
+    ('worker_after_started_at', '2026-11-12T11:02:59+00:00'),
+    ('worker_after_started_at', '2026-11-12T11:04:01+00:00'),
+    ('restart_at', '2026-11-12T11:04:01+00:00'),
+    ('restart_reference', ''),
+])
+def test_rejects_fake_outbox_or_missing_active_replacement(field, invalid):
+    proof_set = list(proofs())
+    proof_set[2]['recovery_outbox'][field] = invalid
+    proof_set[3]['recovery_outbox'][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure):
+        check(*proof_set)
+
+
+def test_rejects_replaced_restore_receipt_or_absent_recovery_proof():
+    proof_set = list(proofs())
+    proof_set[3]['recovery_outbox']['worker_after_id'] = 'forged'
+    with pytest.raises(gate.Day2AcceptanceFailure, match='carry forward'):
+        check(*proof_set)
+    proof_set = list(proofs())
+    del proof_set[2]['recovery_outbox']
+    del proof_set[3]['recovery_outbox']
+    with pytest.raises(gate.Day2AcceptanceFailure, match='recovery_outbox'):
+        check(*proof_set)

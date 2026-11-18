@@ -117,18 +117,24 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
             for citation in finding["citations"]} == {"web-1", "web-2", "web-3"}
     assert all("text" not in source for source in brief["sources"])
 
-    # A reviewed short brief and a deliberately selected memory namespace
-    # carry constraints into the next task; unrelated memory is not imported.
+    # A reviewed conversation dispatch binds an exact selected fact/version,
+    # not a legacy category-wide memory namespace. Its digest is consumed by
+    # the downstream project report and email-draft workflow.
+    from services.coworker.conversation_schemas import ConversationCreate, MessageCreate
+    from services.coworker.task_brief_schemas import MemoryPin, TaskBrief
+
     notes = " ".join(claims) + " Reviewed limitation: these sources do not establish causality."
-    settings = replace(container.settings, agent_runtime_enabled=True,
-                       agent_runtime_v3_enabled=True, intelligent_planner_enabled=True,
-                       agent_memory_enabled=True, context_retrieval_enabled=True,
-                       work_services_enabled=True, search_api_key="fixture-only-search-key")
+    settings = replace(container.settings, conversations_enabled=True,
+                       agent_runtime_enabled=True, agent_runtime_v3_enabled=True,
+                       intelligent_planner_enabled=True, agent_memory_enabled=True,
+                       context_retrieval_enabled=True, work_services_enabled=True,
+                       search_api_key="fixture-only-search-key")
     # The research provider is simulated above; a placeholder key only
     # satisfies Settings.validate and is never used for a network request.
     settings.validate()
     container.settings = settings
-    for service in (container.repository, container.agent, container.memory, container.context):
+    for service in (container.repository, container.agent, container.memory, container.context,
+                    container.conversations, container.conversation_dispatch, container.conversation_task_briefs):
         service.settings = settings
     owner = account(container)
     selected = container.memory.create(owner, MemoryFactCreate(
@@ -139,9 +145,34 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
         namespace="writing", key="excluded_style",
         value="Use an unrelated style instruction from a different memory namespace.",
         language="en"))
-    run, _ = container.agent.create(owner, AgentRunCreate(
-        goal="Preserve three study methods and limitations in the English report and draft email.",
-        memory_namespaces=["project"], output_language="en"), "day6-selected-memory-run")
+    conversation, _ = container.conversations.create(
+        owner, ConversationCreate(title="Three-study project report"), "day6-memory-conversation")
+    turn, _ = container.conversations.append_message(
+        owner, conversation["id"], MessageCreate(
+            text="Preserve three study methods and limitations in the English report and draft email.",
+            client_request_key="day6-memory-message",
+        ))
+    brief = TaskBrief(objective=turn["text"], output_language="en",
+                     deliverables=["An editable project report", "An unsent draft email"],
+                     constraints=["Preserve the reviewed no-causality limitation."])
+    selected_pin = MemoryPin(fact_id=selected["id"], expected_version=selected["version"])
+    preview = container.conversation_task_briefs.validate(
+        owner, conversation["id"], turn["id"], expected_sequence=1, brief=brief,
+        memory_pins=[selected_pin],
+    )
+    run, created = container.conversation_dispatch.dispatch(
+        owner, conversation["id"], turn["id"], expected_sequence=1,
+        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        memory_pins=[selected_pin],
+    )
+    assert created and run["run_id"]
+    replay, retried = container.conversation_dispatch.dispatch(
+        owner, conversation["id"], turn["id"], expected_sequence=1,
+        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        memory_pins=[selected_pin],
+    )
+    assert not retried and replay["run_id"] == run["run_id"]
+    run = {"id": run["run_id"]}
     request = TaskCreate(skill_id="report_email",
                          instruction="Summarize three approaches in English; retain the reviewed limitation and prepare an unsent email.",
                          notes=notes, output_language="en")
@@ -174,6 +205,15 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
     draft_checkpoint = container.repository.step(second["id"], "draft")
     assert draft_checkpoint["memory_provenance"] == [
         {"id": selected["id"], "version": selected["version"]}]
+    with container.repository.sessions() as db:
+        from services.coworker.models import AgentOutbox, AgentRun
+        from sqlalchemy import func, select
+        persisted = db.get(AgentRun, run["id"])
+        assert persisted.reviewed_brief["canonical_digest"] == preview["canonical_digest"]
+        assert persisted.reviewed_brief["schema_version"] == 2
+        assert persisted.memory_namespaces == []
+        assert persisted.project_context["memory_pins"] == [selected_pin.model_dump(mode="json")]
+        assert db.scalar(select(func.count()).select_from(AgentOutbox).where(AgentOutbox.run_id == run["id"])) == 1
     with pytest.raises(CoworkerError):
         container.memory.context_for_run(account(container, "bob"), run["id"])
     for saved in (brief, report):
@@ -193,6 +233,36 @@ def test_day6_development_golden_bangla_comparison_then_english_report_email(con
                 assert manifest["delivery_status"] == "needs_input" and manifest["output_language"] == "en"
             with pytest.raises(CoworkerError):
                 container.repository.artifact(account(container, "bob"), artifact["id"])
+
+    # A corrected fact cannot enter a new v1 decision. An already admitted
+    # historical request still replays without another run or outbox effect.
+    from services.coworker.memory_schemas import MemoryFactUpdate
+    from services.coworker.models import AgentOutbox
+    from sqlalchemy import func, select
+
+    corrected = container.memory.update(owner, selected["id"], MemoryFactUpdate(
+        expected_version=selected["version"],
+        value="Preserve the corrected limitation: all three methods establish associations, not causality.",
+    ))
+    assert corrected["version"] == selected["version"] + 1
+    with pytest.raises(CoworkerError) as stale:
+        container.memory.context_for_run(owner, run["id"])
+    assert stale.value.code == "memory_pins_changed"
+    replay, created = container.conversation_dispatch.dispatch(
+        owner, conversation["id"], turn["id"], expected_sequence=1,
+        reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+        memory_pins=[selected_pin],
+    )
+    assert not created and replay["run_id"] == run["id"]
+    with pytest.raises(CoworkerError) as changed:
+        container.conversation_dispatch.dispatch(
+            owner, conversation["id"], turn["id"], expected_sequence=1,
+            reviewed_brief=brief, expected_digest=preview["canonical_digest"],
+            memory_pins=[MemoryPin(fact_id=selected["id"], expected_version=corrected["version"])],
+        )
+    assert changed.value.code == "idempotency_conflict"
+    with container.repository.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentOutbox).where(AgentOutbox.run_id == run["id"])) == 1
 
 
 def test_research_catalog_request_idempotency_isolation_and_flag_rollback(container, signed_client):
@@ -289,6 +359,23 @@ def test_truncated_source_quotes_and_reference_validation(container):
         bad.findings[0].citations[0].quote = quote
         with pytest.raises(ValueError):
             validate_evidence(bad, result.sources)
+
+
+@pytest.mark.parametrize("mutation", ["missing_hash", "wrong_hash", "modified_excerpt"])
+def test_research_evidence_must_match_retrieved_sha256(mutation):
+    """A real quote cannot authorize evidence whose stored bytes changed."""
+    result = TavilyResearchProvider.parse(search_data(), ResearchOptions(query="test query"))
+    draft = work_draft("research")
+    validate_evidence(draft, result.sources)
+    original_hash = result.sources[0]["sha256"]
+    if mutation == "missing_hash":
+        del result.sources[0]["sha256"]
+    elif mutation == "wrong_hash":
+        result.sources[0]["sha256"] = "0" * 64 if original_hash != "0" * 64 else "1" * 64
+    else:
+        result.sources[0]["text"] += " This appended text is not in the original retrieval."
+    with pytest.raises(ValueError, match="source content hash mismatch"):
+        validate_evidence(draft, result.sources)
 
 
 @pytest.mark.parametrize("response,code", [
