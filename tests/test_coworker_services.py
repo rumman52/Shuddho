@@ -16,9 +16,12 @@ from docx import Document
 from pypdf import PdfReader
 
 from test_coworker import container, signed_client, account, draft
+from services.coworker.agent_schemas import AgentRunCreate
+from services.coworker.task_brief_schemas import TaskBrief
 from coworker_samples import WorkModel, work_draft
 from services.coworker.drafting import DeepSeekDraftModel, DraftFailure
 from services.coworker.errors import CoworkerError
+from services.coworker.exports import render_in_subprocess
 from services.coworker.models import Task
 from services.coworker.runner import DocumentRunner
 from services.coworker.schemas import TaskCreate, parse_draft
@@ -40,14 +43,24 @@ def create_work(container, skill_id, language="en", key="work-request-key"):
 def test_day6_report_email_template_keeps_reviewed_context_and_never_claims_sent(container):
     memory = [{"id": "selected-1", "fact": "Exclude unverified dates"}]
     sources = [{"id": "notes", "label": "Reviewed project brief", "text": "The team completed 12 reviews."}]
+    reviewed_brief = {
+        "objective": "Prepare an evidence-backed report and email draft.",
+        "constraints": ["Preserve limitations", "Keep the report to two pages"],
+        "deliverables": ["Editable project report", "Unsent email draft"],
+    }
+    steering = [{"revision": 2, "instruction": "Use the second structure and emphasize sample-size limitations."}]
     task = {"instruction": "Prepare the project report and a draft email, retaining the prior limitations.",
-            "output_language": "en", "memory": memory}
+            "output_language": "en", "memory": memory, "reviewed_brief": reviewed_brief,
+            "steering_instructions": steering}
     model = DeepSeekDraftModel(container.settings, skill_id="report_email")
     messages = model.messages(task, sources)
     payload = json.loads(messages[-1]["content"])
     assert payload["task"]["workflow_template"] == "project_report_email"
     assert payload["context"]["sources"] == sources
     assert payload["context"]["memory"] == memory
+    assert payload["context"]["reviewed_brief"] == reviewed_brief
+    assert payload["context"]["steering_instructions"] == steering
+    assert "revision order" in messages[0]["content"].lower()
     assert "reviewed" in messages[0]["content"].lower()
     assert "not sent" in messages[0]["content"].lower()
 
@@ -89,6 +102,112 @@ def test_day6_completion_rechecks_checkpoint_before_reporting_success(container,
             value["draft"]["output_language"] = "bn"
         if defect == "reference" and phase == "draft":
             value["draft"]["source_ids"] = ["foreign-document"]
+        return value
+
+    monkeypatch.setattr(container.repository, "step", changed_step)
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.phase(task["id"], "complete"))
+    assert error.value.code == "artifact_invalid"
+    assert container.repository.get_task(account(container), task["id"])["state"] != "completed"
+
+
+
+def test_day6_report_email_runner_forwards_verified_brief_and_steering(container, monkeypatch):
+    from test_coworker import FakeModel
+
+    enable_services(container)
+    enabled = replace(container.settings, agent_runtime_enabled=True)
+    container.settings = enabled
+    container.agent.settings = enabled
+    container.repository.settings = enabled
+    owner = account(container)
+    run, _ = container.agent.create(
+        owner, AgentRunCreate(goal="Prepare an evidence-backed report and email draft.", output_language="en"),
+        "day6-brief-context-run",
+    )
+    task = container.repository.create_task(
+        owner,
+        TaskCreate(skill_id="report_email", instruction="Prepare the project report.", notes="Reviewed notes.",
+                   output_language="en"),
+        "day6-brief-context-task",
+        agent_run_id=run["id"],
+    )[0]
+    brief = TaskBrief(
+        objective="Prepare an evidence-backed report and email draft.",
+        constraints=["Preserve the sample-size limitation.", "Keep the report to two pages."],
+        deliverables=["Editable project report", "Unsent email draft"],
+        source_ids=[],
+        output_language="en",
+    )
+    # Keep the entire existing bounded revision chain, not just its last eight turns.
+    steering = [{"revision": n, "instruction": f"Retain previously reviewed limitation {n}."}
+                for n in range(1, 9)]
+    steering.append({"revision": 9, "instruction": "Use the second structure and emphasize sample-size limitations."})
+    monkeypatch.setattr(container.agent, "worker_run", lambda run_id: {
+        "id": run_id, "owner_id": owner,
+        "reviewed_brief": {"brief": brief.model_dump(mode="json")},
+        "steering_instructions": steering,
+    })
+    monkeypatch.setattr(container.memory, "context_for_run", lambda *_args: {"facts": [], "provenance": []})
+
+    class BriefAwareModel(FakeModel):
+        def messages(self, prompt_task, sources):
+            assert prompt_task["reviewed_brief"] == {
+                "objective": brief.objective,
+                "constraints": brief.constraints,
+                "deliverables": brief.deliverables,
+            }
+            assert prompt_task["steering_instructions"] == steering
+            return super().messages(prompt_task, sources)
+
+    asyncio.run(DocumentRunner(container, BriefAwareModel()).run_for_test(task["id"]))
+    saved = container.repository.get_task(owner, task["id"])
+    assert saved["state"] == "completed"
+    assert {item["filename"] for item in saved["artifacts"]} == {
+        "report.docx", "report.pdf", "email-draft.txt", "source-manifest.json",
+    }
+
+
+def test_day6_export_rejects_wrong_native_mime_before_storage(container):
+    from test_coworker import FakeModel
+
+    enable_services(container)
+    task = create_work(container, "report_email")
+
+    def wrong_mime_renderer(package, sources, **options):
+        outputs = render_in_subprocess(package, sources, **options)
+        return [
+            (name, "application/octet-stream" if name == "report.pdf" else content_type, body)
+            for name, content_type, body in outputs
+        ]
+
+    runner = DocumentRunner(container, FakeModel(), renderer=wrong_mime_renderer)
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+    assert error.value.code == "export_invalid"
+    saved = container.repository.get_task(account(container), task["id"])
+    assert saved["state"] == "failed" and not saved["artifacts"]
+
+
+def test_day6_completion_rechecks_native_mime_after_private_storage_readback(container, monkeypatch):
+    from test_coworker import FakeModel
+
+    enable_services(container)
+    task = create_work(container, "report_email")
+    runner = DocumentRunner(container, FakeModel())
+
+    async def prepare():
+        for phase in ("extract", "draft", "export"):
+            await runner.phase(task["id"], phase)
+
+    asyncio.run(prepare())
+    original_step = container.repository.step
+
+    def changed_step(task_id, phase):
+        value = original_step(task_id, phase)
+        if phase == "export":
+            value = json.loads(json.dumps(value))
+            value["artifacts"][0]["content_type"] = "application/octet-stream"
         return value
 
     monkeypatch.setattr(container.repository, "step", changed_step)
@@ -307,7 +426,7 @@ def test_draft_checkpoint_persists_safe_generation_metadata(container):
 
     assert generation["provider"] == "deepseek"
     assert generation["model"] == settings.deepseek_model
-    assert generation["prompt_version"] == "rukh-content-v1"
+    assert generation["prompt_version"] == "rukh-content-v2"
     assert len(generation["prompt_sha256"]) == 64
     assert generation["task_type"] == "factual_writing"
     assert generation["input_tokens"] == 42

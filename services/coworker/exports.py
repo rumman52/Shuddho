@@ -22,6 +22,93 @@ from .errors import CoworkerError
 RTL_LANGUAGES = {"ar", "fa", "he", "ur", "ps", "dv"}
 
 
+def validate_day6_exports(skill_id, draft, outputs):
+    """Validate native Day 6 artifacts before publication and after private-storage readback."""
+    if skill_id not in {"research", "report_email"}:
+        return
+
+    expected = artifact_filenames(skill_id)
+    if not isinstance(outputs, (list, tuple)) or len(outputs) != 4:
+        raise ValueError("Day 6 export must contain exactly four artifacts")
+
+    content_types = {
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain; charset=utf-8",
+        ".json": "application/json",
+    }
+    rows = {}
+    for row in outputs:
+        if not isinstance(row, (list, tuple)) or len(row) != 3:
+            raise ValueError("Malformed artifact row")
+        filename, content_type, body = row
+        if not isinstance(filename, str) or filename not in expected or filename in rows:
+            raise ValueError("Unexpected or duplicate artifact filename")
+        expected_type = content_types.get(Path(filename).suffix.lower())
+        if expected_type is None or content_type != expected_type:
+            raise ValueError("Artifact MIME type does not match its native format")
+        if not isinstance(body, (bytes, bytearray)) or not 0 < len(body) <= 16 * 1024 * 1024:
+            raise ValueError("Artifact is empty or exceeds the size limit")
+        rows[filename] = bytes(body)
+
+    if set(rows) != expected:
+        raise ValueError("Day 6 artifact set is incomplete")
+
+    if skill_id == "report_email":
+        title = draft.report.title
+        headings = [section.heading for section in draft.report.sections]
+        expected_text = (draft.email.subject, draft.email.body)
+        docx_name, pdf_name, text_name = "report.docx", "report.pdf", "email-draft.txt"
+    else:
+        title = draft.title
+        headings = [finding.heading for finding in draft.findings]
+        expected_text = ()
+        docx_name, pdf_name, text_name = "research-report.docx", "research-report.pdf", "research-report.txt"
+
+    try:
+        document = Document(io.BytesIO(rows[docx_name]))
+        document_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        if not document_text.strip() or not title or title not in document_text:
+            raise ValueError("DOCX title or readable content is missing")
+        if any(not heading or heading not in document_text for heading in headings):
+            raise ValueError("DOCX is missing an expected section heading")
+
+        reader = PdfReader(io.BytesIO(rows[pdf_name]))
+        if reader.is_encrypted or not reader.pages:
+            raise ValueError("PDF has no readable pages")
+        pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        if not pdf_text.strip():
+            raise ValueError("PDF contains no extractable text")
+
+        text_content = rows[text_name].decode("utf-8")
+        if not text_content.strip():
+            raise ValueError("Text artifact is empty")
+        if skill_id == "report_email":
+            if any(not value or value not in text_content for value in expected_text):
+                raise ValueError("Email draft does not contain its subject and body")
+        elif title not in text_content or any(heading not in text_content for heading in headings):
+            raise ValueError("Research text is missing its title or expected headings")
+
+        manifest = json.loads(rows["source-manifest.json"].decode("utf-8"))
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("sources"), list):
+            raise ValueError("Source manifest is malformed")
+        if manifest.get("output_language") != draft.output_language:
+            raise ValueError("Source manifest language does not match the draft")
+        if manifest.get("missing_information") != list(draft.missing_information):
+            raise ValueError("Source manifest completeness state does not match the draft")
+        expected_status = "needs_input" if draft.missing_information else "draft_ready"
+        if manifest.get("delivery_status") != expected_status:
+            raise ValueError("Source manifest has an invalid draft status")
+        if skill_id == "research" and manifest.get("skill_id") != "research":
+            raise ValueError("Research source manifest has the wrong skill")
+        if any(not isinstance(source, dict) or "text" in source for source in manifest["sources"]):
+            raise ValueError("Source manifest must not contain raw source text")
+    except Exception as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("A native Day 6 artifact could not be opened or verified") from exc
+
+
 def render_in_subprocess(draft: AnyDraft, sources: list[dict], *, skill_id: SkillId = "report_email"):
     with tempfile.TemporaryDirectory(prefix="shuddho-export-") as directory:
         folder = Path(directory)

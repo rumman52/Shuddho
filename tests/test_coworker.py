@@ -572,7 +572,7 @@ def test_model_success_and_retryable_provider_failure(container):
     assert result.total_tokens == 200
     assert result.provider == "deepseek"
     assert result.model == settings.deepseek_model
-    assert result.prompt_version == "rukh-content-v1"
+    assert result.prompt_version == "rukh-content-v2"
     assert len(result.prompt_sha256) == 64
     assert result.task_type == "long_form_report"
     assert result.input_tokens == 120 and result.output_tokens == 80
@@ -1982,11 +1982,11 @@ def test_intelligent_planner_reconstructs_server_owned_arguments(container):
     enabled = replace(container.settings, work_services_enabled=True, research_services_enabled=True)
     proposal = AgentPlannerProposal.model_validate({
         "steps": [
-            {"tool": "research.search", "objective": "Compare the current market."},
+            {"tool": "research.search", "objective": "Compare the current market.", "output_language": "bn"},
             {"tool": "email.draft", "objective": "Draft a concise follow-up."},
         ]
     })
-    plan = proposal_to_plan(proposal, "Private original goal", [], "bn", enabled)
+    plan = proposal_to_plan(proposal, "Private original goal", [], "en", enabled)
     assert [step.tool for step in plan] == ["research.search", "email.draft"]
     assert plan[0].arguments["query"] == "Private original goal"
     assert plan[0].arguments["instruction"] == "Private original goal"
@@ -1994,6 +1994,7 @@ def test_intelligent_planner_reconstructs_server_owned_arguments(container):
     assert "Compare the current market." not in json.dumps([step.arguments for step in plan])
     assert plan[0].arguments["document_ids"] == []
     assert plan[0].arguments["output_language"] == "bn"
+    assert plan[1].arguments["output_language"] == "en"
     assert "recipient" not in json.dumps([step.arguments for step in plan]).lower()
 
 
@@ -3807,13 +3808,9 @@ def test_export_checkpoint_commit_response_loss_preserves_referenced_objects(con
         owner = account(container)
         task = new_task(container, owner)
 
-        def render(_draft, _sources, **_options):
-            return [
-                ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"durable report bytes"),
-                ("report.pdf", "application/pdf", b"durable pdf bytes"),
-                ("email-draft.txt", "text/plain", b"durable email bytes"),
-                ("source-manifest.json", "application/json", b"durable manifest bytes"),
-            ]
+        def render(draft, sources, **options):
+            # Exercise ambiguous-commit recovery with actual verified native files.
+            return render_in_subprocess(draft, sources, **options)
 
         runner = DocumentRunner(container, FakeModel(), renderer=render)
         await runner.phase(task["id"], "extract")
@@ -3861,13 +3858,9 @@ def test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_
         task = new_task(container, owner)
         delegate = container.storage
 
-        def render(_draft, _sources, **_options):
-            return [
-                ("report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"verified report bytes"),
-                ("report.pdf", "application/pdf", b"verified pdf bytes"),
-                ("email-draft.txt", "text/plain", b"verified email bytes"),
-                ("source-manifest.json", "application/json", b"verified manifest bytes"),
-            ]
+        def render(draft, sources, **options):
+            # Readback failure must happen after valid native artifacts are stored.
+            return render_in_subprocess(draft, sources, **options)
 
         class FaultingReadStore:
             def __init__(self, wrapped):
