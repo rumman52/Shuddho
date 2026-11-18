@@ -138,6 +138,8 @@ def check_day4(release: dict, data: object, frozen: datetime) -> datetime:
     need(frozen <= edit_at < approved_at <= start_at <= completed, "day4 edit/approval/Start order invalid")
     run_id = referenced(day.get("agent_run_id"), "day4.agent_run_id")
     referenced(day.get("start_receipt_ref"), "day4.start_receipt_ref")
+    need(day.get("owner_b_denied") is True, "day4 lacks independent owner-B denial")
+    referenced(day.get("owner_b_denial_ref"), "day4.owner_b_denial_ref")
     count(day.get("agent_runs_before"), "day4.agent_runs_before")
     count(day.get("agent_runs_after"), "day4.agent_runs_after",
           day["agent_runs_before"] + 1)
@@ -192,6 +194,12 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
          "day5 did not compare selected fact v1 with corrected v2")
     need(outputs["v1"][0] != outputs["v2"][0] and outputs["v1"][1] != outputs["v2"][1],
          "day5 has no witnessed changed factual output")
+    unselected = obj(day.get("unselected_memory"), "day5.unselected_memory")
+    need(unselected.get("absent_from_all_model_inputs") is True
+         and unselected.get("unselected_fact_id") != fact_id,
+         "day5 has no same-category unselected-memory exclusion proof")
+    referenced(unselected.get("unselected_fact_id"), "day5.unselected_fact_id")
+    referenced(unselected.get("evidence_ref"), "day5.unselected.evidence_ref")
     exclusions = day.get("exclusions")
     need(isinstance(exclusions, list) and len(exclusions) == len(NEGATIVES),
          "day5 missing denial proofs")
@@ -262,8 +270,13 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
             for source in sources:
                 citation = obj(source, "day6.research_citation")
                 referenced(citation.get("source_id"), "day6.source_id")
-                referenced(citation.get("url"), "day6.url")
+                referenced(citation.get("title"), "day6.source.title")
+                url = text(citation.get("url"), "day6.source.url")
+                need(url.startswith("https://") and "@" not in url.split("/", 3)[2],
+                     "day6 research source URL must be HTTPS without credentials")
                 sha(citation.get("sha256"), "day6.source.sha256")
+                retrieved = when(citation.get("retrieved_at"), "day6.source.retrieved_at")
+                need(retrieved <= completed, "day6 source retrieval postdates verified comparison")
                 need(citation.get("quote_verified") is True, "day6 citation quote not verified")
         else:
             email = obj(row.get("email_draft"), "day6.email_draft")
@@ -272,6 +285,31 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
             referenced(email.get("draft_receipt_ref"), "day6.draft_receipt_ref")
     need(keys == {(workflow, language) for workflow in WORKFLOWS for language in LANGUAGES},
          "day6 language/workflow matrix incomplete")
+    development = day.get("development_cases")
+    need(isinstance(development, list) and len(development) == 40,
+         "day6 has not executed the 40-case development registry")
+    from collections import Counter
+    observed, accepted, ids, model_requests = Counter(), Counter(), set(), set()
+    for case in development:
+        row = obj(case, "day6.development_case")
+        key = (row.get("workflow"), row.get("language"))
+        need(key in keys, "day6 development case has an unapproved workflow/language")
+        ident = text(row.get("id"), "day6.development_case.id")
+        provider = text(row.get("provider_request_id"), "day6.development_case.provider_request_id")
+        need(ident not in ids and provider not in model_requests,
+             "day6 development case reused identity or model invocation")
+        ids.add(ident)
+        model_requests.add(provider)
+        need(row.get("factual_check") is True and row.get("owner_isolation") is True
+             and row.get("citation_check") is True and row.get("no_send") is True,
+             "day6 development case failed a hard factual/security boundary")
+        score = count(row.get("quality_score"), "day6.development_case.quality_score")
+        need(score <= 8, "day6 quality score must be bounded to 8")
+        referenced(row.get("evidence_ref"), "day6.development_case.evidence_ref")
+        observed[key] += 1
+        accepted[key] += int(score >= 7)
+    need(all(observed[key] == 10 and accepted[key] >= 9 for key in keys),
+         "day6 development quality is below 9/10 in a language/workflow cell")
     reconnect = obj(day.get("reconnect"), "day6.reconnect")
     need(reconnect.get("run_id_before") in runs
          and reconnect.get("run_id_after") == reconnect.get("run_id_before")
