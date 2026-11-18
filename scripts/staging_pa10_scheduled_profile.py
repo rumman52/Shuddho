@@ -11,6 +11,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+if __package__:
+    from .staging_prerequisite_preflight import PreflightFailure, _validate_https_endpoint
+else:
+    from staging_prerequisite_preflight import PreflightFailure, _validate_https_endpoint
+
 
 SCHEMA_VERSION = 1
 PRODUCTION_NAMES = {"prod", "production"}
@@ -61,21 +66,18 @@ def env(name: str) -> str:
 
 
 def clean_origin(value: str) -> str:
-    clean = value.rstrip("/")
-    parsed = urlparse(clean)
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.path not in {"", "/"}
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-    ):
+    # Enforce the shared public-host/control-character/port checks *before*
+    # sending the synthetic owner's bearer token to the staging API.
+    try:
+        _validate_https_endpoint(value, "SHUDDHO_STAGING_API_BASE_URL")
+    except PreflightFailure as error:
+        raise ScheduledProfileProbeFailure(str(error)) from None
+    parsed = urlparse(value)
+    if parsed.path not in {"", "/"} or "?" in value or "#" in value:
         raise ScheduledProfileProbeFailure(
             "SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin."
         )
-    return clean
+    return value[:-1] if parsed.path == "/" else value
 
 
 def sha256_file(path: Path) -> str:
