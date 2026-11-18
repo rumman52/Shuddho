@@ -235,7 +235,9 @@ jobs:
       # live admission or credentials. Mandatory zero-skip source gate only.
       - name: Verify Day 10 complete pilot access proof without skips
         run: |
-          uv run --extra coworker pytest tests/test_pilot_admission_verify.py -q -rs --junitxml=/tmp/day10-pilot-access-source.xml
+          uv run --extra coworker pytest tests/test_staging_release_freeze.py tests/test_day10_release_decision.py tests/test_pilot_admission_verify.py -q -rs --junitxml=/tmp/day10-pilot-access-source.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day10-pilot-access-source.xml --required-module tests.test_staging_release_freeze
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day10-pilot-access-source.xml --required-module tests.test_day10_release_decision
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day10-pilot-access-source.xml --required-module tests.test_pilot_admission_verify
       - name: Preserve Day 10 complete pilot access source evidence
         if: always()
