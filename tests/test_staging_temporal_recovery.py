@@ -25,6 +25,7 @@ def step(ordinal: int, *, depends=None, started=None, finished=None, state="comp
 def task(run_id: str, ordinal: int):
     return SimpleNamespace(
         id=f"task-{ordinal}",
+        state="completed",
         agent_step_id=f"step-{ordinal}",
         idempotency_key=f"agent:{run_id}:{ordinal}",
     )
@@ -209,7 +210,16 @@ def test_recovery_prepare_publishes_private_atomic_state(monkeypatch, tmp_path):
     monkeypatch.setattr(
         recovery.Container, "create",
         lambda _settings: SimpleNamespace(
-            agent=FakeAgent(), repository=SimpleNamespace(sessions=FakeSessions()),
+            agent=FakeAgent(), repository=SimpleNamespace(
+                sessions=FakeSessions(),
+                worker_inventory=lambda **kwargs: [{
+                    "id": "worker-original", "task_queue": "test-staging-queue",
+                    "source_revision": "a" * 40, "state": "running",
+                    "heartbeat_fresh": True,
+                    "started_at": "2026-11-12T23:00:00+00:00",
+                    "heartbeat_at": "2026-11-13T00:00:00+00:00",
+                }],
+            ),
         ),
     )
     monkeypatch.setattr(recovery, "temporal_client", fake_temporal_client)
@@ -232,4 +242,126 @@ def test_validate_persisted_recovery_rejects_restart_after_final_step_finished(o
     with pytest.raises(recovery.RecoveryFailure, match="before the recovery run finished"):
         recovery.validate_persisted_recovery(
             run, steps, tasks, base + timedelta(seconds=offset_seconds)
+        )
+
+
+def _outbox_fixture():
+    _, run, _, tasks = completed_fixture()
+    parent = [SimpleNamespace(run_id=run.id, delivered=True, attempts=0)]
+    children = [
+        SimpleNamespace(task_id=task.id, delivered=True, attempts=1)
+        for task in tasks
+    ]
+    return run, tasks, parent, children
+
+
+def test_recovery_requires_one_logical_agent_outbox_and_three_delivered_task_outboxes():
+    run, tasks, parent, children = _outbox_fixture()
+    assert recovery.validate_outbox_effects(run, tasks, parent, children) == {
+        "agent_outbox_effect_count": 1,
+        "child_task_outbox_count": 3,
+        "child_task_outbox_all_delivered": True,
+    }
+
+
+@pytest.mark.parametrize("failure", [
+    "no_parent", "duplicate_parent", "foreign_parent", "parent_undelivered",
+    "missing_child", "duplicate_child", "foreign_child", "child_undelivered",
+    "child_unattempted",
+])
+def test_recovery_refuses_missing_or_duplicate_logical_outbox_effects(failure):
+    run, tasks, parent, children = _outbox_fixture()
+    if failure == "no_parent":
+        parent.clear()
+    elif failure == "duplicate_parent":
+        parent.append(parent[0])
+    elif failure == "foreign_parent":
+        parent[0].run_id = "foreign"
+    elif failure == "parent_undelivered":
+        parent[0].delivered = False
+    elif failure == "missing_child":
+        children.pop()
+    elif failure == "duplicate_child":
+        children[2].task_id = children[1].task_id
+    elif failure == "foreign_child":
+        children[0].task_id = "unrelated"
+    elif failure == "child_undelivered":
+        children[0].delivered = False
+    elif failure == "child_unattempted":
+        children[0].attempts = 0
+    with pytest.raises(recovery.RecoveryFailure, match="outbox"):
+        recovery.validate_outbox_effects(run, tasks, parent, children)
+
+
+def _worker_evidence():
+    base = datetime(2026, 11, 13, 0, 0, tzinfo=timezone.utc)
+    before = {
+        "id": "old-worker", "task_queue": "test-staging-queue",
+        "source_revision": "a" * 40,
+        "started_at": (base - timedelta(minutes=2)).isoformat(),
+        "heartbeat_at": (base + timedelta(seconds=1)).isoformat(),
+    }
+    after = {
+        "id": "new-worker", "task_queue": "test-staging-queue",
+        "source_revision": "a" * 40, "state": "running", "heartbeat_fresh": True,
+        "started_at": (base + timedelta(seconds=10)).isoformat(),
+        "heartbeat_at": (base + timedelta(seconds=12)).isoformat(),
+    }
+    return base, before, after
+
+
+def _replace(before, after, base):
+    return recovery.validate_worker_replacement(
+        before, [after], revision="a" * 40, task_queue="test-staging-queue",
+        restart_at=base + timedelta(seconds=8),
+        active_start=base + timedelta(seconds=2),
+        active_finish=base + timedelta(seconds=25),
+    )
+
+
+def test_worker_replacement_proves_new_identity_and_heartbeat_during_run():
+    base, before, after = _worker_evidence()
+    got = _replace(before, after, base)
+    assert got["worker_before_id"] == "old-worker"
+    assert got["worker_after_id"] == "new-worker"
+    assert got["worker_after_started_at"] == after["started_at"]
+
+
+@pytest.mark.parametrize("broken", [
+    "same_instance", "wrong_revision", "stale", "registered_before_work",
+    "registered_after_completion", "no_heartbeat_advance", "late_platform_event",
+    "wrong_previous_identity",
+])
+def test_worker_replacement_rejects_forged_or_nonactive_restart(broken):
+    base, before, after = _worker_evidence()
+    if broken == "same_instance":
+        after["id"] = before["id"]
+    elif broken == "wrong_revision":
+        after["source_revision"] = "b" * 40
+    elif broken == "stale":
+        after["heartbeat_fresh"] = False
+    elif broken == "registered_before_work":
+        after["started_at"] = (base + timedelta(seconds=1)).isoformat()
+    elif broken == "registered_after_completion":
+        after["started_at"] = (base + timedelta(seconds=26)).isoformat()
+    elif broken == "no_heartbeat_advance":
+        after["heartbeat_at"] = after["started_at"]
+    elif broken == "late_platform_event":
+        after["started_at"] = (base + timedelta(minutes=8)).isoformat()
+    elif broken == "wrong_previous_identity":
+        before["source_revision"] = "b" * 40
+    with pytest.raises(recovery.RecoveryFailure, match="worker|restart|Worker"):
+        _replace(before, after, base)
+
+
+def test_worker_registry_never_accepts_concurrent_fresh_pollers():
+    base, before, after = _worker_evidence()
+    duplicate = dict(after, id="unexpected-worker")
+    with pytest.raises(recovery.RecoveryFailure, match="exactly one"):
+        recovery.validate_worker_replacement(
+            before, [after, duplicate], revision="a" * 40,
+            task_queue="test-staging-queue",
+            restart_at=base + timedelta(seconds=8),
+            active_start=base + timedelta(seconds=2),
+            active_finish=base + timedelta(seconds=25),
         )
