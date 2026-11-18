@@ -81,7 +81,12 @@ def evidence():
         "outbox_before": 7, "outbox_after": 8,
         "retry": {"same_run_id": "run-day4-A", "http_status": 202,
                   "additional_runs": 0, "additional_outbox": 0},
-        "start_edit_race": {"http_status": 409, "additional_runs": 0, "additional_outbox": 0},
+        "start_edit_race": {
+            "http_status": 409, "additional_runs": 0, "additional_outbox": 0,
+            "started_at": "2026-11-18T02:46:00Z",
+            "edit_committed_at": "2026-11-18T02:47:00Z",
+            "responded_at": "2026-11-18T02:48:00Z",
+        },
         "retry_receipt_ref": "retry-event-A", "race_receipt_ref": "race-event-A",
     }
     arms = []
@@ -131,6 +136,7 @@ def evidence():
                              "pdf": "application/pdf"}[ext],
                     "owner_a_opened": True, "owner_a_hash_verified": True,
                     "owner_b_http_status": 404, "download_receipt_ref": f"owned-file-{key}-{ext}",
+                    "owner_b_denial_ref": f"denied-file-{key}-{ext}",
                 } for ext in ("docx", "pdf")],
             }
             if workflow == "research":
@@ -165,7 +171,9 @@ def evidence():
             "additional_agent_runs": 0, "additional_outbox_effects": 0,
         },
         "provider_send_audit": {
-            "before": 0, "after": 0, "external_provider_receipt_ref": "send-audit-service",
+            "before": 0, "after": 0,
+            "before_at": "2026-11-18T04:59:00Z", "after_at": "2026-11-18T06:59:00Z",
+            "external_provider_receipt_ref": "send-audit-service",
         },
     }
     review = {
@@ -211,9 +219,11 @@ def test_consistent_synthetic_receipts_are_not_automatically_a_hosted_pass():
     (2, ("outbox_after",), 9),
     (2, ("retry", "additional_runs"), 1),
     (2, ("start_edit_race", "http_status"), 200),
+    (2, ("start_edit_race", "edit_committed_at"), "2026-11-18T02:49:00Z"),
     (2, ("owner_b_denied",), False),
     (3, ("unselected_memory", "absent_from_all_model_inputs"), False),
     (3, ("arms", 2, "fact_version"), 3),
+    (3, ("arms", 1, "fact_version"), True),
     (3, ("arms", 2, "provider"), "different-provider"),
     (3, ("arms", 1, "prompt_sha256"), D4),
     (3, ("arms", 2, "observed_claim"), "Original fact"),
@@ -229,6 +239,8 @@ def test_consistent_synthetic_receipts_are_not_automatically_a_hosted_pass():
     (4, ("reconnect", "worker_after_id"), "worker-A"),
     (4, ("reconnect", "additional_agent_runs"), 1),
     (4, ("provider_send_audit", "after"), 1),
+    (4, ("provider_send_audit", "before_at"), T7),
+    (4, ("cases", 0, "native_files", 0, "owner_b_denial_ref"), ""),
     (5, ("role",), "operator"),
     (5, ("independent_platform_readback",), False),
     (5, ("reviewer_id",), "operator-C"),
