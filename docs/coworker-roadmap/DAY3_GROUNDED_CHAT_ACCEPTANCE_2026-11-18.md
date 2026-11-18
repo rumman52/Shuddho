@@ -77,3 +77,33 @@ No staging account was created, no PDF/TXT uploaded, no real provider called, an
 **Release/governance owner**: resolve required CI/governance and independent review before any merge or pilot decision.
 
 **Next executable action:** inspect the exact final PR head's CI; if green, request independent code review. Keep PR draft and stage admission disabled until owner-authorized real qualification has completed.
+
+---
+
+## PR-specific progress record (preserved from shared roadmap)
+
+## Day 3 grounded chat follow-up — 18 November 2026 (Asia/Dhaka)
+
+Main baseline `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`; draft
+[PR #777](https://github.com/rumman52/Shuddho/pull/777) adds a single
+server-side incomplete citation-prefix hardening and a focused service/SSE
+regression. A correct `[[src-1]]` could mask unclosed `[[src_999` or
+`[[src—999` references. Local exact-validator reproduction: four expected
+failures on the baseline and four passes after the one-line guard fix; actual
+repository CI is recorded separately against the PR's exact latest head.
+
+[Day 3 acceptance/evidence report](DAY3_GROUNDED_CHAT_ACCEPTANCE_2026-11-18.md)
+maps owner-pinned source resolution, citation validation, buffered grounded
+streaming and zero AgentRun/outbox boundaries. Read-only Supabase staging
+counts before/after remained 0 for users, storage, conversations, AgentRuns
+and both outboxes, but **no live provider call or authenticated bilingual
+acceptance occurred**. Two redacted English/Bangla fixture answer reviews and
+local TXT/PDF hashes are **not** D-signed real document-version receipts.
+Render staging API is still on older commit `0e0b662fad0a02817a79a4514abba8f94e0ad022`.
+The live two-owner answer/citation, deletion race, browser and owner approval
+gates remain open; separate worker qualification is also open. No deployment,
+paid resource, external send, private content or credential change was made.
+Keep PR draft; require exact-head CI, independent review and owner-authorized
+staging access before calling the pilot ready.
+
+---
