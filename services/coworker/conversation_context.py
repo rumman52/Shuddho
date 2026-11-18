@@ -166,7 +166,7 @@ def require_admitted_conversation_run_sources(db: Session, run: AgentRun) -> Non
             # Version 1 runs retain their original digest. Version 2 binds the
             # same memory pins used by the worker to the reviewed brief.
             reviewed_memory = saved_project.get("memory_pins") if schema_version == MEMORY_BOUND_BRIEF_VERSION else None
-            if schema_version == MEMORY_BOUND_BRIEF_VERSION and not reviewed_memory:
+            if schema_version == MEMORY_BOUND_BRIEF_VERSION and not isinstance(reviewed_memory, list):
                 raise ValueError("Reviewed memory pins missing")
             reviewed_project = {key: value for key, value in saved_project.items()
                                 if key != "memory_pins"}
