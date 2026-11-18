@@ -1,3 +1,12 @@
+## Day 9 source preflight CI enforcement — 18 November 2026 (Asia/Dhaka)
+
+**Level: source-only PR; exact-head CI pending; Day 9 NO-GO.**
+Main `aa705726f4c76cbb819a62211b7743aa44c59b17` has merged [#774](https://github.com/rumman52/Shuddho/pull/774), which fixed the native export fault-fixture failures reproduced in [CI #44278207003](https://github.com/rumman52/Shuddho/actions/runs/44278207003). Do not duplicate that patch. A separate, directly observed acceptance gap remains: the required Coworker CI workflow does not invoke the Day 9 `validate-registry` or `preflight` commands or separately gate the Runtime v3 helper tests. Branch `codex/day9-source-preflight-ci-20261118` adds precisely those source-only mandatory steps, preserving immutable D-held inputs and all opt-in live provider tests; the helper suite has an explicit zero-skip gate and CI artifact. See [task contract](DAY9_SOURCE_PREFLIGHT_CI_2026-11-18.md).
+
+No new API, worker, model, storage, database, permission or feature flag is activated. This is **not** an independent freeze, D custody authentication, 40-case first run or 20 C-operated recovery receipts. Actual Supabase staging is PostgreSQL 17.11 / Alembic 0070 vs source 0072 head; required main governance still fails on missing App client ID and policy drift. Await exact final-head CI and independent GitHub review. C/owner administer governance and authorize staging operations; human D privately establishes #665 custody; reviewers and C carry out observed evaluations and operations. No owner-authorized billed resources or external sends were performed.
+
+---
+
 ## Day 1 native export fault-fixture repair — 18 November 2026 (Asia/Dhaka)
 
 Status: **TEST-SOURCE CANDIDATE / NO-GO**, in [draft PR #774](https://github.com/rumman52/Shuddho/pull/774), based on main `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`. This does not claim a merged fix, green final-head CI, hosted qualification, or production activation.
