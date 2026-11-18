@@ -36,6 +36,9 @@ def _require_present(env: dict[str, str], name: str) -> None:
 
 def _validate_temporal_address(value: str) -> None:
     candidate = value.strip()
+    # A staging credential must not be silently redirected by whitespace.
+    if candidate != value:
+        raise PreflightFailure("SHUDDHO_TEMPORAL_ADDRESS must not have surrounding whitespace.")
     if "://" in candidate:
         raise PreflightFailure(
             "SHUDDHO_TEMPORAL_ADDRESS must be host:port, not an HTTP(S) URL."
@@ -54,6 +57,23 @@ def _validate_temporal_address(value: str) -> None:
     port = int(port_text)
     if port < 1 or port > 65535:
         raise PreflightFailure("SHUDDHO_TEMPORAL_ADDRESS port is outside 1..65535.")
+
+    # Check public DNS hostname syntax before a credentialed Temporal session.
+    # This is only a static shape check, not DNS or certificate verification.
+    labels = host.lower().split(".")
+    if (
+        len(host) > 253
+        or len(labels) < 2
+        or host.lower().endswith((".local", ".localhost", ".internal", ".home.arpa"))
+        or all(re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]+)", label) for label in labels)
+        or any(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+            for label in labels
+        )
+    ):
+        raise PreflightFailure(
+            "SHUDDHO_TEMPORAL_ADDRESS must use a public DNS hostname, not a local or IP destination."
+        )
 
 
 def _validate_https_endpoint(value: str, name: str) -> None:
