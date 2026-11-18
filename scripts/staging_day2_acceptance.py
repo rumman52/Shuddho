@@ -166,7 +166,7 @@ def validate_evidence(
     _nonempty(effect.get("restart_reference"), "recovery_outbox.restart_reference")
     if not (started <= restarted <= finished
             and started <= replacement_started <= finished
-            and abs((replacement_started - restarted).total_seconds()) <= 300):
+            and 0 <= (replacement_started - restarted).total_seconds() <= 300):
         raise Day2AcceptanceFailure("Recovery did not replace a worker during the same active Agent run.")
     digest, restored_at = _stage(restore.get("backup_restore"), "restored.backup_restore",
                                  release_id=release_id, revision=expected_revision)
