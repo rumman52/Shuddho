@@ -5,7 +5,8 @@
 **Follow-up PR:** [#777](https://github.com/rumman52/Shuddho/pull/777) (draft, not approval)  
 **Pinned main baseline:** `c8aa7cf8444f1cf8c5408568e78b3cae6792f00a`  
 **Red test-only commit:** `b28c42b73470d7460e65679355725a0541b68d4d`  
-**First fix commit:** `f99b44a537a4d26dce5718352ad93db4e3918df6`
+**First fix commit:** `f99b44a537a4d26dce5718352ad93db4e3918df6`  
+**Mandatory-suite consolidation:** `3ad4675c7c11e48f867ae1be1406c38612f13e88`
 
 > **Disposition: code-level citation gap reproduced and fixed; live staging pilot acceptance NOT ESTABLISHED.**
 > No production activation, provider spend, new identity/storage content, external dispatch or sends were authorized or performed in this qualification.
@@ -24,7 +25,7 @@
 In `conversation_grounding.py` at the pinned main baseline, the incomplete-source guard matched only `[[src-` (case-insensitive, optional whitespace). A valid `[[src-1]]` followed by **unclosed, source-looking** `[[src_999`, `[[src—999`, `[[sRc:999`, or `[[ src _ 999` was incorrectly accepted; `[[src-999` was correctly rejected. The latter difference identifies the prefix guard as the cause.
 
 1. **RED:** local isolated Python harness faithfully copying the pinned validator from `conversation_grounding.py`, `python -m pytest -q test_citation_validator.py`: **4 failed (unexpected acceptance)**, exit 1, before editing the implementation. Its copy is not a full repository test.
-2. Regression committed **before** the fix in `tests/test_conversation_citation_markers.py`: four validator cases, the service allowlist, and a synthetic TXT grounded SSE test asserting **no displayed delta, no committed answer and no AgentRun**.
+2. Regression committed **before** the fix on the red test-only head, then consolidated into the existing mandatory `tests/test_conversation_replies.py` module: four validator cases, the service allowlist, and a synthetic TXT grounded SSE test asserting **no displayed delta, no committed answer and no AgentRun**.
 3. **GREEN (isolated harness):** widen only the incomplete source-prefix regex to `r"\[\[\s*src"`; rerunning the same harness: **4 passed**, plus normal repeated valid-ID and forged/unknown-ID smoke cases. The real repository tests must be verified separately in GitHub CI.
 4. No API, identity, storage, provider, frontend, schema, Writing Assistant or production configuration was changed.
 
@@ -58,8 +59,8 @@ No staging account was created, no PDF/TXT uploaded, no real provider called, an
 ## Tests and release gates
 
 - **Local narrow RED/GREEN:** isolated exact-source validator copy, 4 failed before / 4 passed after. **Not equivalent to full repository tests.**
-- **Real Python scope:** `uv run --extra coworker pytest tests/test_conversation_citation_markers.py tests/test_conversation_replies.py tests/test_conversation_context.py -q -rs`.
-- **Mandatory focused CI coverage:** `.github/workflows/ci.yml` explicitly includes `tests/test_conversation_citation_markers.py` alongside the existing conversation/API/PostgreSQL suite and checks `tests.test_conversation_citation_markers` with `scripts.mandatory_test_gate` (zero skips/failures/errors required).
+- **Real Python scope:** `uv run --extra coworker pytest tests/test_conversation_replies.py tests/test_conversation_context.py -q -rs`.
+- **Mandatory focused CI coverage:** the existing `.github/workflows/ci.yml` conversation/API/PostgreSQL matrix already includes `tests/test_conversation_replies.py` and verifies `tests.test_conversation_replies` with `scripts.mandatory_test_gate` (zero skips/failures/errors required); no CI workflow modification.
 - **Broader API/grounding:** `uv run --extra coworker pytest tests/test_conversations.py tests/test_conversation_dispatch.py tests/test_coworker_projects.py tests/test_coworker_postgres.py -q -rs`.
 - **Web editor:** `npm run test --workspace @shuddho/web-editor` and `npm run build --workspace @shuddho/web-editor` (verify package scripts before executing).
 - **Browser:** GitHub Actions `browser-qualification`; fixture evidence is not a substitute for staging with actual owner Auth/storage.
