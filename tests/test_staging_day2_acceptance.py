@@ -171,6 +171,7 @@ def test_rejects_forged_worker_or_source_digest():
     ('child_task_outbox_all_delivered', False),
     ('worker_after_id', 'before-restart'),
     ('worker_after_started_at', '2026-11-12T11:01:00+00:00'),
+    ('worker_after_started_at', '2026-11-12T11:02:59+00:00'),
     ('worker_after_started_at', '2026-11-12T11:04:01+00:00'),
     ('restart_at', '2026-11-12T11:04:01+00:00'),
     ('restart_reference', ''),
