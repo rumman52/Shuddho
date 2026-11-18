@@ -1501,8 +1501,12 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         assert run.tool_allowlist == ["daily_plan.create"]
         assert run.connector_read_grant_ids == []
         assert run.action_ids == []
-        assert run.document_ids == [document_id]
+        # AgentRun stores immutable document-version pins, not document_ids.
         assert run.input_versions == [version_id]
+        persisted_version = db.get(DocumentVersion, run.input_versions[0])
+        assert persisted_version is not None
+        assert persisted_version.document_id == document_id
+        assert persisted_version.owner_id == run.owner_id
         started = db.scalars(select(Notification).where(
             Notification.automation_id == automation["id"],
             Notification.kind == "automation_started",
