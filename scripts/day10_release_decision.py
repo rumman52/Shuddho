@@ -20,7 +20,8 @@ if __package__ in {None, ""}:
 
 from scripts.cohort_release_gate import evaluate_release  # noqa: E402
 from scripts.ruke_pilot_eval import (  # noqa: E402
-    OPERATED, RUBRIC, operated_trace_ok, read_json as read_bounded_json, reviewer_identity,
+    BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, operated_trace_ok,
+    read_json as read_bounded_json, reviewer_identity,
 )
 from scripts.staging_release_freeze import (  # noqa: E402
     EXPECTED_ROLLBACK,
@@ -315,6 +316,8 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
     need("api_runtime_manifest_v2_exact_sha_and_flags", (
         isinstance(api, dict) and api.get("schema_version") == 2
         and api.get("source_revision") == revision
+        and isinstance(api.get("build_digest"), str)
+        and BUILD_DIGEST.fullmatch(api["build_digest"]) is not None
         and api.get("environment") == rollout.get("environment")
         and isinstance(api.get("capabilities"), dict)
         and isinstance(capabilities, dict)
@@ -341,15 +344,22 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and schema.get("worker_revision") == schema["migration_revision"])
     worker = artifacts.get("worker")
     need("worker_exact_sha_and_deployment_receipt", proof_ok(worker, release, revision, rollout_hash)
-         and isinstance(worker.get("deployment_reference"), str) and bool(worker["deployment_reference"].strip()))
+         and isinstance(worker.get("deployment_reference"), str) and bool(worker["deployment_reference"].strip())
+         and worker.get("schema_version") == 2
+         and worker.get("environment") == rollout.get("environment")
+         and isinstance(worker.get("build_digest"), str)
+         and BUILD_DIGEST.fullmatch(worker["build_digest"]) is not None
+         and isinstance(worker.get("capabilities"), dict)
+         and set(worker["capabilities"]) == RUNTIME_CAPABILITY_KEYS
+         and all(type(enabled) is bool for enabled in worker["capabilities"].values())
+         and worker["capabilities"] == capabilities
+         and worker.get("action_providers") == rollout.get("action_providers", []))
     ci = artifacts.get("ci")
     need("final_head_ci", bound(ci, release, revision, rollout_hash)
          and ci.get("status") == "passed"
          and isinstance(ci.get("workflow_run_url"), str) and ci["workflow_run_url"].startswith("https://github.com/")
          and isinstance(ci.get("required_checks"), dict)
-         and all(ci["required_checks"].get(key) == "success" for key in
-                 ("test-and-build", "frontend", "coworker", "browser-qualification",
-                  "postgres-18-qualification", "governance-audit", "ci-merge-gate")))
+         and all(ci["required_checks"].get(key) == "success" for key in REQUIRED_DAY9_CI))
     for key in PROOFS:
         need("operated_" + key, operated_proof_ok(key, artifacts.get(key), release, revision, rollout_hash))
     golden = artifacts.get("golden")
