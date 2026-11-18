@@ -42,7 +42,7 @@ class _NoCredentialRedirect(HTTPRedirectHandler):
 
 def _request_json(method: str, url: str, token: str, payload: dict | None = None):
     """Make a bounded GitHub JSON request without following redirects."""
-    if method not in {"GET", "POST"}:
+    if method not in {"GET", "POST", "PUT"}:
         raise ApplyMainRulesetError("unsupported GitHub API method")
     parsed = urlsplit(url)
     try:
@@ -69,7 +69,7 @@ def _request_json(method: str, url: str, token: str, payload: dict | None = None
         "User-Agent": "shuddho-v01-ruleset-operator",
     }
     if payload is not None:
-        if method != "POST" or not isinstance(payload, dict):
+        if method not in {"POST", "PUT"} or not isinstance(payload, dict):
             raise ApplyMainRulesetError("invalid GitHub API payload")
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -79,7 +79,7 @@ def _request_json(method: str, url: str, token: str, payload: dict | None = None
             return json.load(response)
     except (HTTPError, URLError, ValueError, OSError) as exc:
         status = getattr(exc, "code", "unavailable")
-        if method == "POST" and status == 403:
+        if method in {"POST", "PUT"} and status == 403:
             detail = "; verify the token has repository Administration: write permission"
         else:
             detail = ""
