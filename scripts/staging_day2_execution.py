@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import io
 import json
 import os
 import re
+import stat
 import time
 import uuid
 from datetime import datetime
@@ -139,6 +141,36 @@ def public_signed_url(url: object, *, trusted_storage_host: str | None = None) -
     return url
 
 
+def load_private_pdf(path: Path) -> bytes:
+    """Read an operator-selected private, text-based PDF before making API writes."""
+    try:
+        if path.suffix.lower() != ".pdf" or path.is_symlink() or not path.is_file():
+            raise Day2Failure("Select a regular, nonsymlink private PDF file.")
+        metadata = path.stat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+            raise Day2Failure("The selected PDF must be owner-only (mode 0600).")
+        if not 0 < metadata.st_size <= 8 * 1024 * 1024:
+            raise Day2Failure("The selected PDF must be between 1 byte and 8 MiB.")
+        source = path.read_bytes()
+    except OSError:
+        raise Day2Failure("The selected private PDF could not be read.") from None
+    if not source.startswith(b"%PDF-") or not 0 < len(source) <= 8 * 1024 * 1024:
+        raise Day2Failure("The selected source is not a bounded PDF.")
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(source), strict=True)
+        if reader.is_encrypted or not 1 <= len(reader.pages) <= 40:
+            raise Day2Failure("Select an unencrypted PDF with 1–40 pages.")
+        if not any((page.extract_text() or "").strip() for page in reader.pages):
+            raise Day2Failure("The selected PDF must contain extractable text.")
+    except Day2Failure:
+        raise
+    except Exception:
+        raise Day2Failure("The selected PDF is invalid or unreadable.") from None
+    return source
+
+
 def run_probe(
     client: httpx.Client,
     token_a: str,
@@ -154,12 +186,17 @@ def run_probe(
     Keep all private bytes and signed URLs out of the returned evidence.
     """
     release = check_release(freeze)
-    if not isinstance(source, bytes) or not 1 <= len(source) <= 4096:
-        raise Day2Failure("Day 2 source must be bounded synthetic UTF-8 bytes.")
-    try:
-        source.decode("utf-8")
-    except UnicodeDecodeError:
-        raise Day2Failure("Day 2 source must contain valid UTF-8.") from None
+    if not isinstance(source, bytes) or not 1 <= len(source) <= 8 * 1024 * 1024:
+        raise Day2Failure("Day 2 source must be bounded document bytes.")
+    is_pdf = source.startswith(b"%PDF-")
+    if not is_pdf:
+        # Preserve compatibility with the original bounded synthetic TXT probe.
+        if len(source) > 4096:
+            raise Day2Failure("Synthetic TXT source exceeds the Day 2 limit.")
+        try:
+            source.decode("utf-8")
+        except UnicodeDecodeError:
+            raise Day2Failure("Day 2 TXT source must contain valid UTF-8.") from None
     if not 1 <= timeout_seconds <= 1800:
         raise Day2Failure("Task timeout must be between 1 and 1800 seconds.")
     attest_runtime(client, token_a, freeze)
@@ -167,7 +204,7 @@ def run_probe(
     a, b = bearer(token_a), bearer(token_b)
     marker = uuid.uuid4().hex
     source_sha = hashlib.sha256(source).hexdigest()
-    filename = "day2-synthetic-" + marker + ".txt"
+    filename = "day2-synthetic-" + marker + (".pdf" if is_pdf else ".txt")
 
     upload = obj(checked(client.post("/api/v1/documents", headers=a, json={
         "filename": filename,
@@ -364,6 +401,8 @@ async def temporal_completed(settings: Settings, workflow_id: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prove Day 2 private document/model/Temporal/worker identity in controlled staging.")
     parser.add_argument("--freeze-evidence", type=Path, required=True)
+    parser.add_argument("--source-pdf", type=Path, required=True,
+                        help="Approved synthetic text-based PDF in owner-only (0600) private storage.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
@@ -374,6 +413,7 @@ def main() -> None:
             raise Day2Failure("Use a new private evidence destination in an existing directory.")
         freeze = json.loads(args.freeze_evidence.read_text(encoding="utf-8"))
         release = check_release(freeze)
+        source = load_private_pdf(args.source_pdf)
         settings = Settings.from_env()
         if (
             settings.environment != "staging"
@@ -396,12 +436,6 @@ def main() -> None:
             raise Day2Failure("Live Day 2 requires a reviewed HTTPS private S3 endpoint.")
         container = Container.create(settings)
         before = active_worker(container, release["source_revision"])
-        marker = uuid.uuid4().hex
-        source = (
-            "Day 2 synthetic private record " + marker + ".\n"
-            "The test department is North Office. The sample budget is 42 units.\n"
-            "Only these synthetic facts may be used; no real customer data is present.\n"
-        ).encode("utf-8")
         with httpx.Client(base_url=origin, timeout=20, follow_redirects=False) as client:
             result = run_probe(
                 client, token_a, token_b, freeze, source,
