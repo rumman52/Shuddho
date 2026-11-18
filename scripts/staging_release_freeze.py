@@ -65,6 +65,33 @@ RUNTIME_CAPABILITY_KEYS = frozenset({
     "browser_push",
 })
 
+# The formal PA-10 rollout/worker/generation contract has exactly 43
+# independently reviewed flags. The API also emits one *derived UI indicator*:
+# it must be present, boolean, and identical to conversation_replies. Do not
+# silently allow arbitrary extra keys or relabel it as independent authority.
+DERIVED_RUNTIME_CAPABILITY_KEYS = frozenset({"grounded_conversation_replies"})
+API_RUNTIME_CAPABILITY_KEYS = RUNTIME_CAPABILITY_KEYS | DERIVED_RUNTIME_CAPABILITY_KEYS
+
+
+def api_runtime_capabilities_match_rollout(actual: object, declared: object) -> bool:
+    """Validate the complete 44-field API readback against 43 reviewed flags.
+
+    The extra UI-derived field cannot grant anything not already enabled by
+    the canonical conversation_replies flag. Worker and rollout inventories
+    stay strict at the original 43 keys.
+    """
+    return (
+        isinstance(actual, dict)
+        and isinstance(declared, dict)
+        and set(actual) == API_RUNTIME_CAPABILITY_KEYS
+        and set(declared) == RUNTIME_CAPABILITY_KEYS
+        and all(type(value) is bool for value in actual.values())
+        and all(type(value) is bool for value in declared.values())
+        and all(actual[key] is declared[key] for key in RUNTIME_CAPABILITY_KEYS)
+        and actual["grounded_conversation_replies"] is actual["conversation_replies"]
+    )
+
+
 PA10_REQUIRED_TRUE = frozenset({
     "coworker",
     "work_services",
@@ -467,11 +494,8 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         )
 
     capabilities = runtime.get("capabilities")
-    if (
-        not isinstance(capabilities, dict)
-        or set(capabilities) != RUNTIME_CAPABILITY_KEYS
-        or any(type(value) is not bool for value in capabilities.values())
-        or capabilities != state.get("declared_capabilities")
+    if not api_runtime_capabilities_match_rollout(
+        capabilities, state.get("declared_capabilities"),
     ):
         raise StagingReleaseFreezeError(
             "Deployed capability set does not exactly match the reviewed staging rollout."
