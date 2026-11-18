@@ -45,3 +45,39 @@ If an audit fails with "redacted bypass_actors", correct the GitHub
 credential's **ruleset inspection access**. Do not change the code to
 assume an empty bypass list, add an undocumented bypass actor, or remove
 a required check just to obtain a green pipeline.
+
+
+## Day 1: reproducible, non-mutating ruleset drift evidence
+
+The offline tool \`scripts/day1_ruleset_drift.py\` reports which specific
+configuration requirements are missing from ruleset 27324410. It reads
+previously captured GitHub JSON snapshots; it never contacts GitHub, creates
+an App token, modifies a ruleset, approves a review, or exercises a merge.
+
+From an administrator-approved session, capture fresh API readbacks into a
+private directory (do not commit the files or print credentials):
+
+\`\`\`bash
+umask 077
+gh api repos/rumman52/Shuddho/branches/main > /secure/day1/main-branch.json
+gh api repos/rumman52/Shuddho/rulesets/27324410 > /secure/day1/main-ruleset.json
+uv run --extra coworker python -m scripts.day1_ruleset_drift \
+  --branch-json /secure/day1/main-branch.json \
+  --ruleset-json /secure/day1/main-ruleset.json \
+  --expected-main-sha "<exact-current-40-character-main-commit>" \
+  --output /secure/day1/ruleset-drift.json
+\`\`\`
+
+The tool exits **1** for configuration drift, **2** for untrusted/malformed
+input, and **0** only for a configuration *candidate*. Even a zero exit
+prints \`qualified=false\`: administrator-authenticated effective-rule
+inspection, protected GitHub App audit credentials, exact-head CI,
+independent review, and native denied/permitted merge-control exercises are
+still required. This is a diagnostic complement to
+\`main_protection_audit.py\`, not an alternate release gate.
+
+The compared policy is always loaded from the checked-in
+\`infra/github/main-ruleset.json\` by default; weakening that policy causes
+the diagnostic to reject the input. Inputs are bounded and output is
+created once with private permissions. Never commit the captured
+administrator readbacks or evidence files.

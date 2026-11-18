@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
-from hashlib import sha256
 from dataclasses import replace
 from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
@@ -1178,7 +1178,7 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         db.add(DocumentVersion(
             id=version_id, document_id=document_id, owner_id=owner,
             version=1, kind="txt", byte_size=len(document_body),
-            sha256=sha256(document_body).hexdigest(), object_key=document_key,
+            sha256=hashlib.sha256(document_body).hexdigest(), object_key=document_key,
             state="uploaded",
             expires_at=now + timedelta(days=7),
         ))
@@ -1234,6 +1234,10 @@ def test_scheduled_briefing_uses_only_selected_connected_read_context(container)
         for item in context["items"]
     )
 
+    assert any(
+        item["provenance"].get("document_id") == document_id
+        for item in context["items"]
+    )
 
 def _create_email_coworker(container, owner, grant):
     goal, created = container.goals.create(
