@@ -12,6 +12,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 class Days36EvidenceError(ValueError):
@@ -119,7 +120,8 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
     referenced(rev.get("revocation_receipt_ref"), "day3.revocation.revocation_receipt_ref")
     count(rev.get("visible_deltas_after_revoke"), "day3.revocation.visible_deltas_after_revoke", 0)
     count(rev.get("persisted_stale_answers"), "day3.revocation.persisted_stale_answers", 0)
-    need(rev.get("source_revoked") is True, "day3 source was not revoked")
+    need(rev.get("source_revoked") is True and rev["provider_request_id"] not in providers,
+         "day3 needs a distinct revoked provider request")
     for key in ("agent_runs_before", "agent_runs_after", "agent_outbox_before", "agent_outbox_after"):
         count(day.get(key), "day3." + key, 0)
     return completed
@@ -152,6 +154,11 @@ def check_day4(release: dict, data: object, frozen: datetime) -> datetime:
     count(replay.get("additional_outbox"), "day4.retry.additional_outbox", 0)
     race = obj(day.get("start_edit_race"), "day4.start_edit_race")
     need(race.get("http_status") == 409, "day4 concurrent Start/edit did not conflict")
+    raced = when(race.get("started_at"), "day4.start_edit_race.started_at")
+    changed = when(race.get("edit_committed_at"), "day4.start_edit_race.edit_committed_at")
+    responded = when(race.get("responded_at"), "day4.start_edit_race.responded_at")
+    need(frozen <= raced < changed < responded <= completed,
+         "day4 has no proven overlapping Start/edit race")
     count(race.get("additional_runs"), "day4.start_edit_race.additional_runs", 0)
     count(race.get("additional_outbox"), "day4.start_edit_race.additional_outbox", 0)
     for key in ("retry_receipt_ref", "race_receipt_ref"):
@@ -189,6 +196,10 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
         need(arm["prompt_sha256"] == common["prompt_sha256"]
              and arm["source_sha256"] == common["source_sha256"], "day5 source/prompt was not held constant")
     need(facts["none"] == (None, None), "day5 none arm imported a memory")
+    for name in ("v1", "v2"):
+        need(type(facts[name][1]) is int, "day5 pinned fact versions must be exact integers")
+    context_hashes = {arm["model_context_sha256"] for arm in arms}
+    need(len(context_hashes) == 3, "day5 did not compare three distinct model memory contexts")
     fact_id = text(facts["v1"][0], "day5.v1.fact_id")
     need(facts["v2"] == (fact_id, 2) and facts["v1"] == (fact_id, 1),
          "day5 did not compare selected fact v1 with corrected v2")
@@ -262,6 +273,7 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
                  and native.get("owner_b_http_status") in {403, 404},
                  "day6 requires opened A file and denied B file")
             referenced(native.get("download_receipt_ref"), "day6.download_receipt_ref")
+            referenced(native.get("owner_b_denial_ref"), "day6.owner_b_denial_ref")
         need(extensions == {"docx", "pdf"}, "day6 is missing an opened native format")
         if key[0] == "research":
             sources = row.get("citations")
@@ -272,8 +284,12 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
                 referenced(citation.get("source_id"), "day6.source_id")
                 referenced(citation.get("title"), "day6.source.title")
                 url = text(citation.get("url"), "day6.source.url")
-                need(url.startswith("https://") and "@" not in url.split("/", 3)[2],
-                     "day6 research source URL must be HTTPS without credentials")
+                parsed = urlsplit(url)
+                host = parsed.hostname or ""
+                need(parsed.scheme == "https" and bool(host) and "." in host
+                     and parsed.username is None and parsed.password is None
+                     and host != "localhost" and not host.startswith(("127.", "10.", "192.168.", "172.16.")),
+                     "day6 research source URL must be a public HTTPS source without credentials")
                 sha(citation.get("sha256"), "day6.source.sha256")
                 retrieved = when(citation.get("retrieved_at"), "day6.source.retrieved_at")
                 need(retrieved <= completed, "day6 source retrieval postdates verified comparison")
@@ -323,6 +339,11 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
     count(reconnect.get("additional_agent_runs"), "day6.additional_agent_runs", 0)
     count(reconnect.get("additional_outbox_effects"), "day6.additional_outbox_effects", 0)
     send = obj(day.get("provider_send_audit"), "day6.provider_send_audit")
+    before_at = when(send.get("before_at"), "day6.provider_send_audit.before_at")
+    after_at = when(send.get("after_at"), "day6.provider_send_audit.after_at")
+    need(frozen <= before_at <= when(day["started_at"], "day6.started_at")
+         and restarted < after_at <= completed,
+         "day6 external send audit does not bracket the operated exercise")
     count(send.get("before"), "day6.provider_send_audit.before", 0)
     count(send.get("after"), "day6.provider_send_audit.after", 0)
     referenced(send.get("external_provider_receipt_ref"), "day6.provider_send_audit.external_provider_receipt_ref")
