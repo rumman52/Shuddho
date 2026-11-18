@@ -291,3 +291,24 @@ def test_document_task_outbox_missing_or_undelivered_fails_closed(rows):
     records = [SimpleNamespace(**row) if isinstance(row, dict) else row for row in rows]
     with pytest.raises(day2.Day2Failure, match="outbox"):
         day2.document_outbox_receipt(TASK_ID, records)
+
+
+def test_pdf_task_outbox_sql_error_cannot_leak_driver_payload():
+    from types import SimpleNamespace
+
+    sqlalchemy = pytest.importorskip("sqlalchemy")
+    pytest.importorskip("services.coworker.models")
+
+    class BrokenSessions:
+        def __enter__(self):
+            raise sqlalchemy.exc.SQLAlchemyError("private SQL address and secret")
+
+        def __exit__(self, *_args):
+            return False
+
+    container = SimpleNamespace(
+        repository=SimpleNamespace(sessions=lambda: BrokenSessions())
+    )
+    with pytest.raises(day2.Day2Failure, match="could not be independently verified") as raised:
+        day2.persisted_document_outbox(container, TASK_ID)
+    assert "private SQL address" not in str(raised.value)
