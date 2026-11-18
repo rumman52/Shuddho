@@ -1,5 +1,6 @@
 """Pure, offline Day 1 diagnostics: no GitHub mutations and no test credentials."""
 import copy
+import hashlib
 import json
 
 import pytest
@@ -27,6 +28,7 @@ def policy():
                 "do_not_enforce_on_create": False,
                 "required_status_checks": [
                     {"context": "test-and-build", "integration_id": 15368},
+                    {"context": "coworker", "integration_id": 15368},
                     {"context": "ci-merge-gate", "integration_id": 15368},
                 ],
             }},
@@ -111,10 +113,42 @@ def test_cli_writes_one_private_report_and_will_not_overwrite(tmp_path, capsys):
     ]
     assert main(argv) == 0
     data = json.loads((tmp_path / "evidence.json").read_text())
+    # The receipt must identify the exact captured bytes, not just a decoded
+    # object which could have changed whitespace, order, or provenance.
+    for filename, field in (
+        ("branch", "branch_readback_sha256"),
+        ("ruleset", "ruleset_readback_sha256"),
+        ("policy", "reviewed_policy_sha256"),
+    ):
+        expected = hashlib.sha256((tmp_path / f"{filename}.json").read_bytes()).hexdigest()
+        assert data[field] == expected
     assert data["qualified"] is False
     assert (tmp_path / "evidence.json").stat().st_mode & 0o777 == 0o600
     assert main(argv) == 2
     assert "blocked_input" in capsys.readouterr().out
+
+
+def test_ruleset_report_hash_changes_for_same_meaning_different_bytes(tmp_path, capsys):
+    for name, body in (("branch", branch()), ("ruleset", live()), ("policy", policy())):
+        (tmp_path / f"{name}.json").write_text(json.dumps(body), encoding="utf-8")
+    argv = [
+        "--branch-json", str(tmp_path / "branch.json"),
+        "--ruleset-json", str(tmp_path / "ruleset.json"),
+        "--policy-json", str(tmp_path / "policy.json"),
+        "--expected-main-sha", SHA,
+    ]
+    assert main(argv) == 0
+    first = json.loads(capsys.readouterr().out)
+    (tmp_path / "ruleset.json").write_text(json.dumps(live(), indent=2), encoding="utf-8")
+    assert main(argv) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert first["status"] == second["status"] == "configuration_candidate"
+    assert first["drift"] == second["drift"] == []
+    assert first["ruleset_readback_sha256"] != second["ruleset_readback_sha256"]
+    assert first["branch_readback_sha256"] == second["branch_readback_sha256"]
+    assert first["reviewed_policy_sha256"] == second["reviewed_policy_sha256"]
+    assert second["qualified"] is False
 
 
 def test_cli_rejects_symlinked_input(tmp_path):
@@ -130,23 +164,18 @@ def test_cli_rejects_symlinked_input(tmp_path):
         "--expected-main-sha", SHA,
     ]) == 2
 
-def test_additional_reviewed_coworker_check_cannot_be_ignored():
-    updated_policy = policy()
-    status = updated_policy["rules"][-1]["parameters"]["required_status_checks"]
-    status.append({"context": "coworker", "integration_id": 15368})
-
-    # The observed ruleset still has the former two checks. The diagnostic
-    # must report the new reviewed requirement even before PR #754 merges.
-    report = analyze(branch(), live(), updated_policy, expected_main_sha=SHA)
+def test_live_ruleset_missing_mandatory_coworker_cannot_be_ignored():
+    weakened_live = live()
+    checks = weakened_live["rules"][-1]["parameters"]["required_status_checks"]
+    weakened_live["rules"][-1]["parameters"]["required_status_checks"] = [
+        entry for entry in checks if entry["context"] != "coworker"
+    ]
+    report = analyze(branch(), weakened_live, policy(), expected_main_sha=SHA)
     assert report["status"] == "blocked_configuration"
     assert "checks.first_party_coworker" in report["drift"]
     assert report["qualified"] is False
 
-    updated_live = live()
-    updated_live["rules"][-1]["parameters"]["required_status_checks"].append(
-        {"context": "coworker", "integration_id": 15368}
-    )
-    good = analyze(branch(), updated_live, updated_policy, expected_main_sha=SHA)
+    good = analyze(branch(), live(), policy(), expected_main_sha=SHA)
     assert good["status"] == "configuration_candidate"
     assert good["qualified"] is False
 
@@ -186,3 +215,20 @@ def test_cli_rejects_duplicate_json_keys_and_nonfinite_values(
     assert code == 2
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "blocked_input"
+
+
+def test_coworker_is_unconditionally_required_even_if_checked_in_template_is_weakened():
+    # A modified checked-in template cannot make the third Day 1 check
+    # disappear from BOTH the policy and a supplied live snapshot.
+    weakened_policy = policy()
+    checks = weakened_policy["rules"][-1]["parameters"]["required_status_checks"]
+    weakened_policy["rules"][-1]["parameters"]["required_status_checks"] = [
+        entry for entry in checks if entry["context"] != "coworker"
+    ]
+    weakened_live = live()
+    checks = weakened_live["rules"][-1]["parameters"]["required_status_checks"]
+    weakened_live["rules"][-1]["parameters"]["required_status_checks"] = [
+        entry for entry in checks if entry["context"] != "coworker"
+    ]
+    with pytest.raises(EvidenceError, match="mandatory first-party checks"):
+        analyze(branch(), weakened_live, weakened_policy, expected_main_sha=SHA)

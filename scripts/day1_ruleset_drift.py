@@ -17,11 +17,10 @@ import re
 REPOSITORY = "rumman52/Shuddho"
 RULESET_ID = 27324410
 ACTIONS_INTEGRATION_ID = 15368
-# The minimum source policy is preserved while the complete checked-in
-# first-party set is compared dynamically. In particular, a future Coworker
-# check must never disappear merely because this diagnostic was written
-# before the required-check template was strengthened.
-MINIMUM_CHECKS = frozenset(("test-and-build", "ci-merge-gate"))
+# The three Day 1 checks are non-removable policy minima, even if someone
+# edits the checked-in template. Additional reviewed checks remain enforced
+# dynamically and must be pinned to the first-party GitHub Actions app.
+MINIMUM_CHECKS = frozenset(("test-and-build", "coworker", "ci-merge-gate"))
 POLICY_PATH = Path(__file__).resolve().parents[1] / "infra" / "github" / "main-ruleset.json"
 MAX_READ_BYTES = 512_000
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
@@ -235,10 +234,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, help="optional NEW private report file; never overwrite")
     args = parser.parse_args(argv)
     try:
-        branch, _branch_digest = _read_json(args.branch_json)
-        ruleset, _ruleset_digest = _read_json(args.ruleset_json)
+        branch, branch_digest = _read_json(args.branch_json)
+        ruleset, ruleset_digest = _read_json(args.ruleset_json)
         policy, policy_digest = _read_json(args.policy_json)
         report = analyze(branch, ruleset, policy, expected_main_sha=args.expected_main_sha, expected_ruleset_id=args.ruleset_id)
+        # Bind the diagnostic to the exact captured input bytes. Hashes are
+        # reproducibility references, not proof of administrator identity.
+        report["branch_readback_sha256"] = branch_digest
+        report["ruleset_readback_sha256"] = ruleset_digest
         report["reviewed_policy_sha256"] = policy_digest
         rendered = json.dumps(report, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
         if args.output:

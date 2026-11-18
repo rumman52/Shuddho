@@ -238,6 +238,25 @@ def test_bad_repo_identifiers_are_rejected_before_fetch(monkeypatch):
             inspect_repository(name, "ci-token")
 
 
+def test_day1_baseline_trio_runs_in_one_existing_fail_closed_coworker_gate():
+    """Preserve the workbook's exact baseline without duplicating Fly tests."""
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    step_name = "      - name: Verify Fly repository coding contracts without skips"
+    assert workflow.count(step_name) == 1
+    gate = workflow.split(step_name, 1)[1].split("\n      - name:", 1)[0]
+    assert gate.count("uv run --extra coworker pytest ") == 1
+    for selector in (
+        "tests/test_coworker.py::test_provider_capacity_settings_fail_closed",
+        "tests/test_sandbox_control_plane.py::test_sandbox_worker_command_is_networkless_minimal_and_fail_closed",
+        "tests/test_fly_repository_coding.py",
+    ):
+        assert selector in gate
+    assert "-q -rs --junitxml=/tmp/fly-repository-coding.xml" in gate
+    for module in ("tests.test_coworker", "tests.test_sandbox_control_plane", "tests.test_fly_repository_coding"):
+        assert f"scripts.mandatory_test_gate /tmp/fly-repository-coding.xml --required-module {module}" in gate
+    assert "continue-on-error" not in gate
+
+
 def test_main_push_gate_depends_on_governance_without_privileged_pr_access():
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  governance-audit:\n", 1)[1]

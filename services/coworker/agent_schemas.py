@@ -163,6 +163,9 @@ class AgentActionProposal(AgentModel):
 class AgentPlannerChoice(AgentModel):
     tool: str = Field(min_length=3, max_length=80, pattern=r"^[a-z][a-z0-9_.-]+$")
     objective: str = Field(min_length=3, max_length=500)
+    output_language: str | None = Field(
+        default=None, pattern=r"^(?:auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35,
+    )
 
     @field_validator("objective")
     @classmethod
@@ -206,6 +209,9 @@ class AgentV3Decision(AgentModel):
     decision: Literal["next_step", "needs_input", "awaiting_approval", "wait", "blocked", "complete"]
     tool: str | None = Field(default=None, min_length=3, max_length=80, pattern=r"^[a-z][a-z0-9_.-]+$")
     objective: str | None = Field(default=None, min_length=3, max_length=500)
+    output_language: str | None = Field(
+        default=None, pattern=r"^(?:auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$", max_length=35,
+    )
     message: str | None = Field(default=None, min_length=1, max_length=300)
     wait_seconds: int | None = Field(default=None, ge=1, le=60)
     memory_proposal: AgentMemoryProposal | None = None
@@ -221,13 +227,15 @@ class AgentV3Decision(AgentModel):
             if self.tool is None or self.objective is None:
                 raise ValueError("next_step requires tool and objective")
             if self.message is not None or self.wait_seconds is not None:
-                raise ValueError("next_step accepts only tool and objective")
+                raise ValueError("next_step accepts only tool, objective, and optional output_language")
         elif self.decision == "wait":
             if self.wait_seconds is None:
                 raise ValueError("wait requires wait_seconds")
-            if self.tool is not None or self.objective is not None:
-                raise ValueError("wait cannot select a tool")
+            if self.tool is not None or self.objective is not None or self.output_language is not None:
+                raise ValueError("wait cannot select a tool or output language")
         else:
+            if self.output_language is not None:
+                raise ValueError("Only next_step may select a task output language")
             if self.tool is not None or self.objective is not None or self.wait_seconds is not None:
                 raise ValueError("Non-step decisions cannot select a tool or wait duration")
             if self.decision in {"needs_input", "blocked", "awaiting_approval"} and self.message is None:
