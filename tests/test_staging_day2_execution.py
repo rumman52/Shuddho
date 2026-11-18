@@ -266,3 +266,28 @@ def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
     manifest["capabilities"]["agent_browser_read"] = True
     with pytest.raises(freeze.StagingReleaseFreezeError):
         freeze.verify_runtime(state, manifest)
+
+
+def test_document_task_persisted_outbox_proves_single_delivered_effect():
+    from types import SimpleNamespace
+
+    one = SimpleNamespace(task_id=TASK_ID, delivered=True, attempts=2)
+    assert day2.document_outbox_receipt(TASK_ID, [one]) == {
+        "task_id": TASK_ID, "effect_count": 1, "delivered": True,
+        "dispatch_attempts": 2,
+    }
+
+
+@pytest.mark.parametrize("rows", [
+    [], [None, None],
+    [{"task_id": "not-this-task", "delivered": True, "attempts": 1}],
+    [{"task_id": TASK_ID, "delivered": False, "attempts": 1}],
+    [{"task_id": TASK_ID, "delivered": True, "attempts": 0}],
+    [{"task_id": TASK_ID, "delivered": True, "attempts": True}],
+])
+def test_document_task_outbox_missing_or_undelivered_fails_closed(rows):
+    from types import SimpleNamespace
+
+    records = [SimpleNamespace(**row) if isinstance(row, dict) else row for row in rows]
+    with pytest.raises(day2.Day2Failure, match="outbox"):
+        day2.document_outbox_receipt(TASK_ID, records)
