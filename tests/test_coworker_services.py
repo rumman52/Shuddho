@@ -116,6 +116,10 @@ def test_day6_report_email_runner_forwards_verified_brief_and_steering(container
     from test_coworker import FakeModel
 
     enable_services(container)
+    enabled = replace(container.settings, agent_runtime_enabled=True)
+    container.settings = enabled
+    container.agent.settings = enabled
+    container.repository.settings = enabled
     owner = account(container)
     run, _ = container.agent.create(
         owner, AgentRunCreate(goal="Prepare an evidence-backed report and email draft.", output_language="en"),
