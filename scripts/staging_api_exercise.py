@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from scripts.staging_prerequisite_preflight import PreflightFailure, _validate_https_endpoint
+
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
 
@@ -23,10 +25,34 @@ def passed(evidence: str) -> dict:
 
 
 def require_https_base(value: str) -> str:
-    parsed = urlparse(value.rstrip("/"))
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ExerciseFailure("SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin.")
-    return value.rstrip("/")
+    """Reject non-public or non-origin destinations before using two bearer tokens.
+
+    This is a conservative syntax check, not proof of DNS ownership or TLS
+    certificate identity. Live operator approval must still bind the endpoint
+    to the intended staging service.
+    """
+    message = "SHUDDHO_STAGING_API_BASE_URL must be a clean public HTTPS origin."
+    # urlparse removes some control characters (including CR/LF/TAB), so
+    # validate the unmodified operator input before any URL parsing.
+    if (
+        not isinstance(value, str)
+        or value != value.strip()
+        or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ExerciseFailure(message)
+
+    # Keep the existing documented single trailing slash convenience, but
+    # reject paths (including //), an empty query/fragment, and user-info.
+    origin = value[:-1] if value.endswith("/") else value
+    try:
+        _validate_https_endpoint(origin, "SHUDDHO_STAGING_API_BASE_URL")
+        parsed = urlparse(origin)
+    except (PreflightFailure, ValueError):
+        raise ExerciseFailure(message) from None
+
+    if origin != f"https://{parsed.netloc}":
+        raise ExerciseFailure(message)
+    return origin
 
 
 def env_secret(name: str) -> str:
