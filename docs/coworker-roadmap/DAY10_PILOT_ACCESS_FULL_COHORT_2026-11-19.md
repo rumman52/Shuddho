@@ -123,7 +123,8 @@ Exit 0 means the **submitted release prerequisite, authenticated API manifest
 and access probes** passed
 mechanically; it **does not** mean this CLI admitted users, confirmed real
 human approval, verified an image digest from a live runtime, or authorized
-expansion. Exit 1 means no pass; preserve any earlier receipt. A subsequent
+expansion. Exit 1 means no pass; preserve any earlier receipt. A failed first attempt also writes a minimal, anonymous failure receipt with
+only the exception **type** (no exception text or token data). A subsequent
 probe must use a **different output filename**. The operator must archive
 HTTPS and DB observations separately with bounded, privacy-approved
 retention, not the tokens themselves.
