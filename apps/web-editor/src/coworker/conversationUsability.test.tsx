@@ -101,6 +101,56 @@ test("changing task memories requires a new brief preview before Agent admission
   }, data);
 });
 
+test("editing every reviewed brief field and source selection requires fresh validation", async () => {
+  const data = fixture([{ ...record, message_sequence: 1 }]);
+  const sourceId = "00000000-0000-4000-8000-000000000001";
+  const brief = { objective: "Write a report", deliverables: ["Summary"], constraints: [],
+    source_ids: [] as string[], output_language: "en" };
+  const previews: string[] = [];
+  const starts: { digest: string | undefined; sourceIds: string[] }[] = [];
+  Object.assign(data.client, {
+    conversationHistory: async () => ({ items: [{
+      id: "message-1", conversation_id: record.id, sequence: 1, text: "Write a report", created_at: timestamp,
+      selected_sources: [{ resource_type: "document_version", resource_id: sourceId,
+        sha256: "a".repeat(64), version: 1 }], resource_links: [],
+    }] }),
+    proposeConversationTaskBrief: async () => ({ state: "ready", brief, canonical_digest: "proposed" }),
+    previewConversationTaskBrief: async (...args: Parameters<CoworkerClient["previewConversationTaskBrief"]>) => {
+      previews.push(JSON.stringify(args[3]));
+      return { state: "ready", brief: args[3], canonical_digest: `validated-${previews.length}`,
+        memory_pins: [] };
+    },
+    dispatchConversationMessage: async (...args: Parameters<CoworkerClient["dispatchConversationMessage"]>) => {
+      starts.push({ digest: args[6], sourceIds: args[5]?.source_ids ?? [] });
+    },
+  });
+  await mount(async tree => {
+    await act(async () => tree.root.findAllByType("button")
+      .find(button => button.children.includes("Start task"))!.props.onClick());
+    const form = tree.root.findByProps({ "aria-label": "Review task brief" }).findByType("form");
+    const submit = () => act(async () => form.props.onSubmit({ preventDefault() {} }));
+    const invalidateAndRevalidate = async (change: () => void, count: number) => {
+      await act(async () => { change(); });
+      assert.ok(form.findByType("button").children.includes("Validate task preview"));
+      await submit();
+      assert.equal(previews.length, count);
+      assert.equal(starts.length, 0);
+      assert.ok(form.findByType("button").children.includes("Confirm and start reviewed task"));
+    };
+
+    const areas = form.findAllByType("textarea");
+    await invalidateAndRevalidate(() => areas[0].props.onChange({ target: { value: "Write an edited report" } }), 1);
+    await invalidateAndRevalidate(() => areas[1].props.onChange({ target: { value: "Maximum two pages" } }), 2);
+    await invalidateAndRevalidate(() => areas[2].props.onChange({ target: { value: "Summary\nComparison table" } }), 3);
+    await invalidateAndRevalidate(() => form.findByProps({ "aria-label": "Task output language" })
+      .props.onChange({ target: { value: "en-GB" } }), 4);
+    await invalidateAndRevalidate(() => form.findAllByType("input")
+      .find(input => input.props.type === "checkbox")!.props.onChange({ target: { checked: true } }), 5);
+    await submit();
+    assert.deepEqual(starts, [{ digest: "validated-5", sourceIds: [sourceId] }]);
+  }, data);
+});
+
 test("lost first-message response retries in the same conversation with the same key", async () => {
   const data = fixture(); const append = data.client.appendConversationMessage;
   data.client.appendConversationMessage = async (...args) => { await append(...args); if (data.calls.messages.length === 1) throw new Error("response lost"); return {}; };
