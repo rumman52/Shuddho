@@ -22,6 +22,7 @@ from scripts.cohort_release_gate import validate_rollout
 from scripts.day10_release_decision import read_json
 from scripts.ruke_pilot_eval import sha256 as file_sha256, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
+from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from scripts.staging_cohort_admission import (
     CohortAdmissionFailure,
     assert_denied_unprovisioned,
@@ -134,6 +135,50 @@ def probe_access(client: httpx.Client, member_tokens: list[str], denied_token: s
         raise PilotVerificationFailure("Nonmember denial did not return cohort_not_enabled.")
 
 
+
+def verify_live_runtime(client: httpx.Client, token: str, rollout: dict, revision: str,
+                        members_checked: int) -> None:
+    """Pin the admitted API to the exact reviewed source, full flags and cohort."""
+    response = client.get(
+        "/api/v1/runtime-manifest", headers={"Authorization": "Bearer " + token},
+    )
+    if response.status_code != 200:
+        raise PilotVerificationFailure("The authenticated runtime manifest was not available.")
+    try:
+        runtime = response.json()
+    except ValueError:
+        raise PilotVerificationFailure("The runtime manifest was not valid JSON.") from None
+    if not isinstance(runtime, dict):
+        raise PilotVerificationFailure("The runtime manifest was not an object.")
+    capabilities = runtime.get("capabilities")
+    declared = rollout.get("capabilities")
+    cohort = runtime.get("cohort")
+    declared_cohort = rollout.get("cohort")
+    if not (
+        type(runtime.get("schema_version")) is int
+        and runtime["schema_version"] == 2
+        and runtime.get("source_revision") == revision
+        and runtime.get("environment") == rollout.get("environment")
+        and isinstance(capabilities, dict)
+        and isinstance(declared, dict)
+        and set(capabilities) == RUNTIME_CAPABILITY_KEYS
+        and set(declared) == RUNTIME_CAPABILITY_KEYS
+        and all(type(value) is bool for value in capabilities.values())
+        and all(type(value) is bool for value in declared.values())
+        and capabilities == declared
+        and isinstance(runtime.get("reviewed_skills"), dict)
+        and runtime.get("action_providers") == rollout.get("action_providers", [])
+        and isinstance(cohort, dict)
+        and isinstance(declared_cohort, dict)
+        and cohort.get("enforced") is True
+        and type(cohort.get("max_users")) is int
+        and cohort["max_users"] == declared_cohort.get("max_users")
+        and type(cohort.get("configured_members")) is int
+        and cohort["configured_members"] == members_checked
+    ):
+        raise PilotVerificationFailure("Live API identity, flags or cohort differ from the frozen release.")
+
+
 def immutable_report(path: Path, result: dict) -> None:
     """Never overwrite even a failed or previous pilot access verification."""
     encoded = json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
@@ -162,7 +207,10 @@ def main(argv: list[str] | None = None) -> int:
             settings, member_tokens, denied_token, rollout["cohort"]["max_users"],
         )
         assert_denied_unprovisioned(settings, denied_id)
-        with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
+        with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False,
+                          trust_env=False) as client:
+            verify_live_runtime(client, member_tokens[0], rollout,
+                                args.source_revision, len(member_tokens))
             probe_access(client, member_tokens, denied_token)
         assert_denied_unprovisioned(settings, denied_id)
         report = {
@@ -174,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
             "rollout_manifest_sha256": digest,
             "members_checked": len(member_tokens),
             "members_http_200": len(member_tokens),
+            "runtime_manifest_verified": True,
             "nonmember_http_403": True,
             "nonmember_unprovisioned_before_after": True,
             "observed_at": datetime.now(timezone.utc).isoformat(),
