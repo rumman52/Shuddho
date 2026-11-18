@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from scripts.staging_prerequisite_preflight import PreflightFailure, _validate_https_endpoint
+
 TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
 
@@ -23,9 +25,18 @@ def passed(evidence: str) -> dict:
 
 
 def require_https_base(value: str) -> str:
-    parsed = urlparse(value.rstrip("/"))
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ExerciseFailure("SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS origin.")
+    # This endpoint receives two synthetic owners' bearer tokens. An extra
+    # path, control character or local/IP destination must not silently change
+    # the target of the credentialed staging exercise.
+    if not isinstance(value, str):
+        raise ExerciseFailure("SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS DNS origin.")
+    try:
+        _validate_https_endpoint(value, "SHUDDHO_STAGING_API_BASE_URL")
+    except PreflightFailure:
+        raise ExerciseFailure("SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS DNS origin.") from None
+    parsed = urlparse(value)
+    if parsed.path not in ("", "/") or parsed.params:
+        raise ExerciseFailure("SHUDDHO_STAGING_API_BASE_URL must be a clean HTTPS DNS origin.")
     return value.rstrip("/")
 
 
