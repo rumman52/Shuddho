@@ -151,7 +151,8 @@ The comparison requires at least 36/40 accepted development outcomes, 9/10 in
 each research/report-email x Bangla/English cell, no safety violation, artifact
 references, retained quality against baseline, and complete measured usage,
 cost, model/tool times and retries plus independently verified receipts.
-It selects the least costly eligible profile (baseline wins an exact tie).
+It selects the qualified profile with the lowest **all-in cost per independently
+accepted output** (baseline wins an exact tie).
 Quality retention is evaluated on the exact same task IDs, not only totals:
 the candidate may not lose any previously accepted baseline task even if it
 gains a different task in the same workflow/language cell. Within each profile,
@@ -188,3 +189,44 @@ retention/region and a genuinely ingested test event are verified, PostHog is
 INCOMPLETE. Keep the operator JSON report access controlled and local. Never
 emit raw prompts, documents, owner IDs, source IDs, review receipts or
 unapproved telemetry to PostHog.
+
+
+### Day 8 decision-integrity amendment — 18 November 2026 (PR #779)
+
+The initial test-only head in [CI #44287548874](https://github.com/rumman52/Shuddho/actions/runs/44287548874) reproduced eight failures (31 earlier tests passed). The original comparator could select a cheaper but slower candidate, emit a freeze with no end-to-end latency, ignore per-cell failure/retry types, and choose lower raw cohort spend despite a worse acceptance-normalized unit cost. This amendment is a **source-only fix**, not evidence of an operated paired experiment.
+
+Existing schema v1 report envelopes continue to parse. A report **cannot qualify for freeze** until it additionally supplies:
+
+- Configuration SHA-256 fingerprints for schema_sha256, flags_sha256, budgets_sha256 and shared prompt_template_sha256 in addition to existing provider/model, model settings, behavior, generated prompt and tools. The schema/flags/budget/prompt-template fingerprints, provider/model/settings and tool hash must match between profiles. Behavior and generated-prompt fingerprints may differ by context treatment; the instruction template does not.
+- The **same** explicit evaluation_policy for both profiles: positive approved_p95_end_to_end_latency_ms, quality_rubric_sha256, pricing_assumptions_sha256 and owner_approval_receipt_sha256. A syntactically valid hash is not proof that the Founder/C approved it: independent operator readback of actual approval and price ledger remains mandatory before setting receipt-verification flags. Never put confidential approval documents in this repository.
+- Per-case distinct run_id values, immutable provider_usage_case_receipt_sha256 values and output_sha256 digests for accepted artifacts, all independently reconciled to private run, provider and artifact records. The 80 baseline/candidate generations must use distinct run IDs, and no one receipt can be reused across tasks. Never publish raw run IDs outside approved operator storage.
+- Forty measured end_to_end_latency_ms values per profile, distinct from model/tool component time; p50/p95 are unavailable when **any** sample is missing. The candidate must meet the owner-approved p95 latency bound; an otherwise qualified baseline can still be selected.
+- Per-case retry_breakdown with exact model, tool and dispatch nonnegative integer keys. Model + tool must equal retry_count; dispatch retries are separate. failure_breakdown uses exact provider, model and tool keys. Missing categories block freeze instead of silently representing no failures.
+- Per-case cost_components_microusd with exact provider, tools, compute, storage and other nonnegative integer keys totaling cost_microusd. The value is **all-in** only to the extent that external provider invoices, tool/compute/storage allocation, owner-approved price assumptions and independent D review actually substantiate every component. Unknown components must remain missing/null and a blocker; do not use zero as a substitute for uncollected charges.
+
+Output includes 40 matched per-case raw candidate-minus-baseline deltas, four 10-case workflow/language cells with accepted denominators, token/time/cost breakdowns, per-cell p50/p95 and failure/retry types, and profile-level cost_microusd_per_accepted_output. Candidate selection uses exact-rational all-in cost divided by human-accepted outputs, **only after** 36/40 total, 9/10 per cell, no safety violations, artifact verification, no lost accepted task, full measurement, p95 latency, approval-policy and independent-receipt checks. Savings never qualify from a safety- or latency-failing candidate. Unknown metrics are null, not fabricated zeros. Legacy v1 reports lacking new freeze fingerprints still parse and produce BLOCKED instead of being silently promoted. A configuration object with an unrecognized property is rejected before it can be copied to the restricted freeze report, preventing accidental exposure of a prompt, private identifier or credential. Within-profile and cross-profile reuse of a usage-receipt digest is rejected as non-independent evidence. The freeze captures the approved decision policy, all model/prompt/tool/schema/flag/budget hashes, exact corpus identity and hashes of model, runtime configuration, schema model and comparator code; it authorizes no deployment.
+
+Operational evidence remains private, redacted and separately reviewed. These tests use synthetic identifiers and receipts only; they do **not** verify a provider invoice, a real human review, a Temporal natural fire or an owner consent decision.
+
+#### Proposed private telemetry payload — NOT enabled or approved
+
+If C and the Founder separately approve PostHog project identity, region, retention,
+environment/authorized domain, consent and kill-switch behavior under #584, a
+future server-side operational event may allowlist only:
+event_schema_version=1, environment (approved staging enum), workflow (fixed
+enum), outcome (fixed enum), provider and model (approved enum),
+latency_bucket (fixed ranges), error_category (fixed enum), input_tokens,
+output_tokens, retry_model, retry_tool, retry_dispatch and
+all_in_cost_microusd (nonnegative optional aggregates).
+Unknown usage stays null. No IDs or free-text properties are allowed:
+exclude prompts, document text, filenames, account/user/run IDs, source pins,
+emails, recipients, URLs, OAuth/API tokens, connector payloads, review receipts,
+and arbitrary exception strings. Choose a minimal purpose and owner-approved
+retention for every property. Reject unknown keys/types rather than recursively
+"sanitizing" arbitrary user content.
+
+No PostHog SDK, event invocation, pageview/autocapture or approved domain change
+is introduced by PR #779. Until the owner authorizes a concrete destination,
+documented consent and verified nonblocking/off-by-default event instrumentation,
+the egress/event sink must remain absent/disabled. Private operator JSON remains
+the permitted local analysis path.
