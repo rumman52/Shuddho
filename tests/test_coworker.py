@@ -3675,12 +3675,9 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
         task = new_task(container, owner)
         delegate = container.storage
 
-        def render(_draft, _sources, **_options):
-            return [
-                ("one.txt", "text/plain", b"first artifact"),
-                ("two.txt", "text/plain", b"second artifact"),
-                ("three.txt", "text/plain", b"third artifact"),
-            ]
+        def render(draft, sources, **options):
+            # Exercise PUT-loss recovery only after the real native-export validator passes.
+            return render_in_subprocess(draft, sources, **options)
 
         class FaultingStore:
             def __init__(self, wrapped):
@@ -3693,7 +3690,7 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
                 self.put_keys.append(key)
                 # Model the ambiguous S3 case: the second PUT persists, but
                 # the response is lost and the worker sees an exception.
-                if key.endswith("/two.txt") and self.fail_once:
+                if len(self.put_keys) == 2 and self.fail_once:
                     self.wrapped.put(key, data, content_type)
                     self.fail_once = False
                     raise OSError("simulated S3 PUT response loss")
@@ -3723,12 +3720,12 @@ def test_partial_export_storage_failure_cleans_unpublished_objects_before_retry(
         # The same deterministic keys can be safely rewritten after recovery.
         await runner.phase(task["id"], "export")
         saved = container.repository.step(task["id"], "export")
-        assert saved is not None and len(saved["artifacts"]) == 3
+        assert saved is not None and len(saved["artifacts"]) == 4
         assert {item["object_key"] for item in saved["artifacts"]} == set(storage.put_keys)
         for item in saved["artifacts"]:
             body = container.storage.get(item["object_key"], item["byte_size"])
             assert hashlib.sha256(body).hexdigest() == item["sha256"]
-        assert len(container.storage.inventory(prefix=prefix)) == 3
+        assert len(container.storage.inventory(prefix=prefix)) == 4
 
     asyncio.run(scenario())
 
