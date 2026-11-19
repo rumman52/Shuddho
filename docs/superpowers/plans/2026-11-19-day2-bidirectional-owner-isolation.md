@@ -37,10 +37,11 @@
 - The tests define the required `run_probe(..., owner_b_artifact_id=...)` input and structured `owner_isolation` receipt.
 - The test transport models separate owner-A and owner-B documents/artifacts and the API's owner-scoped lists.
 
-- [ ] **Step 1: Add the B-owned artifact fixture and bidirectional API routes**
-- [ ] **Step 2: Add tests for both document directions and both artifact directions**
-- [ ] **Step 3: Add fail-closed tests for missing/foreign B artifacts and leaked resources**
-- [ ] **Step 4: Run the focused test file and confirm failures are caused by the missing behavior**
+- [ ] **Step 1: Add `test_day2_proves_bidirectional_document_and_artifact_access`**; assert both owners have distinct document/artifact IDs, own reads/downloads pass, both foreign directions return `denied_404`, and both foreign listings are excluded.
+- [ ] **Step 2: Add `test_day2_requires_owner_b_control_artifact_before_any_private_write`**; assert a missing B artifact fails before any POST/PUT.
+- [ ] **Step 3: Add `test_day2_rejects_cross_owner_access_in_either_direction`**; parameterize A→B and B→A document read/write plus artifact content/download.
+- [ ] **Step 4: Add `test_day2_rejects_foreign_resource_enumeration`**; cover document and artifact list leakage in both directions.
+- [ ] **Step 5: Run the focused test file and confirm failures are caused by the missing behavior**
 
 Run: `uv run --locked --extra coworker pytest -q tests/test_staging_day2_execution.py`
 
@@ -53,7 +54,7 @@ Expected before implementation: failures for the missing B-artifact argument and
 - Test: `tests/test_staging_day2_execution.py`
 
 **Interfaces:**
-- Extend `run_probe(client, token_a, token_b, freeze, source, *, timeout_seconds=180, trusted_storage_host=None, owner_b_artifact_id)`.
+- Extend `run_probe(client, token_a, token_b, freeze, source, *, owner_b_artifact_id, timeout_seconds=180, trusted_storage_host=None)`.
 - Add private helpers to validate the B-owned artifact metadata and test each owner's document/artifact access.
 - Return `owner_isolation = {status, identities_distinct, owners: {a, b}}`; each owner record contains distinct `document_id`/`artifact_id` and explicit own-read, foreign-denial, and foreign-list statuses.
 
@@ -77,11 +78,12 @@ Run: `uv run --locked --extra coworker pytest -q tests/test_staging_day2_executi
 - Require owner keys `a` and `b`, distinct document/artifact IDs, owner A IDs matching the primary PDF task, and exact positive/negative/list-exclusion statuses in both directions.
 - Keep the structured `owner_isolation` receipt in the returned evidence summary and preserve exact equality across recovery/restore.
 
-- [ ] **Step 1: Update the valid proof fixture to contain both owner records**
-- [ ] **Step 2: Add tests for missing reverse checks, wrong statuses, duplicate IDs, and primary-ID mismatch**
-- [ ] **Step 3: Run the acceptance tests and confirm the new tests fail against the current gate**
-- [ ] **Step 4: Implement the strict validation helper**
-- [ ] **Step 5: Run the acceptance tests and confirm all pass**
+- [ ] **Step 1: Update `proofs()` with distinct `owners.a` and `owners.b` records and all exact status fields.
+- [ ] **Step 2: Add `test_acceptance_rejects_missing_or_leaky_bidirectional_owner_proof` for each direction and resource type.
+- [ ] **Step 3: Add `test_acceptance_rejects_duplicate_or_mismatched_owner_resource_ids` and `test_acceptance_rejects_missing_owner_direction_or_identity`.
+- [ ] **Step 4: Run the acceptance tests and confirm the new tests fail against the current gate.
+- [ ] **Step 5: Implement `validate_owner_isolation` and require it from `validate_evidence`.
+- [ ] **Step 6: Run the acceptance tests and confirm all pass.
 
 Run: `uv run --locked --extra coworker pytest -q tests/test_staging_day2_acceptance.py`
 
