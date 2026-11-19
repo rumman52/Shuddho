@@ -74,6 +74,26 @@ def test_simple_reminder_is_not_misclassified_as_agent_backed_goal_run():
     assert "scheduled_reminder" not in probe.SCENARIOS
 
 
+def test_one_completion_notification_contract_accepts_one_completed_notice():
+    notice = {"id": "notice-1", "kind": "automation_completed"}
+    assert probe.require_one_completion_notification([notice]) is notice
+
+
+@pytest.mark.parametrize("notices", [
+    [],
+    [{"id": "start-1", "kind": "automation_started"}],
+    [{"id": "done-1", "kind": "automation_completed"},
+     {"id": "done-2", "kind": "automation_completed"}],
+    [{"id": "start-1", "kind": "automation_started"},
+     {"id": "done-1", "kind": "automation_completed"}],
+    [{"kind": "automation_completed"}],
+])
+def test_one_completion_notification_contract_rejects_noncanonical_notices(notices):
+    with pytest.raises(probe.ScheduledProfileProbeFailure,
+                       match="exactly one completion notification"):
+        probe.require_one_completion_notification(notices)
+
+
 class _ScopeResponse:
     status_code = 200
 
@@ -198,8 +218,6 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
                      "occurrence_state": "accepted", "run_state": "completed",
                      "run_id": "run-1", "due_at": "2026-11-12T02:00:00Z"}],
         "notifications": [
-            {"id": "start", "automation_id": "automation-1", "occurrence_id": "occ-1",
-             "kind": "automation_started"},
             {"id": "done", "automation_id": "automation-1", "occurrence_id": "occ-1",
              "kind": "automation_completed"},
         ],
