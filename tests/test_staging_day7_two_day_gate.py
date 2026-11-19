@@ -16,7 +16,7 @@ RELEASE = {"release_id": "test-release", "source_revision": "a" * 40,
 def evidence(day: int, version: str) -> dict:
     due = f"2026-11-{day:02d}T02:00:00+00:00"
     return {
-        "schema_version": 1, "evidence_kind": "pa10_scheduled_profile",
+        "schema_version": 2, "evidence_kind": "pa10_scheduled_profile",
         "scenario": "daily_coworker", "status": "passed", "release": deepcopy(RELEASE),
         "synthetic_account_label": "stage-day7-synthetic", "owner_id": "owner-1",
         "automation_id": "automation-1", "automation_revision": 1,
@@ -27,8 +27,8 @@ def evidence(day: int, version: str) -> dict:
         "prepared_at": f"2026-11-{day:02d}T01:30:00+00:00",
         "verified_at": f"2026-11-{day:02d}T02:07:00+00:00",
         "occurrence_id": f"occ-{day}", "due_at": due, "run_id": f"run-{day}",
-        "run_state": "completed", "started_notification_id": f"started-{day}",
-        "completion_notification_id": f"completed-{day}", "new_notification_count": 2,
+        "run_state": "completed",
+        "completion_notification_id": f"completed-{day}", "new_notification_count": 1,
         "input_version_ids": [version], "document_ids": ["doc-1"],
         "authorized_document_ids": ["doc-1"], "goal_id": "goal-1", "goal_revision": 1,
         "project_id": "project-1",
@@ -264,16 +264,25 @@ def test_two_day_gate_rejects_unbound_staging_evidence(broken):
         verify_two_day(first, second, paused)
 
 @pytest.mark.parametrize("defect", [
-    "same_day_duplicate_notice_id",
-    "cross_day_duplicate_notice_id",
+    "missing_completion_notification_id",
+    "cross_day_duplicate_notification_id",
+    "wrong_notification_count",
+    "legacy_started_notification",
+    "legacy_schema_v1",
     "stale_day8_baseline",
 ])
-def test_two_day_gate_rejects_non_unique_notices_and_stale_baseline(defect):
+def test_two_day_gate_rejects_invalid_completion_notices_and_stale_baseline(defect):
     first, second, paused = valid_pair()
-    if defect == "same_day_duplicate_notice_id":
-        first["completion_notification_id"] = first["started_notification_id"]
-    elif defect == "cross_day_duplicate_notice_id":
-        second["started_notification_id"] = first["completion_notification_id"]
+    if defect == "missing_completion_notification_id":
+        first["completion_notification_id"] = ""
+    elif defect == "cross_day_duplicate_notification_id":
+        second["completion_notification_id"] = first["completion_notification_id"]
+    elif defect == "wrong_notification_count":
+        second["new_notification_count"] = 2
+    elif defect == "legacy_started_notification":
+        second["started_notification_id"] = "started-13"
+    elif defect == "legacy_schema_v1":
+        first["schema_version"] = 1
     else:
         # A second-day baseline must be captured after the first day's verified run,
         # otherwise it cannot prove the second independent natural occurrence.

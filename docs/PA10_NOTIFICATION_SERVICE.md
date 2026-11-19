@@ -19,9 +19,12 @@ A new `NotificationRepository` now owns:
 - delivered/read inbox listing;
 - read acknowledgement.
 
-The existing automation path still creates the same `automation_started`
-notification, with the same message, expiry and quiet-hours behavior. It now
-delegates enqueue and delivery operations to the notification service.
+Non-briefing automation profiles retain the existing `automation_started`
+notification, message, expiry and quiet-hours behavior. A scheduled daily or weekly
+briefing intentionally emits no early start notice: each briefing occurrence
+has one unique notification row, so the existing completion hook creates the
+single owner-visible `automation_completed` notice after the result is ready.
+All enqueue and delivery operations still use the same notification service.
 
 ## Compatibility
 

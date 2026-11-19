@@ -574,9 +574,10 @@ def _day8_policy_valid(value: object) -> bool:
     )
 
 
-def _day8_cases(report: dict, expected: dict, label: str) -> dict:
-    if not isinstance(report, dict) or report.get("schema_version") != 1 or report.get("split") != "development":
-        raise ValueError(f"{label}: require development-only schema v1")
+def _day8_cases(report: dict, expected: dict, label: str) -> tuple[dict, dict, bool]:
+    schema_version = report.get("schema_version") if isinstance(report, dict) else None
+    if not isinstance(report, dict) or schema_version not in {1, 2} or report.get("split") != "development":
+        raise ValueError(f"{label}: require development-only schema v1 or v2")
     config = report.get("configuration")
     if not isinstance(config, dict) or config.get("profile") not in DAY8_PROFILES:
         raise ValueError(f"{label}: missing bounded configuration identity")
@@ -596,7 +597,7 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
         raise ValueError(f"{label}: human-review ledger hash required")
     results = report.get("results")
     if not isinstance(results, list) or len(results) != 40:
-        raise ValueError(f"{label}: exactly 40 development task results required")
+        raise ValueError(f"{label}: exactly 40 first-run development task results required")
     by_id = {}
     seen_accepted_artifact_refs = set()
     seen_accepted_review_refs = set()
@@ -610,19 +611,25 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
             raise ValueError(f"{label}: unknown or duplicated development task ID")
         if (row.get("workflow"), row.get("language")) != expected[case_id]:
             raise ValueError(f"{label}: task workflow/language differs from frozen corpus")
+        if schema_version == 2 and (
+            row.get("execution_kind") != "first_run"
+            or type(row.get("attempt_number")) is not int
+            or row["attempt_number"] != 1
+        ):
+            raise ValueError(f"{label}: results must contain explicitly identified first-run attempts only")
         run_id = row.get("run_id")
         if run_id is not None:
             if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
                 raise ValueError(f"{label}: malformed run identity")
             if run_id in seen_run_ids:
-                raise ValueError(f"{label}: reused run identity across cases")
+                raise ValueError(f"{label}: reused run identity across attempts")
             seen_run_ids.add(run_id)
         usage_receipt = row.get("provider_usage_case_receipt_sha256")
         if usage_receipt is not None:
             if not _day8_digest(usage_receipt):
                 raise ValueError(f"{label}: malformed provider usage receipt digest")
             if usage_receipt in seen_usage_receipts:
-                raise ValueError(f"{label}: reused provider usage receipt across cases")
+                raise ValueError(f"{label}: reused provider usage receipt across attempts")
             seen_usage_receipts.add(usage_receipt)
         if row.get("output_sha256") is not None and not _day8_digest(row["output_sha256"]):
             raise ValueError(f"{label}: malformed output digest")
@@ -684,8 +691,103 @@ def _day8_cases(report: dict, expected: dict, label: str) -> dict:
         by_id[case_id] = row
     if set(by_id) != set(expected):
         raise ValueError(f"{label}: incomplete frozen development task coverage")
-    return by_id
 
+    # Schema v2 makes the 40 primary executions explicit and retains any later
+    # execution as a separate, linked rerun. Legacy v1 remains parseable, but
+    # cannot prove that its 40 rows are first runs or that rerun costs are present.
+    reruns_by_id: dict[str, list[dict]] = {}
+    attempt_provenance_complete = schema_version == 2
+    if schema_version == 2:
+        reruns = report.get("reruns")
+        if not isinstance(reruns, list):
+            attempt_provenance_complete = False
+            reruns = []
+        attempts_by_case: dict[str, set[int]] = {}
+        for row in reruns:
+            if not isinstance(row, dict):
+                raise ValueError(f"{label}: invalid rerun evidence")
+            case_id = row.get("id")
+            if not isinstance(case_id, str) or case_id not in by_id:
+                raise ValueError(f"{label}: rerun references an unknown development task")
+            if (row.get("workflow"), row.get("language")) != expected[case_id]:
+                raise ValueError(f"{label}: rerun workflow/language differs from frozen corpus")
+            attempt_number = row.get("attempt_number")
+            if row.get("execution_kind") != "rerun" or type(attempt_number) is not int or attempt_number < 2:
+                raise ValueError(f"{label}: reruns must have an explicit attempt number of at least two")
+            if row.get("rerun_of_run_id") != by_id[case_id].get("run_id"):
+                raise ValueError(f"{label}: rerun must reference its case's first-run identity")
+            attempts = attempts_by_case.setdefault(case_id, set())
+            if attempt_number in attempts:
+                raise ValueError(f"{label}: duplicated rerun attempt number for a development task")
+            attempts.add(attempt_number)
+            run_id = row.get("run_id")
+            if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
+                raise ValueError(f"{label}: malformed rerun identity")
+            if run_id in seen_run_ids:
+                raise ValueError(f"{label}: reused run identity across attempts")
+            seen_run_ids.add(run_id)
+            usage_receipt = row.get("provider_usage_case_receipt_sha256")
+            if usage_receipt is not None:
+                if not _day8_digest(usage_receipt):
+                    raise ValueError(f"{label}: malformed rerun provider usage receipt digest")
+                if usage_receipt in seen_usage_receipts:
+                    raise ValueError(f"{label}: reused provider usage receipt across attempts")
+                seen_usage_receipts.add(usage_receipt)
+            for field in ("passed", "human_accepted", "safety_passed"):
+                if type(row.get(field)) is not bool:
+                    attempt_provenance_complete = False
+            for field in DAY8_CASE_FIELDS:
+                if row.get(field) is not None and not _day8_uint(row[field]):
+                    raise ValueError(f"{label}: rerun {field} must be a measured nonnegative integer or null")
+            retries = row.get("retry_breakdown")
+            if retries is not None:
+                if not _day8_counts(retries, DAY8_RETRY_TYPES):
+                    raise ValueError(f"{label}: invalid rerun retry breakdown")
+                if row.get("retry_count") is not None and (
+                    retries["model"] + retries["tool"] != row["retry_count"]
+                ):
+                    raise ValueError(f"{label}: rerun retry breakdown must match execution retries")
+            failures = row.get("failure_breakdown")
+            if failures is not None and not _day8_counts(failures, DAY8_FAILURE_TYPES):
+                raise ValueError(f"{label}: invalid rerun failure breakdown")
+            costs = row.get("cost_components_microusd")
+            if costs is not None:
+                if not _day8_counts(costs, DAY8_COST_COMPONENTS):
+                    raise ValueError(f"{label}: invalid rerun all-in cost components")
+                if row.get("cost_microusd") is not None and sum(costs.values()) != row["cost_microusd"]:
+                    raise ValueError(f"{label}: rerun cost components must sum to all-in cost")
+            artifacts = row.get("verified_artifact_refs")
+            if not isinstance(artifacts, list) or any(
+                not isinstance(ref, str) or not ref.strip() for ref in artifacts
+            ):
+                attempt_provenance_complete = False
+                artifacts = []
+            if row.get("output_sha256") is not None and not _day8_digest(row["output_sha256"]):
+                raise ValueError(f"{label}: malformed rerun output digest")
+            if row.get("human_accepted") is True:
+                if (
+                    not row.get("passed") or not row.get("safety_passed")
+                    or not _day8_digest(row.get("output_sha256"))
+                    or not artifacts
+                    or not isinstance(row.get("accepted_outcome_ref"), str)
+                    or not row["accepted_outcome_ref"].strip()
+                ):
+                    attempt_provenance_complete = False
+                else:
+                    outcome_ref = row["accepted_outcome_ref"].strip()
+                    if outcome_ref in seen_accepted_review_refs:
+                        raise ValueError(f"{label}: reused accepted outcome reference across attempts")
+                    seen_accepted_review_refs.add(outcome_ref)
+                    for ref in artifacts:
+                        artifact_ref = ref.strip()
+                        if artifact_ref in seen_accepted_artifact_refs:
+                            raise ValueError(f"{label}: reused accepted artifact across attempts")
+                        seen_accepted_artifact_refs.add(artifact_ref)
+            reruns_by_id.setdefault(case_id, []).append(row)
+        for case_id, attempts in attempts_by_case.items():
+            if sorted(attempts) != list(range(2, max(attempts) + 1)):
+                raise ValueError(f"{label}: rerun attempt numbers must be consecutive from two")
+    return by_id, reruns_by_id, attempt_provenance_complete
 
 def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> dict:
     """Compare two externally evidenced, matched 40-task development results.

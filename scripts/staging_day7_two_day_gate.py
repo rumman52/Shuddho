@@ -85,17 +85,19 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
                          "output_language", "quiet_hours", "schedule_applied_revision",
                          "schedule_applied_enabled")
     for index, item in enumerate((first, second), start=1):
-        require(item.get("schema_version") == 1
+        require(item.get("schema_version") == 2
                 and item.get("evidence_kind") == "pa10_scheduled_profile"
                 and item.get("scenario") == "daily_coworker"
                 and item.get("status") == "passed"
                 and item.get("run_profile") == "briefing"
                 and item.get("run_state") == "completed",
                 f"Day {index} is not a passed daily briefing profile probe.")
-        require(item.get("new_notification_count") == 2
-                and all(item.get(k) for k in ("occurrence_id", "run_id", "started_notification_id",
-                                                 "completion_notification_id", "operator_case_reference")),
-                f"Day {index} is missing one-run/two-notice evidence.")
+        require(type(item.get("new_notification_count")) is int
+                and item.get("new_notification_count") == 1
+                and all(item.get(k) for k in ("occurrence_id", "run_id",
+                                                 "completion_notification_id", "operator_case_reference"))
+                and "started_notification_id" not in item,
+                f"Day {index} is missing one-run/one-completion-notice evidence.")
         revision = item.get("automation_revision")
         require(type(revision) is int and revision >= 1,
                 f"Day {index} must identify a valid accepted automation revision.")
@@ -107,16 +109,12 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
                 f"Day {index} occurrence must precede the approved schedule expiry.")
         for field in (*identity, *schedule_identity):
             require(item.get(field) == first.get(field), f"Day {index} changed {field}.")
-    # Two different lifecycle notices must have different persisted IDs, both
-    # within an occurrence and across consecutive scheduled occurrences.
-    notice_ids = [
-        item.get(field)
-        for item in (first, second)
-        for field in ("started_notification_id", "completion_notification_id")
-    ]
+    # One completion notice is persisted per occurrence; consecutive natural
+    # occurrences must therefore carry two different notification IDs.
+    notice_ids = [item.get("completion_notification_id") for item in (first, second)]
     require(all(isinstance(value, str) and bool(value.strip()) for value in notice_ids)
-            and len(notice_ids) == len(set(notice_ids)),
-            "Both days must have four distinct nonblank notification IDs.")
+            and len(notice_ids) == 2 and len(notice_ids) == len(set(notice_ids)),
+            "Both days must have two distinct nonblank completion notification IDs.")
     case_reference = first.get("operator_case_reference")
     require(isinstance(case_reference, str) and bool(case_reference.strip())
             and second.get("operator_case_reference") == case_reference
@@ -164,7 +162,7 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
     require(local_dates[1] == local_dates[0] + timedelta(days=1)
             and due_timestamps[1] > due_timestamps[0],
             "Expected consecutive *local calendar days*, not two same-day triggers.")
-    for field in ("occurrence_id", "run_id", "started_notification_id", "completion_notification_id"):
+    for field in ("occurrence_id", "run_id", "completion_notification_id"):
         require(first.get(field) != second.get(field), f"Both days reused {field}.")
     docs_first = strings(first.get("document_ids"), "Day 7 source documents")
     docs_second = strings(second.get("document_ids"), "Day 8 source documents")
