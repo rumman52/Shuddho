@@ -1,5 +1,11 @@
 # Days 7–8 operational acceptance hardening — 19 November 2026
 
+> Historical record of merged PR #791. Follow-up removes the experimental
+> `operational_telemetry.py` and `tests/test_operational_telemetry.py` in favor
+> of the already-reviewed candidate `day8_telemetry.py` contract and its
+> `tests/test_day8_telemetry_privacy.py` suite. References below describe the
+> original PR's state, not currently existing files.
+
 ## Goal and boundary
 
 Implement missing **source-level** acceptance safeguards for the exact Day 7/8 pilot contract without fabricating two natural Temporal firings, 80 paid development runs, owner privacy consent, API/worker deployment, or release freeze. Source changes alone **do not** satisfy issue #734.
@@ -16,7 +22,7 @@ Base: main observed at `cebe322d88d2120e6c78c6755b70445eedf8c39f`. Branch: `fix/
 ## Reproduce
 
 ```bash
-uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_task_economics_evidence.py tests/test_staging_day7_two_day_gate.py tests/test_operational_telemetry.py -q -rs
+uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_task_economics_evidence.py tests/test_staging_day7_two_day_gate.py tests/test_day8_telemetry_privacy.py -q -rs
 ```
 
 Run all required GitHub CI checks on the exact final PR SHA. Telemetry synthetic approval fixtures are **not real owner approval**. This patch adds no event ingestion, billing, resource provisioning, release deployment, production flag, schema migration or provider switch.

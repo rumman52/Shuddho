@@ -11,8 +11,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+import re
 
 EVENT_NAME = "rukh_agent_run_operational_v1"
+# These validation checks are not a signature verifier or proof of human approval.
+_PROJECT_ID = re.compile(r"[0-9]{1,20}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_METRIC_MAX = 2**63 - 1
 WORKFLOWS = frozenset({"research", "report_email", "daily_briefing", "general_agent"})
 OUTCOMES = frozenset({"completed", "failed", "needs_input", "blocked", "cancelled", "unknown"})
 ERROR_CATEGORIES = frozenset({
@@ -36,12 +41,32 @@ class EventPolicy:
     consent_granted: bool = False
     kill_switch: bool = True
     approved_provider_models: frozenset[tuple[str, str]] = field(default_factory=frozenset)
+    # Set only by the reviewed server-side integration after verifying the
+    # dated Founder/C decision and actual destination configuration. A test
+    # fixture containing this shape is NOT an owner approval.
+    project_id: str | None = None
+    approved_project_id: str | None = None
+    destination_region: str | None = None
+    approved_region: str | None = None
+    destination_retention_days: int | None = None
+    approved_retention_days: int | None = None
+    privacy_approval_sha256: str | None = None
 
     def permits(self) -> bool:
         return (
             self.enabled is True and self.privacy_scope_approved is True
             and self.consent_granted is True and self.kill_switch is False
             and self.environment == "staging" and bool(self.approved_provider_models)
+            and isinstance(self.project_id, str)
+            and _PROJECT_ID.fullmatch(self.project_id) is not None
+            and self.project_id == self.approved_project_id
+            and self.destination_region in ("us", "eu")
+            and self.destination_region == self.approved_region
+            and type(self.destination_retention_days) is int
+            and 1 <= self.destination_retention_days <= 3650
+            and self.destination_retention_days == self.approved_retention_days
+            and isinstance(self.privacy_approval_sha256, str)
+            and _SHA256.fullmatch(self.privacy_approval_sha256) is not None
         )
 
 
@@ -54,7 +79,7 @@ def _nullable_count(raw: Mapping[str, Any], key: str) -> int | None:
     value = raw.get(key)
     if value is None:
         return None
-    if type(value) is not int or value < 0:
+    if type(value) is not int or not 0 <= value <= _METRIC_MAX:
         raise _invalid()
     return value
 
@@ -94,6 +119,8 @@ def build_operational_event(
         raise _invalid()
     provider, model = raw["provider"], raw["model"]
     if (type(provider) is not str or type(model) is not str
+        or re.fullmatch(r"[a-zA-Z0-9._-]{1,80}", provider) is None
+        or re.fullmatch(r"[a-zA-Z0-9._-]{1,80}", model) is None
         or (provider, model) not in policy.approved_provider_models):
         raise _invalid()
     properties: dict[str, str | int | None] = {
