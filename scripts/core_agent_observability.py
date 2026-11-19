@@ -810,9 +810,14 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     for label, report in (("baseline", baseline), ("bounded_context_compact_observations", candidate)):
         if any(report.get(key) != value for key, value in identity.items()):
             raise ValueError(f"{label}: development corpus identity mismatch")
-    base_cases, _base_reruns, _base_attempts_complete = _day8_cases(baseline, expected, "baseline")
-    candidate_cases, _candidate_reruns, _candidate_attempts_complete = _day8_cases(
-        candidate, expected, "bounded_context_compact_observations"
+    # The parser returns (first-run cases, reruns, provenance completeness).
+    # Compare only the matched first-run case mapping here; never treat that
+    # tuple as a dictionary or silently conflate rerun attempts with baseline.
+    base_cases, _base_reruns, _base_attempt_provenance = _day8_cases(
+        baseline, expected, "baseline",
+    )
+    candidate_cases, _candidate_reruns, _candidate_attempt_provenance = _day8_cases(
+        candidate, expected, "bounded_context_compact_observations",
     )
     base_config = baseline["configuration"]
     candidate_config = candidate["configuration"]

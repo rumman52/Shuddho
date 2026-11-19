@@ -2380,9 +2380,8 @@ class AutomationRepository:
                 owner=automation.owner_id,
                 workspace_id=automation.workspace_id,
                 automation_id=automation.id,
-                # A briefing has no start notice; bind its one completion
-                # notice to the occurrence. Other profiles already consume
-                # that unique slot with their start notice.
+                # Briefings intentionally have exactly one notice per occurrence;
+                # other profiles retain their existing start/finish notices.
                 occurrence_id=occurrence.id if profile == "briefing" else None,
                 kind="automation_completed",
                 title=(

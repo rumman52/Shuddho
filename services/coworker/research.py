@@ -175,7 +175,16 @@ class TavilyResearchProvider:
 
 def validate_evidence(draft: ResearchPackage, sources: list[dict]) -> None:
     """Reject invented references/quotes. This does not prove semantic entailment."""
-    by_id = {source["id"]: source for source in sources if source.get("kind") == "web"}
+    by_id: dict[str, dict] = {}
+    for source in sources:
+        if source.get("kind") != "web":
+            continue
+        source_id = source.get("id")
+        if not isinstance(source_id, str) or not re.fullmatch(r"web-[1-5]", source_id):
+            raise ValueError("Invalid research source identifier")
+        if source_id in by_id:
+            raise ValueError("Research source duplicate identifier")
+        by_id[source_id] = source
     used_quotes: dict[str, set[str]] = {}
     for finding in draft.findings:
         for citation in finding.citations:
@@ -183,6 +192,23 @@ def validate_evidence(draft: ResearchPackage, sources: list[dict]) -> None:
             quote = " ".join(unicodedata.normalize("NFC", citation.quote).split())
             if not source:
                 raise ValueError("A citation does not match the retrieved evidence")
+            # A source-backed quote must retain enough provenance to be
+            # independently identified. An absent publication date is allowed.
+            label, retrieved = source.get("label"), source.get("retrieved_at")
+            if not isinstance(label, str) or not label.strip() or len(label) > 180:
+                raise ValueError("Research source provenance is missing a valid title")
+            if not isinstance(retrieved, str):
+                raise ValueError("Research source provenance is missing a retrieval timestamp")
+            try:
+                retrieved_date = datetime.fromisoformat(retrieved.replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("Research source provenance has an invalid retrieval timestamp") from None
+            if (retrieved_date.tzinfo is None
+                or retrieved_date > datetime.now(timezone.utc) + timedelta(days=1)):
+                raise ValueError("Research source provenance has an invalid retrieval timestamp")
+            published = source.get("source_date")
+            if published is not None and source_date(published) is None:
+                raise ValueError("Research source provenance has an invalid publication date")
             # Research results carry an excerpt digest from retrieval. Recheck it
             # immediately before accepting evidence so modified persisted text
             # cannot satisfy a real quote with a stale provenance hash.

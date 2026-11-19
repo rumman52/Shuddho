@@ -2523,8 +2523,8 @@ def test_goal_driven_proactive_schedule_freezes_reviewed_tool_scope(
         )).all()
         assert len(started) == 1
         assert started[0].occurrence_id == first["occurrence_id"]
-        # The start notice occupies the unique occurrence slot for this profile;
-        # completion must still enqueue a separate idempotent notice.
+        # The start notification occupies this occurrence unique-key slot;
+        # the completion notification must remain independently idempotent.
         assert completed[0].occurrence_id is None
         assert completed[0].id != started[0].id
 
