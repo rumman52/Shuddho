@@ -51,7 +51,9 @@ Expected before implementation: failures for the missing B-artifact argument and
 
 **Files:**
 - Modify: `scripts/staging_day2_execution.py`
+- Modify: `scripts/staging_api_exercise.py`
 - Test: `tests/test_staging_day2_execution.py`
+- Test: `tests/test_staging_api_exercise.py`
 
 **Interfaces:**
 - Extend `run_probe(client, token_a, token_b, freeze, source, *, owner_b_artifact_id, timeout_seconds=180, trusted_storage_host=None)`.
@@ -63,7 +65,8 @@ Expected before implementation: failures for the missing B-artifact argument and
 - [ ] **Step 3: Create B's synthetic TXT document and A's selected PDF; verify both document directions**
 - [ ] **Step 4: Verify A's report artifact and B's denial; capture both owner records**
 - [ ] **Step 5: Require `--owner-b-artifact-id` in the CLI and pass it to `run_probe`**
-- [ ] **Step 6: Run the focused execution tests and confirm all pass**
+- [ ] **Step 6: Expose `task_id` and `artifact_id` from `staging_api_exercise.py --artifact` receipts so a separately approved B control artifact can be supplied without logging secrets**
+- [ ] **Step 7: Run the focused execution/API-exercise tests and confirm all pass**
 
 Run: `uv run --locked --extra coworker pytest -q tests/test_staging_day2_execution.py`
 
@@ -87,14 +90,15 @@ Run: `uv run --locked --extra coworker pytest -q tests/test_staging_day2_executi
 
 Run: `uv run --locked --extra coworker pytest -q tests/test_staging_day2_acceptance.py`
 
-### Task 4: Update the operator contract
+### Task 4: Update the operator contract and current readback
 
 **Files:**
 - Modify: `docs/coworker-roadmap/DAY2_EXECUTION_CONTRACT_2026-11-12.md`
 
-- [ ] **Step 1: Document the required pre-existing B-owned artifact ID and how to supply it**
-- [ ] **Step 2: Document both document/artifact directions and the structured receipt**
-- [ ] **Step 3: State explicitly that a missing B artifact blocks before the A task and does not authorize a second provider call**
+- [ ] **Step 1: Document the required pre-existing B-owned artifact ID and the separately authorized reversed-token control exercise**
+- [ ] **Step 2: Document both document/artifact directions and the schema-version-1 structured receipt**
+- [ ] **Step 3: Record the 19 November Render/Supabase/Vercel readback without credentials or raw receipts**
+- [ ] **Step 4: State explicitly that a missing B artifact blocks before the A task and does not authorize a second provider call**
 
 ### Task 5: Full verification and review
 
