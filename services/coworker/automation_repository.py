@@ -2380,6 +2380,7 @@ class AutomationRepository:
                 owner=automation.owner_id,
                 workspace_id=automation.workspace_id,
                 automation_id=automation.id,
+                occurrence_id=occurrence.id,
                 kind="automation_completed",
                 title=(
                     "Meeting preparation ready"
