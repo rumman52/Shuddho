@@ -810,8 +810,10 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     for label, report in (("baseline", baseline), ("bounded_context_compact_observations", candidate)):
         if any(report.get(key) != value for key, value in identity.items()):
             raise ValueError(f"{label}: development corpus identity mismatch")
-    base_cases = _day8_cases(baseline, expected, "baseline")
-    candidate_cases = _day8_cases(candidate, expected, "bounded_context_compact_observations")
+    base_cases, _base_reruns, _base_attempts_complete = _day8_cases(baseline, expected, "baseline")
+    candidate_cases, _candidate_reruns, _candidate_attempts_complete = _day8_cases(
+        candidate, expected, "bounded_context_compact_observations"
+    )
     base_config = baseline["configuration"]
     candidate_config = candidate["configuration"]
     # Both arms must have the same explicitly bounded execution budget.
