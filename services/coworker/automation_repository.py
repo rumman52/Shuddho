@@ -2318,35 +2318,36 @@ class AutomationRepository:
                 raise CoworkerError("automation_occurrence_lost", "Scheduled occurrence state was unavailable.", 503)
             occurrence.run_id = run["id"]; occurrence.state = "accepted"; occurrence.reason = None; occurrence.updated_at = utcnow()
             automation = db.get(Automation, automation_id)
-            visible_at = self.notifications.visible_at_after_quiet_hours(
-                due_at,
-                automation.timezone,
-                automation.quiet_hours,
-            )
-            self.notifications.enqueue_pending(
-                db,
-                owner=owner,
-                workspace_id=automation.workspace_id,
-                automation_id=automation_id,
-                occurrence_id=occurrence.id,
-                kind="automation_started",
-                title=(
-                    "Briefing started"
-                    if run_profile == "briefing"
-                    else "Goal-driven coworker started"
-                    if run_profile == "proactive"
-                    else "Scheduled work started"
-                ),
-                message=(
-                    "Your personal agent started one bounded briefing run."
-                    if run_profile == "briefing"
-                    else "Your coworker started one bounded goal-driven run from the reviewed schedule."
-                    if run_profile == "proactive"
-                    else "Your personal agent started the scheduled bounded run."
-                ),
-                visible_at=visible_at,
-                expires_at=visible_at + timedelta(days=30),
-            )
+            # A daily briefing has one owner-visible notification per occurrence:
+            # the completion notice emitted by notify_run_completed. Because
+            # occurrence_id is unique in cw_notifications, an early start notice
+            # would occupy that row and suppress the completion notice.
+            if run_profile != "briefing":
+                visible_at = self.notifications.visible_at_after_quiet_hours(
+                    due_at,
+                    automation.timezone,
+                    automation.quiet_hours,
+                )
+                self.notifications.enqueue_pending(
+                    db,
+                    owner=owner,
+                    workspace_id=automation.workspace_id,
+                    automation_id=automation_id,
+                    occurrence_id=occurrence.id,
+                    kind="automation_started",
+                    title=(
+                        "Goal-driven coworker started"
+                        if run_profile == "proactive"
+                        else "Scheduled work started"
+                    ),
+                    message=(
+                        "Your coworker started one bounded goal-driven run from the reviewed schedule."
+                        if run_profile == "proactive"
+                        else "Your personal agent started the scheduled bounded run."
+                    ),
+                    visible_at=visible_at,
+                    expires_at=visible_at + timedelta(days=30),
+                )
             return {"occurrence_id": occurrence.id, "run_id": run["id"], "state": "accepted", "replayed": False}
 
     def notify_run_completed(self, run_id: str) -> None:
