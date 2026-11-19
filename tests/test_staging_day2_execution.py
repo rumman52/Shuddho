@@ -547,7 +547,7 @@ def test_day2_rejects_cross_owner_access_in_either_direction(monkeypatch, overri
 ])
 def test_day2_rejects_foreign_resource_enumeration(monkeypatch, override):
     api = BidirectionalDay2API(**override)
-    with pytest.raises(day2.Day2Failure, match="enumerat|list"):
+    with pytest.raises(day2.Day2Failure, match="enumerat|list|catalog|visible"):
         exercise_bidirectional(monkeypatch, api)
 
 
@@ -572,3 +572,27 @@ def test_day2_binds_verified_subject_to_authenticated_api_identity(monkeypatch):
     api = BidirectionalDay2API(wrong_account_binding=True)
     with pytest.raises(day2.Day2Failure, match="subjects"):
         exercise_bidirectional(monkeypatch, api)
+
+
+def test_day2_rejects_malformed_owner_b_artifact_id_before_api_calls():
+    api = BidirectionalDay2API()
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match="valid UUID"):
+            day2.run_probe(
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id="not-a-uuid", timeout_seconds=5,
+            )
+    assert api.calls == []
+
+
+def test_day2_fails_before_private_writes_if_owner_b_artifact_is_visible_to_a():
+    api = BidirectionalDay2API(leak_b_artifact_to_a=True)
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match="visible in owner A"):
+            day2.run_probe(
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+            )
+    assert not any(method in {"POST", "PUT"} for method, _, _ in api.calls)
