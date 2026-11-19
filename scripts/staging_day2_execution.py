@@ -141,6 +141,87 @@ def public_signed_url(url: object, *, trusted_storage_host: str | None = None) -
     return url
 
 
+def _artifact_catalog(client: httpx.Client, headers: dict[str, str], label: str) -> list:
+    value = obj(checked(client.get("/api/v1/artifacts", headers=headers), 200, label), label)
+    artifacts = value.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise Day2Failure(f"{label} did not return an artifact list.")
+    return artifacts
+
+
+def _artifact_entry(artifacts: list, artifact_id: str, label: str) -> dict:
+    matches = [
+        item for item in artifacts
+        if isinstance(item, dict) and str(item.get("id") or "") == artifact_id
+    ]
+    if len(matches) != 1:
+        raise Day2Failure(f"{label} is not present exactly once in its owner's artifact catalog.")
+    item = matches[0]
+    if (
+        not isinstance(item.get("filename"), str) or not item["filename"].strip()
+        or not isinstance(item.get("sha256"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", item["sha256"])
+        or type(item.get("byte_size")) is not int
+        or not 1 <= item["byte_size"] <= 16 * 1024 * 1024
+    ):
+        raise Day2Failure(f"{label} has incomplete digest/size metadata.")
+    return item
+
+
+def _verify_artifact_access(
+    client: httpx.Client,
+    owner_headers: dict[str, str],
+    foreign_headers: dict[str, str],
+    artifact_id: str,
+    metadata: dict,
+    *,
+    label: str,
+    trusted_storage_host: str | None,
+) -> dict:
+    content_route = f"/api/v1/artifacts/{artifact_id}/content"
+    download_route = f"/api/v1/artifacts/{artifact_id}/download"
+    if client.get(content_route, headers=foreign_headers).status_code != 404:
+        raise Day2Failure(f"cross-owner {label} artifact content was not denied.")
+    if client.get(download_route, headers=foreign_headers).status_code != 404:
+        raise Day2Failure(f"cross-owner {label} artifact download was not denied.")
+
+    own_bytes = checked(client.get(content_route, headers=owner_headers), 200, label + " artifact content").content
+    expected_sha = metadata["sha256"]
+    expected_bytes = metadata["byte_size"]
+    if len(own_bytes) != expected_bytes or hashlib.sha256(own_bytes).hexdigest() != expected_sha:
+        raise Day2Failure(f"{label} artifact content does not match persisted metadata.")
+
+    signed = obj(checked(client.get(download_route, headers=owner_headers), 200, label + " artifact URL"), label + " artifact URL")
+    url = public_signed_url(signed.get("url"), trusted_storage_host=trusted_storage_host)
+    signed_response = httpx.get(url, timeout=20, follow_redirects=False)
+    if (
+        signed_response.status_code != 200
+        or len(signed_response.content) != expected_bytes
+        or hashlib.sha256(signed_response.content).hexdigest() != expected_sha
+    ):
+        raise Day2Failure(f"{label} presigned artifact retrieval failed digest verification.")
+    return {
+        "artifact_sha256": expected_sha,
+        "artifact_bytes": expected_bytes,
+        "artifact_content_read": "passed",
+        "artifact_download": "passed",
+        "foreign_artifact_content": "denied_404",
+        "foreign_artifact_download": "denied_404",
+    }
+
+
+def _document_catalog_ids(client: httpx.Client, headers: dict[str, str], label: str) -> set[str]:
+    value = obj(checked(client.get("/api/v1/documents", headers=headers), 200, label), label)
+    documents = value.get("documents")
+    if not isinstance(documents, list):
+        raise Day2Failure(f"{label} did not return a document list.")
+    return {
+        str(item.get("id"))
+        for item in documents
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+
+
 def load_private_pdf(path: Path) -> bytes:
     """Read an operator-selected private, text-based PDF before making API writes."""
     try:
@@ -178,12 +259,15 @@ def run_probe(
     freeze: dict,
     source: bytes,
     *,
+    owner_b_artifact_id: str,
     timeout_seconds: int = 180,
     trusted_storage_host: str | None = None,
 ) -> dict:
-    """Prove a selected private document was executed by the real model-backed task.
+    """Prove one owner-A PDF task and bidirectional private resource isolation.
 
-    Keep all private bytes and signed URLs out of the returned evidence.
+    Owner B's task-output artifact is a pre-existing synthetic control. This
+    command never creates a second provider-backed task. Keep all private bytes
+    and signed URLs out of the returned evidence.
     """
     release = check_release(freeze)
     if not isinstance(source, bytes) or not 1 <= len(source) <= 8 * 1024 * 1024:
@@ -199,33 +283,74 @@ def run_probe(
             raise Day2Failure("Day 2 TXT source must contain valid UTF-8.") from None
     if not 1 <= timeout_seconds <= 1800:
         raise Day2Failure("Task timeout must be between 1 and 1800 seconds.")
+    try:
+        owner_b_artifact_id = str(uuid.UUID(owner_b_artifact_id))
+    except (AttributeError, TypeError, ValueError):
+        raise Day2Failure("Owner B synthetic artifact ID must be a valid UUID.") from None
+
     attest_runtime(client, token_a, freeze)
     require_distinct_owners(client, token_a, token_b)
     a, b = bearer(token_a), bearer(token_b)
+
+    # Fail closed before creating documents or tasks if the reverse-direction
+    # artifact control is absent, visible to A, or not retrievable by B.
+    owner_a_artifacts_before = _artifact_catalog(client, a, "owner A artifact catalog preflight")
+    owner_b_artifacts_before = _artifact_catalog(client, b, "owner B artifact catalog preflight")
+    if any(str(item.get("id") or "") == owner_b_artifact_id for item in owner_a_artifacts_before if isinstance(item, dict)):
+        raise Day2Failure("Owner B synthetic artifact is visible in owner A's artifact catalog.")
+    owner_b_artifact = _artifact_entry(
+        owner_b_artifacts_before, owner_b_artifact_id, "Owner B synthetic artifact",
+    )
+    owner_b_artifact_proof = _verify_artifact_access(
+        client, b, a, owner_b_artifact_id, owner_b_artifact,
+        label="owner B control", trusted_storage_host=trusted_storage_host,
+    )
+
     marker = uuid.uuid4().hex
     source_sha = hashlib.sha256(source).hexdigest()
     filename = "day2-synthetic-" + marker + (".pdf" if is_pdf else ".txt")
+    owner_b_source = f"Day 2 synthetic owner B control note: {marker}\n".encode("utf-8")
+    owner_b_source_sha = hashlib.sha256(owner_b_source).hexdigest()
+    owner_b_filename = "day2-owner-b-control-" + marker + ".txt"
+
+    owner_b_upload = obj(checked(client.post("/api/v1/documents", headers=b, json={
+        "filename": owner_b_filename,
+        "byte_size": len(owner_b_source), "sha256": owner_b_source_sha,
+    }), 201, "owner B control document create"), "owner B control document create")
+    owner_b_document_id = str(owner_b_upload.get("id") or "")
+    if not owner_b_document_id:
+        raise Day2Failure("Owner B control document create did not return an id.")
 
     upload = obj(checked(client.post("/api/v1/documents", headers=a, json={
         "filename": filename,
         "byte_size": len(source), "sha256": source_sha,
     }), 201, "private document create"), "private document create")
     document_id = str(upload.get("id") or "")
-    if not document_id:
-        raise Day2Failure("Private document create did not return an id.")
+    if not document_id or document_id == owner_b_document_id:
+        raise Day2Failure("The two owners did not receive distinct private document IDs.")
+
     doc_content = f"/api/v1/documents/{document_id}/content"
-    checked(client.put(doc_content, headers=b, content=source), 404, "cross-owner document upload")
-    checked(client.put(doc_content, headers=a, content=source), 200, "owned document upload")
-    checked(client.get(doc_content, headers=b), 404, "cross-owner document read")
-    download = checked(client.get(doc_content, headers=a), 200, "owned document read")
-    if hashlib.sha256(download.content).hexdigest() != source_sha or download.content != source:
-        raise Day2Failure("Private document readback did not match the uploaded bytes.")
-    foreign_docs = obj(checked(client.get("/api/v1/documents", headers=b), 200, "foreign document list"), "foreign document list")
-    if not isinstance(foreign_docs.get("documents"), list) or any(
-        isinstance(item, dict) and item.get("id") == document_id
-        for item in foreign_docs["documents"]
-    ):
-        raise Day2Failure("Cross-owner document enumeration was not denied.")
+    owner_b_doc_content = f"/api/v1/documents/{owner_b_document_id}/content"
+    checked(client.put(doc_content, headers=b, content=source), 404, "cross-owner B upload of A document")
+    checked(client.put(owner_b_doc_content, headers=a, content=owner_b_source), 404, "cross-owner A upload of B document")
+    checked(client.put(doc_content, headers=a, content=source), 200, "owner A document upload")
+    checked(client.put(owner_b_doc_content, headers=b, content=owner_b_source), 200, "owner B document upload")
+
+    checked(client.get(doc_content, headers=b), 404, "cross-owner B read of A document")
+    checked(client.get(owner_b_doc_content, headers=a), 404, "cross-owner A read of B document")
+    owner_a_document = checked(client.get(doc_content, headers=a), 200, "owner A document read")
+    owner_b_document = checked(client.get(owner_b_doc_content, headers=b), 200, "owner B document read")
+    if hashlib.sha256(owner_a_document.content).hexdigest() != source_sha or owner_a_document.content != source:
+        raise Day2Failure("Owner A private document readback did not match the uploaded bytes.")
+    if hashlib.sha256(owner_b_document.content).hexdigest() != owner_b_source_sha or owner_b_document.content != owner_b_source:
+        raise Day2Failure("Owner B control document readback did not match the uploaded bytes.")
+
+    owner_a_document_ids = _document_catalog_ids(client, a, "owner A document catalog")
+    owner_b_document_ids = _document_catalog_ids(client, b, "owner B document catalog")
+    if document_id not in owner_a_document_ids or owner_b_document_id in owner_a_document_ids:
+        raise Day2Failure("Owner A document list exposed or omitted an owner-scoped document.")
+    if owner_b_document_id not in owner_b_document_ids or document_id in owner_b_document_ids:
+        raise Day2Failure("Owner B document list exposed or omitted an owner-scoped document.")
 
     task = obj(checked(client.post("/api/v1/tasks", headers={
         **a, "Idempotency-Key": "staging-day2-" + marker,
@@ -267,8 +392,6 @@ def run_probe(
         or result["input"].get("document_ids") != [document_id]
     ):
         raise Day2Failure("Completed task is not bound to the selected private document.")
-    # The real extractor records a digest-bound DocumentVersion as a source;
-    # input.document_ids alone would not prove the model received that source.
     sources = result.get("sources")
     if not isinstance(sources, list):
         raise Day2Failure("Completed report is missing source provenance.")
@@ -312,31 +435,70 @@ def run_probe(
         raise Day2Failure("Completed task did not produce exactly one report PDF.")
     pdf = pdfs[0]
     artifact_id = str(pdf.get("id") or "")
-    expected_sha = pdf.get("sha256")
-    expected_bytes = pdf.get("byte_size")
-    if (
-        not artifact_id
-        or not isinstance(expected_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_sha)
-        or type(expected_bytes) is not int or not 1 <= expected_bytes <= 16 * 1024 * 1024
-    ):
-        raise Day2Failure("Report artifact identity/digest/size metadata is incomplete.")
-    content_route = f"/api/v1/artifacts/{artifact_id}/content"
-    url_route = f"/api/v1/artifacts/{artifact_id}/download"
-    if client.get(url_route, headers=b).status_code != 404:
-        raise Day2Failure("cross-owner artifact download was not denied.")
-    if client.get(content_route, headers=b).status_code != 404:
-        raise Day2Failure("cross-owner artifact content was not denied.")
-    own_bytes = checked(client.get(content_route, headers=a), 200, "owned artifact content").content
-    if len(own_bytes) != expected_bytes or hashlib.sha256(own_bytes).hexdigest() != expected_sha:
-        raise Day2Failure("Owned artifact bytes do not match persisted metadata.")
-    signed = obj(checked(client.get(url_route, headers=a), 200, "private artifact URL"), "private artifact URL")
-    url = public_signed_url(signed.get("url"), trusted_storage_host=trusted_storage_host)
-    signed_response = httpx.get(url, timeout=20, follow_redirects=False)
-    if (
-        signed_response.status_code != 200 or len(signed_response.content) != expected_bytes
-        or hashlib.sha256(signed_response.content).hexdigest() != expected_sha
-    ):
-        raise Day2Failure("Presigned private artifact retrieval failed digest verification.")
+    if not artifact_id or artifact_id == owner_b_artifact_id:
+        raise Day2Failure("Owner A report and owner B control artifact IDs must be distinct.")
+    owner_a_artifact_proof = _verify_artifact_access(
+        client, a, b, artifact_id, pdf,
+        label="owner A report", trusted_storage_host=trusted_storage_host,
+    )
+
+    owner_a_artifacts_after = _artifact_catalog(client, a, "owner A artifact catalog")
+    owner_b_artifacts_after = _artifact_catalog(client, b, "owner B artifact catalog")
+    owner_a_artifact_ids = {
+        str(item.get("id")) for item in owner_a_artifacts_after if isinstance(item, dict) and item.get("id") is not None
+    }
+    owner_b_artifact_ids = {
+        str(item.get("id")) for item in owner_b_artifacts_after if isinstance(item, dict) and item.get("id") is not None
+    }
+    if artifact_id not in owner_a_artifact_ids or artifact_id in owner_b_artifact_ids:
+        raise Day2Failure("Owner A artifact catalog did not isolate its report artifact.")
+    if owner_b_artifact_id not in owner_b_artifact_ids or owner_b_artifact_id in owner_a_artifact_ids:
+        raise Day2Failure("Owner B artifact catalog did not isolate its control artifact.")
+
+    owner_isolation = {
+        "status": "passed",
+        "identities_distinct": True,
+        "owners": {
+            "a": {
+                "document_id": document_id,
+                "document_sha256": source_sha,
+                "document_bytes": len(source),
+                "document_read": "passed",
+                "own_document_list": "included",
+                "foreign_document_read": "denied_404",
+                "foreign_document_write": "denied_404",
+                "foreign_document_list": "excluded",
+                "artifact_id": artifact_id,
+                "artifact_sha256": owner_a_artifact_proof["artifact_sha256"],
+                "artifact_bytes": owner_a_artifact_proof["artifact_bytes"],
+                "artifact_content_read": owner_a_artifact_proof["artifact_content_read"],
+                "artifact_download": owner_a_artifact_proof["artifact_download"],
+                "own_artifact_list": "included",
+                "foreign_artifact_content": owner_a_artifact_proof["foreign_artifact_content"],
+                "foreign_artifact_download": owner_a_artifact_proof["foreign_artifact_download"],
+                "foreign_artifact_list": "excluded",
+            },
+            "b": {
+                "document_id": owner_b_document_id,
+                "document_sha256": owner_b_source_sha,
+                "document_bytes": len(owner_b_source),
+                "document_read": "passed",
+                "own_document_list": "included",
+                "foreign_document_read": "denied_404",
+                "foreign_document_write": "denied_404",
+                "foreign_document_list": "excluded",
+                "artifact_id": owner_b_artifact_id,
+                "artifact_sha256": owner_b_artifact_proof["artifact_sha256"],
+                "artifact_bytes": owner_b_artifact_proof["artifact_bytes"],
+                "artifact_content_read": owner_b_artifact_proof["artifact_content_read"],
+                "artifact_download": owner_b_artifact_proof["artifact_download"],
+                "own_artifact_list": "included",
+                "foreign_artifact_content": owner_b_artifact_proof["foreign_artifact_content"],
+                "foreign_artifact_download": owner_b_artifact_proof["foreign_artifact_download"],
+                "foreign_artifact_list": "excluded",
+            },
+        },
+    }
     return {
         "status": "passed",
         "release_id": release["release_id"],
@@ -345,10 +507,11 @@ def run_probe(
         "document_id": document_id, "document_version_id": source_version_id,
         "document_sha256": source_sha,
         "task_id": task_id, "workflow_id": "shuddho-task-" + task_id,
-        "artifact_id": artifact_id, "artifact_sha256": expected_sha,
-        "artifact_bytes": expected_bytes, "model_attempts": usage["model_attempts"],
+        "artifact_id": artifact_id, "artifact_sha256": owner_a_artifact_proof["artifact_sha256"],
+        "artifact_bytes": owner_a_artifact_proof["artifact_bytes"],
+        "model_attempts": usage["model_attempts"],
         "accounted_tokens": usage["accounted_tokens"],
-        "owner_isolation": "passed", "artifact_retrieval": "passed",
+        "owner_isolation": owner_isolation, "artifact_retrieval": "passed",
     }
 
 
@@ -432,6 +595,8 @@ def main() -> None:
     parser.add_argument("--freeze-evidence", type=Path, required=True)
     parser.add_argument("--source-pdf", type=Path, required=True,
                         help="Approved synthetic text-based PDF in owner-only (0600) private storage.")
+    parser.add_argument("--owner-b-artifact-id", required=True,
+                        help="Pre-existing synthetic task-output artifact UUID owned by owner B; the operator never creates a second model task.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
@@ -468,6 +633,7 @@ def main() -> None:
         with httpx.Client(base_url=origin, timeout=20, follow_redirects=False) as client:
             result = run_probe(
                 client, token_a, token_b, freeze, source,
+                owner_b_artifact_id=args.owner_b_artifact_id,
                 timeout_seconds=args.timeout, trusted_storage_host=endpoint.hostname,
             )
         asyncio.run(temporal_completed(settings, result["workflow_id"]))
