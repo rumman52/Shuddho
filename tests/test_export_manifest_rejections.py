@@ -6,6 +6,7 @@ checks real DOCX/PDF bytes and the required owner-scoped artifact retrieval.
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from test_coworker import account, container, new_task, FakeModel
@@ -34,11 +35,19 @@ def test_export_missing_duplicate_or_unexpected_file_never_publishes(container, 
         runner = DocumentRunner(container, FakeModel(), renderer=lambda *_args, **_kwargs: outputs)
         await runner.phase(task["id"], "extract")
         await runner.phase(task["id"], "draft")
-        await runner.phase(task["id"], "export")
-        with pytest.raises(CoworkerError, match="generated files were incomplete"):
-            await runner.phase(task["id"], "complete")
+
+        # Native inventory validation is deliberately before object-store PUT
+        # and export-checkpoint publication. Completion retains its own
+        # persisted-artifact verification for recovery and tamper resistance.
+        with pytest.raises(CoworkerError) as rejected:
+            await runner.phase(task["id"], "export")
+        assert rejected.value.code == "export_invalid"
+
         current = container.repository.get_task(owner, task["id"])
         assert current["state"] == "running"
         assert current["artifacts"] == []
+        assert container.repository.step(task["id"], "export") is None
+        prefix = f"{owner}/outputs/{task['id']}/"
+        assert container.storage.inventory(prefix=prefix) == []
 
     asyncio.run(scenario())
