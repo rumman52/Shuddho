@@ -474,6 +474,68 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
     assert read.status_code == 200 and read.json()["state"] == "read"
 
 
+def test_briefing_occurrence_emits_one_completion_notification_only(
+    automation_client,
+    automation_container,
+):
+    client, headers = automation_client
+    auth = headers()
+    goal, _, _, _ = create_project_document_goal(
+        client, auth, automation_container, key="day7-single-completion-notice",
+    )
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "day7-single-completion-automation"},
+        json=briefing_automation_payload(goal),
+    )
+    assert response.status_code == 201, response.text
+    automation = response.json()
+    due_at = utcnow().replace(microsecond=0)
+
+    accepted = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at,
+    )
+    assert accepted["state"] == "accepted"
+    occurrence_id = accepted["occurrence_id"]
+    run_id = accepted["run_id"]
+
+    # A briefing should not notify the owner before there is a completed result.
+    with automation_container.repository.sessions() as db:
+        assert db.scalar(
+            select(Notification).where(Notification.occurrence_id == occurrence_id)
+        ) is None
+
+    with automation_container.repository.sessions.begin() as db:
+        run = db.get(AgentRun, run_id)
+        assert run is not None
+        run.state = "completed"
+
+    automation_container.automations.notify_run_completed(run_id)
+    automation_container.automations.notify_run_completed(run_id)
+
+    with automation_container.repository.sessions() as db:
+        notices = db.scalars(
+            select(Notification).where(Notification.occurrence_id == occurrence_id)
+        ).all()
+        assert len(notices) == 1
+        assert notices[0].kind == "automation_completed"
+        notification_id = notices[0].id
+        outboxes = db.scalars(
+            select(NotificationOutbox).where(
+                NotificationOutbox.notification_id == notification_id,
+            )
+        ).all()
+        assert len(outboxes) == 1
+
+    claimed = automation_container.notifications.claim_notifications()
+    assert claimed == [notification_id]
+    automation_container.notifications.deliver_notification(notification_id)
+    assert automation_container.notifications.claim_notifications() == []
+    inbox = client.get("/api/v1/notifications", headers=auth).json()
+    assert len(inbox["notifications"]) == 1
+    assert inbox["notifications"][0]["kind"] == "automation_completed"
+
+
 def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
     automation_client,
     automation_container,
