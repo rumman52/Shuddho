@@ -45,7 +45,7 @@ def make_test_token(subject, *, issuer=AUTH_ISSUER, audience=AUTH_AUDIENCE, expi
     return _b64({"alg": "RS256", "kid": "test-key"}) + "." + _b64(claims) + ".c2ln"
 
 
-def test_token_claims(token):
+def decode_test_token_claims(token):
     payload = token.split(".")[1]
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
@@ -102,7 +102,7 @@ class Day2API:
         if method == "GET" and path == "/api/v1/runtime-manifest":
             return res(200, self.manifest)
         if method == "GET" and path == "/api/v1/me":
-            claims = test_token_claims(user)
+            claims = decode_test_token_claims(user)
             account_id = hashlib.sha256(json.dumps([claims["iss"], claims["sub"]]).encode()).hexdigest()
             if self.wrong_account_binding:
                 account_id = "account-subject-mismatch"
