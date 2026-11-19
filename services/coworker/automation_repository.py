@@ -2318,7 +2318,7 @@ class AutomationRepository:
                 raise CoworkerError("automation_occurrence_lost", "Scheduled occurrence state was unavailable.", 503)
             occurrence.run_id = run["id"]; occurrence.state = "accepted"; occurrence.reason = None; occurrence.updated_at = utcnow()
             automation = db.get(Automation, automation_id)
-            # A daily briefing has one owner-visible notification per occurrence:
+            # A briefing has one owner-visible notification per occurrence:
             # the completion notice emitted by notify_run_completed. Because
             # occurrence_id is unique in cw_notifications, an early start notice
             # would occupy that row and suppress the completion notice.
