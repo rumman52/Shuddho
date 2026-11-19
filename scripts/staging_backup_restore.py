@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -62,7 +63,7 @@ def stable_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def environment_fingerprints(container: Container) -> dict:
+def environment_fingerprints(container: Container) -> dict[str, str]:
     engine = container.repository.sessions.kw["bind"]
     with engine.connect() as connection:
         database = connection.execute(text("select current_database()")).scalar_one()
@@ -111,12 +112,13 @@ def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
     release_context = prepared_release_context(settings, rollout_path)
     _preflight_private_json_destination(state_path)
-    owner = resolve_owner()
     container = Container.create(settings)
     marker = uuid.uuid4().hex
     payload = ("shuddho-backup-restore-probe-" + marker).encode("utf-8")
     digest = hashlib.sha256(payload).hexdigest()
     try:
+        source_fingerprints = environment_fingerprints(container)
+        owner = resolve_owner()
         upload = container.repository.create_upload(
             owner,
             UploadRequest(
@@ -150,7 +152,7 @@ def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
             "task_id": task["id"],
             "sha256": digest,
             "byte_size": len(payload),
-            "source_fingerprints": environment_fingerprints(container),
+            "source_fingerprints": source_fingerprints,
         }
         write_private_json(state_path, state)
         return {
@@ -180,6 +182,18 @@ def verify(
     required = {"release_context", "owner_id", "document_id", "version_id", "task_id", "sha256", "byte_size", "source_fingerprints"}
     if not required.issubset(state):
         raise BackupRestoreFailure("Backup/restore state file is incomplete.")
+    source = state["source_fingerprints"]
+    if (
+        not isinstance(source, dict)
+        or set(source) != {"database", "storage"}
+        or any(
+            not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+            for value in source.values()
+        )
+    ):
+        raise BackupRestoreFailure(
+            "Prepared source environment fingerprints must include database and storage SHA-256 digests."
+        )
 
     context = validate_prepared_release_context(
         state["release_context"],
@@ -189,10 +203,9 @@ def verify(
     container = Container.create(settings)
     try:
         target = environment_fingerprints(container)
-        source = state["source_fingerprints"]
-        if target["database"] == source.get("database"):
+        if target["database"] == source["database"]:
             raise BackupRestoreFailure("Restore verification must run against an isolated restored PostgreSQL target.")
-        if target["storage"] == source.get("storage"):
+        if target["storage"] == source["storage"]:
             raise BackupRestoreFailure("Restore verification must run against an isolated restored object-storage target.")
 
         owner = str(state["owner_id"])

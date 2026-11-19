@@ -27,6 +27,7 @@ uv run --extra coworker python scripts/staging_backup_restore.py prepare \
 
 The prepare step:
 
+- captures the source environment fingerprints before contacting the owner API or seeding records;
 - resolves the disposable staging owner through the deployed API;
 - creates one synthetic uploaded TXT source;
 - stores the source in private object storage;
@@ -50,7 +51,7 @@ Do not claim the gate passed from backup creation alone.
 
 Restore both the database and object storage into separate staging resources.
 
-The verification environment must point to those restored resources. The verifier rejects the original database and object-storage fingerprints.
+The verification environment must point to those restored resources. Before opening the restore target, the verifier requires the prepared state to contain both source fingerprints as lowercase SHA-256 digests. It rejects either target when its fingerprint matches the corresponding source.
 
 ## Phase 4 — verify
 
