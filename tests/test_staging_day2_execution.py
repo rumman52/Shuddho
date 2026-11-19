@@ -20,6 +20,10 @@ VERSION_ID = "44444444-4444-4444-8444-444444444444"
 SOURCE = b"Day 2 synthetic private note: the sample budget is forty-two units.\n"
 ARTIFACT = b"%PDF-1.4\nsynthetic-test-artifact\n"
 SIGNED = "https://storage.example.test/private?signature=redacted"
+OWNER_B_DOC_ID = "55555555-5555-4555-8555-555555555555"
+OWNER_B_ARTIFACT_ID = "66666666-6666-4666-8666-666666666666"
+OWNER_B_ARTIFACT = b"%PDF-1.4\\nowner-B-control-artifact\\n"
+OWNER_B_SIGNED = "https://storage.example.test/owner-b-control?signature=redacted"
 
 
 def runtime():
