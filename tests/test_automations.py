@@ -2517,6 +2517,16 @@ def test_goal_driven_proactive_schedule_freezes_reviewed_tool_scope(
         )).all()
         assert len(completed) == 1
         assert completed[0].title == "Goal-driven coworker update ready"
+        started = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_started",
+        )).all()
+        assert len(started) == 1
+        assert started[0].occurrence_id == first["occurrence_id"]
+        # The start notice occupies the unique occurrence slot for this profile;
+        # completion must still enqueue a separate idempotent notice.
+        assert completed[0].occurrence_id is None
+        assert completed[0].id != started[0].id
 
 
 def test_goal_driven_proactive_scope_rejects_consequential_or_empty_tools(
