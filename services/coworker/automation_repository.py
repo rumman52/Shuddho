@@ -2380,7 +2380,9 @@ class AutomationRepository:
                 owner=automation.owner_id,
                 workspace_id=automation.workspace_id,
                 automation_id=automation.id,
-                occurrence_id=occurrence.id,
+                # Briefings intentionally have exactly one notice per occurrence;
+                # other profiles retain their existing start/finish notices.
+                occurrence_id=occurrence.id if profile == "briefing" else None,
                 kind="automation_completed",
                 title=(
                     "Meeting preparation ready"
