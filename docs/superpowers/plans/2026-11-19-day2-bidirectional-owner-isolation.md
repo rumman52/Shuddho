@@ -60,10 +60,10 @@ Expected before implementation: failures for the missing B-artifact argument and
 - Add private helpers to validate the B-owned artifact metadata and test each owner's document/artifact access.
 - Return `owner_isolation = {status, identities_distinct, owners: {a, b}}`; each owner record contains distinct `document_id`/`artifact_id` and explicit own-read, foreign-denial, and foreign-list statuses.
 
-- [ ] **Step 1: Validate the B artifact UUID and verify it is listed only for B before any write**
+- [ ] **Step 1: Validate the B artifact UUID and both JWTs' issuer, audience, expiry window, role and distinct subject before any write**
 - [ ] **Step 2: Verify B's positive artifact content/download and A's 404 denial with digest checks**
 - [ ] **Step 3: Create B's synthetic TXT document and A's selected PDF; verify both document directions**
-- [ ] **Step 4: Verify A's report artifact and B's denial; capture both owner records**
+- [ ] **Step 4: Verify A's report artifact and B's denial; capture both owner records and the API-bound subject proof**
 - [ ] **Step 5: Require `--owner-b-artifact-id` in the CLI and pass it to `run_probe`**
 - [ ] **Step 6: Expose `task_id` and `artifact_id` from `staging_api_exercise.py --artifact` receipts so a separately approved B control artifact can be supplied without logging secrets**
 - [ ] **Step 7: Run the focused execution/API-exercise tests and confirm all pass**
