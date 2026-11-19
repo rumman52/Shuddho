@@ -481,6 +481,9 @@ def test_briefing_occurrence_emits_one_completion_notification_only(
     automation_container,
 ):
     client, headers = automation_client
+    # Briefing dependencies are default-off in production and in this fixture.
+    # Enable the reviewed v3 stack only for the successful-notification test.
+    _enable_briefings(automation_container)
     auth = headers()
     goal, _, _, _ = create_project_document_goal(
         client, auth, automation_container, key="day7-single-completion-notice",
