@@ -461,6 +461,7 @@ def run_probe(
         raise Day2Failure("Owner B artifact catalog did not isolate its control artifact.")
 
     owner_isolation = {
+        "schema_version": 1,
         "status": "passed",
         "identities_distinct": True,
         "owners": {
