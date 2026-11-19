@@ -9,6 +9,7 @@ The Day 2 operator must prove that two distinct synthetic owners can access thei
 - Verify distinct owner and workspace identities without recording raw account identifiers.
 - Create one synthetic TXT control document as owner B and upload owner A's selected private PDF through the normal private upload path.
 - Verify positive owner reads and cross-owner document read/write denial in both directions.
+- Verify each accepted JWT's issuer, audience, expiry, subject and authenticated API subject-to-account binding without retaining raw claims or tokens.
 - Verify owner-scoped document listings exclude the other owner's document.
 - Verify positive artifact content/download access and cross-owner content/download denial in both directions.
 - Emit structured, non-secret directional evidence and require the acceptance gate to validate it.
