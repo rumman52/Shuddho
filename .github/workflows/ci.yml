@@ -273,9 +273,7 @@ jobs:
           if-no-files-found: warn
       - name: Verify Day 8 economics comparisons and telemetry without skips
         run: |
-          uv run --extra coworker pytest \
-            tests/test_core_agent_observability.py \
-            tests/test_day8_telemetry_privacy.py \
+          uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_day8_telemetry_privacy.py \
             tests/test_task_economics_evidence.py \
             tests/test_staging_day7_two_day_gate.py \
             tests/test_staging_pa10_scheduled_profile.py \
