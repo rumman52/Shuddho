@@ -79,6 +79,18 @@ jobs:
       - name: Run Python tests
         if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: uv run pytest -q
+      - name: Require fail-closed Days 3–6 hosted receipt contracts
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
+        run: |
+          uv run pytest tests/test_staging_days3_6_acceptance.py -q -rs --junitxml=/tmp/days36-receipt-contract.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/days36-receipt-contract.xml --required-module tests.test_staging_days3_6_acceptance
+      - name: Preserve Days 3–6 receipt contract CI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: days36-receipt-contract-${{ github.sha }}
+          path: /tmp/days36-receipt-contract.xml
+          if-no-files-found: warn
       - name: Verify controlled-release contract
         if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: uv run python -m scripts.release_contract_check
