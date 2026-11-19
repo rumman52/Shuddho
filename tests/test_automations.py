@@ -482,6 +482,7 @@ def test_briefing_occurrence_emits_one_completion_notification_only(
 ):
     client, headers = automation_client
     auth = headers()
+    _enable_briefings(automation_container)
     goal, _, _, _ = create_project_document_goal(
         client, auth, automation_container, key="day7-single-completion-notice",
     )
