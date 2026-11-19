@@ -86,6 +86,17 @@ def validate_owner_isolation(
         raise Day2AcceptanceFailure("Bidirectional owner isolation has not passed schema version 1.")
     if proof.get("identities_distinct") is not True:
         raise Day2AcceptanceFailure("Bidirectional owner isolation does not prove distinct identities.")
+    identity_claims = _object(proof.get("identity_claims"), "execution.owner_isolation.identity_claims")
+    if identity_claims.get("subjects_distinct") is not True:
+        raise Day2AcceptanceFailure("Managed owner JWT subjects are not proven distinct.")
+    for owner_key in ("owner_a", "owner_b"):
+        identity = _object(identity_claims.get(owner_key), f"identity_claims.{owner_key}")
+        for field in (
+            "issuer_verified", "audience_verified", "expiry_verified",
+            "subject_verified", "api_subject_binding_verified",
+        ):
+            if identity.get(field) is not True:
+                raise Day2AcceptanceFailure(f"Managed {owner_key} {field} evidence is missing.")
     owners = _object(proof.get("owners"), "execution.owner_isolation.owners")
     if set(owners) != {"a", "b"}:
         raise Day2AcceptanceFailure("Bidirectional owner isolation must contain exactly owners a and b.")
