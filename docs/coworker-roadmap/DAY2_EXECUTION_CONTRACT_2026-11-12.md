@@ -194,6 +194,13 @@ the operator binds each decoded subject to the authenticated `/api/v1/me`
 account ID. Only per-owner boolean claim evidence is retained, never tokens
 or raw subjects.
 
+The resulting `owner_isolation` receipt uses schema version 1. Its `owners.a`
+and `owners.b` records contain distinct document/artifact IDs, SHA-256 digests,
+byte sizes, positive own-resource reads/downloads/list inclusion, and exact
+404 foreign-resource read/write/download plus list-exclusion evidence. The
+acceptance gate rejects missing directions and preserves the nested receipt
+unchanged through recovery and isolated restore checks.
+
 ## Separate restart and backup/restore gates
 
 These are **not** satisfied by the single document test.
