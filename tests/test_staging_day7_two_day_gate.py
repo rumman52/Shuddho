@@ -16,7 +16,7 @@ RELEASE = {"release_id": "test-release", "source_revision": "a" * 40,
 def evidence(day: int, version: str) -> dict:
     due = f"2026-11-{day:02d}T02:00:00+00:00"
     return {
-        "schema_version": 1, "evidence_kind": "pa10_scheduled_profile",
+        "schema_version": 2, "evidence_kind": "pa10_scheduled_profile",
         "scenario": "daily_coworker", "status": "passed", "release": deepcopy(RELEASE),
         "synthetic_account_label": "stage-day7-synthetic", "owner_id": "owner-1",
         "automation_id": "automation-1", "automation_revision": 1,
@@ -268,6 +268,7 @@ def test_two_day_gate_rejects_unbound_staging_evidence(broken):
     "cross_day_duplicate_notification_id",
     "wrong_notification_count",
     "legacy_started_notification",
+    "legacy_schema_v1",
     "stale_day8_baseline",
 ])
 def test_two_day_gate_rejects_invalid_completion_notices_and_stale_baseline(defect):
@@ -280,6 +281,8 @@ def test_two_day_gate_rejects_invalid_completion_notices_and_stale_baseline(defe
         second["new_notification_count"] = 2
     elif defect == "legacy_started_notification":
         second["started_notification_id"] = "started-13"
+    elif defect == "legacy_schema_v1":
+        first["schema_version"] = 1
     else:
         # A second-day baseline must be captured after the first day's verified run,
         # otherwise it cannot prove the second independent natural occurrence.
