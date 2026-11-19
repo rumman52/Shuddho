@@ -279,9 +279,11 @@ jobs:
           uv run --extra coworker pytest \
             tests/test_coworker.py::test_export_checkpoint_commit_response_loss_preserves_referenced_objects \
             tests/test_coworker.py::test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_export \
+            tests/test_export_manifest_rejections.py \
             tests/test_coworker_services.py tests/test_coworker_office.py \
             tests/test_coworker_research.py tests/test_coworker_quality_eval.py \
             -q -rs --junitxml=/tmp/day6-workflows.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_export_manifest_rejections
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_services
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_office
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_research
