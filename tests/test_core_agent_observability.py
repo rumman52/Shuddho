@@ -503,7 +503,7 @@ def _day8_fixture():
         "source_revision": "a" * 40,
         "files": {"development": {"sha256": "d" * 64}},
     }, "cases": cases}
-    identity = {"schema_version": 1, "split": "development",
+    identity = {"schema_version": 2, "split": "development",
                 "suite_id": "pilot", "source_revision": "a" * 40,
                 "case_file_sha256": "d" * 64,
                 "generation_identity_verified": True,
@@ -533,7 +533,9 @@ def _day8_fixture():
                 "pricing_assumptions_sha256": "b" * 64,
                 "owner_approval_receipt_sha256": "c" * 64,
             },
+            "reruns": [],
             "results": [{
+                "execution_kind": "first_run", "attempt_number": 1,
                 "id": case["id"], "workflow": case["workflow"],
                 "language": case["language"],
                 "passed": True, "human_accepted": True, "safety_passed": True,
@@ -938,4 +940,94 @@ def test_day8_rejects_reused_usage_receipt_across_baseline_and_candidate():
         baseline["results"][0]["provider_usage_case_receipt_sha256"]
     )
     with pytest.raises(ValueError, match="reused provider usage receipt across profiles"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def _day8_synthetic_rerun(report, *, cost=500):
+    """A separate synthetic attempt, never a replacement for its first-run row."""
+    first = report["results"][0]
+    return {
+        **first,
+        "execution_kind": "rerun",
+        "attempt_number": 2,
+        "rerun_of_run_id": first["run_id"],
+        "run_id": f"{first['run_id']}:rerun-2",
+        "provider_usage_case_receipt_sha256": hashlib.sha256(
+            f"{first['run_id']}:rerun-2:usage".encode(),
+        ).hexdigest(),
+        "output_sha256": None,
+        "passed": False,
+        "human_accepted": False,
+        "verified_artifact_refs": [],
+        "accepted_outcome_ref": None,
+        "cost_microusd": cost,
+        "cost_components_microusd": {
+            "provider": cost, "tools": 0, "compute": 0, "storage": 0, "other": 0,
+        },
+    }
+
+
+def test_day8_rerun_cost_changes_least_cost_profile_without_changing_first_run_quality():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["reruns"].append(_day8_synthetic_rerun(candidate, cost=500))
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "FROZEN_FOR_DAY9"
+    assert result["profile_summaries"]["baseline"]["total_cost_microusd"] == 800
+    assert result["profile_summaries"]["bounded_context_compact_observations"]["total_cost_microusd"] == 1100
+    assert result["profile_summaries"]["bounded_context_compact_observations"]["human_accepted"] == 40
+    assert result["profile_summaries"]["bounded_context_compact_observations"]["rerun_attempts"] == 1
+    assert result["selected_least_cost_qualified_profile"] == "baseline"
+    assert result["measured_cost_savings_microusd"] == -300
+    row = next(item for item in result["per_task_comparison"]
+               if item["id"] == candidate["results"][0]["id"])
+    assert row["bounded_context_compact_observations"]["all_attempts_cost_microusd"] == 515
+    assert row["measured_cost_savings_microusd"] == -495
+
+
+def test_day8_missing_rerun_cost_or_attempt_provenance_blocks_freeze():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["reruns"].append(_day8_synthetic_rerun(candidate))
+    candidate["reruns"][0]["cost_microusd"] = None
+    candidate["reruns"][0]["cost_components_microusd"] = None
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert result["profile_summaries"]["bounded_context_compact_observations"]["total_cost_microusd"] is None
+
+    candidate["reruns"] = []
+    del candidate["reruns"]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert any("attempt provenance" in blocker for blocker in result["blockers"])
+
+
+def test_day8_legacy_v1_without_explicit_attempts_never_freezes():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    for report in (baseline, candidate):
+        report["schema_version"] = 1
+        del report["reruns"]
+        for first in report["results"]:
+            del first["execution_kind"]
+            del first["attempt_number"]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert any("attempt provenance" in blocker for blocker in result["blockers"])
+
+
+@pytest.mark.parametrize("reused_identity", ["run", "usage"])
+def test_day8_rejects_cross_profile_rerun_identity_reuse(reused_identity):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    rerun = _day8_synthetic_rerun(candidate)
+    if reused_identity == "run":
+        rerun["run_id"] = baseline["results"][0]["run_id"]
+        error = "reused run identity across profiles"
+    else:
+        rerun["provider_usage_case_receipt_sha256"] = baseline["results"][0][
+            "provider_usage_case_receipt_sha256"
+        ]
+        error = "reused provider usage receipt across profiles"
+    candidate["reruns"].append(rerun)
+    with pytest.raises(ValueError, match=error):
         compare_day8_development(baseline, candidate, suite)
