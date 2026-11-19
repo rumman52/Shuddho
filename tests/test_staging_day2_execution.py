@@ -129,6 +129,7 @@ class BidirectionalDay2API(Day2API):
         leak_b_artifact_to_a=False, leak_a_artifact_to_b=False,
         **kwargs,
     ):
+        owner_b_downloads_a_artifact = kwargs.pop("foreign_download", owner_b_downloads_a_artifact)
         super().__init__(foreign_download=owner_b_downloads_a_artifact, **kwargs)
         self.include_owner_b_artifact = include_owner_b_artifact
         self.owner_a_reads_b_document = owner_a_reads_b_document
@@ -237,14 +238,11 @@ def exercise_bidirectional(monkeypatch, api):
 
 
 def exercise(monkeypatch, api):
-    monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
-        200, content=ARTIFACT, request=httpx.Request("GET", url)))
-    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
-        return day2.run_probe(client, "token-a", "token-b", frozen(api.manifest), SOURCE, timeout_seconds=5)
+    return exercise_bidirectional(monkeypatch, api)
 
 
 def test_day2_real_document_artifact_and_owner_denial_contract(monkeypatch):
-    api = Day2API()
+    api = BidirectionalDay2API()
     result = exercise(monkeypatch, api)
     assert result["task_id"] == TASK_ID
     assert result["document_id"] == DOC_ID
@@ -262,11 +260,16 @@ def test_day2_pdf_source_uses_pdf_extension_and_original_bytes(monkeypatch):
     # The transport is synthetic; load_private_pdf separately validates the
     # real PDF before the operator runner can call this API path.
     source = b"%PDF-1.7\nprivate synthetic PDF protocol fixture"
-    api = Day2API(source=source)
-    monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
-        200, content=ARTIFACT, request=httpx.Request("GET", url)))
+    api = BidirectionalDay2API(source=source)
+    def signed_get(url, **kwargs):
+        content = OWNER_B_ARTIFACT if "owner-b-control" in url else ARTIFACT
+        return httpx.Response(200, content=content, request=httpx.Request("GET", url))
+    monkeypatch.setattr(day2.httpx, "get", signed_get)
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
-        result = day2.run_probe(client, "token-a", "token-b", frozen(api.manifest), source, timeout_seconds=5)
+        result = day2.run_probe(
+            client, "token-a", "token-b", frozen(api.manifest), source,
+            owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+        )
     assert result["document_sha256"] == hashlib.sha256(source).hexdigest()
     assert api.uploaded == source
     assert api.document_filename.endswith(".pdf")
@@ -304,7 +307,7 @@ def test_day2_pdf_operator_path_accepts_text_based_pdf(tmp_path):
 
 @pytest.mark.parametrize("change", ["unfrozen", "revision", "digest", "production"])
 def test_day2_rejects_wrong_release_before_any_private_write(monkeypatch, change):
-    api = Day2API()
+    api = BidirectionalDay2API()
     release = frozen(api.manifest)
     if change == "unfrozen":
         release["status"] = "prepared"
@@ -316,44 +319,45 @@ def test_day2_rejects_wrong_release_before_any_private_write(monkeypatch, change
         api.manifest["environment"] = "production"
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
         with pytest.raises(day2.Day2Failure):
-            day2.run_probe(client, "token-a", "token-b", release, SOURCE, timeout_seconds=5)
+            day2.run_probe(client, "token-a", "token-b", release, SOURCE, owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5)
     assert not any(method == "POST" for method, _, _ in api.calls)
 
 
 def test_day2_rejects_fake_model_completion(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="model"):
-        exercise(monkeypatch, Day2API(attempts=0))
+        exercise(monkeypatch, BidirectionalDay2API(attempts=0))
 
 
 def test_day2_rejects_foreign_artifact_download(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="cross-owner"):
-        exercise(monkeypatch, Day2API(foreign_download=200))
+        exercise(monkeypatch, BidirectionalDay2API(foreign_download=200))
 
 
 def test_day2_rejects_presigned_url_outside_reviewed_storage_endpoint(monkeypatch):
-    api = Day2API()
+    api = BidirectionalDay2API()
     monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
         200, content=ARTIFACT, request=httpx.Request("GET", url)))
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
         with pytest.raises(day2.Day2Failure, match="configured private storage endpoint"):
             day2.run_probe(
                 client, "token-a", "token-b", frozen(api.manifest), SOURCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID,
                 timeout_seconds=5, trusted_storage_host="approved-storage.example.test",
             )
 
 
 def test_day2_rejects_missing_selected_document_provenance(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="provenance"):
-        exercise(monkeypatch, Day2API(document_grounded=False))
+        exercise(monkeypatch, BidirectionalDay2API(document_grounded=False))
 
 
 def test_day2_rejects_report_without_document_citation(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="cite the selected document"):
-        exercise(monkeypatch, Day2API(cites_document=False))
+        exercise(monkeypatch, BidirectionalDay2API(cites_document=False))
 
 
 def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
-    api = Day2API()
+    api = BidirectionalDay2API()
     orig = api.__call__
     def same_identity(request):
         if request.url.path == "/api/v1/me":
@@ -361,7 +365,7 @@ def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
         return orig(request)
     with httpx.Client(transport=httpx.MockTransport(same_identity), base_url="https://stage.example.test") as client:
         with pytest.raises(day2.Day2Failure, match="distinct"):
-            day2.run_probe(client, "token-a", "token-b", frozen(), SOURCE, timeout_seconds=5)
+            day2.run_probe(client, "token-a", "token-b", frozen(), SOURCE, owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5)
     assert not any(method == "POST" for method, _, _ in api.calls)
 
 
