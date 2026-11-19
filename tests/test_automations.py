@@ -460,6 +460,8 @@ def test_occurrence_dedupes_to_one_bounded_run_and_one_notification(automation_c
 
     notification_ids = automation_container.notifications.claim_notifications()
     assert len(notification_ids) == 1
+    with automation_container.repository.sessions() as db:
+        assert db.get(Notification, notification_ids[0]).kind == "automation_started"
     assert automation_container.notifications.claim_notifications() == []
     with automation_container.repository.sessions.begin() as db:
         outbox = db.get(NotificationOutbox, notification_ids[0])
@@ -498,6 +500,12 @@ def test_briefing_occurrence_emits_one_completion_notification_only(
     assert accepted["state"] == "accepted"
     occurrence_id = accepted["occurrence_id"]
     run_id = accepted["run_id"]
+    replayed = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], due_at,
+    )
+    assert replayed["replayed"] is True
+    assert replayed["occurrence_id"] == occurrence_id
+    assert replayed["run_id"] == run_id
 
     # A briefing should not notify the owner before there is a completed result.
     with automation_container.repository.sessions() as db:
