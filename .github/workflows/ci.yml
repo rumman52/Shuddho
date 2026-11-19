@@ -224,9 +224,10 @@ jobs:
           if-no-files-found: warn
       # A focused Day 6 evidence gate runs before other feature suites; unrelated
       # later CI failures must not conceal this security boundary's result.
-      - name: Qualify Day 6 cited-source provenance before other suites
+      - name: Qualify Day 6 research integration and cited-source provenance early
         run: |
-          uv run --extra coworker pytest tests/test_research_source_provenance.py -q -rs --junitxml=/tmp/day6-research-provenance.xml
+          uv run --extra coworker pytest tests/test_coworker_research.py tests/test_research_source_provenance.py -q -rs --junitxml=/tmp/day6-research-provenance.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-research-provenance.xml --required-module tests.test_coworker_research
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-research-provenance.xml --required-module tests.test_research_source_provenance
       - name: Preserve Day 6 source-provenance test evidence
         if: always()
