@@ -209,6 +209,19 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      # This module is skipped by the default dependency set; require its Day 6
+      # export-boundary regressions to collect and run with the coworker extra.
+      - name: Qualify Day 6 export-manifest rejection boundaries without skips
+        run: |
+          uv run --extra coworker pytest tests/test_export_manifest_rejections.py -q -rs --junitxml=/tmp/day6-export-manifest-rejections.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-export-manifest-rejections.xml --required-module tests.test_export_manifest_rejections
+      - name: Preserve Day 6 export-manifest regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day6-export-manifest-rejections
+          path: /tmp/day6-export-manifest-rejections.xml
+          if-no-files-found: warn
       # Run the exact Day 5 gate before unrelated qualification groups so an
       # earlier failure cannot conceal memory regressions or their JUnit receipt.
       - name: Qualify Day 5 exact memory selection without skips
