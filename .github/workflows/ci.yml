@@ -272,6 +272,23 @@ jobs:
         with:
           name: day8-economics
           path: /tmp/day8-economics.xml
+      - name: Re-run Day 1 #664 regressions without skips
+        run: |
+          uv run --extra coworker pytest \
+            tests/test_coworker.py::test_provider_capacity_settings_fail_closed \
+            tests/test_sandbox_control_plane.py::test_sandbox_worker_command_is_networkless_minimal_and_fail_closed \
+            tests/test_fly_repository_coding.py \
+            -q -rs --junitxml=/tmp/day1-664-baseline.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day1-664-baseline.xml --required-module tests.test_coworker
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day1-664-baseline.xml --required-module tests.test_sandbox_control_plane
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day1-664-baseline.xml --required-module tests.test_fly_repository_coding
+      - name: Preserve Day 1 #664 baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day1-664-baseline-${{ github.sha }}
+          path: /tmp/day1-664-baseline.xml
+          if-no-files-found: warn
       # Run the Day 6 regression surface before the long Coworker suite so
       # export-contract failures cannot hide behind 20+ minutes of unrelated work.
       - name: Qualify Day 6 workflows, native outputs, quality and interrupted exports
