@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -20,6 +22,36 @@ VERSION_ID = "44444444-4444-4444-8444-444444444444"
 SOURCE = b"Day 2 synthetic private note: the sample budget is forty-two units.\n"
 ARTIFACT = b"%PDF-1.4\nsynthetic-test-artifact\n"
 SIGNED = "https://storage.example.test/private?signature=redacted"
+OWNER_B_DOC_ID = "55555555-5555-4555-8555-555555555555"
+OWNER_B_ARTIFACT_ID = "66666666-6666-4666-8666-666666666666"
+OWNER_B_ARTIFACT = b"%PDF-1.4\\nowner-B-control-artifact\\n"
+OWNER_B_SIGNED = "https://storage.example.test/owner-b-control?signature=redacted"
+AUTH_ISSUER = "https://auth.example.test/auth/v1"
+AUTH_AUDIENCE = "authenticated"
+
+
+def _b64(value):
+    return base64.urlsafe_b64encode(
+        json.dumps(value, separators=(",", ":")).encode()
+    ).rstrip(b"=").decode()
+
+
+def make_test_token(subject, *, issuer=AUTH_ISSUER, audience=AUTH_AUDIENCE, expires_at=None):
+    now = int(time.time())
+    claims = {
+        "iss": issuer, "aud": audience, "exp": expires_at if expires_at is not None else now + 3600,
+        "iat": now, "sub": subject, "role": "authenticated",
+    }
+    return _b64({"alg": "RS256", "kid": "test-key"}) + "." + _b64(claims) + ".c2ln"
+
+
+def decode_test_token_claims(token):
+    payload = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+
+TOKEN_A = make_test_token("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+TOKEN_B = make_test_token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 
 def runtime():
@@ -49,7 +81,7 @@ def frozen(manifest=None):
 
 class Day2API:
     def __init__(self, *, attempts=1, foreign_download=404, document_grounded=True, cites_document=True,
-                 source=SOURCE):
+                 source=SOURCE, wrong_account_binding=False):
         self.calls = []
         self.uploaded = None
         self.task_payload = None
@@ -59,6 +91,7 @@ class Day2API:
         self.cites_document = cites_document
         self.manifest = runtime()
         self.source = source
+        self.wrong_account_binding = wrong_account_binding
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         method, path = request.method, request.url.path
@@ -69,27 +102,31 @@ class Day2API:
         if method == "GET" and path == "/api/v1/runtime-manifest":
             return res(200, self.manifest)
         if method == "GET" and path == "/api/v1/me":
-            return res(200, {"account_id": "owner-a" if user == "token-a" else "owner-b",
-                             "workspace_id": "workspace-a" if user == "token-a" else "workspace-b"})
+            claims = decode_test_token_claims(user)
+            account_id = hashlib.sha256(json.dumps([claims["iss"], claims["sub"]]).encode()).hexdigest()
+            if self.wrong_account_binding:
+                account_id = "account-subject-mismatch"
+            return res(200, {"account_id": account_id,
+                             "workspace_id": "workspace-" + str(claims["sub"])})
         if method == "POST" and path == "/api/v1/documents":
             value = json.loads(request.content)
             assert value["sha256"] == hashlib.sha256(self.source).hexdigest()
             self.document_filename = value["filename"]
             return res(201, {"id": DOC_ID, "state": "pending"})
         if method == "PUT" and path == f"/api/v1/documents/{DOC_ID}/content":
-            if user == "token-b":
+            if user == TOKEN_B:
                 return res(404, {})
             self.uploaded = request.content
             return res(200, {"id": DOC_ID, "state": "uploaded"})
         if method == "GET" and path == f"/api/v1/documents/{DOC_ID}/content":
-            return res(404, {}) if user == "token-b" else res(200, content=self.uploaded)
+            return res(404, {}) if user == TOKEN_B else res(200, content=self.uploaded)
         if method == "GET" and path == "/api/v1/documents":
             return res(200, {"documents": []})
         if method == "POST" and path == "/api/v1/tasks":
             self.task_payload = json.loads(request.content)
             return res(202, {"id": TASK_ID, "state": "queued"})
         if method == "GET" and path == f"/api/v1/tasks/{TASK_ID}":
-            if user == "token-b":
+            if user == TOKEN_B:
                 return res(404, {})
             return res(200, {
                 "id": TASK_ID, "state": "completed", "workflow_version": "report_email_v1",
@@ -105,23 +142,141 @@ class Day2API:
                                "byte_size": len(ARTIFACT), "sha256": hashlib.sha256(ARTIFACT).hexdigest()}],
             })
         if method == "GET" and path == f"/api/v1/tasks/{TASK_ID}/events":
-            return res(404, {}) if user == "token-b" else res(200, {"terminal": True, "state": "completed", "events": [{"phase": "completed"}]})
+            return res(404, {}) if user == TOKEN_B else res(200, {"terminal": True, "state": "completed", "events": [{"phase": "completed"}]})
         if method == "GET" and path == f"/api/v1/artifacts/{ART_ID}/download":
-            return res(self.foreign_download, {}) if user == "token-b" else res(200, {"url": SIGNED, "filename": "report.pdf"})
+            return res(self.foreign_download, {}) if user == TOKEN_B else res(200, {"url": SIGNED, "filename": "report.pdf"})
         if method == "GET" and path == f"/api/v1/artifacts/{ART_ID}/content":
-            return res(404, {}) if user == "token-b" else res(200, content=ARTIFACT)
+            return res(404, {}) if user == TOKEN_B else res(200, content=ARTIFACT)
         raise AssertionError((method, path, user))
 
 
-def exercise(monkeypatch, api):
-    monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
-        200, content=ARTIFACT, request=httpx.Request("GET", url)))
+
+class BidirectionalDay2API(Day2API):
+    def __init__(
+        self, *, include_owner_b_artifact=True,
+        owner_a_reads_b_document=404, owner_a_writes_b_document=404,
+        owner_b_reads_a_document=404, owner_b_writes_a_document=404,
+        owner_a_reads_b_artifact=404, owner_a_downloads_b_artifact=404,
+        owner_b_reads_a_artifact=404, owner_b_downloads_a_artifact=404,
+        leak_b_document_to_a=False, leak_a_document_to_b=False,
+        leak_b_artifact_to_a=False, leak_a_artifact_to_b=False,
+        **kwargs,
+    ):
+        owner_b_downloads_a_artifact = kwargs.pop("foreign_download", owner_b_downloads_a_artifact)
+        super().__init__(foreign_download=owner_b_downloads_a_artifact, **kwargs)
+        self.include_owner_b_artifact = include_owner_b_artifact
+        self.owner_a_reads_b_document = owner_a_reads_b_document
+        self.owner_a_writes_b_document = owner_a_writes_b_document
+        self.owner_b_reads_a_document = owner_b_reads_a_document
+        self.owner_b_writes_a_document = owner_b_writes_a_document
+        self.owner_a_reads_b_artifact = owner_a_reads_b_artifact
+        self.owner_a_downloads_b_artifact = owner_a_downloads_b_artifact
+        self.owner_b_reads_a_artifact = owner_b_reads_a_artifact
+        self.leak_b_document_to_a = leak_b_document_to_a
+        self.leak_a_document_to_b = leak_a_document_to_b
+        self.leak_b_artifact_to_a = leak_b_artifact_to_a
+        self.leak_a_artifact_to_b = leak_a_artifact_to_b
+        self.owner_b_uploaded = None
+        self.owner_b_filename = "owner-b-control.txt"
+        self.task_created = False
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        method, path = request.method, request.url.path
+        user = request.headers.get("Authorization", "").split(" ")[-1]
+
+        def res(code, value=None, content=None):
+            return httpx.Response(code, json=value, request=request) if content is None else httpx.Response(code, content=content, request=request)
+
+        if method == "POST" and path == "/api/v1/documents" and user == TOKEN_B:
+            self.calls.append((method, path, user))
+            value = json.loads(request.content)
+            self.owner_b_filename = value["filename"]
+            return res(201, {"id": OWNER_B_DOC_ID, "state": "pending"})
+        if method == "PUT" and path == f"/api/v1/documents/{OWNER_B_DOC_ID}/content":
+            self.calls.append((method, path, user))
+            if user == TOKEN_A:
+                return res(self.owner_a_writes_b_document, {})
+            self.owner_b_uploaded = request.content
+            return res(200, {"id": OWNER_B_DOC_ID, "state": "uploaded"})
+        if method == "PUT" and path == f"/api/v1/documents/{DOC_ID}/content" and user == TOKEN_B:
+            self.calls.append((method, path, user))
+            return res(self.owner_b_writes_a_document, {})
+        if method == "GET" and path == f"/api/v1/documents/{OWNER_B_DOC_ID}/content":
+            self.calls.append((method, path, user))
+            if user == TOKEN_A:
+                return res(self.owner_a_reads_b_document, {})
+            return res(200, content=self.owner_b_uploaded or b"")
+        if method == "GET" and path == f"/api/v1/documents/{DOC_ID}/content" and user == TOKEN_B:
+            self.calls.append((method, path, user))
+            return res(self.owner_b_reads_a_document, {})
+        if method == "GET" and path == "/api/v1/documents":
+            self.calls.append((method, path, user))
+            if user == TOKEN_A:
+                documents = [{"id": DOC_ID}]
+                if self.leak_b_document_to_a:
+                    documents.append({"id": OWNER_B_DOC_ID})
+            else:
+                documents = [{"id": OWNER_B_DOC_ID}]
+                if self.leak_a_document_to_b:
+                    documents.append({"id": DOC_ID})
+            return res(200, {"documents": documents})
+        if method == "GET" and path == "/api/v1/artifacts":
+            self.calls.append((method, path, user))
+            owner_b = {
+                "id": OWNER_B_ARTIFACT_ID, "filename": "owner-b-control.pdf",
+                "byte_size": len(OWNER_B_ARTIFACT),
+                "sha256": hashlib.sha256(OWNER_B_ARTIFACT).hexdigest(),
+            }
+            owner_a = {
+                "id": ART_ID, "filename": "report.pdf", "byte_size": len(ARTIFACT),
+                "sha256": hashlib.sha256(ARTIFACT).hexdigest(),
+            }
+            if user == TOKEN_A:
+                artifacts = [owner_a] if self.task_created else []
+                if self.leak_b_artifact_to_a:
+                    artifacts.append(owner_b)
+            else:
+                artifacts = [owner_b] if self.include_owner_b_artifact else []
+                if self.leak_a_artifact_to_b and self.task_created:
+                    artifacts.append(owner_a)
+            return res(200, {"artifacts": artifacts})
+        if method == "GET" and path == f"/api/v1/artifacts/{OWNER_B_ARTIFACT_ID}/content":
+            self.calls.append((method, path, user))
+            if user == TOKEN_A:
+                return res(self.owner_a_reads_b_artifact, {})
+            return res(200, content=OWNER_B_ARTIFACT)
+        if method == "GET" and path == f"/api/v1/artifacts/{OWNER_B_ARTIFACT_ID}/download":
+            self.calls.append((method, path, user))
+            if user == TOKEN_A:
+                return res(self.owner_a_downloads_b_artifact, {})
+            return res(200, {"url": OWNER_B_SIGNED, "filename": "owner-b-control.pdf"})
+        if method == "GET" and path == f"/api/v1/artifacts/{ART_ID}/content" and user == TOKEN_B:
+            self.calls.append((method, path, user))
+            return res(self.owner_b_reads_a_artifact, {})
+        if method == "POST" and path == "/api/v1/tasks":
+            self.task_created = True
+        return super().__call__(request)
+
+
+def exercise_bidirectional(monkeypatch, api):
+    def signed_get(url, **kwargs):
+        content = OWNER_B_ARTIFACT if "owner-b-control" in url else ARTIFACT
+        return httpx.Response(200, content=content, request=httpx.Request("GET", url))
+    monkeypatch.setattr(day2.httpx, "get", signed_get)
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
-        return day2.run_probe(client, "token-a", "token-b", frozen(api.manifest), SOURCE, timeout_seconds=5)
+        return day2.run_probe(
+            client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
+            expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+            timeout_seconds=5, owner_b_artifact_id=OWNER_B_ARTIFACT_ID,
+        )
+
+
+def exercise(monkeypatch, api):
+    return exercise_bidirectional(monkeypatch, api)
 
 
 def test_day2_real_document_artifact_and_owner_denial_contract(monkeypatch):
-    api = Day2API()
+    api = BidirectionalDay2API()
     result = exercise(monkeypatch, api)
     assert result["task_id"] == TASK_ID
     assert result["document_id"] == DOC_ID
@@ -131,19 +286,25 @@ def test_day2_real_document_artifact_and_owner_denial_contract(monkeypatch):
     assert api.uploaded == SOURCE
     assert api.task_payload["document_ids"] == [DOC_ID]
     assert api.task_payload["output_language"] == "en"
-    assert any(c == ("GET", f"/api/v1/artifacts/{ART_ID}/download", "token-b") for c in api.calls)
-    assert any(c == ("GET", f"/api/v1/documents/{DOC_ID}/content", "token-b") for c in api.calls)
+    assert any(c == ("GET", f"/api/v1/artifacts/{ART_ID}/download", TOKEN_B) for c in api.calls)
+    assert any(c == ("GET", f"/api/v1/documents/{DOC_ID}/content", TOKEN_B) for c in api.calls)
 
 
 def test_day2_pdf_source_uses_pdf_extension_and_original_bytes(monkeypatch):
     # The transport is synthetic; load_private_pdf separately validates the
     # real PDF before the operator runner can call this API path.
     source = b"%PDF-1.7\nprivate synthetic PDF protocol fixture"
-    api = Day2API(source=source)
-    monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
-        200, content=ARTIFACT, request=httpx.Request("GET", url)))
+    api = BidirectionalDay2API(source=source)
+    def signed_get(url, **kwargs):
+        content = OWNER_B_ARTIFACT if "owner-b-control" in url else ARTIFACT
+        return httpx.Response(200, content=content, request=httpx.Request("GET", url))
+    monkeypatch.setattr(day2.httpx, "get", signed_get)
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
-        result = day2.run_probe(client, "token-a", "token-b", frozen(api.manifest), source, timeout_seconds=5)
+        result = day2.run_probe(
+            client, TOKEN_A, TOKEN_B, frozen(api.manifest), source,
+            expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+            owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+        )
     assert result["document_sha256"] == hashlib.sha256(source).hexdigest()
     assert api.uploaded == source
     assert api.document_filename.endswith(".pdf")
@@ -181,7 +342,7 @@ def test_day2_pdf_operator_path_accepts_text_based_pdf(tmp_path):
 
 @pytest.mark.parametrize("change", ["unfrozen", "revision", "digest", "production"])
 def test_day2_rejects_wrong_release_before_any_private_write(monkeypatch, change):
-    api = Day2API()
+    api = BidirectionalDay2API()
     release = frozen(api.manifest)
     if change == "unfrozen":
         release["status"] = "prepared"
@@ -193,44 +354,46 @@ def test_day2_rejects_wrong_release_before_any_private_write(monkeypatch, change
         api.manifest["environment"] = "production"
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
         with pytest.raises(day2.Day2Failure):
-            day2.run_probe(client, "token-a", "token-b", release, SOURCE, timeout_seconds=5)
+            day2.run_probe(client, TOKEN_A, TOKEN_B, release, SOURCE, expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE, owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5)
     assert not any(method == "POST" for method, _, _ in api.calls)
 
 
 def test_day2_rejects_fake_model_completion(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="model"):
-        exercise(monkeypatch, Day2API(attempts=0))
+        exercise(monkeypatch, BidirectionalDay2API(attempts=0))
 
 
 def test_day2_rejects_foreign_artifact_download(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="cross-owner"):
-        exercise(monkeypatch, Day2API(foreign_download=200))
+        exercise(monkeypatch, BidirectionalDay2API(foreign_download=200))
 
 
 def test_day2_rejects_presigned_url_outside_reviewed_storage_endpoint(monkeypatch):
-    api = Day2API()
+    api = BidirectionalDay2API()
     monkeypatch.setattr(day2.httpx, "get", lambda url, **kwargs: httpx.Response(
         200, content=ARTIFACT, request=httpx.Request("GET", url)))
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
         with pytest.raises(day2.Day2Failure, match="configured private storage endpoint"):
             day2.run_probe(
-                client, "token-a", "token-b", frozen(api.manifest), SOURCE,
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID,
                 timeout_seconds=5, trusted_storage_host="approved-storage.example.test",
             )
 
 
 def test_day2_rejects_missing_selected_document_provenance(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="provenance"):
-        exercise(monkeypatch, Day2API(document_grounded=False))
+        exercise(monkeypatch, BidirectionalDay2API(document_grounded=False))
 
 
 def test_day2_rejects_report_without_document_citation(monkeypatch):
     with pytest.raises(day2.Day2Failure, match="cite the selected document"):
-        exercise(monkeypatch, Day2API(cites_document=False))
+        exercise(monkeypatch, BidirectionalDay2API(cites_document=False))
 
 
 def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
-    api = Day2API()
+    api = BidirectionalDay2API()
     orig = api.__call__
     def same_identity(request):
         if request.url.path == "/api/v1/me":
@@ -238,7 +401,7 @@ def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
         return orig(request)
     with httpx.Client(transport=httpx.MockTransport(same_identity), base_url="https://stage.example.test") as client:
         with pytest.raises(day2.Day2Failure, match="distinct"):
-            day2.run_probe(client, "token-a", "token-b", frozen(), SOURCE, timeout_seconds=5)
+            day2.run_probe(client, TOKEN_A, TOKEN_B, frozen(), SOURCE, expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE, owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5)
     assert not any(method == "POST" for method, _, _ in api.calls)
 
 
@@ -316,3 +479,120 @@ def test_pdf_task_outbox_sql_error_cannot_leak_driver_payload():
     with pytest.raises(day2.Day2Failure, match="could not be independently verified") as raised:
         day2.persisted_document_outbox(container, TASK_ID)
     assert "private SQL address" not in str(raised.value)
+
+
+def test_day2_proves_bidirectional_document_and_artifact_access(monkeypatch):
+    api = BidirectionalDay2API()
+    result = exercise_bidirectional(monkeypatch, api)
+    proof = result["owner_isolation"]
+    assert proof["status"] == "passed"
+    assert proof["identities_distinct"] is True
+    assert proof["identity_claims"]["subjects_distinct"] is True
+    for owner in ("owner_a", "owner_b"):
+        for claim in ("issuer_verified", "audience_verified", "expiry_verified",
+                      "subject_verified", "api_subject_binding_verified"):
+            assert proof["identity_claims"][owner][claim] is True
+    assert proof["owners"]["a"]["document_id"] == DOC_ID
+    assert proof["owners"]["b"]["document_id"] == OWNER_B_DOC_ID
+    assert proof["owners"]["a"]["artifact_id"] == ART_ID
+    assert proof["owners"]["b"]["artifact_id"] == OWNER_B_ARTIFACT_ID
+    for owner in ("a", "b"):
+        row = proof["owners"][owner]
+        assert row["document_read"] == "passed"
+        assert row["own_document_list"] == "included"
+        assert row["foreign_document_read"] == "denied_404"
+        assert row["foreign_document_write"] == "denied_404"
+        assert row["foreign_document_list"] == "excluded"
+        assert row["artifact_content_read"] == "passed"
+        assert row["artifact_download"] == "passed"
+        assert row["own_artifact_list"] == "included"
+        assert row["foreign_artifact_content"] == "denied_404"
+        assert row["foreign_artifact_download"] == "denied_404"
+        assert row["foreign_artifact_list"] == "excluded"
+
+
+def test_day2_requires_owner_b_control_artifact_before_any_private_write(monkeypatch):
+    api = BidirectionalDay2API(include_owner_b_artifact=False)
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match="owner B synthetic artifact"):
+            day2.run_probe(
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                timeout_seconds=5, owner_b_artifact_id=OWNER_B_ARTIFACT_ID,
+            )
+    assert not any(method in {"POST", "PUT"} for method, _, _ in api.calls)
+
+
+@pytest.mark.parametrize("override", [
+    {"owner_a_reads_b_document": 200},
+    {"owner_a_writes_b_document": 200},
+    {"owner_b_reads_a_document": 200},
+    {"owner_b_writes_a_document": 200},
+    {"owner_a_reads_b_artifact": 200},
+    {"owner_a_downloads_b_artifact": 200},
+    {"owner_b_reads_a_artifact": 200},
+    {"owner_b_downloads_a_artifact": 200},
+])
+def test_day2_rejects_cross_owner_access_in_either_direction(monkeypatch, override):
+    api = BidirectionalDay2API(**override)
+    with pytest.raises(day2.Day2Failure, match="cross-owner"):
+        exercise_bidirectional(monkeypatch, api)
+
+
+@pytest.mark.parametrize("override", [
+    {"leak_b_document_to_a": True},
+    {"leak_a_document_to_b": True},
+    {"leak_b_artifact_to_a": True},
+    {"leak_a_artifact_to_b": True},
+])
+def test_day2_rejects_foreign_resource_enumeration(monkeypatch, override):
+    api = BidirectionalDay2API(**override)
+    with pytest.raises(day2.Day2Failure, match="enumerat|list|catalog|visible"):
+        exercise_bidirectional(monkeypatch, api)
+
+
+@pytest.mark.parametrize(("token", "message"), [
+    (make_test_token("cccccccc-cccc-4ccc-8ccc-cccccccccccc", issuer="https://wrong.example.test/auth/v1"), "issuer"),
+    (make_test_token("dddddddd-dddd-4ddd-8ddd-dddddddddddd", audience="wrong-audience"), "audience"),
+    (make_test_token("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", expires_at=int(time.time()) + 10), "expired"),
+    (make_test_token(""), "subject"),
+])
+def test_day2_rejects_invalid_managed_identity_claims(monkeypatch, token, message):
+    api = BidirectionalDay2API()
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match=message):
+            day2.run_probe(
+                client, token, TOKEN_B, frozen(api.manifest), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+            )
+
+
+def test_day2_binds_verified_subject_to_authenticated_api_identity(monkeypatch):
+    api = BidirectionalDay2API(wrong_account_binding=True)
+    with pytest.raises(day2.Day2Failure, match="subjects"):
+        exercise_bidirectional(monkeypatch, api)
+
+
+def test_day2_rejects_malformed_owner_b_artifact_id_before_api_calls():
+    api = BidirectionalDay2API()
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match="valid UUID"):
+            day2.run_probe(
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id="not-a-uuid", timeout_seconds=5,
+            )
+    assert api.calls == []
+
+
+def test_day2_fails_before_private_writes_if_owner_b_artifact_is_visible_to_a():
+    api = BidirectionalDay2API(leak_b_artifact_to_a=True)
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match="visible in owner A"):
+            day2.run_probe(
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+            )
+    assert not any(method in {"POST", "PUT"} for method, _, _ in api.calls)

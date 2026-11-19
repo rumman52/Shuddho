@@ -200,6 +200,8 @@ def test_artifact_authorization_rejects_cross_account_access(monkeypatch):
     )
     assert result["status"] == "passed"
     assert "owner-scoped S3 artifact authorization" in result["evidence"]
+    assert result["task_id"] == "task-1"
+    assert result["artifact_id"] == "artifact-1"
     assert signed_requests == [signed_url, signed_url]
 
 

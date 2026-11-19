@@ -20,8 +20,8 @@ class ExerciseFailure(RuntimeError):
     pass
 
 
-def passed(evidence: str) -> dict:
-    return {"status": "passed", "evidence": evidence}
+def passed(evidence: str, **details) -> dict:
+    return {"status": "passed", "evidence": evidence, **details}
 
 
 def require_https_base(value: str) -> str:
@@ -739,7 +739,9 @@ def artifact_authorization(
         "owner-scoped S3 artifact authorization passed with guessed-ID denial, "
         "cross-owner download/content denial, non-empty signed download and expired "
         "signed-URL denial; physical artifact deletion remains the separate retention/"
-        "deletion staging drill"
+        "deletion staging drill",
+        task_id=task_id,
+        artifact_id=artifact_id,
     )
 
 
