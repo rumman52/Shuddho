@@ -17,6 +17,8 @@ def test_day8_telemetry_privacy_is_part_of_mandatory_suite() -> None:
     assert "--required-module tests.test_day8_telemetry_ci_gate" in step
     assert "tests/test_staging_pa10_scheduled_profile.py" in step
     assert "--required-module tests.test_staging_pa10_scheduled_profile" in step
+    assert "tests/test_automations.py::test_briefing_occurrence_emits_one_completion_notification_only" in step
+    assert "--required-module tests.test_automations" in step
 
 
 def test_only_the_canonical_private_operational_event_module_exists() -> None:
