@@ -71,6 +71,66 @@ def _positive(value: object, label: str) -> int:
     return value
 
 
+def validate_owner_isolation(
+    value: object,
+    *,
+    document_id: str,
+    document_sha256: str,
+    artifact_id: str,
+    artifact_sha256: str,
+    artifact_bytes: int,
+) -> dict:
+    """Require positive and negative document/artifact proofs for both owners."""
+    proof = _object(value, "execution.owner_isolation")
+    if proof.get("schema_version") != 1 or proof.get("status") != "passed":
+        raise Day2AcceptanceFailure("Bidirectional owner isolation has not passed schema version 1.")
+    if proof.get("identities_distinct") is not True:
+        raise Day2AcceptanceFailure("Bidirectional owner isolation does not prove distinct identities.")
+    owners = _object(proof.get("owners"), "execution.owner_isolation.owners")
+    if set(owners) != {"a", "b"}:
+        raise Day2AcceptanceFailure("Bidirectional owner isolation must contain exactly owners a and b.")
+
+    required_statuses = {
+        "document_read": "passed",
+        "own_document_list": "included",
+        "foreign_document_read": "denied_404",
+        "foreign_document_write": "denied_404",
+        "foreign_document_list": "excluded",
+        "artifact_content_read": "passed",
+        "artifact_download": "passed",
+        "own_artifact_list": "included",
+        "foreign_artifact_content": "denied_404",
+        "foreign_artifact_download": "denied_404",
+        "foreign_artifact_list": "excluded",
+    }
+    normalized = {}
+    for owner in ("a", "b"):
+        row = _object(owners.get(owner), f"execution.owner_isolation.owners.{owner}")
+        for key in ("document_id", "artifact_id"):
+            _nonempty(row.get(key), f"owner_{owner}.{key}")
+        _digest(row.get("document_sha256"), f"owner_{owner}.document_sha256")
+        _digest(row.get("artifact_sha256"), f"owner_{owner}.artifact_sha256")
+        _positive(row.get("document_bytes"), f"owner_{owner}.document_bytes")
+        _positive(row.get("artifact_bytes"), f"owner_{owner}.artifact_bytes")
+        for key, expected in required_statuses.items():
+            if row.get(key) != expected:
+                raise Day2AcceptanceFailure(
+                    f"Bidirectional owner isolation owner_{owner}.{key} must be {expected}."
+                )
+        normalized[owner] = row
+
+    owner_a, owner_b = normalized["a"], normalized["b"]
+    if owner_a["document_id"] == owner_b["document_id"] or owner_a["artifact_id"] == owner_b["artifact_id"]:
+        raise Day2AcceptanceFailure("Bidirectional owner isolation resource IDs must be distinct.")
+    if owner_a["document_id"] != document_id or owner_a["artifact_id"] != artifact_id:
+        raise Day2AcceptanceFailure("Owner A isolation resource IDs do not match the primary PDF task.")
+    if owner_a["document_sha256"] != document_sha256:
+        raise Day2AcceptanceFailure("Owner A document digest does not match the primary PDF task.")
+    if owner_a["artifact_sha256"] != artifact_sha256 or owner_a["artifact_bytes"] != artifact_bytes:
+        raise Day2AcceptanceFailure("Owner A artifact digest/size does not match the primary PDF task.")
+    return proof
+
+
 def _stage(value: object, label: str, *, release_id: str, revision: str) -> tuple[str, datetime]:
     obj = _object(value, label)
     if obj.get("status") != "passed":
@@ -124,8 +184,16 @@ def validate_evidence(
     _positive(document_outbox.get("dispatch_attempts"), "document_outbox.dispatch_attempts")
     if run.get("workflow_id") != "shuddho-task-" + run["task_id"]:
         raise Day2AcceptanceFailure("Document execution has an unrelated Temporal workflow id.")
-    if run.get("owner_isolation") != "passed" or run.get("artifact_retrieval") != "passed":
-        raise Day2AcceptanceFailure("Document execution did not prove isolation and private artifact retrieval.")
+    owner_isolation = validate_owner_isolation(
+        run.get("owner_isolation"),
+        document_id=run["document_id"],
+        document_sha256=run["document_sha256"],
+        artifact_id=run["artifact_id"],
+        artifact_sha256=run["artifact_sha256"],
+        artifact_bytes=run["artifact_bytes"],
+    )
+    if run.get("artifact_retrieval") != "passed":
+        raise Day2AcceptanceFailure("Document execution did not prove private artifact retrieval.")
     worker = _object(run.get("worker"), "execution.worker")
     _nonempty(worker.get("id"), "execution.worker.id")
     _nonempty(worker.get("task_queue"), "execution.worker.task_queue")
@@ -193,6 +261,7 @@ def validate_evidence(
         "workflow_id": run["workflow_id"],
         "artifact_id": run["artifact_id"],
         "artifact_sha256": run["artifact_sha256"],
+        "owner_isolation": owner_isolation,
         "worker_id": worker["id"],
         "recovered_agent_run_id": agent_run_id,
         "recovered_agent_workflow_id": effect["workflow_id"],
