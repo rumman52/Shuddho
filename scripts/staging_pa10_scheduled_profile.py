@@ -17,7 +17,7 @@ else:
     from staging_prerequisite_preflight import PreflightFailure, _validate_https_endpoint
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PRODUCTION_NAMES = {"prod", "production"}
 SCENARIOS = {
     "daily_coworker": {"profile": "briefing", "schedule": {"daily"}},
@@ -29,6 +29,25 @@ SCENARIOS = {
 
 class ScheduledProfileProbeFailure(RuntimeError):
     pass
+
+
+def require_one_completion_notification(notices: object) -> dict:
+    """Require one persisted owner notification for a completed briefing occurrence."""
+    if not isinstance(notices, list) or len(notices) != 1:
+        raise ScheduledProfileProbeFailure(
+            "Expected exactly one completion notification for the scheduled occurrence."
+        )
+    notice = notices[0]
+    if (
+        not isinstance(notice, dict)
+        or not isinstance(notice.get("id"), str)
+        or not notice["id"].strip()
+        or notice.get("kind") != "automation_completed"
+    ):
+        raise ScheduledProfileProbeFailure(
+            "Expected exactly one completion notification for the scheduled occurrence."
+        )
+    return notice
 
 
 def utcnow_iso() -> str:
@@ -450,12 +469,7 @@ def verify(args: argparse.Namespace) -> dict:
                     and str(item.get("automation_id") or "") == str(state["automation_id"])
                     and str(item.get("occurrence_id") or "") == occurrence_id
                 ]
-                started = [item for item in notices if item.get("kind") == "automation_started"]
-                completed = [item for item in notices if item.get("kind") == "automation_completed"]
-                if len(started) != 1 or len(completed) != 1:
-                    raise ScheduledProfileProbeFailure(
-                        "Expected exactly one start notice and one completion notice."
-                    )
+                completion_notice = require_one_completion_notification(notices)
                 pin_evidence = {}
                 if scenario == "daily_coworker":
                     run = json_object(
@@ -536,8 +550,7 @@ def verify(args: argparse.Namespace) -> dict:
                     **pin_evidence,
                     "run_state": "completed",
                     "run_updated_at": occurrence.get("run_updated_at"),
-                    "started_notification_id": str(started[0]["id"]),
-                    "completion_notification_id": str(completed[0]["id"]),
+                    "completion_notification_id": str(completion_notice["id"]),
                     "new_notification_count": len(notices),
                     "operator_case_reference": args.operator_case_reference.strip(),
                 }
