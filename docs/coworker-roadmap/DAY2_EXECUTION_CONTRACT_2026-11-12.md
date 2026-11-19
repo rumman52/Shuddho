@@ -16,17 +16,23 @@ release, task, artifact, worker and restore identities in private evidence.
 The merged Day 2 source includes:
 
 - `scripts/staging_day2_execution.py`: one operator-selected **synthetic private, text-based PDF
-  document** is uploaded through the real authenticated API, read back by the
-  owner, denied to a second owner, used by the existing `report_email`
-  workflow with `output_language=en`, and must reach `completed` with
-  positive persisted model attempts/tokens. The extracted selected
-  DocumentVersion must appear in the persisted source manifest with matching
-  document ID and SHA-256, and a report section must cite that version ID.
+  document** is uploaded as owner A through the normal authenticated API and
+  used by the existing `report_email` workflow with `output_language=en`.
+  The task must reach `completed` with positive persisted model attempts/tokens.
+  A synthetic owner-B TXT control document is also uploaded through the normal
+  private path. Each owner must read its own document; the opposite owner must
+  receive 404 for document read/write, and each owner's document listing must
+  exclude the foreign document. The extracted A DocumentVersion must appear in
+  the persisted source manifest with matching document ID and SHA-256, and a
+  report section must cite that version ID.
 - The resulting `report.pdf` is read through the authorized artifact endpoint
   and a private S3 presigned URL. Both byte streams must match the
   repository-reported size and SHA-256. The signed URL must resolve to the
   configured HTTPS S3 endpoint host, not an arbitrary third-party origin.
-  Cross-owner artifact download and content requests must return 404.
+  The artifact checks are bidirectional: B must be denied A's report artifact,
+  and A must be denied B's separate synthetic task-output control artifact.
+  Both owners must positively retrieve their own artifact content and private
+  download URL, and each owner's artifact list must exclude the foreign artifact.
 - `staging_release_freeze.py` now compares the **actual v2 runtime manifest**
   against the exact reviewed declaration; newly exposed capabilities must be
   explicitly declared and cannot be silently added. The existing full PA-10
@@ -53,6 +59,32 @@ Day 1 zero-spend restrictions are not superseded by this patch. Obtain
 separate authorization for database recovery/retention, provisioned compute,
 provider-model calls and approved nonproduction credentials, where required.
 Do not widen database public access or activate production flags.
+
+## Refreshed Day 2 staging readback (19 November 2026, read-only)
+
+This section refreshes the historical 12 November inventory above. It records
+only nonsecret metadata; it is not a deployment, migration, restore or identity
+authorization.
+
+| System | Fresh observation | Consequence |
+| --- | --- | --- |
+| Render workspace | Rumman, `tea-d6ok4okhg0os73erkdv0` | Exact requested workspace was selected for read-only inspection. |
+| Render API | `shuddho-api-staging`, `srv-dav98otg1s2s73cod4gg`; latest live deploy source SHA `0e0b662fad0a02817a79a4514abba8f94e0ad022` | Deployed API is behind inspected repository `main` `8afcfccf409c5a01fd70a7966fb4b538575f502f`; no same-SHA API/worker release is proven. |
+| Render service settings | Auto-deploy disabled; build `pip install uv && uv sync --extra coworker`; start `uv run --extra coworker python -m services.coworker.migrate --check && uv run --extra coworker uvicorn services.coworker.api:app --host 0.0.0.0 --port $PORT`; Render health-check path empty | No configured Render health check; no deployment or command change was made. |
+| Render worker inventory | No dedicated persistent staging worker service | No authenticated Temporal poller, same-SHA worker heartbeat or restart proof. |
+| Supabase `shuddho-staging` (`bsmbvjenpvcyfjzwtuax`) | Private migration ledger `0070`; source expects `0072_merge_0071_heads`; 84 private-schema relations; zero Auth users and zero bucket objects; application tables/outboxes/worker-instance tables read as zero rows | Migration alignment, synthetic identities and real private task remain blocked. |
+| Supabase access posture | Bucket `shuddho-coworker-staging` has `public=false`; `anon` and `authenticated` have no private-schema USAGE or default table grants; no RLS-enabled relations among the 84 private relations; inspection SQL role was `postgres` with RLS bypass | The private-schema grant boundary is present, but row-level security is not enabled. The privileged read-only SQL role is not the app runtime role and must not be used for application migrations or seeding. |
+| Restore | No approved distinct empty database/object-store restore targets were supplied or verified | Do not back up, restore or overwrite the live source. |
+| Browser / Vercel / identity | Connected Vercel project inventory did not establish a Shuddho frontend repository/deployment/origin/API destination; no two approved managed synthetic identity tokens were available for issuer/audience/expiry/subject verification | Browser origin and hosted identity acceptance remain unverified. |
+
+The canonical `scripts/release_contract.py` and the PA-10 freeze contract
+remain authoritative and unchanged. Their CI, identity, database, storage,
+Temporal, model, quality, backup/restore, deletion, restart, fan-in and rollback
+requirements are not satisfied by this read-only inventory or by this source
+patch. Do not provision a paid worker, create identities, issue provider calls,
+apply migrations, seed data, or deploy until the Founder/operator supplies the
+required dated approvals, cost ceiling, duration, restore targets and rollback
+owner.
 
 ## Controlled operator sequence
 
@@ -103,9 +135,10 @@ uv run --extra coworker python scripts/staging_release_freeze.py verify \
 export SHUDDHO_STAGING_ALLOW_DAY2_EXECUTION=true
 # Run where the reviewed staging Settings have the same attested source SHA,
 # private S3, durable PostgreSQL, configured model and Temporal TLS credentials.
-uv run --extra coworker python scripts/staging_day2_execution.py \
+uv run --locked --extra coworker python scripts/staging_day2_execution.py \
   --freeze-evidence /secure/day2/release-frozen.json \
   --source-pdf /secure/day2/approved-synthetic-source.pdf \
+  --owner-b-artifact-id "$DAY2_OWNER_B_ARTIFACT_ID" \
   --output /secure/day2/document-execution.json --timeout 180
 ```
 
@@ -125,6 +158,34 @@ state; do not edit or merge a pass result. The source document and artifact
 remain available for the operator's separately approved retention/deletion
 checks. Existing `scripts/staging_api_exercise.py --artifact` additionally
 checks guessed artifact IDs and expiring signed URLs, when approved.
+
+## Owner-B artifact control precondition
+
+The reverse artifact check needs an actual synthetic task-output artifact owned
+by B. The Day 2 execution command does not create a second provider-backed task.
+If a suitable B-owned artifact does not already exist, it may be prepared with
+the existing `scripts/staging_api_exercise.py --artifact` operator, binding
+owner B as `SHUDDHO_STAGING_TOKEN_A` and owner A as
+`SHUDDHO_STAGING_TOKEN_B` in the protected environment. This is a separate
+model/provider task and requires separate explicit cost authorization; it is
+not implicitly authorized by the one owner-A PDF task.
+
+Only after separate approval for the B-owned synthetic control task, run in the
+protected operator environment:
+
+    export SHUDDHO_STAGING_TOKEN_A="<approved-owner-B-token>"
+    export SHUDDHO_STAGING_TOKEN_B="<approved-owner-A-token>"
+    uv run --locked --extra coworker python scripts/staging_api_exercise.py --artifact --output /secure/day2/owner-b-control.json
+
+Read `storage.artifact_id` from the private receipt and supply only that UUID
+as `DAY2_OWNER_B_ARTIFACT_ID`. The artifact exercise receipt also retains
+`storage.task_id`. Tokens, signed URLs and source content remain outside the
+receipt. The Day 2 execution operator verifies that the ID exists in B's
+artifact catalog, is absent from A's catalog, is retrievable by B and is denied
+to A before creating either document or the owner-A task. If the control
+artifact is absent, invalid, foreign-visible or unreadable, the operator fails
+closed before any private write. Do not manufacture a pass or run a second
+model task without separate approval.
 
 ## Separate restart and backup/restore gates
 
@@ -204,11 +265,12 @@ artifacts and authorization checks. No CI mock or merged source changes that.
 Pass requires an identical reviewed source SHA in the release freeze,
 running staging API, worker registry and Temporal execution; a real model-backed
 completed task on the selected private synthetic document; a retrievable
-SHA-verified private artifact; owner B's denied upload/download/list/task/
-artifact access; a live worker restart with persistent run identity; and
-PostgreSQL+object-storage restoration on separate identities. Inspect
-**nonsecret outputs**, record CI/review results separately, and do not infer
-success from process exit alone.
+SHA-verified private artifact; positive own-resource access and separate 404
+cross-owner document/artifact read/write/download denials in both A-to-B and
+B-to-A directions, with foreign resources absent from both owner-scoped lists;
+a live worker restart with persistent run identity; and PostgreSQL+object-storage
+restoration on separate identities. Inspect **nonsecret outputs**, record
+CI/review results separately, and do not infer success from process exit alone.
 
 **If the database or persistent worker remains unavailable at day's end,
 Day 10 live-pilot readiness is blocked.** Independent source/grounding work
