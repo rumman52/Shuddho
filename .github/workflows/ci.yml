@@ -272,7 +272,7 @@ jobs:
         with:
           name: day8-economics
           path: /tmp/day8-economics.xml
-      - name: Re-run Day 1 #664 regressions without skips
+      - name: "Re-run Day 1 #664 regressions without skips"
         run: |
           uv run --extra coworker pytest \
             tests/test_coworker.py::test_provider_capacity_settings_fail_closed \
@@ -282,7 +282,7 @@ jobs:
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day1-664-baseline.xml --required-module tests.test_coworker
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day1-664-baseline.xml --required-module tests.test_sandbox_control_plane
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day1-664-baseline.xml --required-module tests.test_fly_repository_coding
-      - name: Preserve Day 1 #664 baseline evidence
+      - name: "Preserve Day 1 #664 baseline evidence"
         if: always()
         uses: actions/upload-artifact@v4
         with:
