@@ -24,7 +24,30 @@ def proofs():
         'task_id': 'task-a', 'workflow_id': 'shuddho-task-task-a',
         'artifact_id': 'artifact-a', 'artifact_sha256': '2' * 64, 'artifact_bytes': 220,
         'model_attempts': 1, 'accounted_tokens': 62,
-        'owner_isolation': 'passed', 'artifact_retrieval': 'passed',
+        'owner_isolation': {
+            'status': 'passed',
+            'identities_distinct': True,
+            'owners': {
+                'a': {
+                    'document_id': 'doc-a', 'document_read': 'passed',
+                    'own_document_list': 'included', 'foreign_document_read': 'denied_404',
+                    'foreign_document_write': 'denied_404', 'foreign_document_list': 'excluded',
+                    'artifact_id': 'artifact-a', 'artifact_content_read': 'passed',
+                    'artifact_download': 'passed', 'own_artifact_list': 'included',
+                    'foreign_artifact_content': 'denied_404',
+                    'foreign_artifact_download': 'denied_404', 'foreign_artifact_list': 'excluded',
+                },
+                'b': {
+                    'document_id': 'doc-b', 'document_read': 'passed',
+                    'own_document_list': 'included', 'foreign_document_read': 'denied_404',
+                    'foreign_document_write': 'denied_404', 'foreign_document_list': 'excluded',
+                    'artifact_id': 'artifact-b', 'artifact_content_read': 'passed',
+                    'artifact_download': 'passed', 'own_artifact_list': 'included',
+                    'foreign_artifact_content': 'denied_404',
+                    'foreign_artifact_download': 'denied_404', 'foreign_artifact_list': 'excluded',
+                },
+            },
+        }, 'artifact_retrieval': 'passed',
         'document_outbox': {'task_id': 'task-a', 'effect_count': 1,
                             'delivered': True, 'dispatch_attempts': 1},
         'worker': {'id': 'worker-a', 'task_queue': 'staging-temporal', 'source_revision': SHA,
@@ -214,4 +237,54 @@ def test_pdf_task_requires_exactly_one_delivered_persisted_outbox(field, invalid
     proof_set[2]['document_outbox'][field] = invalid
     proof_set[3]['document_outbox'][field] = invalid
     with pytest.raises(gate.Day2AcceptanceFailure, match='outbox'):
+        check(*proof_set)
+
+
+
+@pytest.mark.parametrize('owner, field, invalid', [
+    ('a', 'foreign_document_read', 'passed'),
+    ('b', 'foreign_document_read', 'passed'),
+    ('a', 'foreign_document_write', 'passed'),
+    ('b', 'foreign_document_write', 'passed'),
+    ('a', 'foreign_document_list', 'included'),
+    ('b', 'foreign_document_list', 'included'),
+    ('a', 'foreign_artifact_content', 'passed'),
+    ('b', 'foreign_artifact_content', 'passed'),
+    ('a', 'foreign_artifact_download', 'passed'),
+    ('b', 'foreign_artifact_download', 'passed'),
+    ('a', 'foreign_artifact_list', 'included'),
+    ('b', 'foreign_artifact_list', 'included'),
+    ('a', 'document_read', 'denied_404'),
+    ('b', 'document_read', 'denied_404'),
+    ('a', 'artifact_content_read', 'denied_404'),
+    ('b', 'artifact_download', 'denied_404'),
+])
+def test_acceptance_rejects_missing_or_leaky_bidirectional_owner_proof(owner, field, invalid):
+    proof_set = list(proofs())
+    proof_set[1]['owner_isolation']['owners'][owner][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure, match='owner|isolation'):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize('owner, field, invalid', [
+    ('b', 'document_id', 'doc-a'),
+    ('b', 'artifact_id', 'artifact-a'),
+    ('a', 'document_id', 'wrong-primary-document'),
+    ('a', 'artifact_id', 'wrong-primary-artifact'),
+])
+def test_acceptance_rejects_duplicate_or_mismatched_owner_resource_ids(owner, field, invalid):
+    proof_set = list(proofs())
+    proof_set[1]['owner_isolation']['owners'][owner][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure, match='owner|isolation'):
+        check(*proof_set)
+
+
+def test_acceptance_rejects_missing_owner_direction_or_identity():
+    proof_set = list(proofs())
+    del proof_set[1]['owner_isolation']['owners']['b']
+    with pytest.raises(gate.Day2AcceptanceFailure, match='owner|isolation'):
+        check(*proof_set)
+    proof_set = list(proofs())
+    proof_set[1]['owner_isolation']['identities_distinct'] = False
+    with pytest.raises(gate.Day2AcceptanceFailure, match='owner|isolation'):
         check(*proof_set)
