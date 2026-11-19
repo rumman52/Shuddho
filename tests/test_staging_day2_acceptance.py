@@ -28,6 +28,19 @@ def proofs():
             'schema_version': 1,
             'status': 'passed',
             'identities_distinct': True,
+            'identity_claims': {
+                'owner_a': {
+                    'issuer_verified': True, 'audience_verified': True,
+                    'expiry_verified': True, 'subject_verified': True,
+                    'api_subject_binding_verified': True,
+                },
+                'owner_b': {
+                    'issuer_verified': True, 'audience_verified': True,
+                    'expiry_verified': True, 'subject_verified': True,
+                    'api_subject_binding_verified': True,
+                },
+                'subjects_distinct': True,
+            },
             'owners': {
                 'a': {
                     'document_id': 'doc-a', 'document_sha256': '1' * 64, 'document_bytes': 180,
@@ -306,4 +319,29 @@ def test_acceptance_rejects_invalid_owner_resource_manifest(owner, field, invali
     proof_set = list(proofs())
     proof_set[1]['owner_isolation']['owners'][owner][field] = invalid
     with pytest.raises(gate.Day2AcceptanceFailure, match='owner|isolation'):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize('owner, field', [
+    ('owner_a', 'issuer_verified'),
+    ('owner_a', 'audience_verified'),
+    ('owner_a', 'expiry_verified'),
+    ('owner_a', 'subject_verified'),
+    ('owner_b', 'issuer_verified'),
+    ('owner_b', 'audience_verified'),
+    ('owner_b', 'expiry_verified'),
+    ('owner_b', 'subject_verified'),
+    ('owner_b', 'api_subject_binding_verified'),
+])
+def test_acceptance_rejects_unverified_owner_jwt_claim(owner, field):
+    proof_set = list(proofs())
+    proof_set[1]['owner_isolation']['identity_claims'][owner][field] = False
+    with pytest.raises(gate.Day2AcceptanceFailure, match='identity|Managed'):
+        check(*proof_set)
+
+
+def test_acceptance_rejects_non_distinct_jwt_subjects():
+    proof_set = list(proofs())
+    proof_set[1]['owner_isolation']['identity_claims']['subjects_distinct'] = False
+    with pytest.raises(gate.Day2AcceptanceFailure, match='subject'):
         check(*proof_set)
