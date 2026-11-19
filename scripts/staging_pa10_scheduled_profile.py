@@ -17,7 +17,9 @@ else:
     from staging_prerequisite_preflight import PreflightFailure, _validate_https_endpoint
 
 
-SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 1
+LEGACY_PROFILE_EVIDENCE_SCHEMA_VERSION = 1
+BRIEFING_EVIDENCE_SCHEMA_VERSION = 2
 PRODUCTION_NAMES = {"prod", "production"}
 SCENARIOS = {
     "daily_coworker": {"profile": "briefing", "schedule": {"daily"}},
@@ -346,7 +348,7 @@ def prepare(args: argparse.Namespace) -> dict:
         )
         current = load_owned(client, token, args.automation_id, args.scenario)
     state = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": STATE_SCHEMA_VERSION,
         "evidence_kind": "pa10_scheduled_profile",
         "scenario": args.scenario,
         "release": release,
@@ -384,7 +386,7 @@ def prepare(args: argparse.Namespace) -> dict:
 def verify(args: argparse.Namespace) -> dict:
     require_guard()
     state = load_json(args.state, "scheduled-profile state")
-    if state.get("schema_version") != SCHEMA_VERSION:
+    if state.get("schema_version") != STATE_SCHEMA_VERSION:
         raise ScheduledProfileProbeFailure(
             "Scheduled-profile state has an unexpected schema."
         )
@@ -469,7 +471,27 @@ def verify(args: argparse.Namespace) -> dict:
                     and str(item.get("automation_id") or "") == str(state["automation_id"])
                     and str(item.get("occurrence_id") or "") == occurrence_id
                 ]
-                completion_notice = require_one_completion_notification(notices)
+                notification_evidence = {}
+                if state.get("run_profile") == "briefing":
+                    completion_notice = require_one_completion_notification(notices)
+                    evidence_schema_version = BRIEFING_EVIDENCE_SCHEMA_VERSION
+                    notification_evidence = {
+                        "completion_notification_id": str(completion_notice["id"]),
+                        "new_notification_count": len(notices),
+                    }
+                else:
+                    started = [item for item in notices if item.get("kind") == "automation_started"]
+                    completed = [item for item in notices if item.get("kind") == "automation_completed"]
+                    if len(started) != 1 or len(completed) != 1:
+                        raise ScheduledProfileProbeFailure(
+                            "Expected exactly one start notice and one completion notice."
+                        )
+                    evidence_schema_version = LEGACY_PROFILE_EVIDENCE_SCHEMA_VERSION
+                    notification_evidence = {
+                        "started_notification_id": str(started[0]["id"]),
+                        "completion_notification_id": str(completed[0]["id"]),
+                        "new_notification_count": len(notices),
+                    }
                 pin_evidence = {}
                 if scenario == "daily_coworker":
                     run = json_object(
@@ -525,7 +547,7 @@ def verify(args: argparse.Namespace) -> dict:
                         pin_evidence["prior_run_input_version_ids"] = old_versions
 
                 evidence = {
-                    "schema_version": SCHEMA_VERSION,
+                    "schema_version": evidence_schema_version,
                     "evidence_kind": "pa10_scheduled_profile",
                     "scenario": scenario,
                     "status": "passed",
@@ -550,8 +572,7 @@ def verify(args: argparse.Namespace) -> dict:
                     **pin_evidence,
                     "run_state": "completed",
                     "run_updated_at": occurrence.get("run_updated_at"),
-                    "completion_notification_id": str(completion_notice["id"]),
-                    "new_notification_count": len(notices),
+                    **notification_evidence,
                     "operator_case_reference": args.operator_case_reference.strip(),
                 }
                 if not evidence["operator_case_reference"]:
