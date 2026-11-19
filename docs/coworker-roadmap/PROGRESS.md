@@ -1,3 +1,19 @@
+## Day 6 export-manifest rejection regression — 19 November 2026 (Asia/Dhaka)
+
+**D06 / [#732](https://github.com/rumman52/Shuddho/issues/732): source-only regression repair in draft [PR #804](https://github.com/rumman52/Shuddho/pull/804); hosted Day 6 acceptance remains NO-GO.** Base `main` `8afcfccf409c5a01fd70a7966fb4b538575f502f`; branch `codex/day6-export-manifest-rejections-20261119`; verified source/test commit `5acda35daa1ffdaf63d3ac1ca9b335199b78141e`; PR merge SHA for the verification run `12f8513402b887803f012a190dfc0b486bdc46d1`.
+
+**RED reproduced on GitHub CI:** initial gate-only PR head `1664c8b38b80e99ea002866a131cef1952b000b7`, [run #44582729097](https://github.com/rumman52/Shuddho/actions/runs/44582729097), **3 failed in 7.35s**. The test supplied synthetic non-native DOCX/PDF bytes and expected a completion-phase error even though `validate_day6_exports` correctly rejected the malformed renderer output during `DocumentRunner.export`.
+
+**Source fix:** no production code was changed. The test now separates (1) missing/duplicate/unexpected renderer file sets, (2) malformed DOCX/PDF bytes, and (3) missing/duplicate/unexpected persisted manifests after a real native render. It asserts export-time failures produce zero storage PUTs, and all rejected paths leave the task failed with zero published artifact records. The persisted-manifest cases use the existing native renderer and verify four successful private-storage PUTs before completion refuses publication. Coworker CI now explicitly runs this module with the coworker extra, a required-module/no-skips JUnit gate, and retained evidence.
+
+**Exact code-head verification:** [PR run #44583092791](https://github.com/rumman52/Shuddho/actions/runs/44583092791): export-manifest gate **8 passed / 0 failed / 0 skipped** (JUnit artifact `14560960395`); broader Day 6 workflow suite **111 passed / 0 failed / 0 skipped** (artifact `14560006846`); offline quality evaluation **14/14 passed**. General test-and-build, frontend tests/build, browser qualification, and PostgreSQL 18 compatibility passed. Vercel GitHub integration posted a Ready preview. The full Coworker job was still running unrelated downstream qualification at the last readback (step 47/79); no full-job GREEN claim is made. Governance audit is skipped while the PR is draft.
+
+**Read-only hosted blockers:** Supabase staging remains Alembic `0070`, with zero Auth users, Coworker accounts, AgentRuns, tasks, artifacts, outbox rows, and objects in the one private storage bucket. Render workspace `Rumman` is listed but not selected, so no service/worker readback or restart was performed. No PostHog ingestion or instrumentation was performed. No staging mutation, provider call, email send, deployment, migration, or paid resource was used.
+
+**Disposition / next action:** keep PR #804 draft and #732 open. Full Coworker CI completion, independent human review, approved synthetic owners A/B, matching hosted API/worker/schema identity, and operated golden workflow evidence remain prerequisites. No Day 3–6 hosted acceptance or pilot activation is claimed.
+
+---
+
 ## Day 1 restore-drill source identity — 19 November 2026 (Asia/Dhaka)
 
 **D01.T06 / [#727](https://github.com/rumman52/Shuddho/issues/727): source guard implemented; operated staging recovery pending.** Base `b13ce501ba05073e3038e9c6cfab1b99b3876dc8`; branch `codex/day1-restore-fingerprint-validation`. The drill opened the restore target before validating both source fingerprints and prepared records before checking source identity. It now reads and records source fingerprints before the owner API or synthetic record creation. Verification requires both existing lowercase SHA-256 fingerprints before opening the target and rejects either matching source resource. The state format and valid prepared manifests are compatible.

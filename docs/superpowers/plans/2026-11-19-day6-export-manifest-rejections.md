@@ -34,7 +34,7 @@
 - **Objective and user-visible behavior:** A task cannot be marked completed or expose downloadable artifacts unless all four expected native outputs have passed validation and the persisted manifest remains complete.
 - **Dependency tasks and current evidence:** Existing native export validation from #766 and native recovery fixture repair #774 are present. Day 6 tracker #732 remains open. PR #801 records three failures in this regression module on the earlier base; the current main still contains the unchanged failing test file.
 - **Base branch/SHA:** `main` at `8afcfccf409c5a01fd70a7966fb4b538575f502f`.
-- **Work branch/PR:** `codex/day6-export-manifest-rejections-20261119`; draft PR to be opened after the CI baseline run.
+- **Work branch/PR:** `codex/day6-export-manifest-rejections-20261119`; [draft PR #804](https://github.com/rumman52/Shuddho/pull/804).
 - **Existing interfaces to reuse:** `DocumentRunner.run_for_test`, `DocumentRunner.phase`, `render_in_subprocess`, `validate_day6_exports`, `container.storage.put`, `container.repository.step`, and `container.repository.get_task`.
 - **Exact files to create/modify:** `tests/test_export_manifest_rejections.py`, `.github/workflows/ci.yml`, this plan, and `docs/coworker-roadmap/PROGRESS.md`.
 - **New interfaces/schema:** None.
@@ -57,18 +57,19 @@
 
 ### Task 1 — Establish the failing CI baseline
 
-- [ ] Add an explicit JUnit-backed Coworker CI step for `tests/test_export_manifest_rejections.py`.
-- [ ] Open a draft PR and capture the initial failing job before changing the test contract.
+- [x] Add an explicit JUnit-backed Coworker CI step for `tests/test_export_manifest_rejections.py`.
+- [x] Open draft PR #804 and capture the initial failing job before changing the test contract.
 
 ### Task 2 — Separate export-time rejection from completion-time manifest rejection
 
-- [ ] Rewrite renderer-set cases to assert `export_invalid` during `run_for_test`, zero storage PUTs, failed task state, and no artifact records.
-- [ ] Add DOCX and PDF malformed-byte cases using `render_in_subprocess` for the otherwise-valid native outputs, corrupting only the selected native body.
-- [ ] Add missing/duplicate/unexpected persisted-manifest cases. Use the real renderer, alter only a copied `repository.step("export")` result at completion, and assert rejection after four storage PUTs with no artifact records.
+- [x] Rewrite renderer-set cases to assert `export_invalid` during `run_for_test`, zero storage PUTs, failed task state, and no artifact records.
+- [x] Add DOCX and PDF malformed-byte cases using `render_in_subprocess` for the otherwise-valid native outputs, corrupting only the selected native body.
+- [x] Add missing/duplicate/unexpected persisted-manifest cases. Use the real renderer, alter only a copied `repository.step("export")` result at completion, and assert rejection after four storage PUTs with no artifact records.
 
 ### Task 3 — Verify and hand off
 
-- [ ] Run the focused regression module and the full impacted Day 6 suite.
-- [ ] Inspect the exact final PR-head Coworker, test/build, browser, and PostgreSQL 18 checks; record failures and skips honestly.
-- [ ] Review the diff against #732 and the Part 03 acceptance contract; update `docs/coworker-roadmap/PROGRESS.md` with the exact final SHA, PR, CI run, test counts, and remaining live blockers.
-- [ ] Keep the PR draft; do not merge or claim Day 6/staging acceptance.
+- [x] Run the focused regression module and the full impacted Day 6 suite.
+- [x] Inspect the exact PR code-head test/build, frontend, browser, PostgreSQL 18, and Day 6-specific Coworker gates; record results and skips honestly.
+- [ ] Wait for the full Coworker job in run #44583092791 to finish; at the last readback it was still running downstream qualification at step 47/79. Do not claim the full Coworker job is green.
+- [x] Review the diff against #732 and the Part 03 acceptance contract; update `docs/coworker-roadmap/PROGRESS.md` with the verified code SHA, PR, CI run, test counts, and remaining live blockers.
+- [x] Keep the PR draft; do not merge or claim Day 6/staging acceptance.
