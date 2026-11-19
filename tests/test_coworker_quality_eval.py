@@ -12,6 +12,18 @@ CASES=Path("tests/fixtures/coworker_quality_eval_cases.jsonl")
 
 def loaded(): return load_cases(CASES)
 
+
+def test_research_quality_fixtures_declare_synthetic_not_provider_provenance():
+    research_cases = [case for case in loaded() if case["skill_id"] == "research"]
+    assert len(research_cases) >= 2
+    assert all(
+        source["provider"] == "fixture"
+        and source["date_basis"] == "synthetic_fixture"
+        and source["retrieved_at"] == "2026-10-01T00:00:00+00:00"
+        and source["source_date"] is None
+        for case in research_cases for source in case["sources"]
+    )
+
 def test_curated_multilingual_quality_fixture_passes():
     cases=loaded()
     r=evaluate_offline(cases)

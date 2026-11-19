@@ -514,7 +514,7 @@ def test_day2_proves_bidirectional_document_and_artifact_access(monkeypatch):
 def test_day2_requires_owner_b_control_artifact_before_any_private_write(monkeypatch):
     api = BidirectionalDay2API(include_owner_b_artifact=False)
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
-        with pytest.raises(day2.Day2Failure, match="Owner B synthetic artifact"):
+        with pytest.raises(day2.Day2Failure, match=r"(?i)owner B synthetic artifact"):
             day2.run_probe(
                 client, TOKEN_A, TOKEN_B, frozen(api.manifest), SOURCE,
                 expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,

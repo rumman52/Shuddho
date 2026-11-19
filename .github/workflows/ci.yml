@@ -222,6 +222,24 @@ jobs:
           name: day6-export-manifest-rejections
           path: /tmp/day6-export-manifest-rejections.xml
           if-no-files-found: warn
+      # A focused Day 6 evidence gate runs before other feature suites; unrelated
+      # later CI failures must not conceal this security boundary's result.
+      - name: Qualify Day 6 research integration and cited-source provenance early
+        run: |
+          uv run --extra coworker pytest tests/test_coworker_research.py tests/test_research_source_provenance.py tests/test_coworker_quality_eval.py -q -rs --junitxml=/tmp/day6-research-provenance.xml
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-research-provenance.xml --required-module tests.test_coworker_research
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-research-provenance.xml --required-module tests.test_research_source_provenance
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-research-provenance.xml --required-module tests.test_coworker_quality_eval
+          uv run --extra coworker python scripts/coworker_quality_eval.py --release-id day6-ci-provenance --min-pass-rate 1.0 --min-fact-recall 1.0 --output /tmp/day6-quality-provenance.json
+      - name: Preserve Day 6 source-provenance test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day6-research-provenance
+          path: |
+            /tmp/day6-research-provenance.xml
+            /tmp/day6-quality-provenance.json
+          if-no-files-found: warn
       # Run the exact Day 5 gate before unrelated qualification groups so an
       # earlier failure cannot conceal memory regressions or their JUnit receipt.
       - name: Qualify Day 5 exact memory selection without skips
@@ -303,11 +321,12 @@ jobs:
             tests/test_coworker.py::test_export_checkpoint_commit_response_loss_preserves_referenced_objects \
             tests/test_coworker.py::test_repeated_artifact_read_failures_never_partially_publish_multi_artifact_export \
             tests/test_coworker_services.py tests/test_coworker_office.py \
-            tests/test_coworker_research.py tests/test_coworker_quality_eval.py \
+            tests/test_coworker_research.py tests/test_research_source_provenance.py tests/test_coworker_quality_eval.py \
             -q -rs --junitxml=/tmp/day6-workflows.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_services
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_office
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_research
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_research_source_provenance
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day6-workflows.xml --required-module tests.test_coworker_quality_eval
           uv run --extra coworker python scripts/coworker_quality_eval.py --release-id day6-ci-evidence-workflows --min-pass-rate 1.0 --min-fact-recall 1.0 --output /tmp/day6-quality.json
       - name: Preserve Day 6 workflow verification evidence

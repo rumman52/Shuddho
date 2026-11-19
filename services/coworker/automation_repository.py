@@ -2380,10 +2380,8 @@ class AutomationRepository:
                 owner=automation.owner_id,
                 workspace_id=automation.workspace_id,
                 automation_id=automation.id,
-                # Briefings intentionally have no start notice. Bind the one
-                # completion notice to this occurrence so the unique DB key
-                # enforces idempotent replay. Other profiles already use the
-                # occurrence key for their start notice and retain two notices.
+                # Briefings intentionally have exactly one notice per occurrence;
+                # other profiles retain their existing start/finish notices.
                 occurrence_id=occurrence.id if profile == "briefing" else None,
                 kind="automation_completed",
                 title=(
