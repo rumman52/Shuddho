@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -69,7 +70,10 @@ def runtime(state):
         "schema_version": 2,
         "source_revision": state["expected_source_revision"],
         "environment": state["expected_environment"],
-        "capabilities": state["declared_capabilities"],
+        "capabilities": {
+            **state["declared_capabilities"],
+            "grounded_conversation_replies": state["declared_capabilities"]["conversation_replies"],
+        },
         "reviewed_skills": {"research": {"state": "unselected"}},
         "action_providers": state["declared_action_providers"],
         "cohort": {
@@ -409,3 +413,67 @@ def test_runtime_v2_rejects_missing_reviewed_skills(tmp_path):
     del observed["reviewed_skills"]
     with pytest.raises(freeze.StagingReleaseFreezeError, match="reviewed_skills"):
         freeze.verify_runtime(state, observed)
+
+
+def test_api_manifest_source_exact_43_plus_one_derived_ui_field():
+    # Parse the actual backend handler, not a separate handwritten mock.
+    api_path = Path(__file__).resolve().parents[1] / "services/coworker/api.py"
+    module = ast.parse(api_path.read_text(encoding="utf-8"))
+    handler = next(
+        node for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "runtime_manifest"
+    )
+    assignment = next(
+        node for node in handler.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "capabilities"
+                for target in node.targets)
+    )
+    manifest = assignment.value
+    assert isinstance(manifest, ast.Dict)
+    assert all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in manifest.keys)
+    entries = {key.value: value for key, value in zip(manifest.keys, manifest.values)}
+    assert len(entries) == len(manifest.keys)
+    assert len(freeze.RUNTIME_CAPABILITY_KEYS) == 43
+    assert len(freeze.API_RUNTIME_CAPABILITY_KEYS) == 44
+    assert set(entries) == freeze.API_RUNTIME_CAPABILITY_KEYS
+    # The derived indicator cannot independently widen the chat capability.
+    assert ast.dump(entries["grounded_conversation_replies"]) == ast.dump(
+        entries["conversation_replies"]
+    )
+
+
+def test_derived_field_must_equal_canonical_chat_flag_even_when_enabled():
+    declared = capabilities()
+    declared["conversation_replies"] = True
+    actual = {**declared, "grounded_conversation_replies": True}
+    assert freeze.api_runtime_capabilities_match_rollout(actual, declared)
+    actual["grounded_conversation_replies"] = False
+    assert not freeze.api_runtime_capabilities_match_rollout(actual, declared)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda actual: actual.pop("grounded_conversation_replies"),
+    lambda actual: actual.update(grounded_conversation_replies=True),
+    lambda actual: actual.update(grounded_conversation_replies=0),
+    lambda actual: actual.update(extra_disabled=False),
+    lambda actual: actual.pop("memory"),
+    lambda actual: actual.update(memory=0),
+])
+def test_release_freeze_rejects_derived_drift_and_unknown_flags(tmp_path, mutate):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    mutate(observed["capabilities"])
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="capability set"):
+        freeze.verify_runtime(state, observed)
+
+
+def test_rollout_and_worker_do_not_gain_derived_authority():
+    declared = capabilities()
+    assert set(declared) == freeze.RUNTIME_CAPABILITY_KEYS
+    declared["grounded_conversation_replies"] = False
+    assert not freeze.api_runtime_capabilities_match_rollout(declared, declared)
+    value = rollout()
+    value["capabilities"]["grounded_conversation_replies"] = False
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="capabilities"):
+        freeze.validate_rollout(value)

@@ -16,6 +16,7 @@ pytest.importorskip("sqlalchemy", reason="Install the coworker extra for pilot a
 pytest.importorskip("jwt", reason="Install the coworker extra for pilot access tests")
 
 from scripts import pilot_admission_verify as pilot
+from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 
 REV = "a" * 40
 
@@ -247,13 +248,13 @@ def test_first_access_report_is_immutable_and_contains_no_credentials(tmp_path):
 
 
 def live_runtime(rollout, revision=REV, members=5):
-    capabilities = {key: False for key in pilot.RUNTIME_CAPABILITY_KEYS}
+    capabilities = {key: False for key in RUNTIME_CAPABILITY_KEYS}
     rollout.update(environment="production", capabilities=capabilities, action_providers=[])
     return {
         "schema_version": 2,
         "source_revision": revision,
         "environment": "production",
-        "capabilities": dict(capabilities),
+        "capabilities": {**capabilities, "grounded_conversation_replies": capabilities["conversation_replies"]},
         "reviewed_skills": {},
         "action_providers": [],
         "cohort": {
@@ -280,6 +281,9 @@ def test_live_runtime_matches_exact_source_flags_and_cohort():
     lambda runtime: runtime["capabilities"].update(unknown_disabled=False),
     lambda runtime: runtime["capabilities"].update(coworker=0),
     lambda runtime: runtime["capabilities"].update(coworker=True),
+    lambda runtime: runtime["capabilities"].pop("grounded_conversation_replies"),
+    lambda runtime: runtime["capabilities"].update(grounded_conversation_replies=True),
+    lambda runtime: runtime["capabilities"].update(grounded_conversation_replies=0),
     lambda runtime: runtime.update(reviewed_skills=None),
     lambda runtime: runtime.update(action_providers=["google"]),
     lambda runtime: runtime["cohort"].update(enforced=False),
@@ -329,3 +333,13 @@ def test_first_failed_access_attempt_is_preserved_without_secret_leak(tmp_path, 
     assert pilot.main(args) == 1
     assert report.read_bytes() == first
     assert "missing-member-tokens.json" not in capsys.readouterr().out
+
+
+def test_post_admission_readback_retains_exact_authority_and_derived_ui_split():
+    rollout = {"cohort": {"max_users": 5}}
+    observed = live_runtime(rollout)
+    assert len(rollout["capabilities"]) == 43
+    assert len(observed["capabilities"]) == 44
+    assert pilot.api_runtime_capabilities_match_rollout(
+        observed["capabilities"], rollout["capabilities"],
+    )

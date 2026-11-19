@@ -22,7 +22,7 @@ from scripts.cohort_release_gate import validate_rollout
 from scripts.day10_release_decision import read_json
 from scripts.ruke_pilot_eval import sha256 as file_sha256, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
-from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+from scripts.staging_release_freeze import api_runtime_capabilities_match_rollout
 from scripts.staging_cohort_admission import (
     CohortAdmissionFailure,
     assert_denied_unprovisioned,
@@ -171,13 +171,7 @@ def verify_live_runtime(client: httpx.Client, token: str, rollout: dict, revisio
         and runtime["schema_version"] == 2
         and runtime.get("source_revision") == revision
         and runtime.get("environment") == rollout.get("environment")
-        and isinstance(capabilities, dict)
-        and isinstance(declared, dict)
-        and set(capabilities) == RUNTIME_CAPABILITY_KEYS
-        and set(declared) == RUNTIME_CAPABILITY_KEYS
-        and all(type(value) is bool for value in capabilities.values())
-        and all(type(value) is bool for value in declared.values())
-        and capabilities == declared
+        and api_runtime_capabilities_match_rollout(capabilities, declared)
         and isinstance(runtime.get("reviewed_skills"), dict)
         and runtime.get("action_providers") == rollout.get("action_providers", [])
         and isinstance(cohort, dict)
