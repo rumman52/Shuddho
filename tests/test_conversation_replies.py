@@ -696,7 +696,7 @@ def _simple_pdf(text=b"Renewal date: 17 March 2027."):
 
 
 def test_attached_pdf_answer_cites_verified_source_without_agent_run(container):
-    from services.coworker.models import AgentRun
+    from services.coworker.models import AgentOutbox, AgentRun
     data = setup(container, question="When does the attached PDF contract renew?")
     service, model, owner, conversation, message = data
     _attached_chat_source(container, data, _simple_pdf(), kind="pdf", filename="contract.pdf")
@@ -714,6 +714,7 @@ def test_attached_pdf_answer_cites_verified_source_without_agent_run(container):
     assert "private/" not in str(result) and "test-grounding/" not in str(result)
     with container.repository.sessions() as db:
         assert db.scalar(select(AgentRun)) is None
+        assert db.scalar(select(AgentOutbox)) is None
 
 
 def test_attached_foreign_source_rejected_before_model_and_budget(container):
@@ -934,7 +935,10 @@ def test_grounded_stream_suppresses_output_if_source_is_revoked_before_commit(co
     assert events[-1][1]["text"] == ""
     assert "source" in events[-1][1]["error"].lower()
     with service.sessions() as db:
+        from services.coworker.models import AgentOutbox, AgentRun
         saved = db.get(ConversationMessage, message["id"]).assistant_reply
+        assert db.scalar(select(AgentRun)) is None
+        assert db.scalar(select(AgentOutbox)) is None
     assert saved["state"] == "failed" and saved["text"] == ""
 
 

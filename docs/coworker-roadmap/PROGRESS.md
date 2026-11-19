@@ -4,6 +4,16 @@
 
 ---
 
+## Day 10 post-admission member-account identity binding — 19 November 2026 (Asia/Dhaka)
+
+**Status: SOURCE PATCH ON REVIEW BRANCH; LIVE PILOT NO-GO.** Base `33aefddc5a5fd918d334c981769c6f9cf1b0b5bf`. [PR #796](https://github.com/rumman52/Shuddho/pull/796) closes a false-positive operated-acceptance gap: the existing complete-cohort verifier counted any HTTP 200 from `/api/v1/me` without confirming the server returned the account identified by that member's signed token. The actual API returns a JSON `account_id`, and the existing admission prerequisite already validates each member's signed identity against the exact backend allowlist. Now the verifier carries that exact mapping into each HTTPS probe, rejects mismatched/absent/malformed/duplicate identities without outputting sensitive data, and preserves the existing fresh-nonmember denial and before/after nonprovisioning checks.
+
+**RED, verified on genuine GitHub CI:** tests-only head `2c559fe47d15201f3b01b6eb6b9beba2f274b010`, [PR run #44390228483](https://github.com/rumman52/Shuddho/actions/runs/44390228483), mandatory Day 10 source step failed: **15 failed, 35 passed**, because `probe_access` did not accept expected member IDs. **Source fix:** initial code head `59a5d591b6e1d4d0d97197914458357f22aa5576`. Final head and complete CI must be freshly read after documentation commits; do not claim GREEN or successful merge before readback. No runtime admission, secrets, external provider, schema, worker, staging deployment, product feature flag, analytics event or policy mutation in this PR.
+
+**Independent source/release boundary:** code-owner review remains required even if GitHub's active native ruleset `27324410` still improperly allows zero approvals. Founder/C must authorize isolated staging setup, distinct reviewer/custody, genuine live complete-cohort observations and rollback before the original D10 tasks can be marked PASS. The existing off-repo execution ledger remains **18/100 verified task PASS, 5/54 exit PASS, 0/10 accepted days** at this checkpoint; never interpret source tests as production qualification.
+
+---
+
 ## Day 10 full-cohort post-admission verification — 19 November 2026 (Asia/Dhaka)
 
 **Status: source implementation on review branch; live Day 9–10 NO-GO.** Review base `cebe322d88d2120e6c78c6755b70445eedf8c39f`. The existing staging cohort smoke test exercises one invite and one denial; new `scripts/pilot_admission_verify.py` performs exact-release, complete 5–10-member HTTPS and fresh nonmember DB/API boundary verification **only after** manual authorized admission. It validates the actual rollout digest and Day 10 READY receipt, exact backend allowlist, private member tokens and immutable output. It does not change allowlists or activate a pilot. Synthetic regressions are in `tests/test_pilot_admission_verify.py` and explicitly mandatory (zero skips) in Coworker CI, with a retained JUnit artifact; executable operator contract: [DAY10_PILOT_ACCESS_FULL_COHORT_2026-11-19.md](DAY10_PILOT_ACCESS_FULL_COHORT_2026-11-19.md).

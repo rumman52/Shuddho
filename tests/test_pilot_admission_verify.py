@@ -124,7 +124,7 @@ def test_member_tokens_must_cover_exact_backend_cohort(monkeypatch):
     members = [f"member-{i}" for i in range(5)]
     cfg = SimpleNamespace(cohort_enforced=True, cohort_max_users=5,
                           cohort_account_ids=frozenset(members))
-    assert pilot.require_exact_pilot_members(cfg, members, "nonmember", 5) == "nonmember"
+    assert pilot.require_exact_pilot_members(cfg, members, "nonmember", 5) == (members, "nonmember")
     with pytest.raises(pilot.PilotVerificationFailure, match="exactly match"):
         pilot.require_exact_pilot_members(cfg, members[:-1] + ["outsider"], "nonmember", 5)
     with pytest.raises(pilot.PilotVerificationFailure, match="overlap"):
@@ -162,10 +162,11 @@ class Client:
 
 
 def test_all_five_members_probed_then_nonmember_denied():
-    client = Client([Response(200) for _ in range(5)] + [
+    member_ids = [f"account-{i}" for i in range(5)]
+    client = Client([Response(200, {"account_id": owner}) for owner in member_ids] + [
         Response(403, {"error": {"code": "cohort_not_enabled"}}),
     ])
-    pilot.probe_access(client, [f"synthetic-token-{i}" for i in range(5)], "denied")
+    pilot.probe_access(client, [f"synthetic-token-{i}" for i in range(5)], "denied", member_ids)
     assert len(client.headers) == 6
     assert client.headers[-1] == "Bearer denied"
 
@@ -178,12 +179,58 @@ def test_all_five_members_probed_then_nonmember_denied():
     (5, 403, {"error": "unexpected"}),
 ])
 def test_any_missing_member_or_nonmember_denial_fails_closed(index, status, body):
-    responses = [Response(200) for _ in range(5)] + [
+    member_ids = [f"account-{i}" for i in range(5)]
+    responses = [Response(200, {"account_id": owner}) for owner in member_ids] + [
         Response(403, {"error": {"code": "cohort_not_enabled"}}),
     ]
     responses[index] = Response(status, body)
     with pytest.raises(pilot.PilotVerificationFailure):
-        pilot.probe_access(Client(responses), [f"member-{i}" for i in range(5)], "denied")
+        pilot.probe_access(Client(responses), [f"member-{i}" for i in range(5)], "denied", member_ids)
+
+
+@pytest.mark.parametrize("invalid_body", [
+    None,
+    {},
+    {"account_id": "another-member"},
+    {"account_id": 42},
+    {"account_id": None},
+    ["not-an-account-response"],
+])
+def test_member_http_200_with_wrong_identity_fails_closed_without_leaking(invalid_body):
+    # A cached/cross-owner 200 is never evidence that this token was admitted.
+    members = [f"account-{i}" for i in range(5)]
+    responses = [Response(200, {"account_id": account}) for account in members] + [
+        Response(403, {"error": {"code": "cohort_not_enabled"}}),
+    ]
+    responses[2] = Response(200, invalid_body)
+    client = Client(responses)
+    with pytest.raises(pilot.PilotVerificationFailure, match="identity") as exc:
+        pilot.probe_access(client, [f"member-token-{i}" for i in range(5)], "denied", members)
+    assert "account-" not in str(exc.value)
+    assert "member-token" not in str(exc.value)
+    # Abort before checking later members or the nonmember after an identity mismatch.
+    assert len(client.headers) == 3
+
+
+def test_duplicate_or_incomplete_expected_member_identity_list_is_denied():
+    members = [f"account-{i}" for i in range(5)]
+    tokens = [f"member-token-{i}" for i in range(5)]
+    for invalid in (members[:4], [members[0]] * 5):
+        client = Client([])
+        with pytest.raises(pilot.PilotVerificationFailure, match="identity"):
+            pilot.probe_access(client, tokens, "denied", invalid)
+        assert client.headers == []
+
+
+def test_member_http_200_with_malformed_json_fails_closed():
+    class InvalidJSON(Response):
+        def json(self):
+            raise ValueError("response has no parseable JSON")
+
+    members = [f"account-{i}" for i in range(5)]
+    client = Client([InvalidJSON(200)])
+    with pytest.raises(pilot.PilotVerificationFailure, match="identity"):
+        pilot.probe_access(client, [f"member-token-{i}" for i in range(5)], "denied", members)
 
 
 def test_first_access_report_is_immutable_and_contains_no_credentials(tmp_path):

@@ -53,8 +53,13 @@ It fails closed unless all of these are true:
    boolean capability flags, action providers and enforced pilot cohort size.
    The independent operator must also verify the deployed image/build digest;
    the HTTP runtime manifest alone does not attest a build digest.
-5. Every member's actual HTTPS `/api/v1/me` response is **200**; a fresh,
-   nonmember's response is **403** with `cohort_not_enabled`.
+5. Every member's actual HTTPS `/api/v1/me` response is **200** **and**
+   its JSON `account_id` exactly matches the signed-token identity that was
+   prevalidated against the complete backend allowlist. A shared-cache,
+   cross-owner, malformed, or identity-free HTTP 200 is **not** admission
+   evidence and aborts before later probes. A fresh nonmember response is
+   **403** with `cohort_not_enabled`. No account ID or bearer token is logged
+   or written into the output receipt.
 6. The nonmember account was not provisioned either **before or after**
    the probes, checked through the existing database access boundary.
 7. A uniquely named output receipt is created exclusively and is never

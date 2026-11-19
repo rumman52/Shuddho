@@ -79,6 +79,18 @@ jobs:
       - name: Run Python tests
         if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: uv run pytest -q
+      - name: Require fail-closed Days 3–6 hosted receipt contracts
+        if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
+        run: |
+          uv run pytest tests/test_staging_days3_6_acceptance.py -q -rs --junitxml=/tmp/days36-receipt-contract.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/days36-receipt-contract.xml --required-module tests.test_staging_days3_6_acceptance
+      - name: Preserve Days 3–6 receipt contract CI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: days36-receipt-contract-${{ github.sha }}
+          path: /tmp/days36-receipt-contract.xml
+          if-no-files-found: warn
       - name: Verify controlled-release contract
         if: needs.pr-base-ancestry.outputs.scope != 'docs' && needs.pr-base-ancestry.outputs.scope != 'frontend'
         run: uv run python -m scripts.release_contract_check
@@ -248,12 +260,12 @@ jobs:
           if-no-files-found: warn
       - name: Verify Day 8 economics comparisons and telemetry without skips
         run: |
-          uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_day8_telemetry_privacy.py tests/test_task_economics_evidence.py tests/test_staging_day7_two_day_gate.py tests/test_operational_telemetry.py -q -rs --junitxml=/tmp/day8-economics.xml
+          uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_day8_telemetry_privacy.py tests/test_task_economics_evidence.py tests/test_staging_day7_two_day_gate.py tests/test_day8_telemetry_ci_gate.py -q -rs --junitxml=/tmp/day8-economics.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_core_agent_observability
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_day8_telemetry_privacy
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_task_economics_evidence
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_staging_day7_two_day_gate
-          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_operational_telemetry
+          uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_day8_telemetry_ci_gate
       - name: Keep Day 8 economics evidence
         if: always()
         uses: actions/upload-artifact@v4
