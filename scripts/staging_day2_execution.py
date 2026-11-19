@@ -101,18 +101,107 @@ def attest_runtime(client: httpx.Client, token: str, freeze: dict) -> dict:
     return release
 
 
-def require_distinct_owners(client: httpx.Client, token_a: str, token_b: str) -> None:
+def _managed_identity_claims(
+    token: str,
+    *,
+    expected_issuer: str,
+    expected_audience: str,
+    minimum_validity_seconds: int,
+) -> tuple[str, str]:
+    """Read claims locally after the same bearer token is accepted by the API.
+
+    The API's issuer-pinned JwtVerifier validates the RS256/ES256 signature and
+    required claims on /runtime-manifest and /me. This local decode binds the
+    exact token's sub to the API account_id and checks the configured claim
+    values without ever retaining or printing the token or subject.
+    """
+    try:
+        import jwt
+
+        header = jwt.get_unverified_header(token)
+        if header.get("alg") not in {"RS256", "ES256"} or not isinstance(header.get("kid"), str):
+            raise ValueError("unsupported JWT header")
+        claims = jwt.decode(token, options={
+            "verify_signature": False,
+            "verify_exp": False,
+            "verify_aud": False,
+            "verify_iss": False,
+            "verify_iat": False,
+            "verify_nbf": False,
+        })
+    except Exception:
+        raise Day2Failure("Managed synthetic identity token claims could not be read.") from None
+    if not isinstance(claims, dict) or claims.get("iss") != expected_issuer:
+        raise Day2Failure("Managed synthetic identity issuer does not match the configured issuer.")
+    audience = claims.get("aud")
+    if not (
+        audience == expected_audience
+        or isinstance(audience, list) and expected_audience in audience
+    ):
+        raise Day2Failure("Managed synthetic identity audience does not match the configured audience.")
+    now = time.time()
+    expiry, issued_at = claims.get("exp"), claims.get("iat")
+    if (
+        type(expiry) not in {int, float}
+        or expiry <= now + minimum_validity_seconds
+        or type(issued_at) not in {int, float}
+        or issued_at > now + 15
+    ):
+        raise Day2Failure("Managed synthetic identity is expired or does not remain valid for the task window.")
+    subject = claims.get("sub")
+    if (
+        not isinstance(subject, str) or not 1 <= len(subject) <= 128
+        or claims.get("role") != "authenticated"
+        or claims.get("is_anonymous") is True
+    ):
+        raise Day2Failure("Managed synthetic identity subject or authenticated role is invalid.")
+    account_id = hashlib.sha256(json.dumps([expected_issuer, subject]).encode()).hexdigest()
+    return subject, account_id
+
+
+def require_distinct_owners(
+    client: httpx.Client,
+    token_a: str,
+    token_b: str,
+    *,
+    expected_issuer: str,
+    expected_audience: str,
+    minimum_validity_seconds: int,
+) -> dict:
     if not token_a or not token_b or token_a == token_b:
         raise Day2Failure("Two distinct synthetic access tokens are required.")
+    subject_a, expected_account_a = _managed_identity_claims(
+        token_a, expected_issuer=expected_issuer, expected_audience=expected_audience,
+        minimum_validity_seconds=minimum_validity_seconds,
+    )
+    subject_b, expected_account_b = _managed_identity_claims(
+        token_b, expected_issuer=expected_issuer, expected_audience=expected_audience,
+        minimum_validity_seconds=minimum_validity_seconds,
+    )
+    if subject_a == subject_b:
+        raise Day2Failure("Two distinct managed synthetic subjects are required.")
     me_a = obj(checked(client.get("/api/v1/me", headers=bearer(token_a)), 200, "owner A identity"), "owner A identity")
     me_b = obj(checked(client.get("/api/v1/me", headers=bearer(token_b)), 200, "owner B identity"), "owner B identity")
     if (
-        not me_a.get("account_id") or not me_b.get("account_id")
-        or me_a["account_id"] == me_b["account_id"]
+        me_a.get("account_id") != expected_account_a
+        or me_b.get("account_id") != expected_account_b
         or not me_a.get("workspace_id") or not me_b.get("workspace_id")
         or me_a["workspace_id"] == me_b["workspace_id"]
     ):
-        raise Day2Failure("Two distinct managed owners and workspaces are required.")
+        raise Day2Failure("Verified token subjects do not bind to two distinct managed owners and workspaces.")
+    return {
+        "owner_a": {
+            "issuer_verified": True, "audience_verified": True,
+            "expiry_verified": True, "subject_verified": True,
+            "api_subject_binding_verified": True,
+        },
+        "owner_b": {
+            "issuer_verified": True, "audience_verified": True,
+            "expiry_verified": True, "subject_verified": True,
+            "api_subject_binding_verified": True,
+        },
+        "subjects_distinct": True,
+    }
 
 
 def public_signed_url(url: object, *, trusted_storage_host: str | None = None) -> str:
@@ -264,6 +353,8 @@ def run_probe(
     freeze: dict,
     source: bytes,
     *,
+    expected_auth_issuer: str,
+    expected_auth_audience: str,
     owner_b_artifact_id: str,
     timeout_seconds: int = 180,
     trusted_storage_host: str | None = None,
@@ -294,7 +385,12 @@ def run_probe(
         raise Day2Failure("Owner B synthetic artifact ID must be a valid UUID.") from None
 
     attest_runtime(client, token_a, freeze)
-    require_distinct_owners(client, token_a, token_b)
+    identity_claims = require_distinct_owners(
+        client, token_a, token_b,
+        expected_issuer=expected_auth_issuer,
+        expected_audience=expected_auth_audience,
+        minimum_validity_seconds=timeout_seconds + 30,
+    )
     a, b = bearer(token_a), bearer(token_b)
 
     # Fail closed before creating documents or tasks if the reverse-direction
@@ -464,6 +560,7 @@ def run_probe(
         "schema_version": 1,
         "status": "passed",
         "identities_distinct": True,
+        "identity_claims": identity_claims,
         "owners": {
             "a": {
                 "document_id": document_id,
@@ -639,6 +736,8 @@ def main() -> None:
         with httpx.Client(base_url=origin, timeout=20, follow_redirects=False) as client:
             result = run_probe(
                 client, token_a, token_b, freeze, source,
+                expected_auth_issuer=settings.auth_issuer,
+                expected_auth_audience=settings.auth_audience,
                 owner_b_artifact_id=args.owner_b_artifact_id,
                 timeout_seconds=args.timeout, trusted_storage_host=endpoint.hostname,
             )
