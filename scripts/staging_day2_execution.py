@@ -186,8 +186,13 @@ def _verify_artifact_access(
         raise Day2Failure(f"cross-owner {label} artifact download was not denied.")
 
     own_bytes = checked(client.get(content_route, headers=owner_headers), 200, label + " artifact content").content
-    expected_sha = metadata["sha256"]
-    expected_bytes = metadata["byte_size"]
+    expected_sha = metadata.get("sha256")
+    expected_bytes = metadata.get("byte_size")
+    if (
+        not isinstance(expected_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_sha)
+        or type(expected_bytes) is not int or not 1 <= expected_bytes <= 16 * 1024 * 1024
+    ):
+        raise Day2Failure(f"{label} artifact identity/digest/size metadata is incomplete.")
     if len(own_bytes) != expected_bytes or hashlib.sha256(own_bytes).hexdigest() != expected_sha:
         raise Day2Failure(f"{label} artifact content does not match persisted metadata.")
 
