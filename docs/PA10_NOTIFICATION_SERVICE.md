@@ -20,7 +20,7 @@ A new `NotificationRepository` now owns:
 - read acknowledgement.
 
 Non-briefing automation profiles retain the existing `automation_started`
-notification, message, expiry and quiet-hours behavior. A scheduled daily
+notification, message, expiry and quiet-hours behavior. A scheduled daily or weekly
 briefing intentionally emits no early start notice: each briefing occurrence
 has one unique notification row, so the existing completion hook creates the
 single owner-visible `automation_completed` notice after the result is ready.
