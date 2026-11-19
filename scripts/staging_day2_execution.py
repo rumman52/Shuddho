@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import io
 import json
@@ -116,19 +117,21 @@ def _managed_identity_claims(
     values without ever retaining or printing the token or subject.
     """
     try:
-        import jwt
+        header_segment, payload_segment, signature_segment = token.split(".")
+        if not signature_segment:
+            raise ValueError("missing JWT signature segment")
 
-        header = jwt.get_unverified_header(token)
+        def decode_segment(segment: str) -> dict:
+            raw = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("JWT segment is not an object")
+            return value
+
+        header = decode_segment(header_segment)
         if header.get("alg") not in {"RS256", "ES256"} or not isinstance(header.get("kid"), str):
             raise ValueError("unsupported JWT header")
-        claims = jwt.decode(token, options={
-            "verify_signature": False,
-            "verify_exp": False,
-            "verify_aud": False,
-            "verify_iss": False,
-            "verify_iat": False,
-            "verify_nbf": False,
-        })
+        claims = decode_segment(payload_segment)
     except Exception:
         raise Day2Failure("Managed synthetic identity token claims could not be read.") from None
     if not isinstance(claims, dict) or claims.get("iss") != expected_issuer:
