@@ -187,6 +187,13 @@ artifact is absent, invalid, foreign-visible or unreadable, the operator fails
 closed before any private write. Do not manufacture a pass or run a second
 model task without separate approval.
 
+For both managed owner tokens, the operator also checks the configured issuer,
+audience, expiry window, authenticated role and distinct subject. The same
+tokens must be accepted by the API's issuer-pinned asymmetric JWT verifier;
+the operator binds each decoded subject to the authenticated `/api/v1/me`
+account ID. Only per-owner boolean claim evidence is retained, never tokens
+or raw subjects.
+
 ## Separate restart and backup/restore gates
 
 These are **not** satisfied by the single document test.
