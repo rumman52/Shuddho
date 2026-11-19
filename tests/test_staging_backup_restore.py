@@ -27,13 +27,16 @@ def test_require_guard_is_fail_closed(monkeypatch):
     backup.require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
 
 
-def test_verify_rejects_same_environment_fingerprints(monkeypatch, tmp_path):
+@pytest.fixture
+def restore_state(monkeypatch, tmp_path):
     settings = SimpleNamespace(source_revision="a" * 40)
     rollout_path = tmp_path / "rollout.json"
     rollout_path.write_text(
-        __import__("json").dumps({"release_id": "backup-restore-test-release"}),
+        json.dumps({"release_id": "backup-restore-test-release"}),
         encoding="utf-8",
     )
+    database = backup.stable_hash("source-db")
+    storage = backup.stable_hash("source-storage")
     state = {
         "release_context": backup.prepared_release_context(settings, rollout_path),
         "owner_id": "owner",
@@ -42,29 +45,83 @@ def test_verify_rejects_same_environment_fingerprints(monkeypatch, tmp_path):
         "task_id": "task",
         "sha256": "a" * 64,
         "byte_size": 10,
-        "source_fingerprints": {"database": "same-db", "storage": "same-storage"},
+        "source_fingerprints": {"database": database, "storage": storage},
     }
-    state_path = tmp_path / "state.json"
-    state_path.write_text(__import__("json").dumps(state), encoding="utf-8")
     monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
-    monkeypatch.setattr(backup, "environment_fingerprints", lambda _container: {"database": "same-db", "storage": "new-storage"})
+    return settings, rollout_path, state
+
+
+@pytest.mark.parametrize(
+    "fingerprints",
+    [
+        None,
+        {},
+        {"database": "1" * 64},
+        {"storage": "2" * 64},
+        {"database": "1" * 63, "storage": "2" * 64},
+        {"database": "1" * 64, "storage": "G" * 64},
+        {"database": "1" * 64, "storage": "A" * 64},
+        {"database": 1, "storage": "2" * 64},
+    ],
+)
+def test_verify_rejects_invalid_source_fingerprints_before_target_access(
+    monkeypatch, tmp_path, restore_state, fingerprints,
+):
+    settings, rollout_path, state = restore_state
+    state["source_fingerprints"] = fingerprints
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    evidence_path = tmp_path / "evidence.json"
+    monkeypatch.setattr(
+        backup.Container, "create", lambda _settings: pytest.fail("restore target opened")
+    )
+
+    with pytest.raises(backup.BackupRestoreFailure, match="source environment fingerprints"):
+        backup.verify(
+            settings, state_path, "backup-run-1", "restore-run-1", rollout_path, evidence_path, None
+        )
+
+    assert not evidence_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("same_resource", "error"),
+    [
+        ("database", "isolated restored PostgreSQL"),
+        ("storage", "isolated restored object-storage"),
+    ],
+)
+def test_verify_rejects_each_original_resource(
+    monkeypatch, tmp_path, restore_state, same_resource, error,
+):
+    settings, rollout_path, state = restore_state
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    evidence_path = tmp_path / "evidence.json"
+    target = {"database": backup.stable_hash("target-db"), "storage": backup.stable_hash("target-storage")}
+    target[same_resource] = state["source_fingerprints"][same_resource]
+    monkeypatch.setattr(backup, "environment_fingerprints", lambda _container: target)
+    disposed = []
 
     class Sessions:
-        kw = {"bind": SimpleNamespace(dispose=lambda: None)}
+        kw = {"bind": SimpleNamespace(dispose=lambda: disposed.append(True))}
 
     fake = SimpleNamespace(repository=SimpleNamespace(sessions=Sessions()), storage=SimpleNamespace())
     monkeypatch.setattr(backup.Container, "create", lambda _settings: fake)
 
-    with pytest.raises(backup.BackupRestoreFailure, match="isolated restored PostgreSQL"):
+    with pytest.raises(backup.BackupRestoreFailure, match=error):
         backup.verify(
             settings,
             state_path,
             "backup-run-1",
             "restore-run-1",
             rollout_path,
-            tmp_path / "evidence.json",
+            evidence_path,
             None,
         )
+
+    assert disposed == [True]
+    assert not evidence_path.exists()
 
 
 def test_verify_requires_non_empty_backup_and_restore_references(monkeypatch, tmp_path):
@@ -123,7 +180,10 @@ def _install_prepare_fakes(monkeypatch, calls):
     monkeypatch.setattr(
         backup,
         "environment_fingerprints",
-        lambda _container: {"database": "source-db", "storage": "source-storage"},
+        lambda _container: {
+            "database": backup.stable_hash("source-db"),
+            "storage": backup.stable_hash("source-storage"),
+        },
     )
 
 
@@ -176,6 +236,27 @@ def test_prepare_rejects_missing_state_directory_before_staging_mutations(monkey
         backup.prepare(settings, state_path, rollout_path)
 
     assert calls == []
+
+
+def test_prepare_does_not_seed_records_if_source_identity_read_fails(
+    monkeypatch, tmp_path, restore_state,
+):
+    settings, rollout_path, _state = restore_state
+    state_path = tmp_path / "state.json"
+    calls = []
+    _install_prepare_fakes(monkeypatch, calls)
+
+    def fail_identity_read(_container):
+        raise backup.BackupRestoreFailure("source identity unavailable")
+
+    monkeypatch.setattr(backup, "environment_fingerprints", fail_identity_read)
+
+    with pytest.raises(backup.BackupRestoreFailure, match="source identity unavailable"):
+        backup.prepare(settings, state_path, rollout_path)
+
+    assert calls == ["container_create", "dispose"]
+    assert not state_path.exists()
+
 
 def test_prepare_preflights_state_destination_before_staging_mutations(monkeypatch, tmp_path):
     settings = SimpleNamespace(source_revision="a" * 40)
