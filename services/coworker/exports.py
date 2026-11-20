@@ -22,7 +22,7 @@ from .errors import CoworkerError
 RTL_LANGUAGES = {"ar", "fa", "he", "ur", "ps", "dv"}
 
 
-def validate_day6_exports(skill_id, draft, outputs):
+def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
     """Validate native Day 6 artifacts before publication and after private-storage readback."""
     if skill_id not in {"research", "report_email"}:
         return
@@ -103,6 +103,12 @@ def validate_day6_exports(skill_id, draft, outputs):
             raise ValueError("Research source manifest has the wrong skill")
         if any(not isinstance(source, dict) or "text" in source for source in manifest["sources"]):
             raise ValueError("Source manifest must not contain raw source text")
+        # The renderer is not an authority for provenance. Its manifest must
+        # reproduce the exact source snapshot saved with the validated draft,
+        # including source IDs, versions, hashes and ordering. Merely checking
+        # that sources is a list allows omitted, substituted or injected data.
+        if not isinstance(expected_sources, list) or manifest["sources"] != expected_sources:
+            raise ValueError("Source manifest does not match the authorized draft sources")
     except Exception as exc:
         if isinstance(exc, ValueError):
             raise

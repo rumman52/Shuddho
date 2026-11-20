@@ -255,7 +255,7 @@ class DocumentRunner:
         outputs = await asyncio.to_thread(self.renderer, parsed_draft, saved["sources"], **options)
         if skill.id in {"research", "report_email"}:
             try:
-                validate_day6_exports(skill.id, parsed_draft, outputs)
+                validate_day6_exports(skill.id, parsed_draft, outputs, expected_sources=saved["sources"])
             except (ValueError, TypeError, KeyError, IndexError, AttributeError):
                 raise CoworkerError(
                     "export_invalid",
@@ -335,7 +335,7 @@ class DocumentRunner:
             verified_outputs.append((artifact.get("filename"), artifact.get("content_type"), body))
         if skill.id in {"research", "report_email"}:
             try:
-                validate_day6_exports(skill.id, validated, verified_outputs)
+                validate_day6_exports(skill.id, validated, verified_outputs, expected_sources=draft["sources"])
             except (ValueError, TypeError, KeyError, IndexError, AttributeError):
                 raise CoworkerError(
                     "artifact_invalid",

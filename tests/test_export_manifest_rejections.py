@@ -7,6 +7,7 @@ after a valid native export must never become published task artifacts.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -144,4 +145,75 @@ def test_complete_missing_duplicate_or_unexpected_persisted_manifest_never_publi
     assert error.value.code == "export_invalid"
     assert len(storage_puts) == 4
     assert {key.rsplit("/", 1)[-1] for key, _content_type, _size in storage_puts} == EXPECTED_FILES
+    _assert_failed_without_published_artifacts(container, owner, task["id"])
+
+
+@pytest.mark.parametrize("mutation", ("omit_sources", "replace_digest", "inject_foreign"))
+def test_export_rejects_manifest_provenance_not_matching_authorized_draft_sources(
+    container, monkeypatch, mutation
+):
+    """A native renderer cannot rewrite the trusted provenance of a task."""
+    owner, task = _new_report_task(container)
+
+    def rewritten_manifest_renderer(package, sources, **options):
+        assert sources and sources[0]["id"] == "notes"
+        outputs = render_in_subprocess(package, sources, **options)
+        rewritten = []
+        for filename, content_type, body in outputs:
+            if filename == "source-manifest.json":
+                manifest = json.loads(body.decode("utf-8"))
+                if mutation == "omit_sources":
+                    manifest["sources"] = []
+                elif mutation == "replace_digest":
+                    manifest["sources"][0]["sha256"] = "0" * 64
+                else:
+                    manifest["sources"].append({
+                        "id": "foreign-source", "label": "Not selected",
+                        "sha256": "f" * 64,
+                    })
+                body = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
+            rewritten.append((filename, content_type, body))
+        return rewritten
+
+    storage_puts = _track_storage_puts(container, monkeypatch)
+    runner = DocumentRunner(container, FakeModel(), renderer=rewritten_manifest_renderer)
+
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+
+    assert error.value.code == "export_invalid"
+    assert storage_puts == []
+    _assert_failed_without_published_artifacts(container, owner, task["id"])
+
+
+def test_complete_rejects_provenance_snapshot_changed_after_valid_native_export(
+    container, monkeypatch
+):
+    """Readback must still bind the files to the draft's current source snapshot."""
+    owner, task = _new_report_task(container)
+    storage_puts = _track_storage_puts(container, monkeypatch)
+    original_step = container.repository.step
+    draft_reads = 0
+
+    def changed_draft_snapshot(task_id, phase):
+        nonlocal draft_reads
+        checkpoint = original_step(task_id, phase)
+        if phase == "draft" and checkpoint is not None:
+            draft_reads += 1
+            if draft_reads == 2:
+                # Keep trusted IDs intact: the existing reference-set check
+                # must pass so the source hash mismatch reaches readback.
+                altered = [{**source, "sha256": "0" * 64} for source in checkpoint["sources"]]
+                return {**checkpoint, "sources": altered}
+        return checkpoint
+
+    monkeypatch.setattr(container.repository, "step", changed_draft_snapshot)
+    runner = DocumentRunner(container, FakeModel())
+
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+
+    assert draft_reads == 2
+    assert error.value.code == "artifact_invalid"
+    assert len(storage_puts) == 4
     _assert_failed_without_published_artifacts(container, owner, task["id"])
