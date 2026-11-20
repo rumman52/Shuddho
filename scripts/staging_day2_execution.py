@@ -233,6 +233,26 @@ def public_signed_url(url: object, *, trusted_storage_host: str | None = None) -
     return url
 
 
+def _extract_pdf_text(payload: bytes, label: str) -> str:
+    """Require readable, extractable PDF page text, not just a .pdf filename."""
+    if not isinstance(payload, bytes) or not payload.startswith(b"%PDF-"):
+        raise Day2Failure(f"{label} is not a PDF.")
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(payload), strict=True)
+        if reader.is_encrypted or not 1 <= len(reader.pages) <= 40:
+            raise Day2Failure(f"{label} must be an unencrypted PDF with 1–40 pages.")
+        body = "\n".join(page.extract_text() or "" for page in reader.pages)
+        if not body.strip():
+            raise Day2Failure(f"{label} has no extractable report text.")
+        return body
+    except Day2Failure:
+        raise
+    except Exception:
+        raise Day2Failure(f"{label} is not a readable text-based PDF.") from None
+
+
 def _artifact_catalog(client: httpx.Client, headers: dict[str, str], label: str) -> list:
     value = obj(checked(client.get("/api/v1/artifacts", headers=headers), 200, label), label)
     artifacts = value.get("artifacts")
@@ -269,6 +289,7 @@ def _verify_artifact_access(
     *,
     label: str,
     trusted_storage_host: str | None,
+    required_pdf_anchor: str | None = None,
 ) -> dict:
     content_route = f"/api/v1/artifacts/{artifact_id}/content"
     download_route = f"/api/v1/artifacts/{artifact_id}/download"
@@ -287,6 +308,8 @@ def _verify_artifact_access(
         raise Day2Failure(f"{label} artifact identity/digest/size metadata is incomplete.")
     if len(own_bytes) != expected_bytes or hashlib.sha256(own_bytes).hexdigest() != expected_sha:
         raise Day2Failure(f"{label} artifact content does not match persisted metadata.")
+    if required_pdf_anchor is not None and required_pdf_anchor not in _extract_pdf_text(own_bytes, f"{label} PDF"):
+        raise Day2Failure(f"{label} PDF is missing the expected synthetic source marker.")
 
     signed = obj(checked(client.get(download_route, headers=owner_headers), 200, label + " artifact URL"), label + " artifact URL")
     url = public_signed_url(signed.get("url"), trusted_storage_host=trusted_storage_host)
@@ -361,6 +384,7 @@ def run_probe(
     owner_b_artifact_id: str,
     timeout_seconds: int = 180,
     trusted_storage_host: str | None = None,
+    expected_source_anchor: str | None = None,
 ) -> dict:
     """Prove one owner-A PDF task and bidirectional private resource isolation.
 
@@ -386,6 +410,14 @@ def run_probe(
         owner_b_artifact_id = str(uuid.UUID(owner_b_artifact_id))
     except (AttributeError, TypeError, ValueError):
         raise Day2Failure("Owner B synthetic artifact ID must be a valid UUID.") from None
+    if expected_source_anchor is not None:
+        if (
+            not isinstance(expected_source_anchor, str)
+            or re.fullmatch(r"SYNTHETIC_[A-Z0-9_]{8,56}", expected_source_anchor) is None
+        ):
+            raise Day2Failure("Expected source marker must be a synthetic uppercase ASCII identifier.")
+        if not is_pdf or expected_source_anchor not in _extract_pdf_text(source, "Selected source PDF"):
+            raise Day2Failure("Selected synthetic PDF does not contain the expected source marker.")
 
     attest_runtime(client, token_a, freeze)
     identity_claims = require_distinct_owners(
@@ -416,6 +448,15 @@ def run_probe(
     owner_b_source = f"Day 2 synthetic owner B control note: {marker}\n".encode("utf-8")
     owner_b_source_sha = hashlib.sha256(owner_b_source).hexdigest()
     owner_b_filename = "day2-owner-b-control-" + marker + ".txt"
+    report_instruction = (
+        "Summarize the selected private document in English as a short report. "
+        "Use only the selected source and include an English email draft."
+    )
+    if expected_source_anchor is not None:
+        report_instruction += (
+            f" Reproduce the synthetic source marker {expected_source_anchor} exactly "
+            "in the English summary and report PDF."
+        )
 
     owner_b_upload = obj(checked(client.post("/api/v1/documents", headers=b, json={
         "filename": owner_b_filename,
@@ -460,10 +501,7 @@ def run_probe(
         **a, "Idempotency-Key": "staging-day2-" + marker,
     }, json={
         "skill_id": "report_email",
-        "instruction": (
-            "Summarize the selected private document in English as a short report. "
-            "Use only the selected source and include an English email draft."
-        ),
+        "instruction": report_instruction,
         "notes": "Synthetic Day 2 staging execution; no customer data or external actions.",
         "document_ids": [document_id],
         "output_language": "en",
@@ -521,6 +559,8 @@ def run_probe(
         or not draft["report"]["summary"].strip()
     ):
         raise Day2Failure("Completed task has no generated report summary.")
+    if expected_source_anchor is not None and expected_source_anchor not in draft["report"]["summary"]:
+        raise Day2Failure("English report summary is missing the expected synthetic source marker.")
     sections = draft["report"].get("sections")
     if not isinstance(sections, list) or not any(
         isinstance(item, dict) and source_version_id in item.get("source_ids", [])
@@ -544,6 +584,7 @@ def run_probe(
     owner_a_artifact_proof = _verify_artifact_access(
         client, a, b, artifact_id, pdf,
         label="owner A report", trusted_storage_host=trusted_storage_host,
+        required_pdf_anchor=expected_source_anchor,
     )
 
     owner_a_artifacts_after = _artifact_catalog(client, a, "owner A artifact catalog")
@@ -618,6 +659,7 @@ def run_probe(
         "model_attempts": usage["model_attempts"],
         "accounted_tokens": usage["accounted_tokens"],
         "owner_isolation": owner_isolation, "artifact_retrieval": "passed",
+        "content_anchor_verification": "passed" if expected_source_anchor is not None else "unverified",
     }
 
 
@@ -703,6 +745,8 @@ def main() -> None:
                         help="Approved synthetic text-based PDF in owner-only (0600) private storage.")
     parser.add_argument("--owner-b-artifact-id", required=True,
                         help="Pre-existing synthetic task-output artifact UUID owned by owner B; the operator never creates a second model task.")
+    parser.add_argument("--expected-source-anchor", required=True,
+                        help="Exact SYNTHETIC_... marker in source PDF, expected in English summary and report PDF.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
@@ -743,6 +787,7 @@ def main() -> None:
                 expected_auth_audience=settings.auth_audience,
                 owner_b_artifact_id=args.owner_b_artifact_id,
                 timeout_seconds=args.timeout, trusted_storage_host=endpoint.hostname,
+                expected_source_anchor=args.expected_source_anchor,
             )
         asyncio.run(temporal_completed(settings, result["workflow_id"]))
         result["document_outbox"] = persisted_document_outbox(container, result["task_id"])

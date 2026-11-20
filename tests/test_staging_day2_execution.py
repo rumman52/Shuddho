@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sys
 import time
+from io import BytesIO
 from copy import deepcopy
 from pathlib import Path
 
@@ -81,7 +83,7 @@ def frozen(manifest=None):
 
 class Day2API:
     def __init__(self, *, attempts=1, foreign_download=404, document_grounded=True, cites_document=True,
-                 source=SOURCE, wrong_account_binding=False):
+                 source=SOURCE, wrong_account_binding=False, summary="A short English summary."):
         self.calls = []
         self.uploaded = None
         self.task_payload = None
@@ -91,6 +93,7 @@ class Day2API:
         self.cites_document = cites_document
         self.manifest = runtime()
         self.source = source
+        self.summary = summary
         self.wrong_account_binding = wrong_account_binding
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -132,7 +135,7 @@ class Day2API:
                 "id": TASK_ID, "state": "completed", "workflow_version": "report_email_v1",
                 "input": {"document_ids": [DOC_ID]},
                 "output_language": "en",
-                "draft": {"report": {"summary": "A short English summary.",
+                "draft": {"report": {"summary": self.summary,
                                      "sections": [{"source_ids": [VERSION_ID if self.cites_document else "notes"]}]}},
                 "sources": [{"id": VERSION_ID, "document_id": DOC_ID,
                              "label": self.document_filename,
@@ -596,3 +599,111 @@ def test_day2_fails_before_private_writes_if_owner_b_artifact_is_visible_to_a():
                 owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
             )
     assert not any(method in {"POST", "PUT"} for method, _, _ in api.calls)
+
+
+def _synthetic_text_pdf(body: str) -> bytes:
+    """Construct a valid text PDF using only the pypdf runtime dependency."""
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Helvetica"),
+    })
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)}),
+    })
+    content = DecodedStreamObject()
+    content.set_data(f"BT /F1 12 Tf 72 720 Td ({body}) Tj ET".encode("ascii"))
+    page[NameObject("/Contents")] = writer._add_object(content)
+    out = BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def _anchor_probe(monkeypatch, *, report_body: str, summary: str, source_body: str):
+    pytest.importorskip("pypdf", reason="Install the coworker extra for real PDF fidelity tests")
+    anchor = "SYNTHETIC_BUDGET_42_UNITS"
+    source = _synthetic_text_pdf(source_body)
+    report = _synthetic_text_pdf(report_body)
+    monkeypatch.setattr(sys.modules[__name__], "ARTIFACT", report)
+    api = BidirectionalDay2API(source=source, summary=summary)
+
+    def signed_get(url, **kwargs):
+        content = OWNER_B_ARTIFACT if "owner-b-control" in url else report
+        return httpx.Response(200, content=content, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(day2.httpx, "get", signed_get)
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        receipt = day2.run_probe(
+            client, TOKEN_A, TOKEN_B, frozen(api.manifest), source,
+            expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+            owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+            expected_source_anchor=anchor,
+        )
+    return receipt, api
+
+
+def test_day2_english_summary_and_real_report_pdf_require_source_content_anchor(monkeypatch):
+    anchor = "SYNTHETIC_BUDGET_42_UNITS"
+    receipt, api = _anchor_probe(
+        monkeypatch,
+        source_body=f"Selected English source fact: {anchor}",
+        summary=f"The synthetic source records {anchor}.",
+        report_body=f"English report summary: {anchor}",
+    )
+    assert receipt["content_anchor_verification"] == "passed"
+    assert anchor in api.task_payload["instruction"]
+    assert anchor not in json.dumps(receipt)  # Marker/content is never copied to private receipts.
+    assert receipt["artifact_sha256"] == hashlib.sha256(ARTIFACT).hexdigest()
+
+
+@pytest.mark.parametrize("invalid", ["missing_summary", "missing_pdf_marker", "invalid_pdf"])
+def test_day2_rejects_unrelated_or_unreadable_pdf_content(monkeypatch, invalid):
+    pytest.importorskip("pypdf", reason="Install the coworker extra for real PDF fidelity tests")
+    anchor = "SYNTHETIC_BUDGET_42_UNITS"
+    source = _synthetic_text_pdf(f"Selected English source fact: {anchor}")
+    report = (
+        b"%PDF-1.4\nnot a real report\n" if invalid == "invalid_pdf"
+        else _synthetic_text_pdf("Unrelated report content" if invalid == "missing_pdf_marker" else anchor)
+    )
+    summary = "The sample fact was processed." if invalid == "missing_summary" else f"Sample: {anchor}"
+    monkeypatch.setattr(sys.modules[__name__], "ARTIFACT", report)
+    api = BidirectionalDay2API(source=source, summary=summary)
+
+    def signed_get(url, **kwargs):
+        content = OWNER_B_ARTIFACT if "owner-b-control" in url else report
+        return httpx.Response(200, content=content, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(day2.httpx, "get", signed_get)
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match="marker|readable text-based PDF"):
+            day2.run_probe(
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), source,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+                expected_source_anchor=anchor,
+            )
+
+
+@pytest.mark.parametrize(("source_body", "anchor", "message"), [
+    (None, "SYNTHETIC_BUDGET_42_UNITS", "Selected synthetic PDF"),
+    ("No marker in this text", "SYNTHETIC_BUDGET_42_UNITS", "expected source marker"),
+    ("SYNTHETIC_BUDGET_42_UNITS", "unsafe anchor with spaces", "uppercase ASCII"),
+])
+def test_day2_source_marker_is_validated_before_any_api_request(source_body, anchor, message):
+    pytest.importorskip("pypdf", reason="Install the coworker extra for real PDF fidelity tests")
+    source = SOURCE if source_body is None else _synthetic_text_pdf(source_body)
+    api = BidirectionalDay2API(source=source)
+    with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
+        with pytest.raises(day2.Day2Failure, match=message):
+            day2.run_probe(
+                client, TOKEN_A, TOKEN_B, frozen(api.manifest), source,
+                expected_auth_issuer=AUTH_ISSUER, expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID, timeout_seconds=5,
+                expected_source_anchor=anchor,
+            )
+    assert api.calls == []
