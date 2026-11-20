@@ -12,7 +12,7 @@
 
 ## Boundaries and review focus
 
-- Reject duplicate existing check contexts, even when both use the pinned GitHub Actions integration.
+- Reject duplicate existing check contexts, even when both use the pinned GitHub Actions integration, in **both** the 'already configured' and proposed-update paths.
 - Reject fields other than `context` and `integration_id` in existing check rows; these may represent native controls the reconciler does not understand.
 - Preserve existing unknown additional contexts as manual reconciliation, not automatic deletion.
 - Allow a known context with a missing/null integration ID to be tightened to the approved provider in a dry run.
@@ -23,7 +23,8 @@
 
 - [x] **RED:** On exact base `d88e606615195b88a876317ebb5a8ef79852da41`, branch `fix/day1-ruleset-status-check-ambiguity-20261120`, add two parametrized negative cases and one positive case in `tests/test_reconcile_main_ruleset.py`.
 - [x] **Reproduce:** [PR #823 test-only run #44774534026](https://github.com/rumman52/Shuddho/actions/runs/44774534026) failed exactly the two new safety cases: 2 failed, 2665 passed, 102 skipped, 6 warnings; existing `_safe_target` did not raise.
-- [x] **Fix:** `scripts/reconcile_main_ruleset.py` rejects duplicate or unrecognized check entries before constructing the PUT body. The unscoped known status-check positive case stays supported.
+- [x] **Fix:** `scripts/reconcile_main_ruleset.py` shares `_require_unambiguous_existing_checks` between ordinary reconciliation and the early 'already configured' readback. Ambiguous native rules cannot be treated as configured or silently replaced. The unscoped known status-check positive case stays supported. Code commits: `81790ce1dace118408336070522dab3a556dda2c`, `91bc6653280c63eb281b5c3dadb47c814e5b1b84`.
+- [x] **Short-circuit regression:** test commit `29afffb9650c0bd497a96dc87ffc4ef3d03e4e06` adds duplicate and unknown-row cases for an otherwise compliant ruleset; these must raise before returning `already_configured`.
 - [ ] **GREEN:** Verify focused `tests/test_reconcile_main_ruleset.py` and `tests/test_day1_ruleset_drift.py` on the final PR head, then collect required application, Coworker, frontend, browser and PostgreSQL 18 CI outcomes.
 - [ ] **Review:** An independent human submits a current-head approval; C/admin verifies the effective native ruleset `27324410`, actual platform negative/positive controls and audit App identity.
 
