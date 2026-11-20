@@ -161,6 +161,14 @@ uv run --locked --extra coworker python -m scripts.staging_day7_two_day_gate \
   --output /tmp/day7-two-day-acceptance.json
 ```
 
+The pause collector also rejects *any extra stored occurrence, run or
+briefing notification* in the two-date synthetic automation's baseline. It
+must contain exactly the two independently observed natural occurrences,
+their two runs and their two completion-notice IDs; an extra pre-baseline
+admission or notice cannot be silently relabeled as authorized history.
+Use **separate** controlled automations for replay, restart, quiet-hours and
+other edge cases rather than contaminating this clean two-date ledger.
+
 The gate checks release/account/automation consistency; one completed run and
 **exactly one unique completion notice per briefing occurrence**; exact scheduled
 local clock time; consecutive **local** calendar days (including DST transitions);
