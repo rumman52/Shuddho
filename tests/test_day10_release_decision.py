@@ -60,13 +60,19 @@ def evidence():
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
                           "accepted": True, "reviewer_scores": [7, 8],
                           "reviewer_rubrics": [
-                              {"reviewer_id": "human-D1", "scores": {
+                              {"reviewer_id": "human-D1", "source_supported": True, "scores": {
                                   "factual_source_fidelity": 2, "constraint_compliance": 2,
                                   "completeness_usefulness": 2, "language_quality": 1}},
-                              {"reviewer_id": "human-D2", "scores": {
+                              {"reviewer_id": "human-D2", "source_supported": True, "scores": {
                                   "factual_source_fidelity": 2, "constraint_compliance": 2,
                                   "completeness_usefulness": 2, "language_quality": 2}},
                           ],
+                          "final_rubric": {
+                              "scores": dict.fromkeys(day10.RUBRIC, 2),
+                              "source_supported": True,
+                              "adjudicator_id": "human-d3",
+                              "evidence_note_sha256": "e" * 64,
+                          },
                           "security_passed": True}
                          for w, l in cells for i in range(10)]}
     recovery = {**proof(), "scenarios": [dict(
@@ -745,3 +751,58 @@ def test_day10_preserves_a_rejected_first_attempt_in_denominator(monkeypatch, st
     # Both original receipts must continue to report the actual failed first run.
     holdout_case["accepted"] = True
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "SOURCE_ONLY"
+
+
+@pytest.mark.parametrize("mutation", [
+    "missing_final", "bad_final_score", "unsupported_final", "missing_third",
+    "reviewer_alias_third", "invalid_evidence_digest", "missing_reviewer_source",
+    "unsupported_reviewer",
+])
+def test_day10_rejects_missing_or_forged_adjudication_lineage(
+    monkeypatch, mutation
+):
+    rollout, artifacts = evidence()
+    case = artifacts["holdout"]["cases"][0]
+    if mutation == "missing_final":
+        del case["final_rubric"]
+    elif mutation == "bad_final_score":
+        case["final_rubric"]["scores"][day10.RUBRIC[0]] = 0
+    elif mutation == "unsupported_final":
+        case["final_rubric"]["source_supported"] = False
+    elif mutation == "missing_third":
+        case["final_rubric"]["adjudicator_id"] = None
+    elif mutation == "reviewer_alias_third":
+        case["final_rubric"]["adjudicator_id"] = "human-D1"
+    elif mutation == "invalid_evidence_digest":
+        case["final_rubric"]["evidence_note_sha256"] = "bad"
+    elif mutation == "missing_reviewer_source":
+        del case["reviewer_rubrics"][0]["source_supported"]
+    else:
+        case["reviewer_rubrics"][0]["source_supported"] = False
+    artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+def test_day10_rejects_adjudication_mismatch_between_first_run_and_holdout(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["holdout"]["cases"][0]["final_rubric"]["evidence_note_sha256"] = "b" * 64
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+def test_day10_accepts_genuinely_unanimous_votes_without_fake_third_adjudicator(monkeypatch):
+    rollout, artifacts = evidence()
+    case = artifacts["holdout"]["cases"][0]
+    case["reviewer_rubrics"][1]["scores"] = deepcopy(case["reviewer_rubrics"][0]["scores"])
+    case["reviewer_scores"] = [7, 7]
+    case["final_rubric"] = {
+        "scores": deepcopy(case["reviewer_rubrics"][0]["scores"]),
+        "source_supported": True,
+        "adjudicator_id": None,
+        "evidence_note_sha256": None,
+    }
+    artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"

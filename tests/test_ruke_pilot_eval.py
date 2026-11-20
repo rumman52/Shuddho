@@ -1073,3 +1073,56 @@ def test_day9_failed_attempt_handoff_retains_failure_digest_and_never_accepts():
     assert failed["evidence_kind"] == "failure_record"
     assert failed["failure_trace_sha256"] == "9" * 64
     assert failed["output_sha256"] == hashes[failed["id"]]
+
+
+def test_day9_adjudication_receipt_preserves_independent_final_rubric_and_original_votes():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    reviews[0]["scores"][RUBRIC[0]] = 1
+    resolution = [{
+        "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
+        "scores": {dimension: (0 if dimension == RUBRIC[0] else 2) for dimension in RUBRIC},
+        "source_supported": True, "evidence_note": "Private adjudication reasoning",
+    }]
+    scored = score_reviews(cases, reviews, resolution, checks)
+    first = scored["results"][0]
+    assert first["accepted"] is False
+    assert first["reviewer_scores"] == [7, 8]
+    assert first["reviewer_rubrics"][0]["source_supported"] is True
+    assert first["final_rubric"] == {
+        "scores": resolution[0]["scores"],
+        "source_supported": True,
+        "adjudicator_id": "d3",
+        "evidence_note_sha256": hashlib.sha256(b"Private adjudication reasoning").hexdigest(),
+    }
+    handed_off = day10_first_run_scores(scored)
+    assert handed_off["cases"][0]["final_rubric"] == first["final_rubric"]
+    # The independent decision and the two original reviewer votes survive
+    # without exposing the text of the private evidence note.
+    assert handed_off["cases"][0]["reviewer_rubrics"] == first["reviewer_rubrics"]
+
+
+def test_day9_unanimous_reviews_preserve_unadjudicated_final_rubric():
+    reviews, checks = reviews_and_checks()
+    scored = score_reviews(tasks(), reviews, [], checks)
+    row = scored["results"][0]
+    assert row["final_rubric"] == {
+        "scores": dict.fromkeys(RUBRIC, 2),
+        "source_supported": True,
+        "adjudicator_id": None,
+        "evidence_note_sha256": None,
+    }
+
+
+def test_day9_one_reviewer_unsupported_source_cannot_be_reaccepted_by_adjudication():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    reviews[0]["source_supported"] = False
+    resolution = [{
+        "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
+        "scores": dict.fromkeys(RUBRIC, 2),
+        "source_supported": True, "evidence_note": "Final review disagrees on source",
+    }]
+    scored = score_reviews(cases, reviews, resolution, checks)
+    assert scored["results"][0]["accepted"] is False
+    assert scored["results"][0]["reviewer_rubrics"][0]["source_supported"] is False
