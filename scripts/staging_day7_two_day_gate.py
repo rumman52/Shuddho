@@ -245,8 +245,9 @@ def verify_two_day(
              (first["completion_notification_id"], second["completion_notification_id"])),
         ):
             baseline = strings(paused.get(field), field)
-            require(set(expected).issubset(baseline),
-                    f"{field} must retain both actual daily receipts before pause.")
+            require(set(baseline) == set(expected),
+                    f"{field} baseline must contain exactly both actual daily receipts, "
+                    "without an extra occurrence, run or notification before pause.")
         observation = paused.get("post_pause_observation")
         require(isinstance(observation, dict),
                 "Post-pause scheduled-opportunity observation is required before qualification.")
