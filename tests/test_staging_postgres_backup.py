@@ -28,8 +28,8 @@ def test_invalid_host_or_existing_archive_directory_stops_before_postgres(tmp_pa
 
 
 def test_verification_receipt_requires_identical_row_inventory(tmp_path):
-    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "first"}}}
-    restored = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "different"}}}
+    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "first"}}, "schema_sha256": "a" * 64}
+    restored = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "different"}}, "schema_sha256": "a" * 64}
 
     def dump(_url, path, _pg_bin):
         path.write_bytes(b"PGDMP-test")
@@ -66,8 +66,27 @@ def test_verification_receipt_requires_identical_row_inventory(tmp_path):
 
 
 
+@pytest.mark.parametrize("bad_schema", [None, "", "wrong", "A" * 64])
+def test_verified_pg_archive_never_publishes_missing_schema_fingerprint(tmp_path, bad_schema):
+    source = {
+        "revision": "0070", "tables": {},
+        "schema_sha256": bad_schema,
+    }
+
+    def dump(_url, path, _pg_bin):
+        path.write_bytes(b"PGDMP-test")
+        return source, "f" * 64
+
+    destination = tmp_path / ("bad-schema-" + str(bad_schema))
+    with patch.object(backup, "dump_source", side_effect=dump), \
+         patch.object(backup, "restore_inventory", return_value=source):
+        with pytest.raises(backup.BackupError, match="structural schema"):
+            backup.run_backup(SOURCE, destination)
+    assert not (destination / "verification.json").exists()
+
+
 def test_broken_checked_in_migration_graph_never_converts_backup_into_release_evidence(tmp_path):
-    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 0, "sha256": "fixture"}}}
+    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 0, "sha256": "fixture"}}, "schema_sha256": "a" * 64}
 
     def dump(_url, path, _pg_bin):
         path.write_bytes(b"PGDMP-synthetic")
@@ -151,6 +170,71 @@ def test_custom_archive_restores_the_same_rows_on_a_disposable_postgres(tmp_path
     assert "TABLE shuddho_coworker cw_accounts" in archive_objects
     assert expected["tables"]["cw_accounts"]["rows"] == 2
     assert expected["tables"]["cw_conversations"]["rows"] == 1
+
+
+def test_catalog_schema_sha_changes_even_when_rows_and_revision_do_not(tmp_path):
+    """A missing index or changed column default must fail the restore comparison."""
+    pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
+    if not pg_bin:
+        pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
+    import psycopg
+
+    with backup.isolated_postgres(Path(pg_bin)) as db_env:
+        connect = dict(
+            host=db_env["PGHOST"], port=db_env["PGPORT"], user=db_env["PGUSER"],
+            dbname=db_env["PGDATABASE"], sslmode="disable",
+        )
+        with psycopg.connect(**connect) as fixture:
+            fixture.execute("CREATE SCHEMA shuddho_coworker")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_alembic_version (version_num text)")
+            fixture.execute("INSERT INTO shuddho_coworker.cw_alembic_version VALUES ('0070')")
+            fixture.execute(
+                "CREATE TABLE shuddho_coworker.cw_accounts "
+                "(id integer PRIMARY KEY, label text DEFAULT 'initial')"
+            )
+            fixture.execute("INSERT INTO shuddho_coworker.cw_accounts (id, label) VALUES (1, 'same')")
+            source = backup.inventory(fixture)
+            assert len(source["schema_sha256"]) == 64
+
+            fixture.execute("CREATE INDEX cw_accounts_label_idx ON shuddho_coworker.cw_accounts (label)")
+            with_index = backup.inventory(fixture)
+            assert source["revision"] == with_index["revision"]
+            assert source["tables"] == with_index["tables"]
+            assert source["schema_sha256"] != with_index["schema_sha256"]
+
+            fixture.execute(
+                "ALTER TABLE shuddho_coworker.cw_accounts "
+                "ALTER COLUMN label SET DEFAULT 'changed'"
+            )
+            with_new_default = backup.inventory(fixture)
+            assert with_index["tables"] == with_new_default["tables"]
+            assert with_index["schema_sha256"] != with_new_default["schema_sha256"]
+            assert with_new_default["schema_sha256"] == backup.inventory(fixture)["schema_sha256"]
+
+
+def test_schema_digest_ignores_only_dropped_column_slot_history(tmp_path):
+    """Replayed DDL can renumber attnum without changing the visible schema."""
+    pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
+    if not pg_bin:
+        pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
+    import psycopg
+
+    with backup.isolated_postgres(Path(pg_bin)) as db_env:
+        connect = dict(
+            host=db_env["PGHOST"], port=db_env["PGPORT"], user=db_env["PGUSER"],
+            dbname=db_env["PGDATABASE"], sslmode="disable",
+        )
+        with psycopg.connect(**connect) as fixture:
+            fixture.execute("CREATE SCHEMA shuddho_coworker")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_alembic_version (version_num text)")
+            fixture.execute("INSERT INTO shuddho_coworker.cw_alembic_version VALUES ('0070')")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_test (id integer, label text)")
+            initial = backup.inventory(fixture)
+            fixture.execute("ALTER TABLE shuddho_coworker.cw_test DROP COLUMN label")
+            fixture.execute("ALTER TABLE shuddho_coworker.cw_test ADD COLUMN label text")
+            replayed = backup.inventory(fixture)
+            assert initial["tables"] == replayed["tables"]
+            assert initial["schema_sha256"] == replayed["schema_sha256"]
 
 
 def test_private_schema_access_rejects_supabase_api_role_grants():
