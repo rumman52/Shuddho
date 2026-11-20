@@ -654,11 +654,26 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
         reviewer_scores = [sum(by_id[cid][reviewer]["scores"][dimension] for dimension in RUBRIC)
                            for reviewer in reviewers]
         reviewer_rubrics = [
-            {"reviewer_id": reviewer, "scores": dict(by_id[cid][reviewer]["scores"])}
+            {"reviewer_id": reviewer, "scores": dict(by_id[cid][reviewer]["scores"]),
+             "source_supported": by_id[cid][reviewer]["source_supported"]}
             for reviewer in reviewers
         ]
+        # An adjudicator's separate verdict cannot be reconstructed from
+        # original reviewer totals. Keep the rubric and a private-note digest,
+        # without exporting protected evidence-note text into the release.
+        adjudicated = cid in resolved
+        final_rubric = {
+            "scores": dict(ratings),
+            "source_supported": chosen["source_supported"],
+            "adjudicator_id": reviewer_identity(chosen["adjudicator_id"]) if adjudicated else None,
+            "evidence_note_sha256": (
+                hashlib.sha256(chosen["evidence_note"].encode("utf-8")).hexdigest()
+                if adjudicated else None
+            ),
+        }
         both_reviewers_meet_floor = all(
             total >= 7 and min(by_id[cid][reviewer]["scores"].values()) > 0
+            and by_id[cid][reviewer]["source_supported"] is True
             for reviewer, total in zip(reviewers, reviewer_scores)
         )
         accepted = (cid not in failed and deterministic_ok and chosen["source_supported"]
@@ -670,7 +685,8 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
                         "accepted": accepted, "deterministic_pass": deterministic_ok,
                         "security_passed": checks[cid]["security_passed"],
                         "source_supported": chosen["source_supported"],
-                        "reviewer_scores": reviewer_scores, "reviewer_rubrics": reviewer_rubrics})
+                        "reviewer_scores": reviewer_scores, "reviewer_rubrics": reviewer_rubrics,
+                         "final_rubric": final_rubric})
     accepted = sum(r["accepted"] for r in results)
     security_failed_cases = sorted(cid for cid, check in checks.items() if not check["security_passed"])
     security_gate_pass = not security_failed_cases
@@ -713,6 +729,7 @@ def day10_first_run_scores(
              "deterministic_pass": row["deterministic_pass"],
              "reviewer_scores": row["reviewer_scores"],
              "reviewer_rubrics": row["reviewer_rubrics"],
+             "final_rubric": row["final_rubric"],
              **({field: receipts[row["case_id"]].get(field) for field in identity_fields}
                 if receipts is not None else {})}
             for row in scores["results"]
