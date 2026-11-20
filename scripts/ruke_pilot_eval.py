@@ -685,8 +685,23 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             "reviewer_count": len(reviewer_set), "reviewers": reviewers, "results": results}
 
 
-def day10_first_run_scores(scores: dict) -> dict:
-    """Shape the preserved Day 9 scores for the existing Day 10 exact-release gate."""
+def day10_first_run_scores(
+    scores: dict, *, case_run_receipts: list[dict] | None = None,
+) -> dict:
+    """Preserve both reviewer scores and the immutable first-attempt identity per case.
+
+    With operated candidate receipts, each scored case retains the original run ID,
+    draft/failure-record hash and failure lineage. A missing or duplicated receipt
+    must not silently disappear from the 40-case release denominator.
+    """
+    receipts = None
+    if case_run_receipts is not None:
+        case_ids = {row["case_id"] for row in scores["results"]}
+        receipts = _unique_rows(case_run_receipts, "case_id", case_ids, 40)
+    identity_fields = (
+        "run_id", "output_sha256", "attempt_status", "evidence_kind",
+        "output_present", "failure_code", "failure_trace_sha256",
+    )
     return {
         "accepted": scores["accepted"],
         "total": scores["total"],
@@ -697,7 +712,9 @@ def day10_first_run_scores(scores: dict) -> dict:
              "source_supported": row["source_supported"],
              "deterministic_pass": row["deterministic_pass"],
              "reviewer_scores": row["reviewer_scores"],
-             "reviewer_rubrics": row["reviewer_rubrics"]}
+             "reviewer_rubrics": row["reviewer_rubrics"],
+             **({field: receipts[row["case_id"]].get(field) for field in identity_fields}
+                if receipts is not None else {})}
             for row in scores["results"]
         ],
     }
@@ -823,6 +840,7 @@ def generation_identity_ok(evidence: object) -> bool:
 
 
 def day10_holdout_receipt(manifest: dict, scores: dict, custody: dict, *,
+                          case_run_receipts: list[dict],
                           manifest_sha256: str, generation_identity_verified: bool,
                           generation_identity_receipt_sha256: str | None) -> dict:
     custody_ok = custody_receipt_ok(custody, manifest)
@@ -846,7 +864,7 @@ def day10_holdout_receipt(manifest: dict, scores: dict, custody: dict, *,
         "generation_identity_verified": generation_identity_verified,
         "generation_identity_receipt_sha256": generation_identity_receipt_sha256,
         "reviewers": scores["reviewers"],
-        "cases": day10_first_run_scores(scores)["cases"],
+        "cases": day10_first_run_scores(scores, case_run_receipts=case_run_receipts)["cases"],
     }
 
 def comparison_evidence_recorded(value: object) -> bool:
@@ -1113,9 +1131,10 @@ def main(argv=None) -> int:
                                 and scores["outcome_gate_pass"] and faults["fault_gate_pass"]
                                 and comparison_evidence_recorded(comparative)
                                 and isolated and source_gate and not high_severity)
-                first_run_scores = day10_first_run_scores(scores)
+                first_run_scores = day10_first_run_scores(scores, case_run_receipts=usage["case_run_receipts"])
                 holdout_receipt = day10_holdout_receipt(
-                    manifest, scores, custody, manifest_sha256=manifest_digest,
+                    manifest, scores, custody, case_run_receipts=usage["case_run_receipts"],
+                    manifest_sha256=manifest_digest,
                     generation_identity_verified=generation_verified,
                     generation_identity_receipt_sha256=evidence.get("generation_identity_receipt_sha256"),
                 )

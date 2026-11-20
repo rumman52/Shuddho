@@ -230,12 +230,20 @@ def test_generation_identity_receipt_and_day10_holdout_artifact_are_compatible()
     }
     reviews, checks = reviews_and_checks()
     scores = score_reviews(tasks(), reviews, [], checks)
+    _, usage = candidate_ledger(
+        tasks(), candidate_outputs_for_manifest(value, manifest_digest="9" * 64),
+        manifest_sha256="9" * 64, manifest=value,
+    )
     artifact = day10_holdout_receipt(
-        value, scores, custody, manifest_sha256="9" * 64,
+        value, scores, custody, case_run_receipts=usage["case_run_receipts"],
+        manifest_sha256="9" * 64,
         generation_identity_verified=True, generation_identity_receipt_sha256="a" * 64,
     )
     assert holdout_ok(artifact, value["release_id"], value["candidate_revision"],
                       value["rollout_manifest_sha256"])
+    assert all(row["attempt_status"] == "succeeded" and row["evidence_kind"] == "draft_output"
+               and row["output_present"] is True and len(row["output_sha256"]) == 64
+               and row["run_id"] for row in artifact["cases"])
 
 def test_candidate_manifest_requires_exact_43_boolean_runtime_flags_and_identity():
     value = manifest()
@@ -1022,3 +1030,46 @@ def test_day9_first_attempt_failure_record_is_bound_to_unique_run_and_trace():
     changed[0]["run_id"] = changed[1]["run_id"]
     with pytest.raises(EvidenceError, match="run IDs"):
         candidate_ledger(tasks(), changed, manifest_sha256="a" * 64, manifest=value)
+
+def test_day9_first_attempt_scoring_handoff_rejects_missing_or_rebound_receipts():
+    value = manifest()
+    reviews, checks = reviews_and_checks()
+    scores = score_reviews(tasks(), reviews, [], checks)
+    _, usage = candidate_ledger(
+        tasks(), candidate_outputs_for_manifest(value), manifest_sha256="a" * 64, manifest=value,
+    )
+    receipts = usage["case_run_receipts"]
+    report = day10_first_run_scores(scores, case_run_receipts=receipts)
+    assert len(report["cases"]) == 40
+    assert report["cases"][0]["run_id"] == receipts[0]["run_id"]
+    assert report["cases"][0]["output_sha256"] == receipts[0]["output_sha256"]
+    with pytest.raises(EvidenceError, match="wrong number"):
+        day10_first_run_scores(scores, case_run_receipts=receipts[:-1])
+    wrong = deepcopy(receipts)
+    wrong[1]["case_id"] = wrong[0]["case_id"]
+    with pytest.raises(EvidenceError, match="duplicate"):
+        day10_first_run_scores(scores, case_run_receipts=wrong)
+
+
+def test_day9_failed_attempt_handoff_retains_failure_digest_and_never_accepts():
+    value = manifest()
+    candidate = _day9_synthetic_failed_attempt(value)
+    hashes, usage = candidate_ledger(
+        tasks(), candidate, manifest_sha256="a" * 64, manifest=value,
+    )
+    reviews, checks = reviews_and_checks()
+    for check in checks:
+        check["output_sha256"] = hashes[check["case_id"]]
+    checks[0]["passed"] = False
+    scores = score_reviews(
+        tasks(), reviews, [], checks, output_hashes=hashes,
+        failed_case_ids=set(usage["failed_case_ids"]),
+    )
+    report = day10_first_run_scores(scores, case_run_receipts=usage["case_run_receipts"])
+    failed = report["cases"][0]
+    assert failed["accepted"] is False
+    assert failed["attempt_status"] == "timed_out"
+    assert failed["output_present"] is False
+    assert failed["evidence_kind"] == "failure_record"
+    assert failed["failure_trace_sha256"] == "9" * 64
+    assert failed["output_sha256"] == hashes[failed["id"]]

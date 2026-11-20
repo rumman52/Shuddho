@@ -559,9 +559,18 @@ def _bind_first_run_to_heldout_outcomes(artifacts):
     """Model the exact Day 9 evaluator pair, never fabricate live qualification."""
     holdout = artifacts["holdout"]
     holdout["manifest_sha256"] = "f" * 64
-    for case in holdout["cases"]:
+    for index, case in enumerate(holdout["cases"]):
         case["source_supported"] = True
         case["deterministic_pass"] = True
+        case.update(
+            run_id=f"first-attempt-{index}",
+            output_sha256=f"{index + 1:064x}",
+            attempt_status="succeeded",
+            evidence_kind="draft_output",
+            output_present=True,
+            failure_code=None,
+            failure_trace_sha256=None,
+        )
     by_cell = {
         f"{workflow}/{language}": {"total": 10, "accepted": 10}
         for workflow, language in sorted(day10.CELLS)
@@ -570,6 +579,16 @@ def _bind_first_run_to_heldout_outcomes(artifacts):
         source_revision=REV,
         rollout_manifest_sha256=HASH,
         manifest_sha256=holdout["manifest_sha256"],
+        candidate_outputs_sha256="e" * 64,
+        case_run_receipts=[
+            {
+                "case_id": case["id"], "release_id": RELEASE, "source_revision": REV,
+                "rollout_manifest_sha256": HASH,
+                "manifest_sha256": holdout["manifest_sha256"],
+                **{field: case[field] for field in day10.ATTEMPT_FIELDS},
+            }
+            for case in holdout["cases"]
+        ],
         scores={
             "total": 40,
             "accepted": 40,
@@ -618,6 +637,9 @@ def test_day10_rejects_unverifiable_first_run_manifest_digest(monkeypatch, field
     ("case", "id", "unrelated-case-id"),
     ("case", "reviewer_scores", [0, 0]),
     ("case", "reviewer_rubrics", []),
+    ("case", "output_sha256", "0" * 64),
+    ("case", "run_id", "other-run"),
+    ("case", "attempt_status", "timed_out"),
 ])
 def test_day10_rejects_disconnected_day9_scores_even_if_holdout_passes(
     monkeypatch, section, field, other
@@ -652,3 +674,74 @@ def test_day10_rejects_incomplete_or_rebound_first_run_case_set(monkeypatch, mut
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "preserved_day9_first_run" in result["blockers"]
+
+@pytest.mark.parametrize(("target", "field", "value"), [
+    ("first_run", "candidate_outputs_sha256", None),
+    ("receipt", "source_revision", "c" * 40),
+    ("receipt", "case_id", ["unhashable-case"]),
+    ("receipt", "manifest_sha256", "d" * 64),
+    ("receipt", "run_id", "other-run"),
+    ("receipt", "output_sha256", "0" * 64),
+    ("receipt", "output_present", False),
+    ("receipt", "attempt_status", "timed_out"),
+    ("receipt", "evidence_kind", "failure_record"),
+    ("holdout", "output_sha256", "0" * 64),
+    ("holdout", "run_id", "other-run"),
+    ("holdout", "output_present", "true"),
+    ("holdout", "attempt_status", "timed_out"),
+])
+def test_day10_rejects_unmatched_first_attempt_lineage(monkeypatch, target, field, value):
+    rollout, artifacts = evidence()
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    if target == "first_run":
+        artifacts["day9_first_run"][field] = value
+    elif target == "receipt":
+        artifacts["day9_first_run"]["case_run_receipts"][0][field] = value
+    else:
+        artifacts["holdout"]["cases"][0][field] = value
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"] or (
+        target == "holdout" and "independent_day9_holdout_36_of_40" in result["blockers"]
+    )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "duplicate", "replay_other_case"])
+def test_day10_rejects_missing_or_reused_first_attempt_receipts(monkeypatch, mutation):
+    rollout, artifacts = evidence()
+    receipts = artifacts["day9_first_run"]["case_run_receipts"]
+    if mutation == "missing":
+        receipts.pop()
+    elif mutation == "duplicate":
+        receipts[1]["case_id"] = receipts[0]["case_id"]
+    else:
+        receipts[1]["run_id"] = receipts[0]["run_id"]
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize("status", ["failed", "timed_out"])
+def test_day10_preserves_a_rejected_first_attempt_in_denominator(monkeypatch, status):
+    rollout, artifacts = evidence()
+    holdout_case = artifacts["holdout"]["cases"][0]
+    score_case = artifacts["day9_first_run"]["scores"]["cases"][0]
+    receipt = artifacts["day9_first_run"]["case_run_receipts"][0]
+    for row in (holdout_case, score_case, receipt):
+        row.update(
+            attempt_status=status, evidence_kind="failure_record", output_present=False,
+            failure_code="provider_timeout", failure_trace_sha256="9" * 64,
+        )
+    for row in (holdout_case, score_case):
+        row["accepted"] = False
+        row["deterministic_pass"] = False
+    receipt.update(attempt_started_at=STARTED, attempt_finished_at=STOPPED)
+    scores = artifacts["day9_first_run"]["scores"]
+    scores["accepted"] = 39
+    scores["by_cell"][holdout_case["workflow"] + "/" + holdout_case["language"]]["accepted"] = 9
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    assert result["scorecard"]["heldout_human_accepted"] == 39
+    # Both original receipts must continue to report the actual failed first run.
+    holdout_case["accepted"] = True
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "SOURCE_ONLY"
