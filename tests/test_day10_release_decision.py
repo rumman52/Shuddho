@@ -853,3 +853,40 @@ def test_day10_rejects_review_later_than_adjudication_even_if_all_rubrics_pass(m
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+@pytest.mark.parametrize("field", ["attempt_started_at", "attempt_finished_at"])
+def test_day10_rejects_first_attempt_without_success_timestamps(monkeypatch, field):
+    rollout, artifacts = evidence()
+    first_case = artifacts["holdout"]["cases"][0]
+    for row in (
+        first_case, artifacts["day9_first_run"]["scores"]["cases"][0],
+        artifacts["day9_first_run"]["case_run_receipts"][0],
+    ):
+        row.pop(field, None)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+def test_day10_rejects_pre_output_blind_review_even_when_adjudication_is_later(monkeypatch):
+    rollout, artifacts = evidence()
+    case = artifacts["holdout"]["cases"][0]
+    case["reviewer_rubrics"][0]["reviewed_at"] = "2026-11-12T00:01:00Z"
+    artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+def test_day10_rejects_rewritten_attempt_finish_even_if_both_scores_match(monkeypatch):
+    rollout, artifacts = evidence()
+    for row in (
+        artifacts["holdout"]["cases"][0],
+        artifacts["day9_first_run"]["scores"]["cases"][0],
+        artifacts["day9_first_run"]["case_run_receipts"][0],
+    ):
+        row["attempt_finished_at"] = "2026-11-12T00:20:00Z"
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
