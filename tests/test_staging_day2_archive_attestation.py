@@ -37,7 +37,7 @@ def _fixtures(tmp_path: Path) -> tuple[dict, dict, tuple[Path, Path, Path, Path]
               for n in range(83)}
     tables["cw_alembic_version"] = {"rows": 1, "sha256": _sha(b'{"version_num": "0070"}\n')}
     source = {
-        "revision": "0070", "tables": tables,
+        "revision": "0070", "tables": tables, "schema_sha256": _sha(b"catalog schema"),
         "access_control": {
             "anon_schema_access": False, "authenticated_schema_access": False,
             "anon_table_privilege_count": 0, "authenticated_table_privilege_count": 0,
@@ -142,6 +142,19 @@ def test_same_source_and_target_never_qualify_as_isolated_restore(tmp_path, reus
     state, target, paths, _ = _fixtures(tmp_path)
     target[reused] = state["source_fingerprints"][reused]
     with pytest.raises(attest.ArchiveAttestationFailure, match="distinct"):
+        _check(state, target, paths)
+
+
+@pytest.mark.parametrize("broken_schema", [None, "", "not-a-digest", 17])
+def test_postgres_archive_rejects_missing_or_forged_schema_digest(tmp_path, broken_schema):
+    state, target, paths, _ = _fixtures(tmp_path)
+    verification = json.loads(paths[0].read_text())
+    if broken_schema is None:
+        del verification["source"]["schema_sha256"]
+    else:
+        verification["source"]["schema_sha256"] = broken_schema
+    paths[0].write_text(json.dumps(verification))
+    with pytest.raises(attest.ArchiveAttestationFailure, match="schema"):
         _check(state, target, paths)
 
 
