@@ -180,23 +180,59 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
                 or not isinstance(rubrics, list) or len(rubrics) != 2):
             return False
         rubric_totals = {}
+        reviewer_votes = {}
         for rubric in rubrics:
             if not isinstance(rubric, dict):
                 return False
             reviewer = reviewer_identity(rubric.get("reviewer_id"))
             dimensions = rubric.get("scores")
+            supported = rubric.get("source_supported")
             if (reviewer not in identities or reviewer in rubric_totals
                     or not isinstance(dimensions, dict) or set(dimensions) != set(RUBRIC)
-                    or any(type(score) is not int or not 0 <= score <= 2 for score in dimensions.values())):
+                    or any(type(score) is not int or not 0 <= score <= 2 for score in dimensions.values())
+                    or type(supported) is not bool):
                 return False
             rubric_totals[reviewer] = sum(dimensions.values())
-            if row["accepted"] and (rubric_totals[reviewer] < 7 or min(dimensions.values()) == 0):
+            reviewer_votes[reviewer] = (tuple(dimensions[part] for part in RUBRIC), supported)
+            if row["accepted"] and (rubric_totals[reviewer] < 7
+                                    or min(dimensions.values()) == 0
+                                    or not supported):
                 return False
         if set(rubric_totals) != identities:
             return False
         if [rubric_totals[reviewer_identity(reviewer)] for reviewer in reviewers] != scores:
             return False
-        if row["accepted"] and min(scores) < 7:
+        # Both original blind votes and the final independently adjudicated
+        # rubric are necessary. A matching pair must not manufacture a third
+        # adjudicator; disagreeing votes require a distinct third identity and
+        # a digest of the private rationale retained outside these reports.
+        final = row.get("final_rubric")
+        if (not isinstance(final, dict)
+                or set(final) != {"scores", "source_supported", "adjudicator_id", "evidence_note_sha256"}):
+            return False
+        final_scores = final["scores"]
+        if (not isinstance(final_scores, dict) or set(final_scores) != set(RUBRIC)
+                or any(type(score) is not int or not 0 <= score <= 2
+                       for score in final_scores.values())
+                or type(final["source_supported"]) is not bool):
+            return False
+        if len(set(reviewer_votes.values())) > 1:
+            adjudicator = reviewer_identity(final["adjudicator_id"])
+            digest = final["evidence_note_sha256"]
+            if (adjudicator is None or adjudicator in identities
+                    or not isinstance(digest, str) or DIGEST.fullmatch(digest) is None):
+                return False
+        else:
+            unanimous = next(iter(reviewer_votes.values()))
+            if (final["adjudicator_id"] is not None
+                    or final["evidence_note_sha256"] is not None
+                    or (tuple(final_scores[part] for part in RUBRIC),
+                        final["source_supported"]) != unanimous):
+                return False
+        if row["accepted"] and (
+                sum(final_scores.values()) < 7
+                or min(final_scores.values()) == 0
+                or final["source_supported"] is not True):
             return False
         counts[cell] += 1
         accepted[cell] += int(row["accepted"])
@@ -407,7 +443,7 @@ def first_run_matches_holdout(
     bound_fields = (
         "id", "workflow", "language", "accepted", "security_passed",
         "source_supported", "deterministic_pass", "reviewer_scores", "reviewer_rubrics",
-        *ATTEMPT_FIELDS,
+        "final_rubric", *ATTEMPT_FIELDS,
     )
     by_cell: Counter[str] = Counter()
     accepted: Counter[str] = Counter()
