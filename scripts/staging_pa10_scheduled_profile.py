@@ -397,6 +397,18 @@ def verify(args: argparse.Namespace) -> dict:
         raise ScheduledProfileProbeFailure("Scheduled-profile scenario is unsupported.")
     base_url = clean_origin(env("SHUDDHO_STAGING_API_BASE_URL"))
     token = env("SHUDDHO_STAGING_TOKEN_A")
+    source_edit_path = getattr(args, "source_edit_receipt", None)
+    if scenario == "daily_coworker" and args.prior_evidence is not None:
+        if source_edit_path is None:
+            raise ScheduledProfileProbeFailure(
+                "Second natural-day verification requires an independently reviewed source-edit receipt."
+            )
+    elif source_edit_path is not None:
+        raise ScheduledProfileProbeFailure(
+            "A source-edit receipt is permitted only for a second daily briefing verification."
+        )
+    source_edit = (load_json(source_edit_path, "authorized source-edit receipt")
+                   if source_edit_path is not None else None)
     old_occurrences = set(state.get("baseline_occurrence_ids") or [])
     old_notices = set(state.get("baseline_notification_ids") or [])
     deadline = time.monotonic() + max(1, args.timeout)
@@ -579,6 +591,8 @@ def verify(args: argparse.Namespace) -> dict:
                     **notification_evidence,
                     "operator_case_reference": args.operator_case_reference.strip(),
                 }
+                if source_edit is not None:
+                    evidence["authorized_source_edit"] = source_edit
                 if not evidence["operator_case_reference"]:
                     raise ScheduledProfileProbeFailure(
                         "A durable operator case/reference is required."
@@ -776,6 +790,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--poll-interval", type=int, default=3)
     verify_parser.add_argument("--prior-evidence", type=Path, default=None,
                                help="Day 7 evidence; recheck original version pins during Day 8 verify")
+    verify_parser.add_argument("--source-edit-receipt", type=Path, default=None,
+                               help="Operator-reviewed source edit between natural daily firings")
     pause_parser = sub.add_parser("pause-two-day")
     pause_parser.add_argument("--rollout", type=Path, required=True)
     pause_parser.add_argument("--provider-policy-plan", type=Path, required=True)

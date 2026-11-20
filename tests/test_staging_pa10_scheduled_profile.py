@@ -12,6 +12,45 @@ def test_guard_fails_closed(monkeypatch):
         probe.require_guard()
 
 
+@pytest.mark.parametrize(("scenario", "has_prior", "has_edit", "error"), [
+    ("daily_coworker", True, False, "requires an independently reviewed source-edit"),
+    ("daily_coworker", False, True, "permitted only for a second daily"),
+    ("weekly_coworker", False, True, "permitted only for a second daily"),
+])
+def test_source_edit_receipt_is_required_only_for_second_daily_probe(
+    monkeypatch, tmp_path, scenario, has_prior, has_edit, error,
+):
+    # These config failures must occur before any authenticated network call.
+    from argparse import Namespace
+    import json
+
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"schema_version": 1, "scenario": scenario}))
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://stage.example.test")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "fake-token")
+    monkeypatch.setattr(probe.httpx, "Client", lambda **_: (_ for _ in ()).throw(
+        AssertionError("no network before source-edit configuration is validated")))
+    args = Namespace(
+        state=state,
+        prior_evidence=tmp_path / "day7.json" if has_prior else None,
+        source_edit_receipt=tmp_path / "edit.json" if has_edit else None,
+    )
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match=error):
+        probe.verify(args)
+
+
+def test_second_day_verify_parser_exposes_source_edit_receipt():
+    parsed = probe.build_parser().parse_args([
+        "verify", "--rollout", "rollout.json", "--provider-policy-plan", "plan.json",
+        "--state", "state.json", "--operator-case-reference", "CASE-7",
+        "--output", "day8.json", "--prior-evidence", "day7.json",
+        "--source-edit-receipt", "edit.json",
+    ])
+    assert str(parsed.source_edit_receipt) == "edit.json"
+
+
 def test_scenario_contracts_are_explicit_and_bounded():
     assert probe.SCENARIOS["daily_coworker"] == {
         "profile": "briefing",

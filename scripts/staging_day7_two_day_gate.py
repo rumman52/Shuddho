@@ -222,6 +222,32 @@ def verify_two_day(
     ]
     require(len(changed_document_ids) == 1,
             "Exactly one authorized document must have a changed pinned version.")
+    # A changed version is not proof that the owner edited the source in the
+    # interval. This receipt is operator-supplied; its underlying audit record
+    # must still be independently authenticated outside this shape validator.
+    edit = second.get("authorized_source_edit")
+    required_edit_fields = {
+        "owner_id", "project_id", "document_id", "previous_version_id",
+        "current_version_id", "edited_at", "operator_case_reference",
+        "evidence_sha256",
+    }
+    require(isinstance(edit, dict) and set(edit) == required_edit_fields,
+            "Day 8 authorized document edit receipt is missing or has unexpected fields.")
+    require(edit["owner_id"] == first["owner_id"]
+            and edit["project_id"] == first["project_id"]
+            and edit["operator_case_reference"] == case_reference
+            and edit["document_id"] == changed_document_ids[0],
+            "Authorized document edit receipt changed owner, project, case or document.")
+    edited_document = changed_document_ids[0]
+    require(edit["previous_version_id"] == first_versions[edited_document]
+            and edit["current_version_id"] == second_versions[edited_document],
+            "Authorized document edit receipt does not match immutable source pins.")
+    require(isinstance(edit["evidence_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", edit["evidence_sha256"]) is not None,
+            "Authorized document edit receipt requires a source-evidence SHA-256.")
+    edited_at = timestamp(edit["edited_at"], "authorized document edited_at")
+    require(verified_timestamps[0] < edited_at < due_timestamps[1],
+            "Authorized document edit must follow Day 7 verification and precede Day 8 due time.")
     paused_at = timestamp(paused.get("paused_at"), "paused_at")
     require(verified_timestamps[1] <= paused_at <= now,
             "Pause must be observed after Day 8 verification and by the current time.")
@@ -282,6 +308,12 @@ def verify_two_day(
         "document_ids": docs_first,
         "first_input_version_ids": pins_first, "second_input_version_ids": pins_second,
         "changed_document_id": changed_document_ids[0],
+        "authorized_source_edit": {
+            "edited_at": edit["edited_at"],
+            "previous_version_id": edit["previous_version_id"],
+            "current_version_id": edit["current_version_id"],
+            "evidence_sha256": edit["evidence_sha256"],
+        },
         "paused_revision": paused["paused_revision"],
         "paused_opportunity_due_at": post_due.isoformat(),
         "post_pause_observed_at": observation["observed_at"] if observation else None,
@@ -294,6 +326,7 @@ def verify_two_day(
             "day7_verified_at": verified_timestamps[0].astimezone(zone).isoformat(),
             "day8_due_at": due_timestamps[1].astimezone(zone).isoformat(),
             "day8_verified_at": verified_timestamps[1].astimezone(zone).isoformat(),
+            "source_edited_at": edited_at.astimezone(zone).isoformat(),
             "paused_at": paused_at.astimezone(zone).isoformat(),
             "post_pause_due_at": post_due.astimezone(zone).isoformat(),
             "post_pause_observed_at": (

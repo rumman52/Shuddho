@@ -51,6 +51,12 @@ def pause_evidence() -> dict:
 def valid_pair():
     first, second = evidence(12, "v1"), evidence(13, "v2")
     second["prior_run_input_version_ids"] = ["v1"]
+    second["authorized_source_edit"] = {
+        "owner_id": "owner-1", "project_id": "project-1", "document_id": "doc-1",
+        "previous_version_id": "v1", "current_version_id": "v2",
+        "edited_at": "2026-11-12T10:00:00+00:00",
+        "operator_case_reference": "CASE-7", "evidence_sha256": "d" * 64,
+    }
     for item in (first, second):
         item["overlap_policy"] = "skip"
         item["catchup_window_seconds"] = 3600
@@ -108,6 +114,8 @@ def test_two_day_gate_accepts_unchanged_scope_fresh_pins_and_pause():
     assert report["changed_document_id"] == "doc-1"
     assert report["first_input_version_ids"] == ["v1"]
     assert report["second_input_version_ids"] == ["v2"]
+    assert report["authorized_source_edit"]["evidence_sha256"] == "d" * 64
+    assert report["owner_local_receipts"]["source_edited_at"] == "2026-11-12T16:00:00+06:00"
     assert report["scheduled_local_dates"] == ["2026-11-12", "2026-11-13"]
 
 
@@ -136,6 +144,45 @@ def test_two_day_gate_rejects_invalid_operator_evidence(mutation):
     first, second, paused = valid_pair()
     mutation(first, second, paused)
     with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
+
+
+@pytest.mark.parametrize("defect", [
+    "missing_edit", "wrong_owner", "wrong_project", "wrong_document",
+    "wrong_old_version", "wrong_new_version", "wrong_case", "missing_hash",
+    "bad_hash", "extra_field", "before_first_verified", "after_second_due",
+    "unaware_edit_time",
+])
+def test_day7_gate_rejects_unqualified_document_edit_receipts(defect):
+    first, second, paused = valid_pair()
+    edit = second["authorized_source_edit"]
+    if defect == "missing_edit":
+        second.pop("authorized_source_edit")
+    elif defect == "wrong_owner":
+        edit["owner_id"] = "another-owner"
+    elif defect == "wrong_project":
+        edit["project_id"] = "another-project"
+    elif defect == "wrong_document":
+        edit["document_id"] = "doc-unapproved"
+    elif defect == "wrong_old_version":
+        edit["previous_version_id"] = "unrelated-v1"
+    elif defect == "wrong_new_version":
+        edit["current_version_id"] = "unrelated-v2"
+    elif defect == "wrong_case":
+        edit["operator_case_reference"] = "OTHER-CASE"
+    elif defect == "missing_hash":
+        edit.pop("evidence_sha256")
+    elif defect == "bad_hash":
+        edit["evidence_sha256"] = "not-a-sha256"
+    elif defect == "extra_field":
+        edit["raw_document_text"] = "synthetic private content"
+    elif defect == "before_first_verified":
+        edit["edited_at"] = first["verified_at"]
+    elif defect == "after_second_due":
+        edit["edited_at"] = second["due_at"]
+    else:
+        edit["edited_at"] = "2026-11-12T10:00:00"
+    with pytest.raises(GateFailure, match="[Aa]uthorized document edit|edited_at"):
         verify_two_day(first, second, paused)
 
 
@@ -172,6 +219,7 @@ def test_two_day_gate_checks_dst_local_calendar_not_24_hours():
     first["verified_at"] = "2026-10-31T12:07:00+00:00"
     second["prepared_at"] = "2026-11-01T12:30:00+00:00"
     second["verified_at"] = "2026-11-01T13:07:00+00:00"
+    second["authorized_source_edit"]["edited_at"] = "2026-10-31T15:00:00+00:00"
     paused["paused_at"] = "2026-11-01T14:00:00+00:00"
     paused["post_pause_observation"]["due_at"] = "2026-11-02T13:00:00+00:00"
     paused["post_pause_observation"]["observed_at"] = "2026-11-02T14:10:00+00:00"
@@ -184,6 +232,7 @@ def test_two_day_gate_checks_dst_local_calendar_not_24_hours():
         "day7_verified_at": "2026-10-31T08:07:00-04:00",
         "day8_due_at": "2026-11-01T08:00:00-05:00",
         "day8_verified_at": "2026-11-01T08:07:00-05:00",
+        "source_edited_at": "2026-10-31T11:00:00-04:00",
         "paused_at": "2026-11-01T09:00:00-05:00",
         "post_pause_due_at": "2026-11-02T08:00:00-05:00",
         "post_pause_observed_at": "2026-11-02T09:10:00-05:00",
@@ -211,6 +260,7 @@ def test_two_day_gate_rejects_ambiguous_next_due_time_during_dst_fall_back():
         "prepared_at": "2026-10-31T05:00:00+00:00",
         "verified_at": "2026-10-31T05:37:00+00:00",
     })
+    second["authorized_source_edit"]["edited_at"] = "2026-10-30T06:00:00+00:00"
     paused["paused_at"] = "2026-10-31T05:45:00+00:00"
     paused["post_pause_observation"].update({
         "due_at": "2026-11-01T05:30:00+00:00",
@@ -351,6 +401,7 @@ def test_staging_script_requires_prior_evidence_option_for_recheck():
         "--output", "day8.json", "--prior-evidence", "day7.json",
     ])
     assert str(parsed.prior_evidence) == "day7.json"
+    assert parsed.source_edit_receipt is None
 
 @pytest.mark.parametrize("broken", ["empty_release", "empty_deployment_reference", "blank_synthetic_account", "mismatched_operator_case"])
 def test_two_day_gate_rejects_unbound_staging_evidence(broken):
