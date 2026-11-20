@@ -279,3 +279,46 @@ def test_rejects_unrelated_repository_and_invalid_main_sha_before_network(api):
             REPO, "fake-admin-token", policy(), expected_main_sha="abc",
         )
     assert api["calls"] == []
+
+
+
+@pytest.mark.parametrize("existing_rows", [
+    [
+        {"context": "coworker", "integration_id": 15368},
+        {"context": "coworker", "integration_id": 15368},
+    ],
+    [
+        {"context": "coworker", "integration_id": 15368, "unreviewed_constraint": True},
+    ],
+])
+def test_ambiguous_existing_status_checks_require_manual_reconciliation(api, existing_rows):
+    """An existing status-check rule with ambiguous entries must not be silently replaced."""
+    api["current"]["rules"].append({
+        "type": "required_status_checks",
+        "parameters": {
+            "strict_required_status_checks_policy": True,
+            "do_not_enforce_on_create": False,
+            "required_status_checks": existing_rows,
+        },
+    })
+    with pytest.raises(ApplyMainRulesetError, match="additional required status checks"):
+        call()
+    assert api["writes"] == []
+
+
+def test_known_unscoped_existing_check_can_still_be_reconciled(api):
+    """An existing required context lacking a publisher can be tightened to the reviewed App ID."""
+    api["current"]["rules"].append({
+        "type": "required_status_checks",
+        "parameters": {
+            "strict_required_status_checks_policy": False,
+            "do_not_enforce_on_create": False,
+            "required_status_checks": [
+                {"context": "coworker", "integration_id": None},
+            ],
+        },
+    })
+    report = call()
+    assert report["status"] == "dry_run"
+    assert report["required_checks"] == ["test-and-build", "coworker", "ci-merge-gate"]
+    assert api["writes"] == []
