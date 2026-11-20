@@ -28,8 +28,11 @@ keys and SHA-256 belong only in this private directory, not GitHub or logs.
 The archive has a deliberate **64 MiB per-object ceiling**, and a
 **10,000-object ceiling** and a **256 MiB aggregate byte ceiling**, to avoid unbounded in-memory downloads. If the
 reviewed source exceeds these ceilings, use a separately reviewed streaming,
-version-aware backup method rather than deleting or skipping objects. Empty
-buckets do not qualify as an object-restore proof.
+version-aware backup method rather than deleting or skipping objects. An empty bucket can be preserved **only with the explicit `--allow-empty-baseline`
+opt-in**. Its archive and restore statuses are `baseline_archived` and
+`baseline_verified`, never `archived` or `verified`. This is preservation
+of the initial zero-object state, **not** proof of private PDF recovery;
+it cannot satisfy the Day 2 `archive_integrity` gate, D02.T09 or D02.G04.
 
 ## Phase 1 — archive the approved source bucket (read only)
 
@@ -64,6 +67,48 @@ semantics are not inferred from identical listings. Concurrent writes
 between reads can escape comparison. To qualify actual hosted restoration,
 freeze writers or capture an approved versioned/object-store snapshot and
 correlate it with the PostgreSQL snapshot.
+
+## Phase 1a — preserve the zero-object pre-seeding baseline
+
+The 20 November read-only staging inventory showed **zero objects** in the
+named private bucket. Part 02 explicitly requires preserving this source
+state *before* any synthetic account or document is seeded. With the same
+approved secure source credentials and `SHUDDHO_STAGING_ALLOW_OBJECT_ARCHIVE=true`,
+run:
+
+```bash
+uv run --locked --extra coworker python -m scripts.staging_object_backup archive \\
+  --directory /secure/private-backups/preseed-empty-objects \\
+  --allow-empty-baseline
+```
+
+This opt-in refuses **nonempty** source buckets, verifies two stable empty
+listings and writes a fresh protected 0600 manifest with `object_count=0`,
+`total_bytes=0`, `objects=[]` and `status=baseline_archived`. The
+source fingerprint is included. Do not rename this receipt or claim that
+any private document bytes were backed up. The default `archive` command
+still refuses an empty bucket for task-recovery evidence.
+
+To test restoring that empty starting state, first authorize a *separate
+empty target* and enable the existing
+`SHUDDHO_STAGING_ALLOW_OBJECT_RESTORE=true` and
+`SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE=true` guards:
+
+```bash
+uv run --locked --extra coworker python -m scripts.staging_object_backup restore \\
+  --archive-directory /secure/private-backups/preseed-empty-objects \\
+  --output /secure/private-backups/preseed-empty-restore.json \\
+  --allow-empty-baseline
+```
+
+The tool requires source and destination fingerprints to differ and refuses
+a nonempty target. It performs **no object PUTs** and writes
+`status=baseline_verified` plus zero object counts. Neither the ordinary
+restore mode nor `staging_day2_archive_attestation` accepts a baseline
+manifest as a successful private-task restore. Once owner A uploads a
+synthetic PDF, create a **new full nonempty archive and isolated restore**
+to demonstrate the actual task and bytes; never reuse the preseed baseline
+as that task's proof.
 
 ## Phase 2 — restore only to a separately authorized empty target
 
