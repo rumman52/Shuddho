@@ -28,7 +28,7 @@
 | Activated | No | No native policy change, deployment or pilot enrolment |
 
 - **Test pass/fail/skip counts:** RED 5/2726/102 with 6 warnings; GREEN pending exact-head readback.
-- **Exact-head CI links:** RED [#44778941841](https://github.com/rumman52/Shuddho/actions/runs/44778941841); GREEN [#44779242832](https://github.com/rumman52/Shuddho/actions/runs/44779242832) pending.
+- **Exact-head CI links:** RED [#44778941841](https://github.com/rumman52/Shuddho/actions/runs/44778941841). For GREEN, inspect the **latest commit** and its jobs on [PR #828 Checks](https://github.com/rumman52/Shuddho/pull/828/checks); earlier runs are superseded by subsequent test and documentation commits. Do not credit cancelled runs.
 - **Review findings and resolution:** Mismatched/type-confused existing publisher should be manually reviewed; validation now reads approved context IDs from validated reviewed policy instead of hardcoding an extra version. Human review pending.
 - **Residual risks:** Native governance and independent reviewer may remain absent despite source CI. GitHub can merge without review if live ruleset remains weak. Do not treat source changes as native enforcement.
 - **Next exact action:** Inspect GREEN required CI on final PR head; have independent maintainer review. C/administrator must perform fresh main SHA + ruleset fingerprint dry-run in protected environment, then after separate authorization prove native negative and positive merge-control cases.
