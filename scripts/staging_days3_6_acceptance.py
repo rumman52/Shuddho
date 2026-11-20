@@ -143,8 +143,11 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
         "day3.prompt_injection is not bound to the pinned private source",
     )
     probe_request = referenced(injection.get("provider_request_id"), "day3.prompt_injection.provider_request_id")
-    need(probe_request not in providers and probe_request != rev["provider_request_id"],
-         "day3.prompt_injection reuses another provider request")
+    # The conflicting instruction is in the shared golden document: the
+    # injection witness must refer to an actual bilingual answer request,
+    # not to a free-standing or revoked model call with unrelated content.
+    need(probe_request in providers and probe_request != rev["provider_request_id"],
+         "day3.prompt_injection provider request does not match a bilingual answer")
     referenced(injection.get("provider_receipt_ref"), "day3.prompt_injection.provider_receipt_ref")
     referenced(injection.get("browser_evidence_ref"), "day3.prompt_injection.browser_evidence_ref")
     probe_start = when(injection.get("provider_started_at"), "day3.prompt_injection.provider_started_at")
