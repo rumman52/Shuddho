@@ -51,7 +51,26 @@ def pause_evidence() -> dict:
 def valid_pair():
     first, second = evidence(12, "v1"), evidence(13, "v2")
     second["prior_run_input_version_ids"] = ["v1"]
-    return first, second, pause_evidence()
+    for item in (first, second):
+        item["overlap_policy"] = "skip"
+        item["catchup_window_seconds"] = 3600
+    paused = pause_evidence()
+    paused.update({
+        "pause_baseline_occurrence_ids": ["occ-12", "occ-13"],
+        "pause_baseline_run_ids": ["run-12", "run-13"],
+        "pause_baseline_notification_ids": ["completed-12", "completed-13"],
+        "post_pause_observation": {
+            "due_at": "2026-11-14T02:00:00+00:00",
+            "observed_at": "2026-11-14T03:10:00+00:00",
+            "new_occurrence_count": 0, "new_run_count": 0,
+            "new_notification_count": 0,
+            "automation_state": "paused",
+            "schedule_applied_revision": 2,
+            "schedule_applied_enabled": False,
+            "operator_case_reference": "CASE-7",
+        },
+    })
+    return first, second, paused
 
 
 def test_two_day_gate_rejects_multiple_document_changes():
@@ -152,6 +171,8 @@ def test_two_day_gate_checks_dst_local_calendar_not_24_hours():
     second["prepared_at"] = "2026-11-01T12:30:00+00:00"
     second["verified_at"] = "2026-11-01T13:07:00+00:00"
     paused["paused_at"] = "2026-11-01T14:00:00+00:00"
+    paused["post_pause_observation"]["due_at"] = "2026-11-02T13:00:00+00:00"
+    paused["post_pause_observation"]["observed_at"] = "2026-11-02T14:10:00+00:00"
     assert verify_two_day(first, second, paused)["scheduled_local_dates"] == ["2026-10-31", "2026-11-01"]
 
 
@@ -304,5 +325,57 @@ def test_day7_gate_rejects_unapproved_goal_scope(defect):
             del item["authorized_document_ids"]
     else:
         second["authorized_document_ids"] = ["doc-evil"]
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
+
+
+def test_two_day_gate_does_not_qualify_pause_acknowledgement_alone():
+    first, second, paused = valid_pair()
+    del paused["post_pause_observation"]
+    with pytest.raises(GateFailure, match="post-pause"):
+        verify_two_day(first, second, paused)
+
+
+@pytest.mark.parametrize("defect", [
+    "due_earlier", "observed_too_early", "future_observation", "new_occurrence",
+    "new_run", "new_notification", "resumed", "wrong_applied_revision",
+    "wrong_case", "missing_history_baseline", "removed_first_occurrence",
+    "wrong_overlap", "missing_catchup_bound", "pause_after_opportunity",
+    "expiry_before_opportunity",
+])
+def test_two_day_gate_rejects_unproven_paused_opportunity(defect):
+    first, second, paused = valid_pair()
+    observation = paused["post_pause_observation"]
+    if defect == "due_earlier":
+        observation["due_at"] = "2026-11-13T02:00:00+00:00"
+    elif defect == "observed_too_early":
+        observation["observed_at"] = "2026-11-14T02:05:00+00:00"
+    elif defect == "future_observation":
+        observation["observed_at"] = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    elif defect == "new_occurrence":
+        observation["new_occurrence_count"] = 1
+    elif defect == "new_run":
+        observation["new_run_count"] = 1
+    elif defect == "new_notification":
+        observation["new_notification_count"] = 1
+    elif defect == "resumed":
+        observation["automation_state"] = "active"
+    elif defect == "wrong_applied_revision":
+        observation["schedule_applied_revision"] = 1
+    elif defect == "wrong_case":
+        observation["operator_case_reference"] = "someone-else"
+    elif defect == "missing_history_baseline":
+        del paused["pause_baseline_run_ids"]
+    elif defect == "removed_first_occurrence":
+        paused["pause_baseline_occurrence_ids"] = ["occ-13"]
+    elif defect == "wrong_overlap":
+        first["overlap_policy"] = "buffer_one"
+    elif defect == "missing_catchup_bound":
+        del second["catchup_window_seconds"]
+    elif defect == "pause_after_opportunity":
+        paused["paused_at"] = "2026-11-14T02:01:00+00:00"
+    elif defect == "expiry_before_opportunity":
+        for item in (first, second, paused):
+            item["expires_at"] = "2026-11-14T01:59:00+00:00"
     with pytest.raises(GateFailure):
         verify_two_day(first, second, paused)
