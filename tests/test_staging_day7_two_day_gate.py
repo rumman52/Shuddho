@@ -219,8 +219,11 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
     class Response:
         status_code = 200
 
+        def __init__(self, payload=None):
+            self.payload = payload
+
         def json(self):
-            return {
+            return self.payload if self.payload is not None else {
                 "id": "automation-1", "state": "paused", "revision": 2,
                 "schedule_applied_revision": 2, "schedule_applied_enabled": False,
                 "schedule_error_code": None,
@@ -241,8 +244,19 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
             return Response()
 
         def get(self, path, **kwargs):
-            assert path == "/api/v1/automations/automation-1"
-            return Response()
+            if path == "/api/v1/automations/automation-1":
+                return Response()
+            if path == "/api/v1/automations/automation-1/history":
+                return Response({"history": [
+                    {"occurrence_id": "occ-12", "run_id": "run-12"},
+                    {"occurrence_id": "occ-13", "run_id": "run-13"},
+                ]})
+            if path == "/api/v1/notifications":
+                return Response({"notifications": [
+                    {"id": "completed-12", "automation_id": "automation-1"},
+                    {"id": "completed-13", "automation_id": "automation-1"},
+                ]})
+            raise AssertionError(f"Unexpected request: {path}")
 
     client = Client()
     monkeypatch.setattr(probe.httpx, "Client", lambda **_args: client)
@@ -381,3 +395,131 @@ def test_two_day_gate_rejects_unproven_paused_opportunity(defect):
             item["expires_at"] = "2026-11-14T01:59:00+00:00"
     with pytest.raises(GateFailure):
         verify_two_day(first, second, paused)
+
+
+def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activity(
+    monkeypatch, tmp_path,
+):
+    import argparse
+    import json
+    from scripts import staging_day7_paused_opportunity as check
+
+    first, second, paused = valid_pair()
+    del paused["post_pause_observation"]
+    paths = [tmp_path / name for name in ("first.json", "second.json", "pause.json")]
+    for path, value in zip(paths, (first, second, paused)):
+        path.write_text(json.dumps(value), encoding="utf-8")
+    args = argparse.Namespace(
+        first_evidence=paths[0], second_evidence=paths[1], pause_evidence=paths[2],
+        rollout=tmp_path / "rollout.json", provider_policy_plan=tmp_path / "policy.json",
+        operator_case_reference="CASE-7", output=tmp_path / "observed.json",
+    )
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT_LABEL", "stage-day7-synthetic")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://staging.example.test")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "not-a-real-token")
+    monkeypatch.setattr(check, "release_identity", lambda *_args: deepcopy(RELEASE))
+
+    history = [
+        {"occurrence_id": "occ-12", "run_id": "run-12"},
+        {"occurrence_id": "occ-13", "run_id": "run-13"},
+    ]
+    notices = [
+        {"id": "completed-12", "automation_id": "automation-1"},
+        {"id": "completed-13", "automation_id": "automation-1"},
+    ]
+    paths_read = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, path, **_kwargs):
+            paths_read.append(path)
+            if path == "/api/v1/me":
+                return Response({"account_id": "owner-1"})
+            if path == "/api/v1/automations/automation-1":
+                return Response({
+                    "id": "automation-1", "state": "paused", "revision": 2,
+                    "schedule_applied_revision": 2, "schedule_applied_enabled": False,
+                    "schedule_error_code": None, "schedule": first["schedule"],
+                    "timezone": first["timezone"],
+                    "overlap_policy": first["overlap_policy"],
+                    "catchup_window_seconds": first["catchup_window_seconds"],
+                    "expires_at": first["expires_at"], "goal_id": first["goal_id"],
+                    "goal_revision": first["goal_revision"],
+                })
+            if path == "/api/v1/automations/automation-1/history":
+                return Response({"history": history})
+            if path == "/api/v1/notifications":
+                return Response({"notifications": notices})
+            raise AssertionError(f"Unexpected network operation: {path}")
+
+        def post(self, *_args, **_kwargs):
+            raise AssertionError("The post-pause observer must be read-only.")
+
+    monkeypatch.setattr(check.httpx, "Client", lambda **_kwargs: Client())
+    qualified = check.collect_paused_opportunity(args)
+    observation = qualified["post_pause_observation"]
+    assert observation["new_occurrence_count"] == 0
+    assert observation["new_run_count"] == 0
+    assert observation["new_notification_count"] == 0
+    assert observation["due_at"] == "2026-11-14T02:00:00+00:00"
+    assert json.loads(args.output.read_text()) == qualified
+    assert paths_read == [
+        "/api/v1/me", "/api/v1/automations/automation-1",
+        "/api/v1/automations/automation-1/history", "/api/v1/notifications",
+    ]
+
+    # A later accepted run and a third notice must never certify a quiet pause.
+    history.append({"occurrence_id": "occ-14", "run_id": "run-14"})
+    notices.append({"id": "completed-14", "automation_id": "automation-1"})
+    args.output = tmp_path / "must-not-exist.json"
+    with pytest.raises(check.ScheduledProfileProbeFailure, match="did not qualify"):
+        check.collect_paused_opportunity(args)
+    assert not args.output.exists()
+
+
+def test_paused_opportunity_collector_refuses_early_read_before_network(
+    monkeypatch, tmp_path,
+):
+    import argparse
+    import json
+    from scripts import staging_day7_paused_opportunity as check
+
+    first, second, paused = valid_pair()
+    del paused["post_pause_observation"]
+    # Move the complete two-day case far enough into the future that a valid
+    # after-opportunity receipt is impossible. The owner-approved schedule and
+    # local timestamps are preserved in the JSON, and no API call may occur.
+    first["due_at"] = "2030-11-12T02:00:00+00:00"
+    second["due_at"] = "2030-11-13T02:00:00+00:00"
+    files = [tmp_path / name for name in ("first.json", "second.json", "pause.json")]
+    for path, item in zip(files, (first, second, paused)):
+        path.write_text(json.dumps(item), encoding="utf-8")
+    args = argparse.Namespace(
+        first_evidence=files[0], second_evidence=files[1], pause_evidence=files[2],
+        operator_case_reference="CASE-7", output=tmp_path / "never.json",
+        rollout=tmp_path / "rollout.json", provider_policy_plan=tmp_path / "policy.json",
+    )
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setattr(check.httpx, "Client", lambda **_kw: (_ for _ in ()).throw(
+        AssertionError("No network access allowed before the due opportunity")
+    ))
+    with pytest.raises(check.ScheduledProfileProbeFailure):
+        check.collect_paused_opportunity(args)
+    assert not args.output.exists()
