@@ -153,7 +153,8 @@ def evidence():
                 row["citations"] = [{
                     "source_id": f"source-{i}", "url": f"https://example.org/study-{i}",
                     "title": f"Synthetic study {i}",
-                    "sha256": D2, "retrieved_at": T5, "quote_verified": True,
+                    "sha256": [D2, D3, D4][i - 1],
+                    "retrieved_at": T5, "quote_verified": True,
                 } for i in (1, 2, 3)]
             else:
                 row["email_draft"] = {
@@ -365,4 +366,27 @@ def test_day6_cannot_reuse_native_artifact_identity_across_cases(first, second, 
     copy["sha256"] = D4
     assert copy["download_receipt_ref"] != source["download_receipt_ref"]
     with pytest.raises(gate.Days36EvidenceError, match="reused across"):
+        validate(args)
+
+
+@pytest.mark.parametrize("language", ["bn", "en"])
+@pytest.mark.parametrize("collision", ["source_id", "url", "sha256", "url_fragment"])
+def test_day6_rejects_duplicate_research_evidence_within_each_language(language, collision):
+    args = evidence()
+    research = next(
+        row for row in args[4]["cases"]
+        if row["workflow"] == "research" and row["language"] == language
+    )
+    original, duplicate = research["citations"][:2]
+    if collision == "url_fragment":
+        # Anchors to different fragments of one fetched document are not
+        # independent evidence and must not count as separate sources.
+        duplicate["url"] = original["url"] + "#different-section"
+    else:
+        duplicate[collision] = original[collision]
+
+    # Titles and other fields remain distinct: reusing even one authoritative
+    # source identity must not satisfy the independent-three-source contract.
+    assert duplicate["title"] != original["title"]
+    with pytest.raises(gate.Days36EvidenceError, match="independent"):
         validate(args)
