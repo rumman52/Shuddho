@@ -1126,3 +1126,46 @@ def test_day9_one_reviewer_unsupported_source_cannot_be_reaccepted_by_adjudicati
     scored = score_reviews(cases, reviews, resolution, checks)
     assert scored["results"][0]["accepted"] is False
     assert scored["results"][0]["reviewer_rubrics"][0]["source_supported"] is False
+
+
+def test_original_blind_review_handoff_binds_output_hash_and_private_rationale():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    for review in reviews:
+        review["output_sha256"] = "d" * 64
+        review["reviewed_at"] = "2026-11-12T00:10:00Z"
+    scored = score_reviews(cases, reviews, [], checks)
+    first = scored["results"][0]["reviewer_rubrics"][0]
+    assert first["output_sha256"] == checks[0]["output_sha256"]
+    assert first["reviewed_at"] == "2026-11-12T00:10:00Z"
+    assert first["evidence_note_sha256"] == hashlib.sha256(b"Fixture rationale").hexdigest()
+    assert "evidence_note" not in first
+
+
+def test_original_blind_reviewer_cannot_rate_a_substituted_output():
+    reviews, checks = reviews_and_checks()
+    for review in reviews:
+        review["output_sha256"] = "d" * 64
+        review["reviewed_at"] = "2026-11-12T00:10:00Z"
+    reviews[0]["output_sha256"] = "e" * 64
+    with pytest.raises(EvidenceError, match="review output"):
+        score_reviews(tasks(), reviews, [], checks)
+
+
+def test_adjudication_must_follow_original_recorded_blind_reviews():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    for review in reviews:
+        review["output_sha256"] = "d" * 64
+        review["reviewed_at"] = "2026-11-12T00:10:00Z"
+    reviews[0]["scores"][RUBRIC[0]] = 1
+    adjudication = [{
+        "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
+        "scores": dict.fromkeys(RUBRIC, 2),
+        "source_supported": True,
+        "evidence_note": "Independent final rationale",
+        "output_sha256": "d" * 64,
+        "adjudicated_at": "2026-11-12T00:09:00Z",
+    }]
+    with pytest.raises(EvidenceError, match="adjudication timestamp"):
+        score_reviews(cases, reviews, adjudication, checks)
