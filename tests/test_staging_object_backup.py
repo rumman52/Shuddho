@@ -266,7 +266,6 @@ def test_cli_requires_explicit_guard_before_storage_is_initialized(monkeypatch, 
 def test_fake_s3_archive_retains_mime_metadata_and_restores_exact_private_bytes(tmp_path):
     """Exercise the real S3 store adapter against memory-only client objects."""
     import io
-    from types import SimpleNamespace
     from services.coworker.storage import S3ObjectStore
 
     class MemoryS3:
@@ -309,11 +308,11 @@ def test_fake_s3_archive_retains_mime_metadata_and_restores_exact_private_bytes(
 
     def store(bucket):
         client = MemoryS3()
-        wrapped = S3ObjectStore(
-            SimpleNamespace(storage_bucket=bucket, storage_endpoint="https://unit.test",
-                            storage_region="us-west-1"),
-            client=client,
-        )
+        # Exercise the real S3 adapter methods without importing boto3 in
+        # the base Python suite: this is a memory-only test client.
+        wrapped = object.__new__(S3ObjectStore)
+        wrapped.bucket = bucket
+        wrapped.client = client
         return wrapped, client
 
     source, original = store("private-source")
