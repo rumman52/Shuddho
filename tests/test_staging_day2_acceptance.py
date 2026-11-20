@@ -113,7 +113,8 @@ def proofs():
     restore['recovery_outbox'] = copy.deepcopy(recovery['recovery_outbox'])
     restore['archive_integrity'] = {
         'status': 'verified', 'source_schema_revision': '0070',
-        'postgres_archive_sha256': '6' * 64, 'postgres_table_count': 84,
+        'postgres_archive_sha256': '6' * 64, 'postgres_schema_sha256': 'd' * 64,
+        'postgres_table_count': 84,
         'postgres_row_count': 1,
         'source_database_fingerprint': '7' * 64,
         'target_database_fingerprint': '8' * 64,
@@ -464,4 +465,15 @@ def test_backup_gate_rejects_legacy_reference_only_restore_receipt():
     proof_set = list(proofs())
     proof_set[3].pop("archive_integrity")
     with pytest.raises(gate.Day2AcceptanceFailure, match="archive_integrity"):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize("invalid_digest", [None, "", "INVALID", 123])
+def test_day2_gate_requires_structural_schema_digest(invalid_digest):
+    proof_set = list(proofs())
+    if invalid_digest is None:
+        del proof_set[3]["archive_integrity"]["postgres_schema_sha256"]
+    else:
+        proof_set[3]["archive_integrity"]["postgres_schema_sha256"] = invalid_digest
+    with pytest.raises(gate.Day2AcceptanceFailure, match="postgres_schema_sha256"):
         check(*proof_set)
