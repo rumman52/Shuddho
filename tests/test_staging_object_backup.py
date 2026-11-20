@@ -217,3 +217,47 @@ def test_archive_existing_output_directory_is_never_overwritten(tmp_path):
     with pytest.raises(backup.ObjectArchiveError, match="fresh"):
         backup.archive_store(source, SRC, archive)
     assert (archive / "important.txt").read_text() == "retain me"
+
+
+def test_archive_rejects_total_bytes_before_reading_any_object(monkeypatch, tmp_path):
+    source, _ = _source(tmp_path)
+    monkeypatch.setattr(backup, "MAX_TOTAL_BYTES", 12)
+
+    class ReadForbidden:
+        def inventory(self):
+            return source.inventory()
+
+        def get(self, *_):
+            pytest.fail("Aggregate over-limit source was downloaded")
+
+    archive = tmp_path / "too-large"
+    with pytest.raises(backup.ObjectArchiveError, match="total"):
+        backup.archive_store(ReadForbidden(), SRC, archive)
+    assert not (archive / "manifest.json").exists()
+
+
+def test_restore_refuses_symlinked_object_directory(tmp_path):
+    archive, _manifest, _payloads = _archive(tmp_path)
+    root = archive / "objects"
+    real = archive / "objects-real"
+    root.rename(real)
+    root.symlink_to(real, target_is_directory=True)
+    target = SpyTarget(tmp_path / "target")
+    output = tmp_path / "restore-receipt.json"
+    with pytest.raises(backup.ObjectArchiveError, match="symlink"):
+        backup.restore_store(target, DST, archive, output)
+    assert target.puts == [] and not output.exists()
+
+
+def test_cli_requires_explicit_guard_before_storage_is_initialized(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("SHUDDHO_STAGING_ALLOW_OBJECT_ARCHIVE", raising=False)
+    monkeypatch.delenv("SHUDDHO_STAGING_ALLOW_OBJECT_RESTORE", raising=False)
+    monkeypatch.delenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", raising=False)
+    monkeypatch.setattr(backup, "make_storage", lambda _: pytest.fail("Storage was initialized"))
+    assert backup.main(["archive", "--directory", str(tmp_path / "archive")]) == 1
+    assert "guards" in capsys.readouterr().out
+    assert backup.main([
+        "restore", "--archive-directory", str(tmp_path / "archive"),
+        "--output", str(tmp_path / "restored.json"),
+    ]) == 1
+    assert "guards" in capsys.readouterr().out
