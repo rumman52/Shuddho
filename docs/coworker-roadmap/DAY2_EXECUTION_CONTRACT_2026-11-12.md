@@ -41,6 +41,15 @@ The merged Day 2 source includes:
   queue**, requires a progressing database heartbeat, and directly describes
   `shuddho-task-<task_id>` in Temporal as `completed`.
 - After Temporal confirms the private `report_email` workflow completed, the Day 2 operator reads the actual `cw_outbox` row keyed by that **same PDF task ID**. Exactly one row, `delivered=true` and positive dispatch attempts are required; `document_outbox` travels unchanged with the task identity through recovery and isolated restore acceptance. This proves one logical task-dispatch ledger effect, not provider-side exactly-once execution.
+- The separate recovery AgentRun receipt records three ordered, distinct,
+  completed child task IDs with their server-owned idempotency keys and step
+  execution windows. The acceptance reconciler checks that the restart
+  interrupted at least one active child, that fan-in followed both branches,
+  that old/new worker heartbeats bracket their respective restart registration,
+  and that the one parent `cw_agent_outbox` row was delivered. It still
+  requires **zero** direct child `cw_outbox` rows. These are database/worker
+  operator claims; an independent verifier must authenticate the live source
+  histories and platform restart event before awarding a hosted PASS.
 - The output contains only nonsecret release/worker/document/task/artifact IDs,
   hashes, sizes, model accounting and pass labels. It does not log tokens,
   user text, signed URLs, passwords, or the synthetic source contents.
