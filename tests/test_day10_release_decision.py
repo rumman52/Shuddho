@@ -50,7 +50,8 @@ def evidence():
               "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True, "provider_model": "model-r"}
     first = {"release_id": RELEASE, "source_revision": REV,
              "rollout_manifest_sha256": HASH, "run_kind": "first_run",
-             "run_id": "day9-first", "manifest_sha256": "f" * 64, "scores": {}}
+             "run_id": "day9-first", "run_started_at": "2026-11-12T00:00:00Z",
+             "manifest_sha256": "f" * 64, "scores": {}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
                "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
@@ -576,6 +577,8 @@ def _bind_first_run_to_heldout_outcomes(artifacts):
             output_present=True,
             failure_code=None,
             failure_trace_sha256=None,
+            attempt_started_at="2026-11-12T00:01:00Z",
+            attempt_finished_at="2026-11-12T00:02:00Z",
         )
         for reviewer_index, reviewer in enumerate(case["reviewer_rubrics"]):
             reviewer.update(
@@ -754,7 +757,10 @@ def test_day10_preserves_a_rejected_first_attempt_in_denominator(monkeypatch, st
     for row in (holdout_case, score_case):
         row["accepted"] = False
         row["deterministic_pass"] = False
-    receipt.update(attempt_started_at=STARTED, attempt_finished_at=STOPPED)
+    receipt.update(
+        attempt_started_at="2026-11-12T00:01:00Z",
+        attempt_finished_at="2026-11-12T00:02:00Z",
+    )
     scores = artifacts["day9_first_run"]["scores"]
     scores["accepted"] = 39
     scores["by_cell"][holdout_case["workflow"] + "/" + holdout_case["language"]]["accepted"] = 9
@@ -850,6 +856,43 @@ def test_day10_rejects_review_later_than_adjudication_even_if_all_rubrics_pass(m
     case["reviewer_rubrics"][1]["reviewed_at"] = "2026-11-12T00:13:00Z"
     case["final_rubric"]["adjudicated_at"] = "2026-11-12T00:12:00Z"
     artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+@pytest.mark.parametrize("field", ["attempt_started_at", "attempt_finished_at"])
+def test_day10_rejects_first_attempt_without_success_timestamps(monkeypatch, field):
+    rollout, artifacts = evidence()
+    first_case = artifacts["holdout"]["cases"][0]
+    for row in (
+        first_case, artifacts["day9_first_run"]["scores"]["cases"][0],
+        artifacts["day9_first_run"]["case_run_receipts"][0],
+    ):
+        row.pop(field, None)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+def test_day10_rejects_pre_output_blind_review_even_when_adjudication_is_later(monkeypatch):
+    rollout, artifacts = evidence()
+    case = artifacts["holdout"]["cases"][0]
+    case["reviewer_rubrics"][0]["reviewed_at"] = "2026-11-12T00:01:00Z"
+    artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+def test_day10_rejects_rewritten_attempt_finish_even_if_both_scores_match(monkeypatch):
+    rollout, artifacts = evidence()
+    for row in (
+        artifacts["holdout"]["cases"][0],
+        artifacts["day9_first_run"]["scores"]["cases"][0],
+        artifacts["day9_first_run"]["case_run_receipts"][0],
+    ):
+        row["attempt_finished_at"] = "2026-11-12T00:20:00Z"
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "independent_day9_holdout_36_of_40" in result["blockers"]

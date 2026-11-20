@@ -478,6 +478,13 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
         attempt_status = row.get("attempt_status", "succeeded")
         if attempt_status not in ("succeeded", "failed", "timed_out"):
             raise EvidenceError("invalid candidate attempt status: " + cid)
+        # A successful first attempt must preserve its execution window just
+        # as a failed/timed-out attempt does; both start after manifest freeze.
+        if manifest is not None and (
+            not timestamp_order_ok(row.get("attempt_started_at"), row.get("attempt_finished_at"))
+            or not timestamp_order_ok(manifest.get("run_started_at"), row.get("attempt_started_at"))
+        ):
+            raise EvidenceError("candidate attempt timestamps must follow frozen manifest and be ordered: " + cid)
         run_id = row.get("run_id")
         if manifest is not None:
             expected = {
@@ -579,8 +586,8 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
                 "output_present": attempt_status == "succeeded",
                 "failure_code": row.get("failure_code") if evidence_kind == "failure_record" else None,
                 "failure_trace_sha256": row.get("trace_sha256") if evidence_kind == "failure_record" else None,
-                "attempt_started_at": row.get("attempt_started_at") if evidence_kind == "failure_record" else None,
-                "attempt_finished_at": row.get("attempt_finished_at") if evidence_kind == "failure_record" else None,
+                "attempt_started_at": row.get("attempt_started_at"),
+                "attempt_finished_at": row.get("attempt_finished_at"),
                 "telemetry": telemetry,
             })
     complete = len(usage) == 40
@@ -596,8 +603,11 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
 
 def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[dict],
                    deterministic: list[dict], *, output_hashes: dict | None = None,
-                   failed_case_ids: set[str] | None = None) -> dict:
+                   failed_case_ids: set[str] | None = None,
+                   case_run_receipts: list[dict] | None = None) -> dict:
     ids = {c["case_id"] for c in cases}
+    attempts = (_unique_rows(case_run_receipts, "case_id", ids, 40)
+                if case_run_receipts is not None else None)
     failed = set() if failed_case_ids is None else failed_case_ids
     if not isinstance(failed, set) or not failed.issubset(ids):
         raise EvidenceError("failed first attempt IDs must be known unique case IDs")
@@ -609,6 +619,14 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             raise EvidenceError("output identity missing for " + case_id)
         if output_hashes is not None and check["output_sha256"] != output_hashes[case_id]:
             raise EvidenceError("deterministic evidence is not bound to actual output: " + case_id)
+        if attempts is not None and (
+            check["output_sha256"] != attempts[case_id].get("output_sha256")
+            or not timestamp_order_ok(
+                attempts[case_id].get("attempt_started_at"),
+                attempts[case_id].get("attempt_finished_at"),
+            )
+        ):
+            raise EvidenceError("review attempt receipt must match original output and ordered timestamps: " + case_id)
         if case_id in failed and check["passed"]:
             raise EvidenceError("failed first attempt cannot claim deterministic pass: " + case_id)
     if len(reviews) != 80:
@@ -633,6 +651,10 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             raise EvidenceError("review output must match the original candidate hash")
         if not timestamp_ok(row.get("reviewed_at")):
             raise EvidenceError("independent blind review timestamp required")
+        if attempts is not None and not timestamp_strictly_after(
+            attempts[row["case_id"]]["attempt_finished_at"], row["reviewed_at"]
+        ):
+            raise EvidenceError("review must occur after the original attempt finishes")
         by_id[row["case_id"]][reviewer] = row
     if any(len(v) != 2 for v in by_id.values()) or len(by_id) != 40:
         raise EvidenceError("two independent reviewers per task required")
@@ -743,6 +765,7 @@ def day10_first_run_scores(
     identity_fields = (
         "run_id", "output_sha256", "attempt_status", "evidence_kind",
         "output_present", "failure_code", "failure_trace_sha256",
+        "attempt_started_at", "attempt_finished_at",
     )
     return {
         "accepted": scores["accepted"],
@@ -783,6 +806,14 @@ def timestamp_order_ok(observed_at: object, verified_at: object) -> bool:
     observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
     verified = datetime.fromisoformat(verified_at.replace("Z", "+00:00"))
     return verified.astimezone(timezone.utc) >= observed.astimezone(timezone.utc)
+
+def timestamp_strictly_after(earlier: object, later: object) -> bool:
+    if not timestamp_order_ok(earlier, later):
+        return False
+    start = datetime.fromisoformat(earlier.replace("Z", "+00:00")).astimezone(timezone.utc)
+    end = datetime.fromisoformat(later.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return end > start
+
 
 def operated_trace_ok(row: dict, required_boundaries: tuple[str, ...]) -> bool:
     """Check the common trace evidence required for an operated recovery case."""
@@ -1151,7 +1182,8 @@ def main(argv=None) -> int:
                 generation_verified = generation_identity_ok(evidence)
                 scores = score_reviews(cases, evidence["reviews"], evidence.get("adjudications", []),
                                        evidence["deterministic"], output_hashes=output_hashes,
-                                       failed_case_ids=set(usage["failed_case_ids"]))
+                                       failed_case_ids=set(usage["failed_case_ids"]),
+                                       case_run_receipts=usage["case_run_receipts"])
                 faults = verify_operations(
                     evidence["operations"], manifest["candidate_revision"],
                     manifest_sha256=manifest_digest, release_id=manifest["release_id"],
