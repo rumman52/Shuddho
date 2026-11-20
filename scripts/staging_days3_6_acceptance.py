@@ -286,9 +286,10 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
             sources = row.get("citations")
             need(isinstance(sources, list) and len(sources) >= 3,
                  "day6 research must cite three independently checked sources")
+            source_ids, source_urls, source_hashes = set(), set(), set()
             for source in sources:
                 citation = obj(source, "day6.research_citation")
-                referenced(citation.get("source_id"), "day6.source_id")
+                source_id = referenced(citation.get("source_id"), "day6.source_id")
                 referenced(citation.get("title"), "day6.source.title")
                 url = text(citation.get("url"), "day6.source.url")
                 parsed = urlsplit(url)
@@ -297,7 +298,18 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
                      and parsed.username is None and parsed.password is None
                      and host != "localhost" and not host.startswith(("127.", "10.", "192.168.", "172.16.")),
                      "day6 research source URL must be a public HTTPS source without credentials")
-                sha(citation.get("sha256"), "day6.source.sha256")
+                source_hash = sha(citation.get("sha256"), "day6.source.sha256")
+                # Fragments point to sections of the same document, not
+                # independently retrieved evidence. Reuse across languages is
+                # allowed; each research output needs three different sources.
+                url_identity = (parsed.scheme, parsed.netloc.casefold(),
+                                parsed.path or "/", parsed.query)
+                need(source_id not in source_ids and url_identity not in source_urls
+                     and source_hash not in source_hashes,
+                     "day6 research sources must be independent by ID, URL and content digest")
+                source_ids.add(source_id)
+                source_urls.add(url_identity)
+                source_hashes.add(source_hash)
                 retrieved = when(citation.get("retrieved_at"), "day6.source.retrieved_at")
                 need(retrieved <= completed, "day6 source retrieval postdates verified comparison")
                 need(citation.get("quote_verified") is True, "day6 citation quote not verified")
