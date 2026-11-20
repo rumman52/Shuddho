@@ -340,6 +340,9 @@ def run_backup(url: str, directory: Path, pg_bin: Path | None = None) -> dict:
             r"[a-f0-9]{64}", source_database_fingerprint
         ):
             raise BackupError("The archive source database fingerprint is unavailable.")
+        schema_digest = source.get("schema_sha256") if isinstance(source, dict) else None
+        if not isinstance(schema_digest, str) or re.fullmatch(r"[0-9a-f]{64}", schema_digest) is None:
+            raise BackupError("The private PostgreSQL structural schema fingerprint is unavailable.")
         partial.chmod(0o600)
         partial.rename(archive)
     finally:
