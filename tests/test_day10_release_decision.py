@@ -543,3 +543,102 @@ def test_43_frozen_flags_and_derived_api_field_remain_separate_from_worker(monke
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "worker_exact_sha_and_deployment_receipt" in result["blockers"]
+
+
+def _bind_first_run_to_heldout_outcomes(artifacts):
+    """Model the exact Day 9 evaluator pair, never fabricate live qualification."""
+    holdout = artifacts["holdout"]
+    holdout["manifest_sha256"] = "f" * 64
+    for case in holdout["cases"]:
+        case["source_supported"] = True
+        case["deterministic_pass"] = True
+    by_cell = {
+        f"{workflow}/{language}": {"total": 10, "accepted": 10}
+        for workflow, language in sorted(day10.CELLS)
+    }
+    artifacts["day9_first_run"].update(
+        source_revision=REV,
+        rollout_manifest_sha256=HASH,
+        manifest_sha256=holdout["manifest_sha256"],
+        scores={
+            "total": 40,
+            "accepted": 40,
+            "by_cell": by_cell,
+            "cases": deepcopy(holdout["cases"]),
+        },
+    )
+
+
+@pytest.mark.parametrize(("field", "other"), [
+    ("source_revision", "c" * 40),
+    ("rollout_manifest_sha256", "d" * 64),
+    ("manifest_sha256", "d" * 64),
+])
+def test_day10_rejects_first_run_bound_to_another_release_identity(monkeypatch, field, other):
+    rollout, artifacts = evidence()
+    _bind_first_run_to_heldout_outcomes(artifacts)
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    artifacts["day9_first_run"][field] = other
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize("field", ["first_run", "holdout"])
+def test_day10_rejects_unverifiable_first_run_manifest_digest(monkeypatch, field):
+    rollout, artifacts = evidence()
+    _bind_first_run_to_heldout_outcomes(artifacts)
+    if field == "first_run":
+        artifacts["day9_first_run"].pop("manifest_sha256")
+    else:
+        artifacts["holdout"].pop("manifest_sha256")
+    result = decision(monkeypatch, rollout, artifacts)
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize(("section", "field", "other"), [
+    ("aggregate", "accepted", 39),
+    ("aggregate", "total", 39),
+    ("cell", "accepted", 9),
+    ("cell", "total", 9),
+    ("case", "accepted", False),
+    ("case", "security_passed", False),
+    ("case", "source_supported", False),
+    ("case", "deterministic_pass", False),
+    ("case", "id", "unrelated-case-id"),
+    ("case", "reviewer_scores", [0, 0]),
+    ("case", "reviewer_rubrics", []),
+])
+def test_day10_rejects_disconnected_day9_scores_even_if_holdout_passes(
+    monkeypatch, section, field, other
+):
+    rollout, artifacts = evidence()
+    _bind_first_run_to_heldout_outcomes(artifacts)
+    scores = artifacts["day9_first_run"]["scores"]
+    if section == "aggregate":
+        scores[field] = other
+    elif section == "cell":
+        scores["by_cell"]["research_brief/bn"][field] = other
+    else:
+        scores["cases"][0][field] = other
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize("mutation", ["missing", "duplicate", "other_reviewer", "source_swap"])
+def test_day10_rejects_incomplete_or_rebound_first_run_case_set(monkeypatch, mutation):
+    rollout, artifacts = evidence()
+    _bind_first_run_to_heldout_outcomes(artifacts)
+    rows = artifacts["day9_first_run"]["scores"]["cases"]
+    if mutation == "missing":
+        rows.pop()
+    elif mutation == "duplicate":
+        rows[0] = deepcopy(rows[1])
+    elif mutation == "other_reviewer":
+        rows[0]["reviewer_rubrics"][0]["reviewer_id"] = "unmatched-reviewer"
+    else:
+        artifacts["holdout"]["cases"][0]["id"] = "replaced-heldout-case"
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
