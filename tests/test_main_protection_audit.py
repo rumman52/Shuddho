@@ -468,3 +468,43 @@ def test_missing_native_enforce_on_create_flag_is_not_trusted():
     del rule["rules"][3]["parameters"]["do_not_enforce_on_create"]
     with pytest.raises(GovernanceAuditError, match="ruleset"):
         audit_governance(protected_branch(), [rule])
+
+
+@pytest.mark.parametrize(
+    "unreviewed_row",
+    [
+        {"context": "test-and-build", "integration_id": 15368},
+        {"context": "unreviewed-extra-check", "integration_id": 98765},
+        {"context": "unreviewed-extra-check"},
+        {"context": "unreviewed-extra-check", "integration_id": "15368"},
+        {"context": "", "integration_id": 15368},
+        {"context": "   ", "integration_id": 15368},
+        {"context": "unreviewed-extra-check", "integration_id": 15368, "unknown": True},
+        None,
+    ],
+    ids=[
+        "duplicate-first-party-context",
+        "extra-untrusted-publisher",
+        "extra-absent-publisher",
+        "extra-type-confused-publisher",
+        "empty-context",
+        "whitespace-context",
+        "unknown-row-constraint",
+        "malformed-row",
+    ],
+)
+def test_governance_audit_rejects_ambiguous_or_untrusted_status_rows(unreviewed_row):
+    """Every native status row must be unambiguous, not only the mandatory three."""
+    rule = approved_ruleset()
+    rule["rules"][3]["parameters"]["required_status_checks"].append(unreviewed_row)
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_governance_audit_allows_one_additional_unique_first_party_check():
+    """The candidate audit enforces minimum policy; approved extra checks strengthen it."""
+    rule = approved_ruleset()
+    rule["rules"][3]["parameters"]["required_status_checks"].append(
+        {"context": "additional-first-party-check", "integration_id": 15368}
+    )
+    assert audit_governance(protected_branch(), [rule]) == 123
