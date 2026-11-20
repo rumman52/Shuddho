@@ -250,6 +250,8 @@ def validate_worker_replacement(
         "worker_before_id": previous_id,
         "worker_after_id": after["id"],
         "worker_after_started_at": started_at.isoformat(),
+        "worker_before_heartbeat_at": before_heartbeat.isoformat(),
+        "worker_after_heartbeat_at": heartbeat.isoformat(),
     }
 
 
@@ -272,8 +274,8 @@ def validate_outbox_effects(
         raise RecoveryFailure("Recovered child task identities are not distinct.")
     if task_outbox:
         raise RecoveryFailure("Direct Agent child tasks unexpectedly generated task outbox effects.")
-    return {"agent_outbox_effect_count": 1, "child_task_outbox_count": 0,
-            "child_task_outbox_expected_absent": True}
+    return {"agent_outbox_effect_count": 1, "agent_outbox_delivered": True,
+            "child_task_outbox_count": 0, "child_task_outbox_expected_absent": True}
 
 
 def validate_persisted_recovery(
@@ -316,7 +318,23 @@ def validate_persisted_recovery(
         raise RecoveryFailure("Recorded worker restart did not occur after agent execution started and before the recovery run finished.")
     if not any(_utc(item.started_at) <= restart_at <= _utc(item.finished_at) for item in ordered):
         raise RecoveryFailure("Recorded worker restart did not interrupt an actively executing child task.")
+    # Carry database-verified child identities and active step windows into
+    # the private receipt; a prose fan-in assertion is not independently
+    # checkable by the subsequent Day 2 release reconciler.
+    by_step = {item.agent_step_id: item for item in tasks}
+    completed_children = [
+        {
+            "ordinal": item.ordinal,
+            "task_id": by_step[item.id].id,
+            "state": by_step[item.id].state,
+            "idempotency_key": by_step[item.id].idempotency_key,
+            "started_at": _utc(item.started_at).isoformat(),
+            "finished_at": _utc(item.finished_at).isoformat(),
+        }
+        for item in ordered
+    ]
     return {
+        "completed_children": completed_children,
         "fan_in_started_at": _utc(ordered[2].started_at).isoformat(),
         "branch_finished_at": [_utc(ordered[0].finished_at).isoformat(), _utc(ordered[1].finished_at).isoformat()],
         "child_tasks": len(tasks),
@@ -406,6 +424,7 @@ async def verify(
                 "restart_at": restart_at.isoformat(),
                 "restart_reference": concise_ref,
                 **worker, **outbox,
+                "completed_children": facts["completed_children"],
             },
             "temporal": passed(
                 f"AgentWorkflow v2 completed across controlled worker restart; restart_ref={concise_ref}; workflow={workflow_id}",
