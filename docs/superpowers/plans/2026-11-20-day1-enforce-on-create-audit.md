@@ -38,11 +38,11 @@
 - Consumes: `audit_governance(branch: dict, rulesets: list[dict]) -> int`, `_has_required_rules(rule: dict) -> bool`.
 - Produces: No new API; stricter acceptance predicate for the existing read-only audit.
 
-- [ ] **Step 1: Add failing tests** for all four weakened/ambiguous `do_not_enforce_on_create` forms, plus an exact-false approved fixture.
-- [ ] **Step 2: Verify RED**: execute the tests before code change, confirming failures specifically because `audit_governance` does not raise for these mutations; record exact commit and test log.
-- [ ] **Step 3: Implement minimal code** to accept only `p.get("do_not_enforce_on_create") is False` in `valid_checks`.
+- [x] **Step 1: Add failing tests** for all four weakened/ambiguous `do_not_enforce_on_create` forms, plus an exact-false approved fixture.
+- [x] **Step 2: Verify RED**: test-only SHA `7b235a5cf005f0e1e4ccd55a11dca20bfe4e5b6e`, [GitHub CI #44783850122](https://github.com/rumman52/Shuddho/actions/runs/44783850122) — 6 expected missing-exception failures, 2,786 passes, 103 skips, 6 warnings.
+- [x] **Step 3: Implement minimal code** to accept only `p.get("do_not_enforce_on_create") is False` in `valid_checks`.
 - [ ] **Step 4: Verify GREEN** using `uv run --locked pytest -q tests/test_main_protection_audit.py tests/test_day1_ruleset_drift.py tests/test_reconcile_main_ruleset.py` and review exact-head GitHub CI results.
-- [ ] **Step 5: Commit code and regression** on an isolated branch; review the diff and verify the policy file has not changed.
+- [x] **Step 5: Commit code and regression** on an isolated branch; review the diff and verify the policy file has not changed.
 
 ### Task 2: Evidence handoff and PR
 
@@ -50,7 +50,7 @@
 - Create: `docs/coworker-roadmap/DAY1_AUDIT_ENFORCE_ON_CREATE_2026-11-20.md`
 - Modify: `docs/coworker-roadmap/PROGRESS.md`
 
-- [ ] **Step 1: Record task contract** with observed red and green tests, current base/head SHA, risk boundary, exact CI and manual blockers.
-- [ ] **Step 2: Create or update a draft PR**, include test evidence and exact-head CI; never self-approve, merge, mutate the live ruleset, or claim operational day completion.
+- [x] **Step 1: Record task contract** with observed red and green tests, current base/head SHA, risk boundary, exact CI and manual blockers.
+- [x] **Step 2: Create or update a draft PR**, include test evidence and exact-head CI; never self-approve, merge, mutate the live ruleset, or claim operational day completion.
 
 **Release state:** Source-only and pilot NO-GO until separately operated native control, staging, independent D custody and Founder/Owner-C approval gates have passed.
