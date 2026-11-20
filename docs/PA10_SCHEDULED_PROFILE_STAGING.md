@@ -7,7 +7,7 @@ Use `scripts/staging_pa10_scheduled_profile.py` to collect consistent release-bo
 - `deadline_coworker` → `deadline` profile on a daily/weekly schedule;
 - `goal_driven_proactivity` → `proactive` profile on a daily/weekly schedule.
 
-The probe records a baseline from the owner-scoped automation history and inbox, waits for exactly one new schedule occurrence, and accepts evidence only when it links one completed Agent run plus exactly one start and one completion notice.
+The probe records a baseline from owner-scoped automation history and inbox and waits for one new occurrence with a completed Agent run. **Briefings have exactly one completion notice per occurrence** (no start notice); deadline/proactive profiles retain one start and one completion notice.
 
 The PA-10 matrix's **simple scheduled reminder** remains intentionally excluded from this Agent-backed collector because it now has a dedicated notification-only path and dedicated `scripts/staging_pa10_simple_reminder.py` verifier. Do not qualify reminders through this scheduled-profile script. This script remains for Agent-backed Daily/Weekly/Deadline/goal-driven profiles.
 
@@ -89,9 +89,22 @@ API observations and independent Temporal schedule logs.
    its deployment/worker evidence rather than triggering an extra run.
 4. Pause the **same synthetic automation** only after both passed day records exist.
    The guarded `pause-two-day` command validates the pair *before* issuing the
-   owner-scoped, revision-checked pause request, then reads the paused state back.
-   Finally run the offline two-day evidence gate and independently review the
-   real Temporal natural-firing logs and absence of extra accepted runs.
+   owner-scoped, revision-checked pause request, then reads the paused state back
+   and captures the owner's exact occurrence/run/notification baseline. **This
+   immediate pause receipt is preliminary and cannot pass the final two-day gate.**
+5. Leave that synthetic schedule paused through its *next* approved local daily
+   opportunity, including the full configured catch-up window (60–86,400 seconds).
+   The approved expiry must be later than the opportunity. Only then run the
+   **read-only**, owner-authenticated `staging_day7_paused_opportunity` observer;
+   it rejects release/owner/goal drift, resumed state, missing baseline rows and
+   any new stored occurrence, run or notification. It writes a new pause receipt
+   with an explicit due timestamp and observation timestamp. No automated wait,
+   shortened time window, manual Temporal trigger or fabricated timestamp qualifies.
+6. Run the offline gate with the **observed** pause receipt. Independently review
+   both days' natural Temporal schedule histories, server/worker recovery, and
+   actual notification transport logs (the owner inbox only proves persistence,
+   not downstream physical delivery). Complete the other controlled Day 7 edge
+   cases separately; no JSON file substitutes for those operational receipts.
 
 ```bash
 # The SHUDDHO_STAGING_* gates described above must be set in a reviewed synthetic
@@ -127,15 +140,29 @@ uv run --extra coworker python scripts/staging_pa10_scheduled_profile.py pause-t
   --second-evidence /tmp/day8-evidence.json \
   --operator-case-reference "$CASE_ID" --output /tmp/day8-pause.json
 
-uv run --extra coworker python scripts/staging_day7_two_day_gate.py \
+# At the following approved local scheduled time PLUS the complete catch-up
+# window, use the SAME synthetic token/release; this command only performs GETs.
+uv run --locked --extra coworker python -m scripts.staging_day7_paused_opportunity \
+  --rollout "$ROLLOUT" --provider-policy-plan "$PROVIDER_POLICY" \
+  --first-evidence /tmp/day7-evidence.json \
+  --second-evidence /tmp/day8-evidence.json \
+  --pause-evidence /tmp/day8-pause.json \
+  --operator-case-reference "$CASE_ID" \
+  --output /tmp/day8-paused-opportunity.json
+
+uv run --locked --extra coworker python -m scripts.staging_day7_two_day_gate \
   --first /tmp/day7-evidence.json --second /tmp/day8-evidence.json \
-  --pause /tmp/day8-pause.json --output /tmp/day7-two-day-acceptance.json
+  --pause /tmp/day8-paused-opportunity.json \
+  --output /tmp/day7-two-day-acceptance.json
 ```
 
 The gate checks release/account/automation consistency; one completed run and two
 unique notices each day; exact scheduled local clock time; consecutive **local**
 calendar days (including DST transitions); identical authorized document IDs; a
 changed immutable version pin on Day 8; the unchanged original Day 7 pin when
-re-read; and the persisted pause transition. Attach the independent Temporal
+re-read; the persisted pause transition; and **zero** new owner-scoped stored
+occurrences, runs and notifications after the following scheduled local time
+and catch-up window. The pause-only artifact is intentionally insufficient.
+Attach the independent Temporal
 schedule provenance and operational notification/worker observations to the
 operator case before declaring the actual natural-firing acceptance complete.
