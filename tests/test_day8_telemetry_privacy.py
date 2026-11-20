@@ -33,7 +33,11 @@ def policy(**overrides):
                   project_id="999999", approved_project_id="999999",
                   destination_region="us", approved_region="us",
                   destination_retention_days=30, approved_retention_days=30,
-                  privacy_approval_sha256="a" * 64)
+                  privacy_approval_sha256="a" * 64,
+                  destination_ingestion_host="us.i.posthog.com",
+                  approved_ingestion_host="us.i.posthog.com",
+                  destination_api_host="us.posthog.com",
+                  approved_api_host="us.posthog.com")
     values.update(overrides)
     return EventPolicy(**values)
 
@@ -98,6 +102,19 @@ def test_invalid_values_cannot_be_emitted(field, bad):
     {"destination_retention_days": True},
     {"privacy_approval_sha256": None},
     {"privacy_approval_sha256": "missing"},
+    {"destination_ingestion_host": None},
+    {"approved_ingestion_host": None},
+    {"destination_api_host": None},
+    {"approved_api_host": None},
+    {"destination_ingestion_host": "eu.i.posthog.com"},
+    {"approved_ingestion_host": "eu.i.posthog.com"},
+    {"destination_api_host": "eu.posthog.com"},
+    {"approved_api_host": "eu.posthog.com"},
+    {"destination_ingestion_host": "https://us.i.posthog.com"},
+    {"destination_ingestion_host": "us.i.posthog.com:443"},
+    {"destination_api_host": "us.posthog.com.evil.test"},
+    {"destination_api_host": "us.posthog.com/path"},
+    {"destination_ingestion_host": "us.i.posthog.com.evil.test"},
 ])
 def test_no_outbound_without_all_protected_configuration(overrides):
     guard = EventPolicy() if not overrides else policy(**overrides)
@@ -144,3 +161,49 @@ def test_invalid_and_failed_sinks_do_not_break_task_execution():
     assert emit_operational_event(BASE, policy(), lambda *args: received.append(args)) is True
     assert len(received) == 1
     assert all("SYNTHETIC_PRIVATE" not in str(part) for part in received[0])
+
+
+def test_legacy_privacy_approval_cannot_emit_without_bound_posthog_hosts():
+    """A project/region/retention match alone does not select an egress host."""
+    legacy = EventPolicy(
+        enabled=True, environment="staging", privacy_scope_approved=True,
+        consent_granted=True, kill_switch=False,
+        approved_provider_models=frozenset({("deepseek", "deepseek-chat")}),
+        project_id="999999", approved_project_id="999999",
+        destination_region="us", approved_region="us",
+        destination_retention_days=30, approved_retention_days=30,
+        privacy_approval_sha256="a" * 64,
+    )
+    outbound = []
+    assert emit_operational_event(BASE, legacy, lambda *args: outbound.append(args)) is False
+    assert outbound == []
+
+
+@pytest.mark.parametrize("region,ingestion,api", [
+    ("us", "us.i.posthog.com", "us.posthog.com"),
+    ("eu", "eu.i.posthog.com", "eu.posthog.com"),
+])
+def test_approved_cloud_region_requires_exact_ingestion_and_api_hosts(region, ingestion, api):
+    guard = policy(
+        destination_region=region, approved_region=region,
+        destination_ingestion_host=ingestion, approved_ingestion_host=ingestion,
+        destination_api_host=api, approved_api_host=api,
+    )
+    observed = []
+    assert emit_operational_event(BASE, guard, lambda *args: observed.append(args)) is True
+    assert len(observed) == 1
+    assert observed[0][0] == "rukh_agent_run_operational_v1"
+    # Destination identity is server-side policy, never an event property.
+    assert not any("host" in field or "project_id" in field
+                   for field in observed[0][1])
+
+
+def test_host_configuration_never_appears_in_validation_errors_or_events():
+    sensitive_host = "https://synthetic-secret.example.test/user:password"
+    guard = policy(destination_ingestion_host=sensitive_host)
+    observed = []
+    assert emit_operational_event(BASE, guard, lambda *args: observed.append(args)) is False
+    assert observed == []
+    with pytest.raises(ValueError) as error:
+        build_operational_event(BASE, guard)
+    assert sensitive_host not in str(error.value)
