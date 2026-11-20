@@ -299,6 +299,79 @@ def golden_ok(value: object, release: str, revision: str, digest: str) -> bool:
             and value.get("owner_isolation_checked") is True)
 
 
+
+
+def first_run_matches_holdout(
+    first_run: object, holdout: object, release: str, revision: str, rollout_hash: str,
+) -> bool:
+    """Bind preserved first-run scores to the SAME release, manifest, and 40 cases.
+
+    The Day 9 evaluator emits two artifacts from one input: a full first-run
+    report and its holdout receipt. The release gate must reject a historical
+    or re-labeled report even when both artifacts separately look well-formed.
+    A pre-fix report remains archival evidence, not qualifying evidence for
+    the newly fixed release. Authentication of the original bytes remains
+    an independent operator responsibility.
+    """
+    if (not bound(first_run, release, revision, rollout_hash)
+            or not isinstance(holdout, dict)
+            or first_run.get("run_kind") != "first_run"
+            or not nonempty_text(first_run.get("run_id"))):
+        return False
+    manifest_sha = first_run.get("manifest_sha256")
+    if (not isinstance(manifest_sha, str) or not DIGEST.fullmatch(manifest_sha)
+            or holdout.get("manifest_sha256") != manifest_sha):
+        return False
+    scores = first_run.get("scores")
+    if not isinstance(scores, dict) or type(scores.get("total")) is not int or scores["total"] != 40:
+        return False
+    originals = scores.get("cases")
+    verified = holdout.get("cases")
+    if not isinstance(originals, list) or not isinstance(verified, list) or len(originals) != 40 or len(verified) != 40:
+        return False
+    first_by_id: dict[str, dict] = {}
+    holdout_by_id: dict[str, dict] = {}
+    for rows, indexed in ((originals, first_by_id), (verified, holdout_by_id)):
+        for row in rows:
+            if (not isinstance(row, dict) or not isinstance(row.get("id"), str)
+                    or not row["id"] or row["id"] in indexed
+                    or (row.get("workflow"), row.get("language")) not in CELLS):
+                return False
+            indexed[row["id"]] = row
+    if set(first_by_id) != set(holdout_by_id):
+        return False
+    bound_fields = (
+        "id", "workflow", "language", "accepted", "security_passed",
+        "source_supported", "deterministic_pass", "reviewer_scores", "reviewer_rubrics",
+    )
+    by_cell: Counter[str] = Counter()
+    accepted: Counter[str] = Counter()
+    for case_id, original in first_by_id.items():
+        if any(original.get(field) != holdout_by_id[case_id].get(field) for field in bound_fields):
+            return False
+        if any(type(original.get(field)) is not bool for field in (
+                "accepted", "security_passed", "source_supported", "deterministic_pass")):
+            return False
+        if original["accepted"] and not all(original[key] for key in (
+                "security_passed", "source_supported", "deterministic_pass")):
+            return False
+        cell = original["workflow"] + "/" + original["language"]
+        by_cell[cell] += 1
+        accepted[cell] += int(original["accepted"])
+    expected_cells = {
+        workflow + "/" + language: {
+            "total": by_cell[workflow + "/" + language],
+            "accepted": accepted[workflow + "/" + language],
+        }
+        for workflow, language in CELLS
+    }
+    expected_accepted = sum(accepted.values())
+    return (all(by_cell[cell] == 10 for cell in expected_cells)
+            and type(scores.get("accepted")) is int
+            and scores["accepted"] == expected_accepted
+            and scores.get("by_cell") == expected_cells)
+
+
 def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[str, dict | None]) -> dict:
     """Use the canonical cohort gate unchanged; add stricter Day-10 exact-release proofs."""
     release = rollout.get("release_id")
@@ -364,14 +437,9 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and isinstance(model, dict) and isinstance(model.get("provider_model"), str)
          and golden.get("provider_model") == model["provider_model"])
     first_run = artifacts.get("day9_first_run")
-    need("preserved_day9_first_run", isinstance(first_run, dict)
-         and first_run.get("release_id") == release
-         and isinstance(first_run.get("source_revision"), str) and bool(SHA.fullmatch(first_run["source_revision"]))
-         and isinstance(first_run.get("rollout_manifest_sha256"), str)
-         and bool(DIGEST.fullmatch(first_run["rollout_manifest_sha256"]))
-         and first_run.get("run_kind") == "first_run"
-         and isinstance(first_run.get("run_id"), str) and bool(first_run["run_id"].strip())
-         and isinstance(first_run.get("scores"), dict) and bool(first_run["scores"]))
+    need("preserved_day9_first_run", first_run_matches_holdout(
+        first_run, artifacts.get("holdout"), release, revision, rollout_hash,
+    ))
     need("separate_final_rerun", golden_ok(golden, release, revision, rollout_hash)
          and isinstance(first_run, dict) and first_run.get("run_id") != golden.get("run_id"))
     need("independent_day9_holdout_36_of_40", holdout_ok(artifacts.get("holdout"), release, revision, rollout_hash))

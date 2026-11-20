@@ -48,9 +48,9 @@ def evidence():
           "workflow_run_url": "https://github.com/rumman52/Shuddho/actions/runs/123"}
     golden = {**proof(), "scenario": "integrated_multi_turn", "run_id": "golden-final",
               "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True, "provider_model": "model-r"}
-    first = {"release_id": RELEASE, "source_revision": "c" * 40,
-             "rollout_manifest_sha256": "d" * 64, "run_kind": "first_run",
-             "run_id": "day9-first", "scores": {"accepted": 28, "total": 40}}
+    first = {"release_id": RELEASE, "source_revision": REV,
+             "rollout_manifest_sha256": HASH, "run_kind": "first_run",
+             "run_id": "day9-first", "manifest_sha256": "f" * 64, "scores": {}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
                "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
@@ -135,6 +135,7 @@ def evidence():
         both_directions_verified=True,
         denied_resource_types=["documents", "memory", "artifacts", "activity"],
     )
+    _bind_first_run_to_heldout_outcomes(artifacts)
     return rollout, artifacts
 
 
@@ -280,6 +281,11 @@ def test_rejected_case_can_preserve_zero_reviewer_total_but_accepted_case_cannot
     row["accepted"] = False
     row["reviewer_scores"] = [0, 8]
     row["reviewer_rubrics"][0]["scores"] = {dimension: 0 for dimension in day10.RUBRIC}
+    preserved = artifacts["day9_first_run"]["scores"]
+    preserved["cases"][0] = deepcopy(row)
+    preserved["accepted"] = 39
+    cell = row["workflow"] + "/" + row["language"]
+    preserved["by_cell"][cell]["accepted"] = 9
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
     row["accepted"] = True
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "SOURCE_ONLY"
@@ -343,10 +349,14 @@ def test_canonical_decision_is_not_overridable(monkeypatch):
     assert result["decision"] == "SOURCE_ONLY"
 
 
-def test_first_run_can_retain_original_pre_fix_manifest(monkeypatch):
+def test_legacy_first_run_is_retained_as_history_but_cannot_qualify_new_digest(monkeypatch):
     rollout, artifacts = evidence()
-    assert artifacts["day9_first_run"]["rollout_manifest_sha256"] != HASH
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    artifacts["day9_first_run"]["source_revision"] = "c" * 40
+    artifacts["day9_first_run"]["rollout_manifest_sha256"] = "d" * 64
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
 
 
 def test_only_authorization_missing_is_staging_only(monkeypatch):
