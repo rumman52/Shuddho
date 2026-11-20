@@ -1,0 +1,219 @@
+"""Day 2 local tests for full-byte private-object archive/restore.
+
+These never contact hosted Supabase S3 and never attest to hosted D02.T09.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import stat
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+from services.coworker.storage import LocalObjectStore
+from scripts import staging_object_backup as backup
+
+
+SRC = hashlib.sha256(b"synthetic-source-bucket").hexdigest()
+DST = hashlib.sha256(b"disposable-target-bucket").hexdigest()
+
+
+def _source(tmp_path: Path):
+    store = LocalObjectStore(tmp_path / "source")
+    payloads = {
+        "owner-a/inputs/v1/source.pdf": b"%PDF-1.4\nSYNTHETIC_OWNER_A\n%%EOF\n",
+        "owner-b/inputs/v2/source.txt": "বাংলা and English\n".encode("utf-8"),
+    }
+    for key, payload in payloads.items():
+        store.put(key, payload, "application/octet-stream")
+    return store, payloads
+
+
+def _archive(tmp_path: Path):
+    store, payloads = _source(tmp_path)
+    archive = tmp_path / "private-backup"
+    manifest = backup.archive_store(store, SRC, archive)
+    return archive, manifest, payloads
+
+
+def test_local_archive_and_distinct_empty_restore_read_back_every_byte(tmp_path):
+    archive, manifest, payloads = _archive(tmp_path)
+    assert manifest["schema_version"] == 1
+    assert manifest["status"] == "archived"
+    assert manifest["source_storage_fingerprint"] == SRC
+    assert manifest["object_count"] == 2
+    assert manifest["total_bytes"] == sum(map(len, payloads.values()))
+    assert sorted(row["key"] for row in manifest["objects"]) == sorted(payloads)
+    assert stat.S_IMODE(archive.stat().st_mode) == 0o700
+    assert stat.S_IMODE((archive / "manifest.json").stat().st_mode) == 0o600
+    assert all(
+        stat.S_IMODE((archive / "objects" / row["file"]).stat().st_mode) == 0o600
+        and row["sha256"] == hashlib.sha256(payloads[row["key"]]).hexdigest()
+        for row in manifest["objects"]
+    )
+
+    destination = LocalObjectStore(tmp_path / "isolated-target")
+    receipt = tmp_path / "restore-receipt.json"
+    restored = backup.restore_store(destination, DST, archive, receipt)
+    assert restored["status"] == "verified"
+    assert restored["source_storage_fingerprint"] == SRC
+    assert restored["target_storage_fingerprint"] == DST
+    assert restored["object_count"] == 2
+    assert stat.S_IMODE(receipt.stat().st_mode) == 0o600
+    assert json.loads(receipt.read_text()) == restored
+    assert [o.key for o in destination.inventory()] == sorted(payloads)
+    for key, body in payloads.items():
+        assert destination.get(key, len(body)) == body
+
+
+def test_empty_source_never_qualifies_an_archive(tmp_path):
+    source = LocalObjectStore(tmp_path / "empty")
+    archive = tmp_path / "private-backup"
+    with pytest.raises(backup.ObjectArchiveError, match="empty"):
+        backup.archive_store(source, SRC, archive)
+    assert not (archive / "manifest.json").exists()
+
+
+def test_source_mutation_during_archive_is_rejected(tmp_path):
+    source, _ = _source(tmp_path)
+    archive = tmp_path / "private-backup"
+
+    class ChangingStore:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+            self.listings = 0
+
+        def inventory(self):
+            self.listings += 1
+            if self.listings == 2:
+                self.wrapped.put("owner-b/inputs/v3/late.txt", b"late", "text/plain")
+            return self.wrapped.inventory()
+
+        def get(self, key, limit):
+            return self.wrapped.get(key, limit)
+
+    with pytest.raises(backup.ObjectArchiveError, match="changed"):
+        backup.archive_store(ChangingStore(source), SRC, archive)
+    assert not (archive / "manifest.json").exists()
+
+
+def test_archive_rejects_oversized_object_without_reading_it(monkeypatch, tmp_path):
+    source, _ = _source(tmp_path)
+    monkeypatch.setattr(backup, "MAX_OBJECT_BYTES", 8)
+
+    class ReadForbidden:
+        def inventory(self):
+            return source.inventory()
+
+        def get(self, *_):
+            pytest.fail("Oversized object was downloaded")
+
+    archive = tmp_path / "private-backup"
+    with pytest.raises(backup.ObjectArchiveError, match="maximum"):
+        backup.archive_store(ReadForbidden(), SRC, archive)
+    assert not (archive / "manifest.json").exists()
+
+
+class SpyTarget:
+    def __init__(self, path: Path):
+        self.wrapped = LocalObjectStore(path)
+        self.puts = []
+
+    def inventory(self):
+        return self.wrapped.inventory()
+
+    def put(self, key, value, content_type):
+        self.puts.append(key)
+        self.wrapped.put(key, value, content_type)
+
+    def get(self, key, limit):
+        return self.wrapped.get(key, limit)
+
+
+def test_restore_refuses_same_resource_before_any_write(tmp_path):
+    archive, _, _ = _archive(tmp_path)
+    target = SpyTarget(tmp_path / "target")
+    output = tmp_path / "restore-receipt.json"
+    with pytest.raises(backup.ObjectArchiveError, match="distinct"):
+        backup.restore_store(target, SRC, archive, output)
+    assert target.puts == [] and not output.exists()
+
+
+def test_restore_refuses_nonempty_target_before_any_write(tmp_path):
+    archive, _, _ = _archive(tmp_path)
+    target = SpyTarget(tmp_path / "target")
+    target.wrapped.put("existing/inputs/v1/existing.txt", b"untouched", "text/plain")
+    output = tmp_path / "restore-receipt.json"
+    with pytest.raises(backup.ObjectArchiveError, match="empty"):
+        backup.restore_store(target, DST, archive, output)
+    assert target.puts == [] and not output.exists()
+    assert target.wrapped.get("existing/inputs/v1/existing.txt", 9) == b"untouched"
+
+
+@pytest.mark.parametrize("corruption", ["bytes", "digest", "duplicate", "symlink", "missing"])
+def test_restore_refuses_corrupt_or_ambiguous_archive_before_any_write(tmp_path, corruption):
+    archive, manifest, _ = _archive(tmp_path)
+    path = archive / "objects" / manifest["objects"][0]["file"]
+    if corruption == "bytes":
+        path.write_bytes(b"tampered")
+    elif corruption == "digest":
+        manifest["objects"][0]["sha256"] = "0" * 64
+    elif corruption == "duplicate":
+        manifest["objects"].append(dict(manifest["objects"][0]))
+        manifest["object_count"] += 1
+        manifest["total_bytes"] += manifest["objects"][0]["byte_size"]
+    elif corruption == "symlink":
+        contents = path.read_bytes()
+        path.unlink()
+        other = tmp_path / "untrusted-source"
+        other.write_bytes(contents)
+        path.symlink_to(other)
+    elif corruption == "missing":
+        path.unlink()
+    if corruption in ("digest", "duplicate"):
+        (archive / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    target = SpyTarget(tmp_path / "target")
+    output = tmp_path / "restore-receipt.json"
+    with pytest.raises(backup.ObjectArchiveError):
+        backup.restore_store(target, DST, archive, output)
+    assert target.puts == [] and not output.exists()
+
+
+def test_restore_preflights_receipt_destination_before_uploads(tmp_path):
+    archive, _, _ = _archive(tmp_path)
+    target = SpyTarget(tmp_path / "target")
+    receipt = tmp_path / "occupied.json"
+    receipt.write_text("original")
+    with pytest.raises(backup.ObjectArchiveError, match="receipt"):
+        backup.restore_store(target, DST, archive, receipt)
+    assert target.puts == []
+    assert receipt.read_text() == "original"
+
+
+def test_restore_readback_detects_corrupt_target_and_emits_no_pass(tmp_path):
+    archive, _, _ = _archive(tmp_path)
+
+    class CorruptingTarget(SpyTarget):
+        def get(self, key, limit):
+            data = super().get(key, limit)
+            return b"tampered" if self.puts else data
+
+    target = CorruptingTarget(tmp_path / "target")
+    output = tmp_path / "restore-receipt.json"
+    with pytest.raises(backup.ObjectArchiveError, match="readback"):
+        backup.restore_store(target, DST, archive, output)
+    assert target.puts
+    assert not output.exists()
+
+
+def test_archive_existing_output_directory_is_never_overwritten(tmp_path):
+    source, _ = _source(tmp_path)
+    archive = tmp_path / "already-there"
+    archive.mkdir()
+    (archive / "important.txt").write_text("retain me")
+    with pytest.raises(backup.ObjectArchiveError, match="fresh"):
+        backup.archive_store(source, SRC, archive)
+    assert (archive / "important.txt").read_text() == "retain me"
