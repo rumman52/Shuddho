@@ -66,6 +66,7 @@ def _inventory(value: object) -> dict:
     revision = inv.get("revision")
     if not isinstance(revision, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,128}", revision):
         raise ArchiveAttestationFailure("PostgreSQL source migration revision is invalid.")
+    _hash(inv.get("schema_sha256"), "PostgreSQL structural schema SHA-256")
     tables = _object(inv.get("tables"), "PostgreSQL table inventory")
     if not 84 <= len(tables) <= 512 or "cw_alembic_version" not in tables:
         raise ArchiveAttestationFailure("PostgreSQL inventory must include all 84+ private tables and migration ledger.")
@@ -153,6 +154,7 @@ def attest_archives(
         "status": "verified",
         "source_schema_revision": source_inventory["revision"],
         "postgres_archive_sha256": pg["archive_sha256"],
+        "postgres_schema_sha256": source_inventory["schema_sha256"],
         "postgres_table_count": len(source_inventory["tables"]),
         "postgres_row_count": sum(row["rows"] for row in source_inventory["tables"].values()),
         "source_database_fingerprint": original["database"],
