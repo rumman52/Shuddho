@@ -68,6 +68,8 @@ def valid_pair():
             "schedule_applied_revision": 2,
             "schedule_applied_enabled": False,
             "operator_case_reference": "CASE-7",
+            "owner_id": "owner-1", "automation_id": "automation-1",
+            "release": deepcopy(RELEASE),
         },
     })
     return first, second, paused
