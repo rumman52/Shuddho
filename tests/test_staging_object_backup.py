@@ -261,3 +261,74 @@ def test_cli_requires_explicit_guard_before_storage_is_initialized(monkeypatch, 
         "--output", str(tmp_path / "restored.json"),
     ]) == 1
     assert "guards" in capsys.readouterr().out
+
+
+def test_fake_s3_archive_retains_mime_metadata_and_restores_exact_private_bytes(tmp_path):
+    """Exercise the real S3 store adapter against memory-only client objects."""
+    import io
+    from types import SimpleNamespace
+    from services.coworker.storage import S3ObjectStore
+
+    class MemoryS3:
+        def __init__(self):
+            self.entries = {}
+
+        def put_object(self, *, Bucket, Key, Body, ContentType, Metadata):
+            self.entries[Key] = {
+                "bytes": bytes(Body),
+                "content_type": ContentType,
+                "metadata": dict(Metadata),
+                "modified_at": datetime.now(timezone.utc),
+            }
+
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys, **kwargs):
+            return {
+                "IsTruncated": False,
+                "Contents": [
+                    {"Key": key, "Size": len(row["bytes"]),
+                     "LastModified": row["modified_at"]}
+                    for key, row in sorted(self.entries.items())
+                    if key.startswith(Prefix)
+                ],
+            }
+
+        def head_object(self, *, Bucket, Key):
+            row = self.entries[Key]
+            return {
+                "ContentLength": len(row["bytes"]),
+                "ContentType": row["content_type"],
+                "Metadata": dict(row["metadata"]),
+            }
+
+        def get_object(self, *, Bucket, Key):
+            row = self.entries[Key]
+            return {
+                "ContentLength": len(row["bytes"]),
+                "Body": io.BytesIO(row["bytes"]),
+            }
+
+    def store(bucket):
+        client = MemoryS3()
+        wrapped = S3ObjectStore(
+            SimpleNamespace(storage_bucket=bucket, storage_endpoint="https://unit.test",
+                            storage_region="us-west-1"),
+            client=client,
+        )
+        return wrapped, client
+
+    source, original = store("private-source")
+    source.put("owner-a/inputs/v1/report.pdf", b"%PDF-1.4\nPRIVATE\n%%EOF", "application/pdf")
+    archive_dir = tmp_path / "archive"
+    manifest = backup.archive_store(source, SRC, archive_dir)
+    assert manifest["objects"][0]["content_type"] == "application/pdf"
+    assert manifest["objects"][0]["sha256"] == original.entries[
+        "owner-a/inputs/v1/report.pdf"
+    ]["metadata"]["sha256"]
+
+    restored, target_client = store("private-target")
+    receipt = backup.restore_store(restored, DST, archive_dir, tmp_path / "verified.json")
+    assert receipt["object_count"] == 1
+    item = target_client.entries["owner-a/inputs/v1/report.pdf"]
+    assert item["bytes"] == b"%PDF-1.4\nPRIVATE\n%%EOF"
+    assert item["content_type"] == "application/pdf"
+    assert item["metadata"]["sha256"] == manifest["objects"][0]["sha256"]
