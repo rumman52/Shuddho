@@ -455,11 +455,17 @@ def _unique_rows(rows: list[dict], key: str, allowed: set[str], count: int) -> d
 def candidate_ledger(cases: list[dict], outputs: list[dict], *,
                     manifest_sha256: str | None = None,
                     manifest: dict | None = None) -> tuple[dict[str, str], dict]:
-    """Bind each submitted output, run ID and source list to the frozen candidate."""
+    """Bind all 40 first attempts, including no-output failures, to their frozen run.
+
+    A failed/timed-out attempt has no draft to hash. Its deterministic evidence
+    identity instead hashes a canonical failure record containing the case/run,
+    failure code, private trace digest and observation timestamps. The receipt
+    explicitly marks this as a failure record, never as generated output.
+    """
     ids = {case["case_id"] for case in cases}
     indexed = _unique_rows(outputs, "case_id", ids, 40)
     by_id = {case["case_id"]: case for case in cases}
-    hashes, usage, case_receipts = {}, [], []
+    hashes, usage, case_receipts, failed_case_ids = {}, [], [], []
     run_ids = set()
     if manifest is not None and (
         not isinstance(manifest_sha256, str) or not SHA.fullmatch(manifest_sha256)
@@ -469,6 +475,10 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
     for cid, row in indexed.items():
         if manifest_sha256 is not None and row.get("manifest_sha256") != manifest_sha256:
             raise EvidenceError("candidate output is not bound to frozen manifest digest: " + cid)
+        attempt_status = row.get("attempt_status", "succeeded")
+        if attempt_status not in ("succeeded", "failed", "timed_out"):
+            raise EvidenceError("invalid candidate attempt status: " + cid)
+        run_id = row.get("run_id")
         if manifest is not None:
             expected = {
                 "release_id": manifest["release_id"],
@@ -484,31 +494,67 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
             }
             if any(row.get(key) != value for key, value in expected.items()):
                 raise EvidenceError("candidate run identity does not match frozen manifest: " + cid)
-            run_id = row.get("run_id")
             if (not isinstance(run_id, str) or not run_id.strip() or run_id != run_id.strip()
                     or len(run_id) > 128 or run_id in run_ids):
                 raise EvidenceError("candidate run IDs must be present and unique: " + cid)
             run_ids.add(run_id)
-        if not isinstance(row.get("output"), dict):
-            raise EvidenceError("candidate output must be a draft object")
-        try:
-            encoded = json.dumps(row["output"], ensure_ascii=False, sort_keys=True,
+        if attempt_status == "succeeded":
+            if not isinstance(row.get("output"), dict):
+                raise EvidenceError("candidate output must be a draft object")
+            try:
+                encoded = json.dumps(row["output"], ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":"), allow_nan=False).encode()
+            except (ValueError, TypeError) as exc:
+                raise EvidenceError("invalid candidate output encoding") from exc
+            if len(encoded) > by_id[cid]["max_output_bytes"]:
+                raise EvidenceError("candidate output exceeds task bound")
+            task = by_id[cid]
+            skill = "research" if task["workflow"] == "research_brief" else "report_email"
+            try:
+                parsed = parse_draft(skill, row["output"])
+            except (ValueError, TypeError, KeyError) as exc:
+                raise EvidenceError("candidate output violates production draft schema: " + cid) from exc
+            source_refs = sorted(source_references(parsed))
+            if parsed.output_language != task["language"] or set(source_refs) != {task["citation_id"]}:
+                raise EvidenceError("candidate output language/citation scope mismatch: " + cid)
+            if manifest is not None and row.get("source_refs") != source_refs:
+                raise EvidenceError("candidate source list does not match output citations: " + cid)
+            evidence_kind = "draft_output"
+        else:
+            if "output" not in row or row["output"] is not None:
+                raise EvidenceError("failed first attempt must have no draft output: " + cid)
+            if row.get("source_refs") != []:
+                raise EvidenceError("failed first attempt source refs must be empty: " + cid)
+            code = row.get("failure_code")
+            if not isinstance(code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code):
+                raise EvidenceError("failed first attempt failure code is missing or invalid: " + cid)
+            trace_sha = row.get("trace_sha256")
+            if not _trace_sha_ok(trace_sha):
+                raise EvidenceError("failed first attempt private trace SHA-256 is missing or invalid: " + cid)
+            started_at = row.get("attempt_started_at")
+            finished_at = row.get("attempt_finished_at")
+            if not timestamp_order_ok(started_at, finished_at):
+                raise EvidenceError("failed first attempt timestamps are missing or reversed: " + cid)
+            if (not isinstance(run_id, str) or not run_id.strip()
+                    or run_id != run_id.strip() or len(run_id) > 128):
+                raise EvidenceError("failed first attempt requires a bounded run ID: " + cid)
+            # Hash a failure receipt, not an invented draft or empty provider
+            # response. Include the case/run to prevent trace reuse masquerading
+            # as a separate success. The private trace stays outside the report.
+            failure_record = {
+                "case_id": cid, "run_id": run_id,
+                "manifest_sha256": manifest_sha256,
+                "attempt_status": attempt_status,
+                "failure_code": code, "trace_sha256": trace_sha,
+                "attempt_started_at": started_at,
+                "attempt_finished_at": finished_at,
+                "output": None,
+            }
+            encoded = json.dumps(failure_record, ensure_ascii=False, sort_keys=True,
                                  separators=(",", ":"), allow_nan=False).encode()
-        except (ValueError, TypeError) as exc:
-            raise EvidenceError("invalid candidate output encoding") from exc
-        if len(encoded) > by_id[cid]["max_output_bytes"]:
-            raise EvidenceError("candidate output exceeds task bound")
-        task = by_id[cid]
-        skill = "research" if task["workflow"] == "research_brief" else "report_email"
-        try:
-            parsed = parse_draft(skill, row["output"])
-        except (ValueError, TypeError, KeyError) as exc:
-            raise EvidenceError("candidate output violates production draft schema: " + cid) from exc
-        source_refs = sorted(source_references(parsed))
-        if parsed.output_language != task["language"] or set(source_refs) != {task["citation_id"]}:
-            raise EvidenceError("candidate output language/citation scope mismatch: " + cid)
-        if manifest is not None and row.get("source_refs") != source_refs:
-            raise EvidenceError("candidate source list does not match output citations: " + cid)
+            source_refs = []
+            evidence_kind = "failure_record"
+            failed_case_ids.append(cid)
         hashes[cid] = hashlib.sha256(encoded).hexdigest()
         telemetry = row.get("telemetry")
         if telemetry is not None:
@@ -529,6 +575,12 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
                 "context_budget_bytes": identity["context_budget_bytes"],
                 "time_limit_seconds": manifest["time_limit_seconds"],
                 "source_refs": source_refs, "output_sha256": hashes[cid],
+                "attempt_status": attempt_status, "evidence_kind": evidence_kind,
+                "output_present": attempt_status == "succeeded",
+                "failure_code": row.get("failure_code") if evidence_kind == "failure_record" else None,
+                "failure_trace_sha256": row.get("trace_sha256") if evidence_kind == "failure_record" else None,
+                "attempt_started_at": row.get("attempt_started_at") if evidence_kind == "failure_record" else None,
+                "attempt_finished_at": row.get("attempt_finished_at") if evidence_kind == "failure_record" else None,
                 "telemetry": telemetry,
             })
     complete = len(usage) == 40
@@ -537,12 +589,18 @@ def candidate_ledger(cases: list[dict], outputs: list[dict], *,
         "total_tokens": sum(t["tokens"] for t in usage) if complete else None,
         "total_latency_ms": sum(t["latency_ms"] for t in usage) if complete else None,
         "reported_cost_microusd": sum(t["cost_microusd"] for t in usage) if complete else None,
+        "failed_case_ids": sorted(failed_case_ids),
         "case_run_receipts": case_receipts,
     }
 
+
 def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[dict],
-                   deterministic: list[dict], *, output_hashes: dict | None = None) -> dict:
+                   deterministic: list[dict], *, output_hashes: dict | None = None,
+                   failed_case_ids: set[str] | None = None) -> dict:
     ids = {c["case_id"] for c in cases}
+    failed = set() if failed_case_ids is None else failed_case_ids
+    if not isinstance(failed, set) or not failed.issubset(ids):
+        raise EvidenceError("failed first attempt IDs must be known unique case IDs")
     checks = _unique_rows(deterministic, "case_id", ids, 40)
     for case_id, check in checks.items():
         if type(check.get("passed")) is not bool or type(check.get("security_passed")) is not bool:
@@ -551,6 +609,8 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             raise EvidenceError("output identity missing for " + case_id)
         if output_hashes is not None and check["output_sha256"] != output_hashes[case_id]:
             raise EvidenceError("deterministic evidence is not bound to actual output: " + case_id)
+        if case_id in failed and check["passed"]:
+            raise EvidenceError("failed first attempt cannot claim deterministic pass: " + case_id)
     if len(reviews) != 80:
         raise EvidenceError("exactly two independent scores per task required")
     by_id = defaultdict(dict)
@@ -601,7 +661,7 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             total >= 7 and min(by_id[cid][reviewer]["scores"].values()) > 0
             for reviewer, total in zip(reviewers, reviewer_scores)
         )
-        accepted = (deterministic_ok and chosen["source_supported"]
+        accepted = (cid not in failed and deterministic_ok and chosen["source_supported"]
                     and both_reviewers_meet_floor and sum(ratings.values()) >= 7
                     and min(ratings.values()) > 0)
         per_cell[cell]["accepted"] += int(accepted)
@@ -1029,7 +1089,8 @@ def main(argv=None) -> int:
                 )
                 generation_verified = generation_identity_ok(evidence)
                 scores = score_reviews(cases, evidence["reviews"], evidence.get("adjudications", []),
-                                       evidence["deterministic"], output_hashes=output_hashes)
+                                       evidence["deterministic"], output_hashes=output_hashes,
+                                       failed_case_ids=set(usage["failed_case_ids"]))
                 faults = verify_operations(
                     evidence["operations"], manifest["candidate_revision"],
                     manifest_sha256=manifest_digest, release_id=manifest["release_id"],
