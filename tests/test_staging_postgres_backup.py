@@ -28,8 +28,8 @@ def test_invalid_host_or_existing_archive_directory_stops_before_postgres(tmp_pa
 
 
 def test_verification_receipt_requires_identical_row_inventory(tmp_path):
-    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "first"}}}
-    restored = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "different"}}}
+    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "first"}}, "schema_sha256": "a" * 64}
+    restored = {"revision": "0070", "tables": {"cw_accounts": {"rows": 1, "sha256": "different"}}, "schema_sha256": "a" * 64}
 
     def dump(_url, path, _pg_bin):
         path.write_bytes(b"PGDMP-test")
@@ -66,8 +66,27 @@ def test_verification_receipt_requires_identical_row_inventory(tmp_path):
 
 
 
+@pytest.mark.parametrize("bad_schema", [None, "", "wrong", "A" * 64])
+def test_verified_pg_archive_never_publishes_missing_schema_fingerprint(tmp_path, bad_schema):
+    source = {
+        "revision": "0070", "tables": {},
+        "schema_sha256": bad_schema,
+    }
+
+    def dump(_url, path, _pg_bin):
+        path.write_bytes(b"PGDMP-test")
+        return source, "f" * 64
+
+    destination = tmp_path / ("bad-schema-" + str(bad_schema))
+    with patch.object(backup, "dump_source", side_effect=dump), \\
+         patch.object(backup, "restore_inventory", return_value=source):
+        with pytest.raises(backup.BackupError, match="structural schema"):
+            backup.run_backup(SOURCE, destination)
+    assert not (destination / "verification.json").exists()
+
+
 def test_broken_checked_in_migration_graph_never_converts_backup_into_release_evidence(tmp_path):
-    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 0, "sha256": "fixture"}}}
+    source = {"revision": "0070", "tables": {"cw_accounts": {"rows": 0, "sha256": "fixture"}}, "schema_sha256": "a" * 64}
 
     def dump(_url, path, _pg_bin):
         path.write_bytes(b"PGDMP-synthetic")
