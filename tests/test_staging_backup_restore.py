@@ -312,3 +312,66 @@ def test_prepare_rejects_symlink_state_path_before_staging_mutations(monkeypatch
     assert calls == []
     assert target_path.read_text(encoding="utf-8") == '{"existing":true}'
 
+
+
+
+def test_full_archive_receipts_are_mandatory_before_restored_sql_reads(monkeypatch, tmp_path, restore_state):
+    settings, rollout_path, state = restore_state
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    target = {"database": backup.stable_hash("different-db"),
+              "storage": backup.stable_hash("different-storage")}
+    monkeypatch.setattr(backup, "environment_fingerprints", lambda _container: target)
+
+    disposed = []
+    class Sessions:
+        kw = {"bind": SimpleNamespace(dispose=lambda: disposed.append(True))}
+
+    fake = SimpleNamespace(repository=SimpleNamespace(sessions=Sessions()), storage=SimpleNamespace())
+    monkeypatch.setattr(backup.Container, "create", lambda _: fake)
+    monkeypatch.setattr(
+        backup, "restored_database_inventory",
+        lambda _: pytest.fail("Unqualified restore may not inspect database rows"),
+    )
+
+    with pytest.raises(backup.BackupRestoreFailure, match="mandatory"):
+        backup.verify(
+            settings, state_path, "reference", "reference", rollout_path,
+            tmp_path / "receipt.json", None,
+        )
+    assert disposed == [True]
+    assert not (tmp_path / "receipt.json").exists()
+
+
+def test_restored_database_readback_is_repeatable_read_and_read_only(monkeypatch):
+    from scripts import staging_postgres_backup as postgres
+
+    operations = []
+    class Database:
+        def execute(self, command):
+            operations.append(command)
+        def rollback(self):
+            operations.append("rollback")
+
+    dbapi = Database()
+    class Proxy:
+        driver_connection = dbapi
+        def close(self):
+            operations.append("close")
+
+    class Engine:
+        def raw_connection(self):
+            return Proxy()
+
+    fake = SimpleNamespace(repository=SimpleNamespace(
+        sessions=SimpleNamespace(kw={"bind": Engine()}),
+    ))
+    expected = {"revision": "0070", "tables": {"cw_alembic_version": {"rows": 1}}}
+    monkeypatch.setattr(postgres, "inventory", lambda connection:
+                        operations.append("inventory") or expected
+                        if connection is dbapi else pytest.fail("unrelated connection"))
+    assert backup.restored_database_inventory(fake) == expected
+    assert operations == [
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+        "inventory", "rollback", "close",
+    ]
