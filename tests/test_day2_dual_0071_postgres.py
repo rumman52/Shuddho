@@ -185,3 +185,21 @@ def test_dual_0071_first_parent_upgrade_merge_rollback_and_replay(first_parent):
         assert INDEX in indexes and FK in constraints
         check_current_revision(url)
         _old_reader(url, sample)
+
+
+@pytest.mark.parametrize("unsafe_url", [
+    "postgresql+psycopg://example:pw@aws-0-us-west-1.pooler.supabase.com:5432/shuddho_coworker_test",
+    "postgresql+psycopg://example:pw@localhost:5432/postgres",
+    "postgresql+psycopg://example:pw@127.0.0.2:5432/shuddho_coworker_test",
+    "postgresql+psycopg://example:pw@localhost:5432/shuddho_coworker_prod",
+    "sqlite:////tmp/shuddho_coworker_test",
+])
+def test_rehearsal_rejects_nonlocal_or_non_test_urls_before_opening_database(monkeypatch, unsafe_url):
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_URL", unsafe_url)
+    monkeypatch.setattr(
+        psycopg, "connect",
+        lambda *_args, **_kwargs: pytest.fail("A database connection was attempted"),
+    )
+    with pytest.raises(RuntimeError, match="disposable loopback"):
+        with _disposable_database():
+            pytest.fail("Unsafe database URL was accepted")
