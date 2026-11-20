@@ -810,15 +810,19 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     for label, report in (("baseline", baseline), ("bounded_context_compact_observations", candidate)):
         if any(report.get(key) != value for key, value in identity.items()):
             raise ValueError(f"{label}: development corpus identity mismatch")
-    # The parser returns (first-run cases, reruns, provenance completeness).
-    # Compare only the matched first-run case mapping here; never treat that
-    # tuple as a dictionary or silently conflate rerun attempts with baseline.
-    base_cases, _base_reruns, _base_attempt_provenance = _day8_cases(
-        baseline, expected, "baseline",
-    )
-    candidate_cases, _candidate_reruns, _candidate_attempt_provenance = _day8_cases(
+    base_cases, base_reruns, base_attempt_provenance = _day8_cases(baseline, expected, "baseline")
+    candidate_cases, candidate_reruns, candidate_attempt_provenance = _day8_cases(
         candidate, expected, "bounded_context_compact_observations",
     )
+
+    # First-run results are the fixed 40-case quality denominator. Reruns are
+    # separate attempts, but their cost and receipt identities must still be
+    # accounted for before any Day 9 freeze can be selected.
+    def attempts(cases: dict, reruns: dict) -> list[dict]:
+        return [*cases.values(), *(row for rows in reruns.values() for row in rows)]
+
+    base_attempts = attempts(base_cases, base_reruns)
+    candidate_attempts = attempts(candidate_cases, candidate_reruns)
     base_config = baseline["configuration"]
     candidate_config = candidate["configuration"]
     # Both arms must have the same explicitly bounded execution budget.
@@ -844,18 +848,18 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         for field in DAY8_FREEZE_MATCH_FIELDS
     ):
         raise ValueError("paired context experiment must preserve shared prompt template, schema, flags and budgets")
-    base_run_ids = {row["run_id"] for row in base_cases.values()
+    base_run_ids = {row["run_id"] for row in base_attempts
                     if isinstance(row.get("run_id"), str)}
-    candidate_run_ids = {row["run_id"] for row in candidate_cases.values()
+    candidate_run_ids = {row["run_id"] for row in candidate_attempts
                          if isinstance(row.get("run_id"), str)}
     if base_run_ids & candidate_run_ids:
         raise ValueError("reused run identity across profiles is not an independent generation")
     base_usage_receipts = {
-        row["provider_usage_case_receipt_sha256"] for row in base_cases.values()
+        row["provider_usage_case_receipt_sha256"] for row in base_attempts
         if _day8_digest(row.get("provider_usage_case_receipt_sha256"))
     }
     candidate_usage_receipts = {
-        row["provider_usage_case_receipt_sha256"] for row in candidate_cases.values()
+        row["provider_usage_case_receipt_sha256"] for row in candidate_attempts
         if _day8_digest(row.get("provider_usage_case_receipt_sha256"))
     }
     if base_usage_receipts & candidate_usage_receipts:
@@ -869,59 +873,66 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     def complete_metrics(rows: list[dict]) -> bool:
         return all(
             all(_day8_uint(row.get(field)) for field in DAY8_CASE_FIELDS)
+            and _day8_uint(row.get("end_to_end_latency_ms"))
+            and all(type(row.get(field)) is bool for field in ("passed", "human_accepted", "safety_passed"))
             and _day8_counts(row.get("retry_breakdown"), DAY8_RETRY_TYPES)
             and _day8_counts(row.get("failure_breakdown"), DAY8_FAILURE_TYPES)
             and _day8_counts(row.get("cost_components_microusd"), DAY8_COST_COMPONENTS)
             and isinstance(row.get("run_id"), str) and bool(row["run_id"].strip())
             and _day8_digest(row.get("provider_usage_case_receipt_sha256"))
-            and (not row["human_accepted"] or _day8_digest(row.get("output_sha256")))
+            and (row.get("human_accepted") is not True or _day8_digest(row.get("output_sha256")))
             for row in rows
         )
 
-    def cell_summary(rows: list[dict]) -> dict:
+    def cell_summary(rows: list[dict], all_cell_attempts: list[dict],
+                     provenance_complete: bool) -> dict:
         count = len(rows)
         accepted_count = sum(
             r["human_accepted"] and r["passed"] and r["safety_passed"] for r in rows
         )
-        complete = complete_metrics(rows)
+        complete = provenance_complete and complete_metrics(all_cell_attempts)
         times = [r["end_to_end_latency_ms"] for r in rows
                  if _day8_uint(r.get("end_to_end_latency_ms"))]
         # Never calculate a cohort percentile from a censored subset.
         latency_complete = len(times) == count
-        cost = sum(r["cost_microusd"] for r in rows) if complete else None
+        cost = sum(r["cost_microusd"] for r in all_cell_attempts) if complete else None
         return {
             "cases": count,
+            "rerun_attempts": len(all_cell_attempts) - count,
             "accepted": accepted_count,
             "acceptance_rate": ratio(accepted_count, count),
             "metrics_complete": complete,
             "latency_samples": len(times),
             "p50_end_to_end_latency_ms": percentile(times, 0.50) if latency_complete else None,
             "p95_end_to_end_latency_ms": percentile(times, 0.95) if latency_complete else None,
-            "total_input_tokens": sum(r["input_tokens"] for r in rows) if complete else None,
-            "total_output_tokens": sum(r["output_tokens"] for r in rows) if complete else None,
-            "total_model_time_ms": sum(r["model_time_ms"] for r in rows) if complete else None,
-            "total_tool_time_ms": sum(r["tool_time_ms"] for r in rows) if complete else None,
+            "total_input_tokens": sum(r["input_tokens"] for r in all_cell_attempts) if complete else None,
+            "total_output_tokens": sum(r["output_tokens"] for r in all_cell_attempts) if complete else None,
+            "total_model_time_ms": sum(r["model_time_ms"] for r in all_cell_attempts) if complete else None,
+            "total_tool_time_ms": sum(r["tool_time_ms"] for r in all_cell_attempts) if complete else None,
             "total_cost_microusd": cost,
             "cost_microusd_per_accepted_output": (
                 round(cost / accepted_count, 2)
                 if cost is not None and accepted_count else None
             ),
             "retries_by_type": {
-                name: sum(r["retry_breakdown"][name] for r in rows)
+                name: sum(r["retry_breakdown"][name] for r in all_cell_attempts)
                 for name in DAY8_RETRY_TYPES
             } if complete else None,
             "failures_by_type": {
-                name: sum(r["failure_breakdown"][name] for r in rows)
+                name: sum(r["failure_breakdown"][name] for r in all_cell_attempts)
                 for name in DAY8_FAILURE_TYPES
             } if complete else None,
         }
 
     summaries = {}
-    for label, report, items in (
-        ("baseline", baseline, base_cases),
-        ("bounded_context_compact_observations", candidate, candidate_cases),
+    for label, report, items, reruns, provenance_complete in (
+        ("baseline", baseline, base_cases, base_reruns, base_attempt_provenance),
+        ("bounded_context_compact_observations", candidate, candidate_cases,
+         candidate_reruns, candidate_attempt_provenance),
     ):
         records = list(items.values())
+        rerun_rows = [row for rows in reruns.values() for row in rows]
+        all_rows = [*records, *rerun_rows]
         accepted = [r for r in records if r["human_accepted"] and r["passed"] and r["safety_passed"]]
         by_cell = {}
         cell_metrics = {}
@@ -934,8 +945,10 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
                 by_cell[name] = sum(
                     r["human_accepted"] and r["passed"] and r["safety_passed"] for r in cell
                 )
-                cell_metrics[name] = cell_summary(cell)
-        metrics_complete = complete_metrics(records)
+                cell_attempts = [*cell, *(row for row in rerun_rows
+                                           if (row["workflow"], row["language"]) == (workflow, language))]
+                cell_metrics[name] = cell_summary(cell, cell_attempts, provenance_complete)
+        metrics_complete = provenance_complete and complete_metrics(all_rows)
         safety_ok = all(r["safety_passed"] for r in records)
         artifact_coverage = all(r["verified_artifact_refs"] for r in accepted)
         quality_ok = len(accepted) >= 36 and all(n >= 9 for n in by_cell.values()) and safety_ok and artifact_coverage
@@ -948,11 +961,13 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             and p95 <= policy["approved_p95_end_to_end_latency_ms"]
         )
         totals = {
-            field: sum(int(r[field]) for r in records) if metrics_complete else None
+            field: sum(int(r[field]) for r in all_rows) if metrics_complete else None
             for field in DAY8_CASE_FIELDS
         }
         summaries[label] = {
             "cases": 40,
+            "rerun_attempts": len(rerun_rows),
+            "attempt_provenance_complete": provenance_complete,
             "human_accepted": len(accepted),
             "by_cell": by_cell,
             "cell_metrics": cell_metrics,
@@ -983,15 +998,15 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
                 for r in records
             ),
             "retries_by_type": {
-                name: sum(r["retry_breakdown"][name] for r in records)
+                name: sum(r["retry_breakdown"][name] for r in all_rows)
                 for name in DAY8_RETRY_TYPES
             } if metrics_complete else None,
             "failures_by_type": {
-                name: sum(r["failure_breakdown"][name] for r in records)
+                name: sum(r["failure_breakdown"][name] for r in all_rows)
                 for name in DAY8_FAILURE_TYPES
             } if metrics_complete else None,
             "all_in_cost_components_microusd": {
-                name: sum(r["cost_components_microusd"][name] for r in records)
+                name: sum(r["cost_components_microusd"][name] for r in all_rows)
                 for name in DAY8_COST_COMPONENTS
             } if metrics_complete else None,
             "total_input_tokens": totals["input_tokens"],
@@ -1029,6 +1044,8 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         blockers.append("missing or invalid fixed per-task time limit in both profiles")
     if not policy_complete:
         blockers.append("missing or invalid owner-approved latency, rubric and pricing decision policy")
+    if not base_attempt_provenance or not candidate_attempt_provenance:
+        blockers.append("missing explicit first-run and rerun attempt provenance in both profiles")
     if not a["metrics_complete"] or not b["metrics_complete"]:
         blockers.append(
             "missing run/output/usage receipts, measured input/output tokens, end-to-end latency, "
@@ -1112,10 +1129,19 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     for case_id in sorted(expected):
         record = {"id": case_id, "workflow": expected[case_id][0],
                   "language": expected[case_id][1]}
-        for label, cases in (("baseline", base_cases),
-                             ("bounded_context_compact_observations", candidate_cases)):
+        for label, cases, reruns, provenance in (
+            ("baseline", base_cases, base_reruns, base_attempt_provenance),
+            ("bounded_context_compact_observations", candidate_cases,
+             candidate_reruns, candidate_attempt_provenance),
+        ):
             item = cases[case_id]
+            case_reruns = reruns.get(case_id, [])
             economics = {field: item.get(field) for field in task_fields}
+            economics["rerun_attempts"] = len(case_reruns)
+            economics["all_attempts_cost_microusd"] = (
+                sum(r["cost_microusd"] for r in [item, *case_reruns])
+                if provenance and complete_metrics([item, *case_reruns]) else None
+            )
             economics["measured_model_tool_time_ms"] = (
                 item["model_time_ms"] + item["tool_time_ms"]
                 if _day8_uint(item.get("model_time_ms"))
@@ -1137,16 +1163,24 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             )
             for field in DAY8_CASE_FIELDS
         }
+        # Cost deltas include rerun attempts, not only the first 40 rows.
+        record["paired_measured_deltas_candidate_minus_baseline"]["cost_microusd"] = (
+            record["bounded_context_compact_observations"]["all_attempts_cost_microusd"]
+            - record["baseline"]["all_attempts_cost_microusd"]
+            if _day8_uint(record["baseline"]["all_attempts_cost_microusd"])
+            and _day8_uint(record["bounded_context_compact_observations"]["all_attempts_cost_microusd"])
+            else None
+        )
         record["measured_cost_savings_microusd"] = (
-            record["baseline"]["cost_microusd"]
-            - record["bounded_context_compact_observations"]["cost_microusd"]
+            record["baseline"]["all_attempts_cost_microusd"]
+            - record["bounded_context_compact_observations"]["all_attempts_cost_microusd"]
             if qualified_savings
             and baseline.get("generation_identity_verified") is True
             and candidate.get("generation_identity_verified") is True
             and baseline.get("receipts_independently_verified") is True
             and candidate.get("receipts_independently_verified") is True
-            and _day8_uint(record["baseline"]["cost_microusd"])
-            and _day8_uint(record["bounded_context_compact_observations"]["cost_microusd"])
+            and _day8_uint(record["baseline"]["all_attempts_cost_microusd"])
+            and _day8_uint(record["bounded_context_compact_observations"]["all_attempts_cost_microusd"])
             else None
         )
         per_task.append(record)

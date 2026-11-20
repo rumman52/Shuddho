@@ -481,8 +481,10 @@ def test_briefing_occurrence_emits_one_completion_notification_only(
     automation_container,
 ):
     client, headers = automation_client
-    auth = headers()
+    # Briefing dependencies are default-off in production and in this fixture.
+    # Enable the reviewed v3 stack only for the successful-notification test.
     _enable_briefings(automation_container)
+    auth = headers()
     goal, _, _, _ = create_project_document_goal(
         client, auth, automation_container, key="day7-single-completion-notice",
     )
@@ -543,6 +545,51 @@ def test_briefing_occurrence_emits_one_completion_notification_only(
     inbox = client.get("/api/v1/notifications", headers=auth).json()
     assert len(inbox["notifications"]) == 1
     assert inbox["notifications"][0]["kind"] == "automation_completed"
+
+
+def test_legacy_briefing_started_notice_is_not_mislabeled_as_completion(
+    automation_client, automation_container,
+):
+    """An old start-notice row cannot be silently counted as a new completion."""
+    client, headers = automation_client
+    _enable_briefings(automation_container)
+    auth = headers()
+    goal, _, _, _ = create_project_document_goal(
+        client, auth, automation_container, key="day7-legacy-start-notice",
+    )
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "day7-legacy-briefing"},
+        json=briefing_automation_payload(goal),
+    )
+    assert response.status_code == 201, response.text
+    automation = response.json()
+    accepted = automation_container.automations.accept_occurrence(
+        automation["id"], automation["revision"], utcnow().replace(microsecond=0),
+    )
+    assert accepted["state"] == "accepted"
+    with automation_container.repository.sessions.begin() as db:
+        row = db.get(Automation, automation["id"])
+        assert row is not None
+        automation_container.notifications.enqueue_pending(
+            db, owner=row.owner_id, workspace_id=row.workspace_id,
+            automation_id=row.id, occurrence_id=accepted["occurrence_id"],
+            kind="automation_started", title="Legacy start",
+            message="Synthetic pre-fix start notification.",
+            visible_at=utcnow(), expires_at=utcnow() + timedelta(days=1),
+        )
+        db.get(AgentRun, accepted["run_id"]).state = "completed"
+    automation_container.automations.notify_run_completed(accepted["run_id"])
+    automation_container.automations.notify_run_completed(accepted["run_id"])
+    with automation_container.repository.sessions() as db:
+        notices = db.scalars(
+            select(Notification).where(
+                Notification.automation_id == automation["id"],
+            )
+        ).all()
+        assert len(notices) == 1
+        assert notices[0].occurrence_id == accepted["occurrence_id"]
+        assert notices[0].kind == "automation_started"
 
 
 def test_transient_agent_capacity_rejection_keeps_occurrence_reclaimable(
@@ -1582,8 +1629,7 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
             Notification.automation_id == automation["id"],
             Notification.kind == "automation_started",
         )).all()
-        assert len(started) == 1
-        assert started[0].title == "Briefing started"
+        assert started == []  # Daily briefings notify only after the result is ready.
 
     with automation_container.repository.sessions.begin() as db:
         run = db.get(AgentRun, first["run_id"])
@@ -1598,7 +1644,11 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         )).all()
         assert len(completed) == 1
         assert completed[0].title == "Briefing ready"
+        assert completed[0].occurrence_id == first["occurrence_id"]
         assert "daily/weekly briefing" in completed[0].message
+        assert db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+        )).all() == completed
 
 
 def test_day7_occurrence_blocks_when_a_selected_document_is_unlinked_from_its_project(
@@ -1665,9 +1715,22 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
         started = db.scalars(select(Notification).where(
             Notification.automation_id == automation["id"], Notification.kind == "automation_started"
         )).all()
-        assert len(started) == 1 and started[0].visible_at.replace(tzinfo=timezone.utc) > due
+        assert started == []
+        # Quiet hours still apply to a due-at timestamp in the forbidden window.
+        assert automation_container.notifications.visible_at_after_quiet_hours(
+            due, "Asia/Dhaka", body["quiet_hours"],
+        ) > due
+    before_completion = utcnow()
     automation_container.automations.notify_run_completed(first["run_id"])
     automation_container.automations.notify_run_completed(first["run_id"])
+    with automation_container.repository.sessions() as db:
+        completed = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_completed",
+        )).all()
+        assert len(completed) == 1
+        assert completed[0].occurrence_id == first["occurrence_id"]
+        assert completed[0].visible_at.replace(tzinfo=timezone.utc) >= before_completion
     with automation_container.repository.sessions.begin() as db:
         db.add(DocumentVersion(
             id=v2, document_id=document_id, owner_id=owner_id, version=2,
@@ -1700,9 +1763,14 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
         assert stopped["state"] == "skipped"
         with restarted.repository.sessions() as db:
             assert len(db.scalars(select(AgentRun).where(AgentRun.goal_id == goal["id"])).all()) == 2
-            assert len(db.scalars(select(Notification).where(
+            assert db.scalars(select(Notification).where(
                 Notification.automation_id == automation["id"], Notification.kind == "automation_started"
-            )).all()) == 2
+            )).all() == []
+            completed = db.scalars(select(Notification).where(
+                Notification.automation_id == automation["id"], Notification.kind == "automation_completed"
+            )).all()
+            assert len(completed) == 1
+            assert completed[0].occurrence_id == first["occurrence_id"]
     finally:
         restarted.repository.sessions.kw["bind"].dispose()
 
