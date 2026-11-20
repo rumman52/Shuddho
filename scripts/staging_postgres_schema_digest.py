@@ -5,7 +5,8 @@ equivalence: changed defaults, indexes, policies or constraints can leave
 every stored row unchanged. Hash pg_catalog records from the *same* snapshot
 used by the backup inventory and compare them after an isolated restore.
 
-Exclude OIDs, physical file names, object ownership and discretionary ACLs,
+Exclude OIDs, raw physical column-slot numbers (which change on DDL replay),
+physical file names, object ownership and discretionary ACLs,
 which change intentionally when pg_restore uses --no-owner --no-privileges.
 The private Supabase API-role grant boundary is audited separately.
 """
@@ -44,7 +45,9 @@ CATALOG_QUERIES: tuple[tuple[str, str], ...] = (
         "columns",
         """
         SELECT jsonb_build_object(
-            'relation', c.relname, 'ordinal', a.attnum, 'name', a.attname,
+            'relation', c.relname,
+            'visible_ordinal', row_number() OVER (PARTITION BY c.oid ORDER BY a.attnum),
+            'name', a.attname,
             'type', format_type(a.atttypid, a.atttypmod),
             'not_null', a.attnotnull,
             'identity', a.attidentity::text,
