@@ -11,6 +11,9 @@ from pathlib import Path
 from sqlalchemy import select, text
 
 from scripts.staging_api_exercise import env_secret, require_https_base
+from scripts.staging_day2_archive_attestation import (
+    ArchiveAttestationFailure, attest_archives,
+)
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     passed,
@@ -80,6 +83,27 @@ def environment_fingerprints(container: Container) -> dict[str, str]:
         "database": stable_hash(f"{address}|{port}|{database}"),
         "storage": stable_hash(storage_identity),
     }
+
+
+def restored_database_inventory(container: Container) -> dict:
+    """Read every private table from the isolated target in one SQL snapshot."""
+    from scripts.staging_postgres_backup import inventory
+
+    engine = container.repository.sessions.kw["bind"]
+    proxy = engine.raw_connection()
+    dbapi = getattr(proxy, "driver_connection", None) or proxy
+    try:
+        # This connection is separate from the synthetic-probe ORM session and
+        # cannot change the target while comparing all table digests.
+        dbapi.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        return inventory(dbapi)
+    except Exception:
+        raise BackupRestoreFailure("Isolated restored PostgreSQL inventory could not be verified.") from None
+    finally:
+        try:
+            dbapi.rollback()
+        finally:
+            proxy.close()
 
 
 def _preflight_private_json_destination(path: Path) -> None:
@@ -172,6 +196,11 @@ def verify(
     rollout_path: Path,
     evidence_path: Path,
     base_evidence: Path | None,
+    *,
+    postgres_verification: Path | None = None,
+    postgres_archive: Path | None = None,
+    object_archive: Path | None = None,
+    object_restore_receipt: Path | None = None,
 ) -> dict:
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
     if not backup_reference.strip() or not restore_reference.strip():
@@ -208,6 +237,21 @@ def verify(
         if target["storage"] == source["storage"]:
             raise BackupRestoreFailure("Restore verification must run against an isolated restored object-storage target.")
 
+        if any(path is None for path in (
+            postgres_verification, postgres_archive, object_archive, object_restore_receipt,
+        )):
+            raise BackupRestoreFailure(
+                "Full PostgreSQL verification, dump, private object archive and restore receipt are mandatory."
+            )
+        integrity, source_inventory, restored_objects = attest_archives(
+            state, target, postgres_verification, postgres_archive,
+            object_archive, object_restore_receipt,
+        )
+        if restored_database_inventory(container) != source_inventory:
+            raise BackupRestoreFailure(
+                "Isolated PostgreSQL target has different schema, migration ledger, rows, or table SHA-256."
+            )
+
         owner = str(state["owner_id"])
         document_id = str(state["document_id"])
         version_id = str(state["version_id"])
@@ -242,6 +286,12 @@ def verify(
         body = container.storage.get(object_key, expected_size)
         if len(body) != expected_size or hashlib.sha256(body).hexdigest() != expected_sha:
             raise BackupRestoreFailure("Restored object bytes do not match the pre-backup SHA-256 manifest.")
+        if not any(
+            row["key"] == object_key and row["sha256"] == expected_sha
+            and row["byte_size"] == expected_size for row in restored_objects
+        ):
+            raise BackupRestoreFailure("Synthetic probe object is absent from the full private archive/restore ledger.")
+        integrity["probe_object_verified"] = True
 
         base = {}
         if base_evidence:
@@ -251,6 +301,7 @@ def verify(
             base.update(value)
         backup_ref = backup_reference.strip()[:200]
         restore_ref = restore_reference.strip()[:200]
+        base["archive_integrity"] = integrity
         base["backup_restore"] = passed(
             f"isolated PostgreSQL + private object restore matched synthetic manifest and SHA-256; backup_ref={backup_ref}; restore_ref={restore_ref}",
             context,
@@ -273,6 +324,10 @@ def main() -> None:
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--backup-reference", required=True)
     verify_parser.add_argument("--restore-reference", required=True)
+    verify_parser.add_argument("--postgres-verification", type=Path, required=True)
+    verify_parser.add_argument("--postgres-archive", type=Path, required=True)
+    verify_parser.add_argument("--object-archive-directory", type=Path, required=True)
+    verify_parser.add_argument("--object-restore-receipt", type=Path, required=True)
     verify_parser.add_argument("--rollout", type=Path, required=True)
     verify_parser.add_argument("--base-evidence", type=Path)
     verify_parser.add_argument("--output", type=Path, required=True)
@@ -292,10 +347,15 @@ def main() -> None:
                 args.rollout,
                 args.output,
                 args.base_evidence,
+                postgres_verification=args.postgres_verification,
+                postgres_archive=args.postgres_archive,
+                object_archive=args.object_archive_directory,
+                object_restore_receipt=args.object_restore_receipt,
             )
             print(json.dumps({"written": str(args.output), **result}, indent=2))
     except (
         BackupRestoreFailure,
+        ArchiveAttestationFailure,
         StagingReleaseEvidenceError,
         httpx.HTTPError,
         OSError,
