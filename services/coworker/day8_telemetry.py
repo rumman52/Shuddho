@@ -18,6 +18,12 @@ EVENT_NAME = "rukh_agent_run_operational_v1"
 _PROJECT_ID = re.compile(r"[0-9]{1,20}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _METRIC_MAX = 2**63 - 1
+# Cloud-only until a separately reviewed self-hosted/proxy egress contract exists.
+# Keep private API hosts separate from public event-ingestion endpoints.
+_POSTHOG_CLOUD_HOSTS = {
+    "us": ("us.i.posthog.com", "us.posthog.com"),
+    "eu": ("eu.i.posthog.com", "eu.posthog.com"),
+}
 WORKFLOWS = frozenset({"research", "report_email", "daily_briefing", "general_agent"})
 OUTCOMES = frozenset({"completed", "failed", "needs_input", "blocked", "cancelled", "unknown"})
 ERROR_CATEGORIES = frozenset({
@@ -51,8 +57,20 @@ class EventPolicy:
     destination_retention_days: int | None = None
     approved_retention_days: int | None = None
     privacy_approval_sha256: str | None = None
+    # Two independently supplied pieces of configuration: actual intended
+    # cloud hosts and the hosts in the dated Founder/C authorization. A
+    # metadata match does not authenticate an injected sink or its network
+    # routing; that requires separate adapter/egress verification.
+    destination_ingestion_host: str | None = None
+    approved_ingestion_host: str | None = None
+    destination_api_host: str | None = None
+    approved_api_host: str | None = None
 
     def permits(self) -> bool:
+        cloud_hosts = (
+            _POSTHOG_CLOUD_HOSTS.get(self.destination_region)
+            if type(self.destination_region) is str else None
+        )
         return (
             self.enabled is True and self.privacy_scope_approved is True
             and self.consent_granted is True and self.kill_switch is False
@@ -62,6 +80,11 @@ class EventPolicy:
             and self.project_id == self.approved_project_id
             and self.destination_region in ("us", "eu")
             and self.destination_region == self.approved_region
+            and cloud_hosts is not None
+            and self.destination_ingestion_host == cloud_hosts[0]
+            and self.approved_ingestion_host == cloud_hosts[0]
+            and self.destination_api_host == cloud_hosts[1]
+            and self.approved_api_host == cloud_hosts[1]
             and type(self.destination_retention_days) is int
             and 1 <= self.destination_retention_days <= 3650
             and self.destination_retention_days == self.approved_retention_days
