@@ -55,6 +55,16 @@ def _psycopg_url(sqlalchemy_url: str) -> str:
 def _disposable_database():
     """Each branch gets its own database, never an existing schema in place."""
     root_url = make_url(os.environ["SHUDDHO_TEST_POSTGRES_URL"])
+    if (
+        root_url.drivername != "postgresql+psycopg"
+        or root_url.host not in {"localhost", "127.0.0.1", "::1"}
+        or not root_url.database
+        or not root_url.database.endswith("_test")
+    ):
+        raise RuntimeError(
+            "Day 2 migration rehearsal requires a disposable loopback PostgreSQL _test "
+            "database; remote, maintenance and managed staging URLs are forbidden."
+        )
     db_name = "day2_dual_0071_" + uuid.uuid4().hex[:20]
     admin_dsn = _psycopg_url(root_url.render_as_string(hide_password=False))
     with psycopg.connect(admin_dsn, autocommit=True) as admin:
