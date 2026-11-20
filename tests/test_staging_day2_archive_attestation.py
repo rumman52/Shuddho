@@ -151,3 +151,21 @@ def test_symlink_receipt_rejected(tmp_path):
     link.symlink_to(paths[0])
     with pytest.raises(attest.ArchiveAttestationFailure):
         _check(state, target, (link, *paths[1:]))
+
+
+def test_preseed_zero_object_baseline_is_never_private_task_restore_proof(tmp_path):
+    state, target, paths, _ = _fixtures(tmp_path)
+    empty_source = LocalObjectStore(tmp_path / "preseed-source")
+    baseline = tmp_path / "preseed-empty-archive"
+    objects.archive_store(
+        empty_source, state["source_fingerprints"]["storage"],
+        baseline, allow_empty_baseline=True,
+    )
+    empty_target = LocalObjectStore(tmp_path / "preseed-target")
+    receipt = tmp_path / "preseed-restore-receipt.json"
+    objects.restore_store(
+        empty_target, target["storage"], baseline, receipt,
+        allow_empty_baseline=True,
+    )
+    with pytest.raises(attest.ArchiveAttestationFailure, match="baseline"):
+        _check(state, target, (paths[0], paths[1], baseline, receipt))
