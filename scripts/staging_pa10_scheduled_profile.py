@@ -363,6 +363,8 @@ def prepare(args: argparse.Namespace) -> dict:
         "run_profile": current["automation"]["run_profile"],
         "output_language": current["automation"]["output_language"],
         "quiet_hours": current["automation"].get("quiet_hours"),
+        "overlap_policy": current["automation"].get("overlap_policy"),
+        "catchup_window_seconds": current["automation"].get("catchup_window_seconds"),
         "expires_at": current["automation"].get("expires_at"),
         "schedule_applied_revision": current["automation"].get("schedule_applied_revision"),
         "schedule_applied_enabled": current["automation"].get("schedule_applied_enabled"),
@@ -561,6 +563,8 @@ def verify(args: argparse.Namespace) -> dict:
                     "run_profile": state["run_profile"],
                     "output_language": state["output_language"],
                     "quiet_hours": state["quiet_hours"],
+                    "overlap_policy": state["overlap_policy"],
+                    "catchup_window_seconds": state["catchup_window_seconds"],
                     "expires_at": state["expires_at"],
                     "schedule_applied_revision": state["schedule_applied_revision"],
                     "schedule_applied_enabled": state["schedule_applied_enabled"],
@@ -643,7 +647,7 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         evidence["schedule_applied_revision"] = revision + 1
         evidence["schedule_applied_enabled"] = False
         try:
-            verify_two_day(first, second, evidence)
+            verify_two_day(first, second, evidence, require_paused_opportunity=False)
         except GateFailure as error:
             raise ScheduledProfileProbeFailure(
                 f"Two-day evidence rejected before pause: {error}"
@@ -686,8 +690,45 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         evidence["schedule_applied_enabled"] = observed.get("schedule_applied_enabled")
         evidence["paused_revision"] = int(observed["revision"])
         evidence["paused_at"] = utcnow_iso()
+        # Baseline only after the pause is applied, so a later read-only check
+        # can compare the *same owner's* stored occurrence/run/notice identities.
+        history = json_object(
+            client.get(f'/api/v1/automations/{state["automation_id"]}/history',
+                       headers=auth(token)), "pause history baseline",
+        ).get("history")
+        notices = json_object(
+            client.get("/api/v1/notifications", headers=auth(token)),
+            "pause notification baseline",
+        ).get("notifications")
+        if not isinstance(history, list) or not isinstance(notices, list):
+            raise ScheduledProfileProbeFailure("Pause baseline endpoints returned invalid lists.")
+        occurrence_ids = sorted({
+            item["occurrence_id"] for item in history if isinstance(item, dict)
+            and isinstance(item.get("occurrence_id"), str) and item["occurrence_id"]
+        })
+        run_ids = sorted({
+            item["run_id"] for item in history if isinstance(item, dict)
+            and isinstance(item.get("run_id"), str) and item["run_id"]
+        })
+        notification_ids = sorted({
+            item["id"] for item in notices if isinstance(item, dict)
+            and item.get("automation_id") == state["automation_id"]
+            and isinstance(item.get("id"), str) and item["id"]
+        })
+        if (not {first["occurrence_id"], second["occurrence_id"]}.issubset(occurrence_ids)
+                or not {first["run_id"], second["run_id"]}.issubset(run_ids)
+                or not {first["completion_notification_id"],
+                        second["completion_notification_id"]}.issubset(notification_ids)):
+            raise ScheduledProfileProbeFailure(
+                "Pause baseline omitted an observed occurrence, run or notification."
+            )
+        evidence.update({
+            "pause_baseline_occurrence_ids": occurrence_ids,
+            "pause_baseline_run_ids": run_ids,
+            "pause_baseline_notification_ids": notification_ids,
+        })
         try:
-            verify_two_day(first, second, evidence)
+            verify_two_day(first, second, evidence, require_paused_opportunity=False)
         except GateFailure as error:
             raise ScheduledProfileProbeFailure(f"Post-pause evidence rejected: {error}") from None
     args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
