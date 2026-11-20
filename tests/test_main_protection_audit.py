@@ -48,6 +48,7 @@ def approved_ruleset() -> dict:
                 "type": "required_status_checks",
                 "parameters": {
                     "strict_required_status_checks_policy": True,
+                    "do_not_enforce_on_create": False,
                     "required_status_checks": [
                         {"context": name, "integration_id": 15368} for name in sorted(CHECKS)
                     ],
@@ -448,5 +449,22 @@ def test_day1_coworker_is_required_by_native_ruleset_audit():
     rule["rules"][3]["parameters"]["required_status_checks"] = [
         entry for entry in checks if entry["context"] != "coworker"
     ]
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+@pytest.mark.parametrize("weakened", [True, None, 0, "false", "False"])
+def test_native_check_enforce_on_create_cannot_be_disabled_or_type_confused(weakened):
+    """A strict check still needs to run for newly created refs."""
+    rule = approved_ruleset()
+    rule["rules"][3]["parameters"]["do_not_enforce_on_create"] = weakened
+    with pytest.raises(GovernanceAuditError, match="ruleset"):
+        audit_governance(protected_branch(), [rule])
+
+
+def test_missing_native_enforce_on_create_flag_is_not_trusted():
+    """Missing native enforcement metadata is not proof of active checks."""
+    rule = approved_ruleset()
+    del rule["rules"][3]["parameters"]["do_not_enforce_on_create"]
     with pytest.raises(GovernanceAuditError, match="ruleset"):
         audit_governance(protected_branch(), [rule])
