@@ -33,7 +33,7 @@ def test_verification_receipt_requires_identical_row_inventory(tmp_path):
 
     def dump(_url, path, _pg_bin):
         path.write_bytes(b"PGDMP-test")
-        return source
+        return source, "f" * 64
 
     destination = tmp_path / "mismatch"
     with patch.object(backup, "dump_source", side_effect=dump):
@@ -49,6 +49,7 @@ def test_verification_receipt_requires_identical_row_inventory(tmp_path):
             receipt = backup.run_backup(SOURCE, destination)
     assert receipt["status"] == "verified"
     assert receipt["source"] == source
+    assert receipt["source_database_fingerprint"] == "f" * 64
     alignment = receipt["schema_alignment"]
     assert alignment["status"] == "migration_required"
     assert alignment["source_revision"] == "0070"
@@ -70,7 +71,7 @@ def test_broken_checked_in_migration_graph_never_converts_backup_into_release_ev
 
     def dump(_url, path, _pg_bin):
         path.write_bytes(b"PGDMP-synthetic")
-        return source
+        return source, "f" * 64
 
     output = tmp_path / "verified-older-schema"
     with patch.object(backup, "dump_source", side_effect=dump), \
@@ -80,6 +81,7 @@ def test_broken_checked_in_migration_graph_never_converts_backup_into_release_ev
 
     assert receipt["status"] == "verified"
     assert receipt["source"] == source
+    assert receipt["source_database_fingerprint"] == "f" * 64
     assert receipt["schema_alignment"] == {
         "status": "migration_graph_unverified",
         "source_revision": "0070",
