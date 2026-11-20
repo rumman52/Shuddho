@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -47,8 +47,36 @@ def strings(value: object, field: str) -> list[str]:
     return value
 
 
-def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
-    """Check cross-day pins, local schedule, identity, notices and paused state."""
+def next_paused_opportunity(first: dict, second: dict) -> datetime:
+    """Compute the next *local calendar* due time after Day 8, including DST."""
+    schedule = first.get("schedule")
+    require(isinstance(schedule, dict)
+            and type(schedule.get("hour")) is int
+            and type(schedule.get("minute")) is int
+            and 0 <= schedule["hour"] <= 23 and 0 <= schedule["minute"] <= 59,
+            "Cannot calculate the next paused schedule opportunity.")
+    require(first.get("overlap_policy") == "skip",
+            "Daily briefing must use the approved skip overlap policy.")
+    catchup = first.get("catchup_window_seconds")
+    require(type(catchup) is int and 60 <= catchup <= 86400,
+            "Daily briefing requires an explicit bounded catch-up window.")
+    try:
+        zone = ZoneInfo(str(first.get("timezone", "")))
+    except (ZoneInfoNotFoundError, ValueError, TypeError) as error:
+        raise GateFailure("Cannot calculate a paused opportunity without a valid timezone.") from error
+    next_local_date = timestamp(second.get("due_at"), "Day 8 due_at").astimezone(zone).date() + timedelta(days=1)
+    local_due = datetime.combine(next_local_date,
+                                 time(schedule["hour"], schedule["minute"]), tzinfo=zone)
+    due = local_due.astimezone(timezone.utc)
+    require(due.astimezone(zone).replace(tzinfo=None) == local_due.replace(tzinfo=None),
+            "The next local scheduled time is nonexistent in the owner's timezone.")
+    return due
+
+
+def verify_two_day(
+    first: dict, second: dict, paused: dict, *, require_paused_opportunity: bool = True,
+) -> dict:
+    """Check two daily runs and, by default, a later zero-admission pause opportunity."""
     now = datetime.now(timezone.utc)
     require(all(isinstance(x, dict) for x in (first, second, paused)),
             "Expected three JSON evidence objects.")
@@ -82,7 +110,8 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
                 "goal_id", "goal_revision", "project_id", "authorized_document_ids",
                 "expires_at")
     schedule_identity = ("timezone", "schedule", "automation_revision", "run_profile",
-                         "output_language", "quiet_hours", "schedule_applied_revision",
+                         "output_language", "quiet_hours", "overlap_policy",
+                         "catchup_window_seconds", "schedule_applied_revision",
                          "schedule_applied_enabled")
     for index, item in enumerate((first, second), start=1):
         require(item.get("schema_version") == 2
@@ -192,8 +221,44 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
             "Pause must be observed after Day 8 verification and by the current time.")
     require(timestamp(first.get("expires_at"), "expires_at") > paused_at,
             "The approved schedule expiry must remain after the Day 8 pause.")
+    post_due = next_paused_opportunity(first, second)
+    require(verified_timestamps[1] < paused_at < post_due,
+            "Pause must occur after Day 8 verification and before the next scheduled opportunity.")
+    require(timestamp(first.get("expires_at"), "expires_at") > post_due,
+            "An expired schedule cannot establish a later paused opportunity.")
+    observation = None
+    if require_paused_opportunity:
+        for field, expected in (
+            ("pause_baseline_occurrence_ids", (first["occurrence_id"], second["occurrence_id"])),
+            ("pause_baseline_run_ids", (first["run_id"], second["run_id"])),
+            ("pause_baseline_notification_ids",
+             (first["completion_notification_id"], second["completion_notification_id"])),
+        ):
+            baseline = strings(paused.get(field), field)
+            require(set(expected).issubset(baseline),
+                    f"{field} must retain both actual daily receipts before pause.")
+        observation = paused.get("post_pause_observation")
+        require(isinstance(observation, dict),
+                "Post-pause scheduled-opportunity observation is required before qualification.")
+        require(timestamp(observation.get("due_at"), "post-pause opportunity due_at") == post_due,
+                "Post-pause observation does not match the next approved local schedule due time.")
+        observed_at = timestamp(observation.get("observed_at"), "post-pause observed_at")
+        require(post_due + timedelta(seconds=catchup) <= observed_at <= now,
+                "Post-pause observation must follow the entire catch-up window and precede now.")
+        require(observation.get("automation_state") == "paused"
+                and observation.get("schedule_applied_revision") == paused["paused_revision"]
+                and observation.get("schedule_applied_enabled") is False
+                and observation.get("owner_id") == first["owner_id"]
+                and observation.get("automation_id") == first["automation_id"]
+                and observation.get("release") == first["release"]
+                and observation.get("operator_case_reference") == case_reference,
+                "Post-pause observation changed owner/release, revision, schedule or operator case.")
+        for field in ("new_occurrence_count", "new_run_count", "new_notification_count"):
+            require(type(observation.get(field)) is int and observation[field] == 0,
+                    f"Post-pause {field} must be exactly zero.")
     return {
-        "status": "passed", "scenario": "day7_two_day_daily_briefing",
+        "status": "passed" if require_paused_opportunity else "preflight_only",
+        "scenario": "day7_two_day_daily_briefing",
         "release": first["release"], "owner_id": first["owner_id"],
         "automation_id": first["automation_id"], "project_id": first["project_id"],
         "expires_at": first["expires_at"],
@@ -207,10 +272,13 @@ def verify_two_day(first: dict, second: dict, paused: dict) -> dict:
         "first_input_version_ids": pins_first, "second_input_version_ids": pins_second,
         "changed_document_id": changed_document_ids[0],
         "paused_revision": paused["paused_revision"],
+        "paused_opportunity_due_at": post_due.isoformat(),
+        "post_pause_observed_at": observation["observed_at"] if observation else None,
+        "post_pause_zero_admissions_verified": observation is not None,
         "operator_case_references": [first["operator_case_reference"],
                                      second["operator_case_reference"],
                                      paused["operator_case_reference"]],
-        "limitation": "Schedule provenance still requires independent Temporal natural-timer logs.",
+        "limitation": "Natural timer provenance and downstream delivery absence still require independent Temporal and transport logs.",
     }
 
 
