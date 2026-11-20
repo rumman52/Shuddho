@@ -322,3 +322,24 @@ def test_known_unscoped_existing_check_can_still_be_reconciled(api):
     assert report["status"] == "dry_run"
     assert report["required_checks"] == ["test-and-build", "coworker", "ci-merge-gate"]
     assert api["writes"] == []
+
+
+
+@pytest.mark.parametrize("ambiguous_row", [
+    {"context": "coworker", "integration_id": 15368},
+    {"context": "coworker", "integration_id": 15368, "unreviewed_constraint": True},
+])
+def test_already_compliant_ruleset_rejects_ambiguous_native_status_checks(api, ambiguous_row):
+    """The early 'already_configured' return must not mask native-rule ambiguity."""
+    api["current"] = {
+        **policy(), "id": reconcile.RULESET_ID,
+        "source": REPO, "source_type": "Repository",
+    }
+    rows = api["current"]["rules"][-1]["parameters"]["required_status_checks"]
+    if "unreviewed_constraint" in ambiguous_row:
+        rows[1] = ambiguous_row
+    else:
+        rows.append(ambiguous_row)
+    with pytest.raises(ApplyMainRulesetError, match="additional required status checks"):
+        call()
+    assert api["writes"] == []
