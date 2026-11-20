@@ -111,6 +111,18 @@ def proofs():
         'restart_reference': 'actual-platform-event-123',
     }
     restore['recovery_outbox'] = copy.deepcopy(recovery['recovery_outbox'])
+    restore['archive_integrity'] = {
+        'status': 'verified', 'source_schema_revision': '0070',
+        'postgres_archive_sha256': '6' * 64, 'postgres_table_count': 84,
+        'postgres_row_count': 1,
+        'source_database_fingerprint': '7' * 64,
+        'target_database_fingerprint': '8' * 64,
+        'object_manifest_sha256': '9' * 64, 'object_count': 2,
+        'object_total_bytes': 1024,
+        'source_storage_fingerprint': 'a' * 64,
+        'target_storage_fingerprint': 'b' * 64,
+        'probe_object_verified': True,
+    }
     restore['backup_restore'] = {'status': 'passed', 'release_id': 'day2-001', 'source_revision': SHA,
                                  'rollout_manifest_sha256': '3' * 64,
                                  'exercise_started_at': '2026-11-12T11:06:00+00:00',
@@ -425,4 +437,31 @@ def test_recovery_rejects_restart_while_no_child_was_active():
         children[0]["finished_at"] = "2026-11-12T11:02:59+00:00"
         children[1]["finished_at"] = "2026-11-12T11:02:59+00:00"
     with pytest.raises(gate.Day2AcceptanceFailure, match="active child task"):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize("field, bad_value", [
+    ("status", "unverified"),
+    ("probe_object_verified", False),
+    ("postgres_archive_sha256", "unsigned"),
+    ("postgres_table_count", 83),
+    ("postgres_row_count", 0),
+    ("object_manifest_sha256", ""),
+    ("object_count", 0),
+    ("object_total_bytes", 0),
+    ("source_database_fingerprint", "8" * 64),
+    ("target_storage_fingerprint", "a" * 64),
+    ("source_schema_revision", ""),
+])
+def test_backup_gate_rejects_missing_or_inconsistent_full_archive_evidence(field, bad_value):
+    proof_set = list(proofs())
+    proof_set[3]["archive_integrity"][field] = bad_value
+    with pytest.raises(gate.Day2AcceptanceFailure):
+        check(*proof_set)
+
+
+def test_backup_gate_rejects_legacy_reference_only_restore_receipt():
+    proof_set = list(proofs())
+    proof_set[3].pop("archive_integrity")
+    with pytest.raises(gate.Day2AcceptanceFailure, match="archive_integrity"):
         check(*proof_set)

@@ -285,6 +285,26 @@ def validate_evidence(
         raise Day2AcceptanceFailure("Recovery fan-in started before both completed branches.")
     if not any(begin <= restarted <= end for begin, end in child_windows):
         raise Day2AcceptanceFailure("Recovery restart did not interrupt an active child task.")
+    integrity = _object(restore.get("archive_integrity"), "restored.archive_integrity")
+    if integrity.get("status") != "verified" or integrity.get("probe_object_verified") is not True:
+        raise Day2AcceptanceFailure("Restored source archive and synthetic probe must have verified receipts.")
+    for field in (
+        "postgres_archive_sha256", "object_manifest_sha256",
+        "source_database_fingerprint", "target_database_fingerprint",
+        "source_storage_fingerprint", "target_storage_fingerprint",
+    ):
+        _digest(integrity.get(field), "archive_integrity." + field)
+    for field in ("postgres_table_count", "postgres_row_count", "object_count", "object_total_bytes"):
+        _positive(integrity.get(field), "archive_integrity." + field)
+    if integrity["postgres_table_count"] < 84:
+        raise Day2AcceptanceFailure("Restored database has an incomplete 84-table source inventory.")
+    if (integrity["source_database_fingerprint"] == integrity["target_database_fingerprint"]
+            or integrity["source_storage_fingerprint"] == integrity["target_storage_fingerprint"]):
+        raise Day2AcceptanceFailure("Source and restored database/object targets are not independent.")
+    if not isinstance(integrity.get("source_schema_revision"), str) or not re.fullmatch(
+        r"[A-Za-z0-9_]{1,128}", integrity["source_schema_revision"]
+    ):
+        raise Day2AcceptanceFailure("Restored archive schema revision is missing.")
     digest, restored_at = _stage(restore.get("backup_restore"), "restored.backup_restore",
                                  release_id=release_id, revision=expected_revision)
     if digest != rollout_digest:
@@ -312,6 +332,7 @@ def validate_evidence(
         "completed_child_task_count": len(child_ids),
         "logical_document_outbox_effect_count": 1,
         "document_outbox_dispatch_attempts": document_outbox["dispatch_attempts"],
+        "archive_integrity": integrity,
         "required_live_checks": list(_CHECKS),
         "caveat": "Only operator-supplied evidence consistency; independent live/platform verification remains mandatory.",
     }

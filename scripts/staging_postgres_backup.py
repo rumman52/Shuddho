@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import file_digest, sha256
 import os
+import re
 from pathlib import Path
 import shlex
 import signal
@@ -221,7 +222,7 @@ def inventory(connection) -> dict:
     return {"revision": revisions[0][0], "tables": result, "access_control": access_control}
 
 
-def dump_source(url: str, archive: Path, pg_bin: Path | None) -> dict:
+def dump_source(url: str, archive: Path, pg_bin: Path | None) -> tuple[dict, str]:
     import psycopg
 
     parsed = urlsplit(url)
@@ -245,7 +246,15 @@ def dump_source(url: str, archive: Path, pg_bin: Path | None) -> dict:
         pgpass.flush()
         db_env["PGPASSFILE"] = pgpass.name
         with psycopg.connect(**connection) as source:
-            return dump_snapshot(source, db_env, archive, pg_bin, expected_user=username.split(".", 1)[0])
+            snapshot = dump_snapshot(source, db_env, archive, pg_bin, expected_user=username.split(".", 1)[0])
+            # Bind this verified archive to the same observable database identity
+            # captured by staging_backup_restore.prepare, never to a supplied label.
+            database, address, port = source.execute(
+                "SELECT current_database(), coalesce(inet_server_addr()::text, 'local'), "
+                "coalesce(inet_server_port(), 0)"
+            ).fetchone()
+            fingerprint = sha256(f"{address}|{port}|{database}".encode("utf-8")).hexdigest()
+            return snapshot, fingerprint
 
 
 def dump_snapshot(connection, db_env: dict[str, str], archive: Path, pg_bin: Path | None, *, expected_user: str) -> dict:
@@ -318,7 +327,11 @@ def run_backup(url: str, directory: Path, pg_bin: Path | None = None) -> dict:
     partial = directory / ".coworker.dump.partial"
     archive = directory / "coworker.dump"
     try:
-        source = dump_source(url, partial, pg_bin)
+        source, source_database_fingerprint = dump_source(url, partial, pg_bin)
+        if not isinstance(source_database_fingerprint, str) or not re.fullmatch(
+            r"[a-f0-9]{64}", source_database_fingerprint
+        ):
+            raise BackupError("The archive source database fingerprint is unavailable.")
         partial.chmod(0o600)
         partial.rename(archive)
     finally:
@@ -341,6 +354,7 @@ def run_backup(url: str, directory: Path, pg_bin: Path | None = None) -> dict:
     result = {
         "status": "verified", "verified_at": datetime.now(timezone.utc).isoformat(),
         "archive_sha256": file_hash(archive), "source": source,
+        "source_database_fingerprint": source_database_fingerprint,
         "schema_alignment": schema_alignment,
     }
     write_private_json(directory / "verification.json", result)

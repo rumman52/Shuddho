@@ -240,6 +240,10 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --backup-reference "<actual-private-backup-manifest-reference>" \
   --restore-reference "<actual-isolated-restore-event-reference>" \
   --rollout /secure/day2/pa10-staging-rollout.json \
+  --postgres-verification /secure/private-backups/source-db/verification.json \
+  --postgres-archive /secure/private-backups/source-db/coworker.dump \
+  --object-archive-directory /secure/private-backups/staging-source-objects \
+  --object-restore-receipt /secure/private-backups/object-restore-receipt.json \
   --base-evidence /secure/day2/temporal-recovery.json \
   --output /secure/day2/restore-evidence.json
 ```
@@ -249,8 +253,17 @@ than the one-document Day 2 smoke. If those are not present on the approved
 release, report the restart drill **blocked**, do not silently call it a
 document-only test. For backup, recover/export any retained original DB
 **before** adding a probe. The restore script rejects the original source
-database or original object storage as its target. It needs both actual
-backup and restore references; merely running commands does not count.
+database or original object storage as its target. **Four independent
+private artifact paths are now mandatory**: verified PostgreSQL archive JSON,
+its exact hashed dump bytes, the complete private-object archive directory,
+and the independent object restore receipt. The restore gate compares the
+source archive's per-table counts/digests against a read-only repeatable-read
+inventory of the isolated PostgreSQL target, rehashes every private source
+object byte, checks the isolated object inventory and probe object, and binds
+source/target resource fingerprints. Free-text backup/restore reference labels
+alone are not proof. Older legacy receipts must be rerun, not edited to pass.
+Review hosted operator events and privileges independently; even an
+`archive_integrity` receipt alone does not establish live D02.T09/G04 PASS.
 
 ## Required same-run restart and outbox evidence
 

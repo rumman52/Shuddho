@@ -64,11 +64,21 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --backup-reference postgres-snapshot-123/object-backup-456 \
   --restore-reference isolated-restore-run-789 \
   --rollout /secure/release/cohort-rollout.json \
+  --postgres-verification /secure/private-backups/source-db/verification.json \
+  --postgres-archive /secure/private-backups/source-db/coworker.dump \
+  --object-archive-directory /secure/private-backups/staging-source-objects \
+  --object-restore-receipt /secure/private-backups/object-restore-receipt.json \
   --base-evidence /secure/path/staging-evidence.json \
   --output /secure/path/staging-evidence.restore.json
 ```
 
-This legacy synthetic-probe gate checks **one selected private object and account/task**. Its non-empty free-text backup and restore references are not authenticated evidence of a full archive or its independent restore. Require the private receipts from `staging_postgres_backup` and `staging_object_backup` as separate operator evidence before marking D02.T09 or D02.G04 complete.\n\nThe gate becomes `passed` only if:
+The verifier now **rejects free-text-only evidence**: nonempty backup/restore references remain trace IDs, but four mandatory protected file paths supply the real verified PostgreSQL dump and readback, entire private-object byte archive and isolated object restore receipt. The PostgreSQL source archive must attest the same database fingerprint captured in the prepare state; its dump SHA-256 and 84+ per-table row counts/digests must be valid. The verifier runs a new read-only, repeatable-read inventory on the isolated PostgreSQL target and requires exact schema, revision, table and row-digest equality. It rehashes every archived object, matches the complete isolated object restore receipt, and proves the selected probe object occurs in that full manifest. The source and restored database/object resource fingerprints must differ.
+
+The resulting `archive_integrity` object contains only hashed source/target identities, counts, revisions and archive SHA-256 values; no object keys, credentials or document bytes are returned. The acceptance reconciler requires it alongside the original `backup_restore` stage. Existing legacy `backup_restore` receipts lacking this structure must be rerun, not edited to look current.
+
+**Important:** independently review the actual native PostgreSQL archive/restore output, object restore operator actions, approved custody, owner A/B API denial and matching release identity; these structured receipts establish mutual consistency, not cryptographic authentication of the cloud operator or live hosted Day 2 PASS. Do not execute these managed operations without fresh Founder/C authorization.
+
+The gate becomes `passed` only if:
 
 - the restored account and workspace exist;
 - the source document/version exists and is still uploaded;
