@@ -431,6 +431,8 @@ def candidate_outputs_for_manifest(value, manifest_digest="a" * 64):
             "time_limit_seconds": value["time_limit_seconds"],
             "run_id": "agent-run-" + task["case_id"],
             "source_refs": refs,
+            "attempt_started_at": "2026-11-12T00:01:00Z",
+            "attempt_finished_at": "2026-11-12T00:02:00Z",
             "telemetry": {"tokens": 100, "latency_ms": 500, "cost_microusd": 10},
         })
     return result
