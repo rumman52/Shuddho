@@ -37,17 +37,17 @@
 - Consumes: `audit_governance(branch: dict, rulesets: list[dict]) -> int`, `GovernanceAuditError`, `approved_ruleset()`.
 - Produces: No public API changes.
 
-- [ ] **Step 1: Add test cases** for duplicate valid row, extra untrusted/missing publisher, malformed/blank row, and unexpected status-check keys. Add a positive unique-extra first-party check.
-- [ ] **Step 2: Run full repository `test-and-build` CI on the test-only commit** and capture the actual failures as RED. Failures must be `DID NOT RAISE GovernanceAuditError`, not collection or environment faults.
-- [ ] **Step 3: Record exact test-only SHA and failing CI run**.
+- [x] **Step 1: Add test cases** for duplicate valid row, extra untrusted/missing publisher, malformed/blank row, and unexpected status-check keys. Add a positive unique-extra first-party check.
+- [x] **Step 2: Run full repository `test-and-build` CI on the test-only commit** and capture the actual failures as RED. Failures must be `DID NOT RAISE GovernanceAuditError`, not collection or environment faults.
+- [x] **Step 3: Record exact test-only SHA and failing CI run**.
 
 ### Task 2: Minimal fix and GREEN
 
 **Files:**
 - Modify: `scripts/main_protection_audit.py`.
 
-- [ ] **Step 1: Validate `required_status_checks` is a list of unique, nonblank string contexts with exact GitHub Actions integration ID `15368`, and no unknown fields.
-- [ ] **Step 2: Assert `CHECKS.issubset(seen_contexts)` instead of counting matches; do not change the broader approval, bypass, branch or strictness logic.
+- [x] **Step 1: Validate `required_status_checks` is a list of unique, nonblank string contexts with exact GitHub Actions integration ID `15368`, and no unknown fields.
+- [x] **Step 2: Assert `CHECKS.issubset(seen_contexts)` instead of counting matches; do not change the broader approval, bypass, branch or strictness logic.
 - [ ] **Step 3: Verify focused command** `uv run --locked --extra coworker pytest -q tests/test_main_protection_audit.py tests/test_day1_ruleset_drift.py tests/test_reconcile_main_ruleset.py`.
 - [ ] **Step 4: Verify final-head CI**, recording test-and-build, Coworker, PostgreSQL, frontend, browser and merge gate separately; never convert `SKIPPED` to `SUCCESS`.
 
@@ -57,7 +57,15 @@
 - Create: `docs/coworker-roadmap/DAY1_STATUS_ROW_AUDIT_2026-11-21.md`.
 - Modify: `docs/coworker-roadmap/PROGRESS.md`.
 
-- [ ] **Step 1: Record red/green evidence and current exact head/base and risk boundaries**.
-- [ ] **Step 2: Open a reviewable draft PR, link current CI and the owner blockers on Linear MD-5**.
+- [x] **Step 1: Record red/green evidence and current exact head/base and risk boundaries**.
+- [x] **Step 2: Open a reviewable draft PR, link current CI and the owner blockers on Linear MD-5**.
 
 **Release:** **SOURCE_ONLY / NO-GO** until privileged App admin explicitly proves actual native merge restrictions, staging restore/runtime identity, independent evaluation custody and the Founder+Owner C approvals.
+
+
+### Verified TDD checkpoint (21 November 2026)
+
+- Base `4b6c747475aa881c979d0eabf52f415fe6100b3d`; test-only `f44c59d2b7b812c33167b882d0c8096e6d56cc12`.
+- [RED GitHub Actions #44790402009](https://github.com/rumman52/Shuddho/actions/runs/44790402009), `test-and-build`: 8 targeted `DID NOT RAISE GovernanceAuditError` failures, 2,858 pass, 103 skip, 6 warnings.
+- Minimal source correction at `5e5793b986e88ab1afdbbce83bd6c1e8bce24d17` validates all native status rows, context uniqueness and exact publisher. No live ruleset write.
+- [Draft PR #838](https://github.com/rumman52/Shuddho/pull/838); final-head GREEN job results are not established by this RED run. Exact-head CI check: https://github.com/rumman52/Shuddho/pull/838/checks.
