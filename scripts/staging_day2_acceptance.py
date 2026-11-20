@@ -289,7 +289,7 @@ def validate_evidence(
     if integrity.get("status") != "verified" or integrity.get("probe_object_verified") is not True:
         raise Day2AcceptanceFailure("Restored source archive and synthetic probe must have verified receipts.")
     for field in (
-        "postgres_archive_sha256", "object_manifest_sha256",
+        "postgres_archive_sha256", "postgres_schema_sha256", "object_manifest_sha256",
         "source_database_fingerprint", "target_database_fingerprint",
         "source_storage_fingerprint", "target_storage_fingerprint",
     ):
