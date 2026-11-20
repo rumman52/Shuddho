@@ -1190,3 +1190,37 @@ def test_adjudication_must_follow_original_recorded_blind_reviews():
     }]
     with pytest.raises(EvidenceError, match="adjudication timestamp"):
         score_reviews(cases, reviews, adjudication, checks)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda row: row.pop("attempt_started_at", None),
+    lambda row: row.pop("attempt_finished_at", None),
+    lambda row: row.update(attempt_started_at="2026-11-12T00:03:00Z",
+                           attempt_finished_at="2026-11-12T00:02:00Z"),
+    lambda row: row.update(attempt_started_at="2026-11-11T23:59:00Z"),
+])
+def test_successful_first_attempt_requires_complete_ordered_post_manifest_times(mutation):
+    value = manifest()
+    candidates = candidate_outputs_for_manifest(value)
+    mutation(candidates[0])
+    with pytest.raises(EvidenceError, match="attempt timestamps"):
+        candidate_ledger(tasks(), candidates, manifest_sha256="a" * 64, manifest=value)
+
+
+def test_blind_reviews_cannot_predate_original_attempt_finish():
+    value = manifest()
+    hashes, usage = candidate_ledger(
+        tasks(), candidate_outputs_for_manifest(value),
+        manifest_sha256="a" * 64, manifest=value,
+    )
+    reviews, checks = reviews_and_checks()
+    for row in checks:
+        row["output_sha256"] = hashes[row["case_id"]]
+    for row in reviews:
+        row["output_sha256"] = hashes[row["case_id"]]
+    reviews[0]["reviewed_at"] = "2026-11-12T00:01:00Z"
+    with pytest.raises(EvidenceError, match="review.*attempt"):
+        score_reviews(
+            tasks(), reviews, [], checks, output_hashes=hashes,
+            case_run_receipts=usage["case_run_receipts"],
+        )
