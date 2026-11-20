@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import file_digest, sha256
 import os
+import re
 from pathlib import Path
 import shlex
 import signal
@@ -327,7 +328,7 @@ def run_backup(url: str, directory: Path, pg_bin: Path | None = None) -> dict:
     archive = directory / "coworker.dump"
     try:
         source, source_database_fingerprint = dump_source(url, partial, pg_bin)
-        if not isinstance(source_database_fingerprint, str) or not __import__("re").fullmatch(
+        if not isinstance(source_database_fingerprint, str) or not re.fullmatch(
             r"[a-f0-9]{64}", source_database_fingerprint
         ):
             raise BackupError("The archive source database fingerprint is unavailable.")
