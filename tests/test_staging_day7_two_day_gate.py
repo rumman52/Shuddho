@@ -357,7 +357,7 @@ def test_two_day_gate_does_not_qualify_pause_acknowledgement_alone():
     "new_run", "new_notification", "resumed", "wrong_applied_revision",
     "wrong_case", "missing_history_baseline", "removed_first_occurrence",
     "wrong_overlap", "missing_catchup_bound", "pause_after_opportunity",
-    "expiry_before_opportunity",
+    "expiry_before_opportunity", "expiry_inside_catchup",
 ])
 def test_two_day_gate_rejects_unproven_paused_opportunity(defect):
     first, second, paused = valid_pair()
@@ -393,6 +393,9 @@ def test_two_day_gate_rejects_unproven_paused_opportunity(defect):
     elif defect == "expiry_before_opportunity":
         for item in (first, second, paused):
             item["expires_at"] = "2026-11-14T01:59:00+00:00"
+    elif defect == "expiry_inside_catchup":
+        for item in (first, second, paused):
+            item["expires_at"] = "2026-11-14T02:30:00+00:00"
     with pytest.raises(GateFailure):
         verify_two_day(first, second, paused)
 
