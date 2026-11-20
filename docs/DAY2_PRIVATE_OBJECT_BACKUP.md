@@ -39,7 +39,7 @@ or GitHub. The required nonsecret settings include:
 
 ```bash
 SHUDDHO_COWORKER_ENV=staging
-SHUDDHO_COWORKER_STORAGE_BACKEND=s3
+SHUDDHO_COWORKER_STORAGE=s3
 SHUDDHO_COWORKER_BUCKET=shuddho-coworker-staging
 SHUDDHO_COWORKER_S3_ENDPOINT=https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3
 AWS_DEFAULT_REGION=us-west-1
