@@ -304,6 +304,28 @@ def test_day6_quality_fails_when_two_of_ten_cases_in_one_cell_fail():
         validate(args)
 
 
+def test_day3_direct_chat_allows_existing_owner_runs_with_zero_new_effects():
+    args = evidence()
+    args[1].update({
+        "agent_runs_before": 3, "agent_runs_after": 3,
+        "agent_outbox_before": 7, "agent_outbox_after": 7,
+    })
+    # Direct chat has no NEW AgentRun or outbox effects; old work may exist.
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+@pytest.mark.parametrize("field", ["agent_runs_after", "agent_outbox_after"])
+def test_day3_preexisting_counts_still_deny_new_chat_side_effects(field):
+    args = evidence()
+    args[1].update({
+        "agent_runs_before": 3, "agent_runs_after": 3,
+        "agent_outbox_before": 7, "agent_outbox_after": 7,
+    })
+    args[1][field] += 1
+    with pytest.raises(gate.Days36EvidenceError, match="day3"):
+        validate(args)
+
+
 def test_counts_reject_bools_and_noncanonical_hashes():
     args = evidence()
     args[1]["agent_runs_after"] = False
