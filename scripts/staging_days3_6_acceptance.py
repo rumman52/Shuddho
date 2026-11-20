@@ -122,8 +122,11 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
     count(rev.get("persisted_stale_answers"), "day3.revocation.persisted_stale_answers", 0)
     need(rev.get("source_revoked") is True and rev["provider_request_id"] not in providers,
          "day3 needs a distinct revoked provider request")
-    for key in ("agent_runs_before", "agent_runs_after", "agent_outbox_before", "agent_outbox_after"):
-        count(day.get(key), "day3." + key, 0)
+    # The owner may already have task history. Direct chat is read-only with
+    # respect to AgentRun and dispatch, so require *zero delta*, not zero history.
+    for prefix in ("agent_runs", "agent_outbox"):
+        before = count(day.get(prefix + "_before"), "day3." + prefix + "_before")
+        count(day.get(prefix + "_after"), "day3." + prefix + "_after", before)
     return completed
 
 
