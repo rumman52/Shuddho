@@ -209,6 +209,31 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      # Default Python tests omit the coworker PDF dependency. Require the
+      # exact Day 2 acceptance contracts to run with pypdf and zero skips.
+      - name: Qualify Day 2 private PDF fidelity and recovery contracts without skips
+        run: |
+          uv run --extra coworker pytest \
+            tests/test_staging_day2_execution.py \
+            tests/test_staging_day2_acceptance.py \
+            tests/test_staging_migration_alignment.py \
+            tests/test_staging_backup_restore.py \
+            -q -rs --junitxml=/tmp/day2-private-staging.xml
+          for module in \
+            tests.test_staging_day2_execution \
+            tests.test_staging_day2_acceptance \
+            tests.test_staging_migration_alignment \
+            tests.test_staging_backup_restore; do
+            uv run --extra coworker python -m scripts.mandatory_test_gate \
+              /tmp/day2-private-staging.xml --required-module "$module"
+          done
+      - name: Preserve Day 2 source-level acceptance regressions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day2-private-staging-regressions
+          path: /tmp/day2-private-staging.xml
+          if-no-files-found: warn
       # This module is skipped by the default dependency set; require its Day 6
       # export-boundary regressions to collect and run with the coworker extra.
       - name: Qualify Day 6 export-manifest rejection boundaries without skips
@@ -291,7 +316,15 @@ jobs:
           if-no-files-found: warn
       - name: Verify Day 8 economics comparisons and telemetry without skips
         run: |
-          uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_day8_telemetry_privacy.py tests/test_task_economics_evidence.py tests/test_staging_day7_two_day_gate.py tests/test_staging_pa10_scheduled_profile.py tests/test_automations.py::test_briefing_occurrence_emits_one_completion_notification_only tests/test_automations.py::test_occurrence_dedupes_to_one_bounded_run_and_one_notification tests/test_day8_telemetry_ci_gate.py -q -rs --junitxml=/tmp/day8-economics.xml
+          uv run --extra coworker pytest tests/test_core_agent_observability.py tests/test_day8_telemetry_privacy.py \
+            tests/test_task_economics_evidence.py \
+            tests/test_staging_day7_two_day_gate.py \
+            tests/test_staging_pa10_scheduled_profile.py \
+            tests/test_automations.py::test_briefing_occurrence_emits_one_completion_notification_only \
+            tests/test_automations.py::test_legacy_briefing_started_notice_is_not_mislabeled_as_completion \
+            tests/test_automations.py::test_occurrence_dedupes_to_one_bounded_run_and_one_notification \
+            tests/test_day8_telemetry_ci_gate.py \
+            -q -rs --junitxml=/tmp/day8-economics.xml
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_core_agent_observability
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_day8_telemetry_privacy
           uv run --extra coworker python -m scripts.mandatory_test_gate /tmp/day8-economics.xml --required-module tests.test_task_economics_evidence

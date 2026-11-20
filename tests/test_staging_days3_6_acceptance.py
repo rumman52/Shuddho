@@ -304,6 +304,28 @@ def test_day6_quality_fails_when_two_of_ten_cases_in_one_cell_fail():
         validate(args)
 
 
+def test_day3_direct_chat_allows_existing_owner_runs_with_zero_new_effects():
+    args = evidence()
+    args[1].update({
+        "agent_runs_before": 3, "agent_runs_after": 3,
+        "agent_outbox_before": 7, "agent_outbox_after": 7,
+    })
+    # Direct chat has no NEW AgentRun or outbox effects; old work may exist.
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+@pytest.mark.parametrize("field", ["agent_runs_after", "agent_outbox_after"])
+def test_day3_preexisting_counts_still_deny_new_chat_side_effects(field):
+    args = evidence()
+    args[1].update({
+        "agent_runs_before": 3, "agent_runs_after": 3,
+        "agent_outbox_before": 7, "agent_outbox_after": 7,
+    })
+    args[1][field] += 1
+    with pytest.raises(gate.Days36EvidenceError, match="day3"):
+        validate(args)
+
+
 def test_counts_reject_bools_and_noncanonical_hashes():
     args = evidence()
     args[1]["agent_runs_after"] = False
@@ -323,4 +345,24 @@ def test_timestamp_requires_timezone_and_attestation_after_all_days():
     args = evidence()
     args[5]["reviewed_at"] = "2026-11-18T06:00:00Z"
     with pytest.raises(gate.Days36EvidenceError, match="predates"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("first", "second", "extension"), [
+    (0, 1, "docx"),  # Same workflow, different output language.
+    (0, 2, "pdf"),   # Same language, different workflow.
+    (1, 3, "docx"),  # Cross-language and cross-workflow.
+])
+def test_day6_cannot_reuse_native_artifact_identity_across_cases(first, second, extension):
+    args = evidence()
+    files1 = args[4]["cases"][first]["native_files"]
+    files2 = args[4]["cases"][second]["native_files"]
+    source = next(item for item in files1 if item["extension"] == extension)
+    copy = next(item for item in files2 if item["extension"] == extension)
+    # Different bytes and independently named receipts cannot turn one stored
+    # artifact identity into two independently generated user deliverables.
+    copy["artifact_id"] = source["artifact_id"]
+    copy["sha256"] = D4
+    assert copy["download_receipt_ref"] != source["download_receipt_ref"]
+    with pytest.raises(gate.Days36EvidenceError, match="reused across"):
         validate(args)

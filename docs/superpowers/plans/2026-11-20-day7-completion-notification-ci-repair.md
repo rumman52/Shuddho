@@ -3,7 +3,7 @@
 **Date:** 2026-11-20  
 **Issue:** #733 (D07.T05/T06/T09), #734 (D08.G01)  
 **Repository baseline:** `main` @ `193aa4939c3d4258c34c45402d79a37936b149b1`  
-**Related work:** merged PR #803, open PR #809
+**Related work:** merged PR #803, subsequently merged PR #809
 
 ## Goal
 
@@ -27,4 +27,11 @@ Restore the CI acceptance tests for the existing one-notification briefing contr
 
 ## Non-goals and release gates
 
-These are *controlled local tests*, **not** two natural Temporal firings. They do not satisfy the Day 7 operated evidence, the Day 8 80 paid first-run experiments, independent review, privacy sign-off or freeze requirements. PR #809 is already fixing Day 8 first-run/rerun cost accounting, so this PR must not duplicate it.
+These are *controlled local tests*, **not** two natural Temporal firings. They do not satisfy the Day 7 operated evidence, the Day 8 80 paid first-run experiments, independent review, privacy sign-off or freeze requirements. merged PR #809 already fixed Day 8 first-run/rerun cost accounting, so this PR must not duplicate it.
+
+## Merge reconciliation after #809 and later main changes
+
+- This PR's own branch was updated with `main` at `db9b5b7644e7fff5fd19c2137933e23222ec1705`, preserving new main's Day 8 evaluator, production fixes, unrelated tests and CI gates.
+- Retained both PR-specific completion-only acceptance tests, stronger first/second occurrence idempotency checks, controlled quiet-hours visibility tests, and main's separate quiet-hours helper assertion.
+- Previous CI run `44701431337` passed source, Coworker, frontend, browser, PostgreSQL and ancestry jobs; `ci-merge-gate` failed exclusively due to missing independent maintainer approval on the original PR head. A new exact-head CI run is required after the merge reconciliation.
+- All evidence remains source-only, with no natural Temporal firing, provider-cost qualification, reviewer approval, pilot admission or production deployment claimed.
