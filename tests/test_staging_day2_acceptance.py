@@ -141,6 +141,7 @@ def test_valid_proofs_are_consistent_without_claiming_platform_verification():
     result = check(*proof_set)
     assert result['status'] == 'evidence_consistent'
     assert result['source_revision'] == SHA
+    assert proof_set[3]['archive_integrity']['postgres_schema_sha256'] == 'd' * 64
     assert result['rollout_manifest_sha256'] == proof_set[0]['release']['rollout_manifest_sha256']
     assert result['task_id'] == 'task-a'
     assert result['artifact_sha256'] == '2' * 64
