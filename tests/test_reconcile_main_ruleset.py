@@ -343,3 +343,43 @@ def test_already_compliant_ruleset_rejects_ambiguous_native_status_checks(api, a
     with pytest.raises(ApplyMainRulesetError, match="additional required status checks"):
         call()
     assert api["writes"] == []
+
+
+
+@pytest.mark.parametrize("publisher", [
+    98765, 0, "15368", 15368.0, True,
+])
+def test_unreviewed_existing_check_publisher_requires_manual_reconciliation(api, publisher):
+    """A native context's explicit third-party or malformed publisher cannot be overwritten."""
+    api["current"]["rules"].append({
+        "type": "required_status_checks",
+        "parameters": {
+            "strict_required_status_checks_policy": True,
+            "do_not_enforce_on_create": False,
+            "required_status_checks": [
+                {"context": "coworker", "integration_id": publisher},
+            ],
+        },
+    })
+    with pytest.raises(ApplyMainRulesetError, match="publisher"):
+        call()
+    assert api["writes"] == []
+
+
+@pytest.mark.parametrize("publisher", [None, 15368])
+def test_known_null_or_reviewed_check_publisher_can_be_reconciled(api, publisher):
+    """Unscoped/pinned entries may be reviewed, without any mutation during a dry-run."""
+    api["current"]["rules"].append({
+        "type": "required_status_checks",
+        "parameters": {
+            "strict_required_status_checks_policy": False,
+            "do_not_enforce_on_create": False,
+            "required_status_checks": [
+                {"context": "coworker", "integration_id": publisher},
+            ],
+        },
+    })
+    report = call()
+    assert report["status"] == "dry_run"
+    assert report["required_checks"] == ["test-and-build", "coworker", "ci-merge-gate"]
+    assert api["writes"] == []
