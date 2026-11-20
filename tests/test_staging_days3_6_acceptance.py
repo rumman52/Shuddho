@@ -209,6 +209,12 @@ def evidence():
                 "native_files": [{
                     "artifact_id": f"{key}-{ext}",
                     "extension": ext, "sha256": D5, "byte_size": 512,
+                    "manifest_sha256": D5, "object_store_sha256": D5,
+                    "owner_download_sha256": D5, "object_store_byte_size": 512,
+                    "owner_download_byte_size": 512, "owner_a_http_status": 200,
+                    "storage_object_ref": f"private-object-{key}-{ext}",
+                    "manifest_receipt_ref": f"manifest-readback-{key}-{ext}",
+                    "object_store_receipt_ref": f"storage-readback-{key}-{ext}",
                     "mime": {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                              "pdf": "application/pdf"}[ext],
                     "owner_a_opened": True, "owner_a_hash_verified": True,
@@ -251,6 +257,19 @@ def evidence():
             "browser_reconnected_at": "2026-11-18T06:10:00Z",
             "run_finished_at": "2026-11-18T06:20:00Z",
             "additional_agent_runs": 0, "additional_outbox_effects": 0,
+            "artifacts_before": [
+                {"artifact_id": "research-bn-docx", "sha256": D5}
+            ],
+            "artifacts_after": [
+                {"artifact_id": f"research-bn-{extension}", "sha256": D5}
+                for extension in ("docx", "pdf")
+            ],
+            "run_agent_effects_before": 1, "run_agent_effects_after": 1,
+            "run_outbox_effects_before": 1, "run_outbox_effects_after": 1,
+            "before_snapshot_at": "2026-11-18T05:30:00Z",
+            "after_snapshot_at": "2026-11-18T06:30:00Z",
+            "before_snapshot_receipt_ref": "pre-reconnect-operator-readback",
+            "after_snapshot_receipt_ref": "post-reconnect-operator-readback",
         },
         "provider_send_audit": {
             "before": 0, "after": 0,
@@ -663,3 +682,100 @@ def test_day5_rejects_foreign_memory_fact_context_or_private_output_access(owner
     args[3]["owner_access"][owner][field] = invalid
     with pytest.raises(gate.Days36EvidenceError, match="day5"):
         validate(args)
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("manifest_sha256", D4),
+    ("object_store_sha256", D4),
+    ("owner_download_sha256", D4),
+    ("manifest_sha256", "not-sha256"),
+    ("object_store_byte_size", 513),
+    ("owner_download_byte_size", 0),
+    ("owner_download_byte_size", 513),
+    ("owner_a_http_status", 403),
+    ("storage_object_ref", ""),
+    ("manifest_receipt_ref", ""),
+    ("object_store_receipt_ref", ""),
+])
+def test_day6_rejects_native_file_that_is_not_byte_identical_across_readbacks(field, invalid):
+    args = evidence()
+    args[4]["cases"][0]["native_files"][0][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "manifest_sha256", "object_store_sha256", "owner_download_sha256",
+    "object_store_byte_size", "owner_download_byte_size",
+    "owner_a_http_status", "storage_object_ref",
+    "manifest_receipt_ref", "object_store_receipt_ref",
+])
+def test_day6_rejects_missing_native_storage_manifest_or_owner_readback(field):
+    args = evidence()
+    del args[4]["cases"][1]["native_files"][1][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+def test_day6_rejects_reused_private_object_key_across_language_cases():
+    args = evidence()
+    files = [row["native_files"] for row in args[4]["cases"]]
+    files[2][1]["storage_object_ref"] = files[0][0]["storage_object_ref"]
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("artifacts_after", []),
+    ("artifacts_after", [
+        {"artifact_id": "research-bn-docx", "sha256": D5},
+        {"artifact_id": "research-bn-docx", "sha256": D5},
+    ]),
+    ("artifacts_after", [
+        {"artifact_id": "research-bn-docx", "sha256": D5},
+        {"artifact_id": "research-bn-pdf", "sha256": D4},
+    ]),
+    ("artifacts_after", [
+        {"artifact_id": "research-bn-docx", "sha256": D5},
+        {"artifact_id": "report_email-bn-pdf", "sha256": D5},
+    ]),
+    ("artifacts_before", [
+        {"artifact_id": "report_email-bn-docx", "sha256": D5},
+    ]),
+    ("artifacts_before", [
+        {"artifact_id": "research-bn-docx", "sha256": D4},
+    ]),
+    ("run_agent_effects_before", 0),
+    ("run_agent_effects_after", 2),
+    ("run_outbox_effects_before", 2),
+    ("run_outbox_effects_after", 0),
+    ("before_snapshot_at", "2026-11-18T05:50:00Z"),
+    ("after_snapshot_at", "2026-11-18T06:15:00Z"),
+    ("before_snapshot_receipt_ref", ""),
+    ("after_snapshot_receipt_ref", ""),
+])
+def test_day6_rejects_recovery_that_loses_or_mutates_artifacts_or_effect_identity(field, invalid):
+    args = evidence()
+    args[4]["reconnect"][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "artifacts_before", "artifacts_after",
+    "run_agent_effects_before", "run_agent_effects_after",
+    "run_outbox_effects_before", "run_outbox_effects_after",
+    "before_snapshot_at", "after_snapshot_at",
+    "before_snapshot_receipt_ref", "after_snapshot_receipt_ref",
+])
+def test_day6_requires_operated_pre_post_recovery_readback(field):
+    args = evidence()
+    del args[4]["reconnect"][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+def test_day6_can_have_no_artifacts_before_worker_restart_but_exact_expected_set_after():
+    args = evidence()
+    args[4]["reconnect"]["artifacts_before"] = []
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
