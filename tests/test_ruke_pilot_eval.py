@@ -922,3 +922,103 @@ def test_pilot_strict_json_retains_valid_bangla_and_boolean_data():
     assert strict_json_loads('{"ভাষা": "বাংলা", "security_passed": true}') == {
         "ভাষা": "বাংলা", "security_passed": True,
     }
+
+
+def _day9_synthetic_failed_attempt(value, *, status="timed_out"):
+    """Synthetic first attempt with no draft, but a distinct release-bound trace."""
+    rows = candidate_outputs_for_manifest(value)
+    row = rows[0]
+    row.update({
+        "attempt_status": status,
+        "output": None,
+        "source_refs": [],
+        "failure_code": "provider_timeout" if status == "timed_out" else "provider_error",
+        "trace_sha256": "9" * 64,
+        "attempt_started_at": "2026-11-12T00:00:00Z",
+        "attempt_finished_at": "2026-11-12T00:01:00Z",
+    })
+    return rows
+
+
+@pytest.mark.parametrize("status", ["failed", "timed_out"])
+def test_day9_failed_first_attempt_is_preserved_in_all_forty_and_cannot_be_accepted(status):
+    value = manifest()
+    rows = _day9_synthetic_failed_attempt(value, status=status)
+    hashes, usage = candidate_ledger(tasks(), rows, manifest_sha256="a" * 64, manifest=value)
+    failed_case_id = rows[0]["case_id"]
+    assert len(hashes) == len(usage["case_run_receipts"]) == 40
+    assert usage["failed_case_ids"] == [failed_case_id]
+    receipt = next(item for item in usage["case_run_receipts"] if item["case_id"] == failed_case_id)
+    assert receipt["attempt_status"] == status
+    assert receipt["evidence_kind"] == "failure_record"
+    assert receipt["output_present"] is False
+    assert receipt["failure_trace_sha256"] == "9" * 64
+    assert receipt["output_sha256"] == hashes[failed_case_id]
+
+    reviews, checks = reviews_and_checks()
+    for check in checks:
+        check["output_sha256"] = hashes[check["case_id"]]
+    checks[0]["passed"] = False
+    scored = score_reviews(
+        tasks(), reviews, [], checks, output_hashes=hashes,
+        failed_case_ids=set(usage["failed_case_ids"]),
+    )
+    assert len(scored["results"]) == 40
+    assert scored["accepted"] == 39
+    assert scored["results"][0]["accepted"] is False
+    assert scored["by_cell"]["research_brief/bn"]["accepted"] == 9
+    assert scored["outcome_gate_pass"]  # A single honest failure stays in the denominator.
+    # A false success attestation must never turn the missing output into a pass.
+    checks[0]["passed"] = True
+    with pytest.raises(EvidenceError, match="failed first attempt.*deterministic"):
+        score_reviews(
+            tasks(), reviews, [], checks, output_hashes=hashes,
+            failed_case_ids=set(usage["failed_case_ids"]),
+        )
+
+
+@pytest.mark.parametrize(("mutation", "match"), [
+    ("missing_trace", "trace"),
+    ("non_hex_trace", "trace"),
+    ("missing_code", "failure code"),
+    ("forged_output", "no draft"),
+    ("stale_refs", "source refs"),
+    ("inverted_timestamps", "timestamps"),
+    ("missing_timestamp", "timestamps"),
+    ("unknown_status", "attempt status"),
+])
+def test_day9_first_attempt_failure_evidence_fails_closed_on_ambiguous_rows(mutation, match):
+    value = manifest()
+    rows = _day9_synthetic_failed_attempt(value)
+    failed = rows[0]
+    if mutation == "missing_trace":
+        failed.pop("trace_sha256")
+    elif mutation == "non_hex_trace":
+        failed["trace_sha256"] = "not-a-digest"
+    elif mutation == "missing_code":
+        failed["failure_code"] = ""
+    elif mutation == "forged_output":
+        failed["output"] = candidate_outputs_for_manifest(value)[0]["output"]
+    elif mutation == "stale_refs":
+        failed["source_refs"] = ["web-1"]
+    elif mutation == "inverted_timestamps":
+        failed["attempt_finished_at"] = "2026-11-11T23:59:00Z"
+    elif mutation == "missing_timestamp":
+        failed.pop("attempt_started_at")
+    else:
+        failed["attempt_status"] = "pretend_success"
+    with pytest.raises(EvidenceError, match=match):
+        candidate_ledger(tasks(), rows, manifest_sha256="a" * 64, manifest=value)
+
+
+def test_day9_first_attempt_failure_record_is_bound_to_unique_run_and_trace():
+    value = manifest()
+    rows = _day9_synthetic_failed_attempt(value)
+    first_hashes, _ = candidate_ledger(tasks(), rows, manifest_sha256="a" * 64, manifest=value)
+    changed = deepcopy(rows)
+    changed[0]["trace_sha256"] = "8" * 64
+    changed_hashes, _ = candidate_ledger(tasks(), changed, manifest_sha256="a" * 64, manifest=value)
+    assert first_hashes[rows[0]["case_id"]] != changed_hashes[rows[0]["case_id"]]
+    changed[0]["run_id"] = changed[1]["run_id"]
+    with pytest.raises(EvidenceError, match="run IDs"):
+        candidate_ledger(tasks(), changed, manifest_sha256="a" * 64, manifest=value)
