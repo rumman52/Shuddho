@@ -90,7 +90,13 @@ def _has_required_rules(rule: dict) -> bool:
         )
 
     def valid_checks(p):
-        if not isinstance(p, dict) or p.get("strict_required_status_checks_policy") is not True:
+        if (
+            not isinstance(p, dict)
+            or p.get("strict_required_status_checks_policy") is not True
+            or p.get("do_not_enforce_on_create") is not False
+        ):
+            # A missing or truthy native exemption is not proof that required
+            # status checks also apply when a matching ref is first created.
             return False
         required = p.get("required_status_checks")
         if not isinstance(required, list):
