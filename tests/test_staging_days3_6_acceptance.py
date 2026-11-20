@@ -390,3 +390,39 @@ def test_day6_rejects_duplicate_research_evidence_within_each_language(language,
     assert duplicate["title"] != original["title"]
     with pytest.raises(gate.Days36EvidenceError, match="independent"):
         validate(args)
+
+
+@pytest.mark.parametrize("language", ["bn", "en"])
+@pytest.mark.parametrize("url", [
+    "https://172.17.0.1/report",        # RFC1918 range missed by prefix checks
+    "https://169.254.169.254/report",   # link-local / metadata address
+    "https://100.64.0.1/report",       # shared address space, not public
+    "https://127.1/report",            # noncanonical IPv4 loopback notation
+    "https://0177.0.0.1/report",       # noncanonical numeric IPv4 notation
+    "https://localhost./report",      # trailing dot bypasses exact-name check
+    "https://service.local/report",   # local DNS suffix
+    "https://[::1]/report",           # IPv6 loopback
+    "https://[fc00::1]/report",       # IPv6 unique-local
+    "https://[fe80::1]/report",       # IPv6 link-local
+])
+def test_day6_rejects_private_or_nonpublic_research_url(language, url):
+    args = evidence()
+    research = next(row for row in args[4]["cases"]
+                    if row["workflow"] == "research" and row["language"] == language)
+    research["citations"][0]["url"] = url
+    with pytest.raises(gate.Days36EvidenceError, match="public HTTPS"):
+        validate(args)
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.org/study-1",   # ordinary approved DNS URL
+    "https://1.1.1.1/study-1",       # globally routable IPv4 literal
+    "https://[2001:4860:4860::8888]/study-1",  # globally routable IPv6
+])
+def test_day6_public_https_source_urls_remain_structurally_valid(url):
+    args = evidence()
+    research = next(row for row in args[4]["cases"]
+                    if row["workflow"] == "research" and row["language"] == "bn")
+    research["citations"][0]["url"] = url
+    # Structural acceptance is NOT evidence of a genuine hosted retrieval.
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
