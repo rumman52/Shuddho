@@ -201,7 +201,10 @@ def test_complete_rejects_provenance_snapshot_changed_after_valid_native_export(
         if phase == "draft" and checkpoint is not None:
             draft_reads += 1
             if draft_reads == 2:
-                return {**checkpoint, "sources": []}
+                # Keep trusted IDs intact: the existing reference-set check
+                # must pass so the source hash mismatch reaches readback.
+                altered = [{**source, "sha256": "0" * 64} for source in checkpoint["sources"]]
+                return {**checkpoint, "sources": altered}
         return checkpoint
 
     monkeypatch.setattr(container.repository, "step", changed_draft_snapshot)
