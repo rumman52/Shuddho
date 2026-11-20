@@ -21,6 +21,7 @@ from services.coworker.storage import S3ObjectStore, make_storage, validate_key
 
 SCHEMA_VERSION = 1
 MAX_OBJECT_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_BYTES = 256 * 1024 * 1024
 MAX_OBJECTS = 10_000
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -58,6 +59,7 @@ def _inventory(store) -> list[dict]:
         raise ObjectArchiveError("Private object inventory exceeds the allowed count or is malformed.")
     rows = []
     seen: set[str] = set()
+    total_bytes = 0
     for item in items:
         try:
             key = validate_key(item.key)
@@ -72,6 +74,9 @@ def _inventory(store) -> list[dict]:
         if not isinstance(modified, datetime) or modified.tzinfo is None:
             raise ObjectArchiveError("Private object inventory has no timezone-aware modification time.")
         seen.add(key)
+        total_bytes += size
+        if total_bytes > MAX_TOTAL_BYTES:
+            raise ObjectArchiveError("Private object inventory total exceeds the allowed archive size.")
         rows.append({
             "key": key,
             "byte_size": size,
@@ -213,9 +218,13 @@ def _manifest(directory: Path) -> tuple[dict, list[tuple[dict, bytes]], str]:
     if (not isinstance(rows, list) or not 0 < len(rows) <= MAX_OBJECTS
             or type(manifest["object_count"]) is not int
             or manifest["object_count"] != len(rows)
-            or type(manifest["total_bytes"]) is not int):
+            or type(manifest["total_bytes"]) is not int
+            or not 0 <= manifest["total_bytes"] <= MAX_TOTAL_BYTES):
         raise ObjectArchiveError("Source object manifest has invalid object totals.")
 
+    objects_root = directory / "objects"
+    if objects_root.is_symlink() or not objects_root.is_dir():
+        raise ObjectArchiveError("Archived objects directory is missing or symlinked.")
     verified = []
     seen = set()
     size_total = 0
@@ -244,7 +253,9 @@ def _manifest(directory: Path) -> tuple[dict, list[tuple[dict, bytes]], str]:
             raise ObjectArchiveError("Source object manifest has an invalid timestamp.") from None
         if modified.tzinfo is None:
             raise ObjectArchiveError("Source object manifest has an unqualified timestamp.")
-        payload = _read_private_bytes(directory / "objects" / row["file"], size)
+        if size_total + size > MAX_TOTAL_BYTES:
+            raise ObjectArchiveError("Source object manifest total exceeds the allowed archive size.")
+        payload = _read_private_bytes(objects_root / row["file"], size)
         if _sha(payload) != checksum:
             raise ObjectArchiveError("Archived object SHA-256 digest does not match the manifest.")
         seen.add(key)
