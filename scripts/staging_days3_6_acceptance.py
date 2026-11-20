@@ -373,6 +373,8 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
     need(isinstance(cases, list) and len(cases) == 4, "day6 needs both workflows in both languages")
     keys, runs, requests = set(), set(), set()
     native_artifact_ids: set[str] = set()
+    private_object_refs: set[str] = set()
+    artifacts_by_run: dict[str, dict[str, str]] = {}
     for case in cases:
         row = obj(case, "day6.case")
         key = (row.get("workflow"), row.get("language"))
@@ -390,6 +392,7 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
         files = row.get("native_files")
         need(isinstance(files, list) and len(files) >= 2, "day6 native files are missing")
         extensions, object_keys = set(), set()
+        run_artifacts: dict[str, str] = {}
         for f in files:
             native = obj(f, "day6.native_file")
             ext = native.get("extension")
@@ -402,9 +405,28 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
                  "day6 native artifact identity reused across workflow/language cases")
             object_keys.add(key_id)
             native_artifact_ids.add(key_id)
-            sha(native.get("sha256"), "day6.native_file.sha256")
-            count(native.get("byte_size"), "day6.native_file.byte_size")
-            need(native["byte_size"] > 0, "day6 native file has zero bytes")
+            # An operator-supplied boolean cannot substitute for comparing
+            # actual original bytes read from the private object store and
+            # downloaded through the owning API against the native manifest.
+            manifest_digest = sha(native.get("sha256"), "day6.native_file.sha256")
+            for label in ("manifest_sha256", "object_store_sha256", "owner_download_sha256"):
+                observed_digest = sha(native.get(label), "day6.native_file." + label)
+                need(observed_digest == manifest_digest,
+                     f"day6 native {label} does not match original file bytes")
+            size = count(native.get("byte_size"), "day6.native_file.byte_size")
+            need(size > 0, "day6 native file has zero bytes")
+            for label in ("object_store_byte_size", "owner_download_byte_size"):
+                count(native.get(label), "day6.native_file." + label, size)
+            private_object_ref = referenced(native.get("storage_object_ref"),
+                                            "day6.native_file.storage_object_ref")
+            need(private_object_ref not in private_object_refs,
+                 "day6 reused a private storage object across native files")
+            private_object_refs.add(private_object_ref)
+            need(native.get("owner_a_http_status") == 200,
+                 "day6 owner A did not retrieve original native bytes successfully")
+            for label in ("manifest_receipt_ref", "object_store_receipt_ref"):
+                referenced(native.get(label), "day6.native_file." + label)
+            run_artifacts[key_id] = manifest_digest
             need(native.get("mime") == {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                        "pdf": "application/pdf"}[ext], "day6 native MIME mismatch")
             need(native.get("owner_a_opened") is True and native.get("owner_a_hash_verified") is True
@@ -413,6 +435,7 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
             referenced(native.get("download_receipt_ref"), "day6.download_receipt_ref")
             referenced(native.get("owner_b_denial_ref"), "day6.owner_b_denial_ref")
         need(extensions == {"docx", "pdf"}, "day6 is missing an opened native format")
+        artifacts_by_run[run] = run_artifacts
         if key[0] == "research":
             sources = row.get("citations")
             need(isinstance(sources, list) and len(sources) >= 3,
@@ -504,6 +527,45 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
     run_finished = when(reconnect.get("run_finished_at"), "day6.reconnect.run_finished_at")
     need(frozen <= run_started < disconnected < restarted < reconnected < run_finished <= completed,
          "day6 browser reconnect/worker replacement did not occur within the same active run")
+
+    # Preserve already-published artifacts across the replacement, and
+    # require exactly the final stored manifest for this SAME run after it
+    # finishes. Before may be empty if nothing was published at interruption.
+    expected_artifacts = artifacts_by_run[reconnect["run_id_before"]]
+    for label in ("before_snapshot_receipt_ref", "after_snapshot_receipt_ref"):
+        referenced(reconnect.get(label), "day6.reconnect." + label)
+    before_at = when(reconnect.get("before_snapshot_at"), "day6.reconnect.before_snapshot_at")
+    after_at = when(reconnect.get("after_snapshot_at"), "day6.reconnect.after_snapshot_at")
+    need(run_started <= before_at <= disconnected
+         and run_finished <= after_at <= completed,
+         "day6 recovery artifact readbacks do not bracket the active interruption")
+
+    def read_artifact_snapshot(label: str) -> dict[str, str]:
+        entries = reconnect.get(label)
+        need(isinstance(entries, list), f"day6.reconnect.{label} must be a list")
+        snapshot: dict[str, str] = {}
+        for entry in entries:
+            item = obj(entry, f"day6.reconnect.{label}.entry")
+            artifact_id = text(item.get("artifact_id"),
+                               f"day6.reconnect.{label}.artifact_id")
+            digest = sha(item.get("sha256"), f"day6.reconnect.{label}.sha256")
+            need(artifact_id not in snapshot,
+                 f"day6.reconnect.{label} duplicates an artifact")
+            snapshot[artifact_id] = digest
+        return snapshot
+
+    before_artifacts = read_artifact_snapshot("artifacts_before")
+    after_artifacts = read_artifact_snapshot("artifacts_after")
+    need(after_artifacts == expected_artifacts,
+         "day6 recovered artifact manifest does not match the final owning run")
+    need(all(expected_artifacts.get(artifact_id) == digest
+             for artifact_id, digest in before_artifacts.items()),
+         "day6 recovery lost or mutated a previously published artifact")
+    # These are run-scoped effect counts, not global owner history; an
+    # unrelated user's prior runs must not distort exactly-once recovery.
+    for label in ("run_agent_effects_before", "run_agent_effects_after",
+                  "run_outbox_effects_before", "run_outbox_effects_after"):
+        count(reconnect.get(label), "day6.reconnect." + label, 1)
     count(reconnect.get("additional_agent_runs"), "day6.additional_agent_runs", 0)
     count(reconnect.get("additional_outbox_effects"), "day6.additional_outbox_effects", 0)
     send = obj(day.get("provider_send_audit"), "day6.provider_send_audit")
