@@ -127,6 +127,10 @@ def attest_archives(
         object_manifest, verified_archive, object_manifest_sha = _manifest(object_archive)
     except (ObjectArchiveError, OSError, ValueError) as error:
         raise ArchiveAttestationFailure("Private source object archive bytes or manifest are invalid.") from None
+    if object_manifest["status"] == "baseline_archived" or not verified_archive:
+        raise ArchiveAttestationFailure(
+            "An empty pre-seeding baseline does not prove a private PDF/task object restore."
+        )
     if object_manifest["source_storage_fingerprint"] != original["storage"]:
         raise ArchiveAttestationFailure("Private object archive belongs to a different source storage.")
     restored = _private_json(object_restore_receipt, "Private object restore receipt")
