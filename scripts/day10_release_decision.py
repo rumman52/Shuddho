@@ -181,19 +181,31 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
             return False
         rubric_totals = {}
         reviewer_votes = {}
+        review_times = {}
         for rubric in rubrics:
-            if not isinstance(rubric, dict):
+            if (not isinstance(rubric, dict)
+                    or set(rubric) != {
+                        "reviewer_id", "scores", "source_supported",
+                        "output_sha256", "reviewed_at", "evidence_note_sha256",
+                    }):
                 return False
             reviewer = reviewer_identity(rubric.get("reviewer_id"))
             dimensions = rubric.get("scores")
             supported = rubric.get("source_supported")
+            reviewed_at = timestamp(rubric.get("reviewed_at"))
+            note_hash = rubric.get("evidence_note_sha256")
             if (reviewer not in identities or reviewer in rubric_totals
                     or not isinstance(dimensions, dict) or set(dimensions) != set(RUBRIC)
                     or any(type(score) is not int or not 0 <= score <= 2 for score in dimensions.values())
-                    or type(supported) is not bool):
+                    or type(supported) is not bool
+                    or rubric.get("output_sha256") != row["output_sha256"]
+                    or reviewed_at is None
+                    or not isinstance(note_hash, str)
+                    or DIGEST.fullmatch(note_hash) is None):
                 return False
             rubric_totals[reviewer] = sum(dimensions.values())
             reviewer_votes[reviewer] = (tuple(dimensions[part] for part in RUBRIC), supported)
+            review_times[reviewer] = reviewed_at
             if row["accepted"] and (rubric_totals[reviewer] < 7
                                     or min(dimensions.values()) == 0
                                     or not supported):
@@ -208,24 +220,32 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
         # a digest of the private rationale retained outside these reports.
         final = row.get("final_rubric")
         if (not isinstance(final, dict)
-                or set(final) != {"scores", "source_supported", "adjudicator_id", "evidence_note_sha256"}):
+                or set(final) != {
+                    "scores", "source_supported", "adjudicator_id",
+                    "evidence_note_sha256", "output_sha256", "adjudicated_at",
+                }):
             return False
         final_scores = final["scores"]
         if (not isinstance(final_scores, dict) or set(final_scores) != set(RUBRIC)
                 or any(type(score) is not int or not 0 <= score <= 2
                        for score in final_scores.values())
-                or type(final["source_supported"]) is not bool):
+                or type(final["source_supported"]) is not bool
+                or final["output_sha256"] != row["output_sha256"]):
             return False
         if len(set(reviewer_votes.values())) > 1:
             adjudicator = reviewer_identity(final["adjudicator_id"])
             digest = final["evidence_note_sha256"]
+            adjudicated_at = timestamp(final["adjudicated_at"])
             if (adjudicator is None or adjudicator in identities
-                    or not isinstance(digest, str) or DIGEST.fullmatch(digest) is None):
+                    or not isinstance(digest, str) or DIGEST.fullmatch(digest) is None
+                    or adjudicated_at is None
+                    or any(adjudicated_at <= observed for observed in review_times.values())):
                 return False
         else:
             unanimous = next(iter(reviewer_votes.values()))
             if (final["adjudicator_id"] is not None
                     or final["evidence_note_sha256"] is not None
+                    or final["adjudicated_at"] is not None
                     or (tuple(final_scores[part] for part in RUBRIC),
                         final["source_supported"]) != unanimous):
                 return False

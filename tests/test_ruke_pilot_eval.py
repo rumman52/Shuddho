@@ -131,7 +131,9 @@ def reviews_and_checks(cases=None):
         for reviewer in ("D1", "D2"):
             reviews.append({"case_id": cid, "reviewer_id": reviewer,
                             "scores": dict.fromkeys(RUBRIC, 2),
-                            "source_supported": True, "evidence_note": "Fixture rationale"})
+                            "source_supported": True, "evidence_note": "Fixture rationale",
+                            "output_sha256": "d" * 64,
+                            "reviewed_at": "2026-11-12T00:10:00Z" if reviewer == "D1" else "2026-11-12T00:11:00Z"})
     return reviews, checks
 
 
@@ -229,11 +231,15 @@ def test_generation_identity_receipt_and_day10_holdout_artifact_are_compatible()
         "receipt_sha256": "f" * 64, "verified_at": "2026-11-12T00:02:00Z",
     }
     reviews, checks = reviews_and_checks()
-    scores = score_reviews(tasks(), reviews, [], checks)
-    _, usage = candidate_ledger(
+    output_hashes, usage = candidate_ledger(
         tasks(), candidate_outputs_for_manifest(value, manifest_digest="9" * 64),
         manifest_sha256="9" * 64, manifest=value,
     )
+    for check in checks:
+        check["output_sha256"] = output_hashes[check["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = output_hashes[review["case_id"]]
+    scores = score_reviews(tasks(), reviews, [], checks, output_hashes=output_hashes)
     artifact = day10_holdout_receipt(
         value, scores, custody, case_run_receipts=usage["case_run_receipts"],
         manifest_sha256="9" * 64,
@@ -564,6 +570,8 @@ def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
     reviews, checks = reviews_and_checks()
     for row in checks:
         row["output_sha256"] = hashes[row["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = hashes[review["case_id"]]
     assert score_reviews(tasks(), reviews, [], checks, output_hashes=hashes)["accepted"] == 40
     checks[0]["output_sha256"] = "0" * 64
     with pytest.raises(EvidenceError, match="not bound"):
@@ -644,6 +652,7 @@ def test_each_original_reviewer_must_meet_seven_of_eight_without_zero_even_after
         "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
         "scores": dict.fromkeys(RUBRIC, 2), "source_supported": True,
         "evidence_note": "Independent adjudication preserves both original reviewer ratings",
+        "output_sha256": "d" * 64, "adjudicated_at": "2026-11-12T00:12:00Z",
     }]
     result = score_reviews(cases, reviews, adjudication, checks)
     assert result["results"][0]["reviewer_scores"] == [6, 8]
@@ -717,7 +726,8 @@ def test_adjudication_required_and_third_reviewer_must_be_separate():
         score_reviews(tasks(), reviews, [], checks)
     adjudication = [{"case_id": tasks()[0]["case_id"], "adjudicator_id": "D3",
                      "scores": dict.fromkeys(RUBRIC, 2),
-                     "source_supported": True, "evidence_note": "Evidence reconciled"}]
+                     "source_supported": True, "evidence_note": "Evidence reconciled",
+        "output_sha256": "d" * 64, "adjudicated_at": "2026-11-12T00:12:00Z"}]
     assert score_reviews(tasks(), reviews, adjudication, checks)["disagreements_adjudicated"] == 1
     adjudication[0]["adjudicator_id"] = "D1"
     with pytest.raises(EvidenceError, match="separate adjudicator"):
@@ -731,7 +741,8 @@ def test_rubric_rejects_missing_or_impersonated_third_adjudicator():
     for fake in (None, "", " ", "D1 ", "d1", "D２"):
         resolution = [{"case_id": cases[0]["case_id"], "adjudicator_id": fake,
                        "scores": dict.fromkeys(RUBRIC, 2),
-                       "source_supported": True, "evidence_note": "Synthetic reasoning"}]
+                       "source_supported": True, "evidence_note": "Synthetic reasoning",
+        "output_sha256": "d" * 64, "adjudicated_at": "2026-11-12T00:12:00Z"}]
         with pytest.raises(EvidenceError, match="separate adjudicator"):
             score_reviews(cases, reviews, resolution, checks)
 
@@ -966,6 +977,8 @@ def test_day9_failed_first_attempt_is_preserved_in_all_forty_and_cannot_be_accep
     reviews, checks = reviews_and_checks()
     for check in checks:
         check["output_sha256"] = hashes[check["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = hashes[review["case_id"]]
     checks[0]["passed"] = False
     scored = score_reviews(
         tasks(), reviews, [], checks, output_hashes=hashes,
@@ -1060,6 +1073,8 @@ def test_day9_failed_attempt_handoff_retains_failure_digest_and_never_accepts():
     reviews, checks = reviews_and_checks()
     for check in checks:
         check["output_sha256"] = hashes[check["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = hashes[review["case_id"]]
     checks[0]["passed"] = False
     scores = score_reviews(
         tasks(), reviews, [], checks, output_hashes=hashes,
@@ -1083,6 +1098,7 @@ def test_day9_adjudication_receipt_preserves_independent_final_rubric_and_origin
         "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
         "scores": {dimension: (0 if dimension == RUBRIC[0] else 2) for dimension in RUBRIC},
         "source_supported": True, "evidence_note": "Private adjudication reasoning",
+        "output_sha256": "d" * 64, "adjudicated_at": "2026-11-12T00:12:00Z",
     }]
     scored = score_reviews(cases, reviews, resolution, checks)
     first = scored["results"][0]
@@ -1094,6 +1110,8 @@ def test_day9_adjudication_receipt_preserves_independent_final_rubric_and_origin
         "source_supported": True,
         "adjudicator_id": "d3",
         "evidence_note_sha256": hashlib.sha256(b"Private adjudication reasoning").hexdigest(),
+        "output_sha256": "d" * 64,
+        "adjudicated_at": "2026-11-12T00:12:00Z",
     }
     handed_off = day10_first_run_scores(scored)
     assert handed_off["cases"][0]["final_rubric"] == first["final_rubric"]
@@ -1111,6 +1129,8 @@ def test_day9_unanimous_reviews_preserve_unadjudicated_final_rubric():
         "source_supported": True,
         "adjudicator_id": None,
         "evidence_note_sha256": None,
+        "output_sha256": "d" * 64,
+        "adjudicated_at": None,
     }
 
 
@@ -1122,7 +1142,51 @@ def test_day9_one_reviewer_unsupported_source_cannot_be_reaccepted_by_adjudicati
         "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
         "scores": dict.fromkeys(RUBRIC, 2),
         "source_supported": True, "evidence_note": "Final review disagrees on source",
+        "output_sha256": "d" * 64, "adjudicated_at": "2026-11-12T00:12:00Z",
     }]
     scored = score_reviews(cases, reviews, resolution, checks)
     assert scored["results"][0]["accepted"] is False
     assert scored["results"][0]["reviewer_rubrics"][0]["source_supported"] is False
+
+
+def test_original_blind_review_handoff_binds_output_hash_and_private_rationale():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    for review in reviews:
+        review["output_sha256"] = "d" * 64
+        review["reviewed_at"] = "2026-11-12T00:10:00Z"
+    scored = score_reviews(cases, reviews, [], checks)
+    first = scored["results"][0]["reviewer_rubrics"][0]
+    assert first["output_sha256"] == checks[0]["output_sha256"]
+    assert first["reviewed_at"] == "2026-11-12T00:10:00Z"
+    assert first["evidence_note_sha256"] == hashlib.sha256(b"Fixture rationale").hexdigest()
+    assert "evidence_note" not in first
+
+
+def test_original_blind_reviewer_cannot_rate_a_substituted_output():
+    reviews, checks = reviews_and_checks()
+    for review in reviews:
+        review["output_sha256"] = "d" * 64
+        review["reviewed_at"] = "2026-11-12T00:10:00Z"
+    reviews[0]["output_sha256"] = "e" * 64
+    with pytest.raises(EvidenceError, match="review output"):
+        score_reviews(tasks(), reviews, [], checks)
+
+
+def test_adjudication_must_follow_original_recorded_blind_reviews():
+    cases = tasks()
+    reviews, checks = reviews_and_checks(cases)
+    for review in reviews:
+        review["output_sha256"] = "d" * 64
+        review["reviewed_at"] = "2026-11-12T00:10:00Z"
+    reviews[0]["scores"][RUBRIC[0]] = 1
+    adjudication = [{
+        "case_id": cases[0]["case_id"], "adjudicator_id": "D3",
+        "scores": dict.fromkeys(RUBRIC, 2),
+        "source_supported": True,
+        "evidence_note": "Independent final rationale",
+        "output_sha256": "d" * 64,
+        "adjudicated_at": "2026-11-12T00:09:00Z",
+    }]
+    with pytest.raises(EvidenceError, match="adjudication timestamp"):
+        score_reviews(cases, reviews, adjudication, checks)
