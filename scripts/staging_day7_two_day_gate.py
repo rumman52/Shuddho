@@ -70,6 +70,12 @@ def next_paused_opportunity(first: dict, second: dict) -> datetime:
     due = local_due.astimezone(timezone.utc)
     require(due.astimezone(zone).replace(tzinfo=None) == local_due.replace(tzinfo=None),
             "The next local scheduled time is nonexistent in the owner's timezone.")
+    # A repeated fall-back civil time has TWO valid UTC instants. Choosing
+    # Python's default fold=0 would silently assert an offset that the real
+    # Temporal scheduler has not independently supplied. Fail closed instead
+    # of treating one guessed due instant as proof of a paused opportunity.
+    require(local_due.utcoffset() == local_due.replace(fold=1).utcoffset(),
+            "The next local scheduled time is ambiguous across a DST fold.")
     return due
 
 
@@ -239,8 +245,9 @@ def verify_two_day(
              (first["completion_notification_id"], second["completion_notification_id"])),
         ):
             baseline = strings(paused.get(field), field)
-            require(set(expected).issubset(baseline),
-                    f"{field} must retain both actual daily receipts before pause.")
+            require(set(baseline) == set(expected),
+                    f"{field} baseline must contain exactly both actual daily receipts, "
+                    "without an extra occurrence, run or notification before pause.")
         observation = paused.get("post_pause_observation")
         require(isinstance(observation, dict),
                 "Post-pause scheduled-opportunity observation is required before qualification.")
@@ -279,6 +286,21 @@ def verify_two_day(
         "paused_opportunity_due_at": post_due.isoformat(),
         "post_pause_observed_at": observation["observed_at"] if observation else None,
         "post_pause_zero_admissions_verified": observation is not None,
+        # Keep the actual local calendar date AND UTC offset for every observed
+        # receipt. Do not replace the owner's IANA time zone with a fixed offset
+        # or synthesize a post-pause observation during the preflight-only step.
+        "owner_local_receipts": {
+            "day7_due_at": due_timestamps[0].astimezone(zone).isoformat(),
+            "day7_verified_at": verified_timestamps[0].astimezone(zone).isoformat(),
+            "day8_due_at": due_timestamps[1].astimezone(zone).isoformat(),
+            "day8_verified_at": verified_timestamps[1].astimezone(zone).isoformat(),
+            "paused_at": paused_at.astimezone(zone).isoformat(),
+            "post_pause_due_at": post_due.astimezone(zone).isoformat(),
+            "post_pause_observed_at": (
+                timestamp(observation["observed_at"], "post-pause observed_at")
+                .astimezone(zone).isoformat() if observation else None
+            ),
+        },
         "operator_case_references": [first["operator_case_reference"],
                                      second["operator_case_reference"],
                                      paused["operator_case_reference"]],

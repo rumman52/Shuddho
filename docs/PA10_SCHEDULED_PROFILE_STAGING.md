@@ -75,7 +75,12 @@ API observations and independent Temporal schedule logs.
    deployment, owner approval, worker health, and quiet-hour notification rule.
    Set the staging guard variables, expected environment, nonproduction API origin,
    synthetic account label, bearer token, and deployment reference documented above;
-   never place credentials in evidence artifacts.
+   never place credentials in evidence artifacts. **Choose an unambiguous local time
+   across the staging validity period.** If the next due time lands in the autumn
+   repeated hour (for example, 01:30 occurs twice), the offline gate now blocks:
+   selecting Python's default DST fold is not independent proof of which UTC
+   instant Temporal scheduled. Re-approve an unambiguous time and recapture
+   new natural-day evidence instead of manually editing a UTC timestamp.
 2. **Before Day 7's scheduled time**, collect a baseline. Allow the actual Temporal
    schedule to fire while the user is absent. Record Temporal schedule/audit logs,
    run completion, history, and notifications, and verify that day. The resulting
@@ -156,13 +161,34 @@ uv run --locked --extra coworker python -m scripts.staging_day7_two_day_gate \
   --output /tmp/day7-two-day-acceptance.json
 ```
 
-The gate checks release/account/automation consistency; one completed run and two
-unique notices each day; exact scheduled local clock time; consecutive **local**
-calendar days (including DST transitions); identical authorized document IDs; a
-changed immutable version pin on Day 8; the unchanged original Day 7 pin when
-re-read; the persisted pause transition; and **zero** new owner-scoped stored
-occurrences, runs and notifications after the following scheduled local time
-and catch-up window. The pause-only artifact is intentionally insufficient.
+The pause collector also rejects *any extra stored occurrence, run or
+briefing notification* in the two-date synthetic automation's baseline. It
+must contain exactly the two independently observed natural occurrences,
+their two runs and their two completion-notice IDs; an extra pre-baseline
+admission or notice cannot be silently relabeled as authorized history.
+Use **separate** controlled automations for replay, restart, quiet-hours and
+other edge cases rather than contaminating this clean two-date ledger.
+
+The gate checks release/account/automation consistency; one completed run and
+**exactly one unique completion notice per briefing occurrence**; exact scheduled
+local clock time; consecutive **local** calendar days (including DST transitions);
+identical authorized document IDs; a changed immutable version pin on Day 8;
+the unchanged original Day 7 pin when re-read; the persisted pause transition;
+and **zero** new owner-scoped stored occurrences, runs and notifications after
+the following scheduled local time and catch-up window. The pause-only artifact
+is intentionally insufficient.
+
+The generated report includes `owner_local_receipts`: the owner-IANA-zone
+`day7_due_at`, `day7_verified_at`, `day8_due_at`, `day8_verified_at`,
+`paused_at`, `post_pause_due_at` and the actual
+`post_pause_observed_at`. Each present ISO 8601 timestamp records **both the
+local calendar date/time and the UTC offset**, including differing offsets on
+successive DST dates. During the preliminary `preflight_only` receipt,
+`post_pause_observed_at` is explicitly `null`, not synthesized. A non-existent
+spring-forward scheduled time and an ambiguous fall-back next due time both
+fail closed. The report uses UTC instants to calculate ordering and retains
+owner-local timestamps solely for independent audit.
+
 Attach the independent Temporal
 schedule provenance and operational notification/worker observations to the
 operator case before declaring the actual natural-firing acceptance complete.

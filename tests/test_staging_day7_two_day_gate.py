@@ -175,10 +175,62 @@ def test_two_day_gate_checks_dst_local_calendar_not_24_hours():
     paused["paused_at"] = "2026-11-01T14:00:00+00:00"
     paused["post_pause_observation"]["due_at"] = "2026-11-02T13:00:00+00:00"
     paused["post_pause_observation"]["observed_at"] = "2026-11-02T14:10:00+00:00"
-    assert verify_two_day(first, second, paused)["scheduled_local_dates"] == ["2026-10-31", "2026-11-01"]
+    report = verify_two_day(first, second, paused)
+    assert report["scheduled_local_dates"] == ["2026-10-31", "2026-11-01"]
+    # A local date is not enough to audit a natural Temporal timer near DST.
+    # Every observed due/verification/pause timestamp must retain the IANA offset.
+    assert report["owner_local_receipts"] == {
+        "day7_due_at": "2026-10-31T08:00:00-04:00",
+        "day7_verified_at": "2026-10-31T08:07:00-04:00",
+        "day8_due_at": "2026-11-01T08:00:00-05:00",
+        "day8_verified_at": "2026-11-01T08:07:00-05:00",
+        "paused_at": "2026-11-01T09:00:00-05:00",
+        "post_pause_due_at": "2026-11-02T08:00:00-05:00",
+        "post_pause_observed_at": "2026-11-02T09:10:00-05:00",
+    }
 
 
-def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path):
+
+def test_two_day_gate_rejects_ambiguous_next_due_time_during_dst_fall_back():
+    # At 01:30 on 2026-11-01 New York repeats the same civil time with
+    # two *different* UTC offsets, so selecting fold=0 would falsely assert a
+    # verified Temporal opportunity without the operator resolving the fold.
+    first, second, paused = valid_pair()
+    for day in (first, second):
+        day["timezone"] = "America/New_York"
+        day["schedule"] = {"kind": "daily", "hour": 1, "minute": 30, "weekdays": []}
+        day["expires_at"] = "2026-11-03T00:00:00+00:00"
+    paused["expires_at"] = "2026-11-03T00:00:00+00:00"
+    first.update({
+        "due_at": "2026-10-30T05:30:00+00:00",
+        "prepared_at": "2026-10-30T05:00:00+00:00",
+        "verified_at": "2026-10-30T05:37:00+00:00",
+    })
+    second.update({
+        "due_at": "2026-10-31T05:30:00+00:00",
+        "prepared_at": "2026-10-31T05:00:00+00:00",
+        "verified_at": "2026-10-31T05:37:00+00:00",
+    })
+    paused["paused_at"] = "2026-10-31T05:45:00+00:00"
+    paused["post_pause_observation"].update({
+        "due_at": "2026-11-01T05:30:00+00:00",
+        "observed_at": "2026-11-01T07:10:00+00:00",
+    })
+    with pytest.raises(GateFailure, match="ambiguous"):
+        verify_two_day(first, second, paused)
+
+
+def test_day7_preflight_does_not_invent_post_pause_observation_offset():
+    first, second, paused = valid_pair()
+    del paused["post_pause_observation"]
+    report = verify_two_day(first, second, paused, require_paused_opportunity=False)
+    assert report["status"] == "preflight_only"
+    assert report["owner_local_receipts"]["day7_due_at"] == "2026-11-12T08:00:00+06:00"
+    assert report["owner_local_receipts"]["post_pause_observed_at"] is None
+
+
+@pytest.mark.parametrize("unexpected", [None, "occurrence", "run", "notification"])
+def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path, unexpected):
     import argparse
     import json
     from scripts import staging_pa10_scheduled_profile as probe
@@ -247,19 +299,35 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
             if path == "/api/v1/automations/automation-1":
                 return Response()
             if path == "/api/v1/automations/automation-1/history":
-                return Response({"history": [
+                history = [
                     {"occurrence_id": "occ-12", "run_id": "run-12"},
                     {"occurrence_id": "occ-13", "run_id": "run-13"},
-                ]})
+                ]
+                if unexpected == "occurrence":
+                    history.append({"occurrence_id": "occ-unexpected", "run_id": "run-unexpected"})
+                if unexpected == "run":
+                    history.append({"occurrence_id": "occ-13", "run_id": "run-unexpected"})
+                return Response({"history": history})
             if path == "/api/v1/notifications":
-                return Response({"notifications": [
+                notices = [
                     {"id": "completed-12", "automation_id": "automation-1"},
                     {"id": "completed-13", "automation_id": "automation-1"},
-                ]})
+                ]
+                if unexpected == "notification":
+                    notices.append({"id": "completed-unexpected", "automation_id": "automation-1"})
+                return Response({"notifications": notices})
             raise AssertionError(f"Unexpected request: {path}")
 
     client = Client()
     monkeypatch.setattr(probe.httpx, "Client", lambda **_args: client)
+    if unexpected:
+        with pytest.raises(probe.ScheduledProfileProbeFailure, match="Pause baseline"):
+            probe.pause_two_day(args)
+        assert client.posts == [(
+            "/api/v1/automations/automation-1/pause", {"expected_revision": 1},
+        )]
+        assert not args.output.exists()
+        return
     result = probe.pause_two_day(args)
     assert result["paused_revision"] == 2
     assert client.posts == [(
@@ -343,6 +411,25 @@ def test_day7_gate_rejects_unapproved_goal_scope(defect):
         second["authorized_document_ids"] = ["doc-evil"]
     with pytest.raises(GateFailure):
         verify_two_day(first, second, paused)
+
+
+
+@pytest.mark.parametrize(("baseline_field", "extra_id"), [
+    ("pause_baseline_occurrence_ids", "occ-unexpected"),
+    ("pause_baseline_run_ids", "run-unexpected"),
+    ("pause_baseline_notification_ids", "completed-unexpected"),
+])
+def test_two_day_gate_rejects_unexpected_pause_baseline_activity(
+    baseline_field, extra_id,
+):
+    # The synthetic profile begins with Day 7's first occurrence. Any extra
+    # occurrence, execution or notice already stored by the pause readback
+    # cannot silently become an approved baseline for the zero-admission gate.
+    first, second, paused = valid_pair()
+    paused[baseline_field].append(extra_id)
+    with pytest.raises(GateFailure, match="baseline"):
+        verify_two_day(first, second, paused)
+
 
 
 def test_two_day_gate_does_not_qualify_pause_acknowledgement_alone():

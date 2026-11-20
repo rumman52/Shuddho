@@ -715,12 +715,27 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             and item.get("automation_id") == state["automation_id"]
             and isinstance(item.get("id"), str) and item["id"]
         })
-        if (not {first["occurrence_id"], second["occurrence_id"]}.issubset(occurrence_ids)
-                or not {first["run_id"], second["run_id"]}.issubset(run_ids)
-                or not {first["completion_notification_id"],
-                        second["completion_notification_id"]}.issubset(notification_ids)):
+        # This newly approved synthetic daily routine must have exactly the
+        # Day 7/8 natural occurrences, admitted runs and completion notices
+        # when paused. Extra IDs (even if present before this readback) could
+        # otherwise be laundered into the baseline and conceal unintended
+        # admissions/deliveries during the pause transition.
+        own_notices = [
+            item for item in notices if isinstance(item, dict)
+            and item.get("automation_id") == state["automation_id"]
+        ]
+        if (len(history) != 2 or len(own_notices) != 2
+                or any(not isinstance(item, dict) for item in history)
+                or any(not isinstance(item, dict) for item in notices)
+                or set(occurrence_ids) != {first["occurrence_id"], second["occurrence_id"]}
+                or set(run_ids) != {first["run_id"], second["run_id"]}
+                or set(notification_ids) != {
+                    first["completion_notification_id"],
+                    second["completion_notification_id"],
+                }):
             raise ScheduledProfileProbeFailure(
-                "Pause baseline omitted an observed occurrence, run or notification."
+                "Pause baseline must contain exactly the two observed occurrences, "
+                "runs and completion notifications; unexpected activity blocks acceptance."
             )
         evidence.update({
             "pause_baseline_occurrence_ids": occurrence_ids,
