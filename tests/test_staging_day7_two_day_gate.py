@@ -396,6 +396,25 @@ def test_day7_gate_rejects_unapproved_goal_scope(defect):
         verify_two_day(first, second, paused)
 
 
+
+@pytest.mark.parametrize(("baseline_field", "extra_id"), [
+    ("pause_baseline_occurrence_ids", "occ-unexpected"),
+    ("pause_baseline_run_ids", "run-unexpected"),
+    ("pause_baseline_notification_ids", "completed-unexpected"),
+])
+def test_two_day_gate_rejects_unexpected_pause_baseline_activity(
+    baseline_field, extra_id,
+):
+    # The synthetic profile begins with Day 7's first occurrence. Any extra
+    # occurrence, execution or notice already stored by the pause readback
+    # cannot silently become an approved baseline for the zero-admission gate.
+    first, second, paused = valid_pair()
+    paused[baseline_field].append(extra_id)
+    with pytest.raises(GateFailure, match="baseline"):
+        verify_two_day(first, second, paused)
+
+
+
 def test_two_day_gate_does_not_qualify_pause_acknowledgement_alone():
     first, second, paused = valid_pair()
     del paused["post_pause_observation"]
