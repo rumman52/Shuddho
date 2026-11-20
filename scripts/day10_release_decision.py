@@ -389,7 +389,8 @@ def first_run_matches_holdout(
     run_ids: set[str] = set()
     for receipt in receipts:
         if (not isinstance(receipt, dict)
-                or receipt.get("case_id") not in first_by_id
+                or not isinstance(receipt.get("case_id"), str)
+                or receipt["case_id"] not in first_by_id
                 or receipt["case_id"] in receipts_by_id
                 or not bound(receipt, release, revision, rollout_hash)
                 or receipt.get("manifest_sha256") != manifest_sha
