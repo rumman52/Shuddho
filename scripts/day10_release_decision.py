@@ -161,7 +161,7 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
             return False
         run_ids.add(row["run_id"])
         if (row["attempt_status"] != "succeeded"
-                and (row["accepted"] is not False or row.get("deterministic_pass") is not False)):
+                and (row.get("accepted") is not False or row.get("deterministic_pass") is not False)):
             return False
         cell = (row.get("workflow"), row.get("language"))
         if cell not in CELLS or type(row.get("accepted")) is not bool:
