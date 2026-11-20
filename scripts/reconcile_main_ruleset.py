@@ -157,13 +157,23 @@ def _safe_target(existing: dict, reviewed: dict) -> dict:
             for x in candidate_rules if x["type"] == "required_status_checks"
         )
         allowed = {row["context"] for row in target_rows}
-        if not isinstance(rows, list) or any(
-            not isinstance(row, dict)
-            or not isinstance(row.get("context"), str)
-            or row["context"] not in allowed
-            for row in rows
-        ):
+        if not isinstance(rows, list):
             raise ApplyMainRulesetError("additional required status checks must be preserved manually")
+        observed_contexts: set[str] = set()
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or set(row) - {"context", "integration_id"}
+                or not isinstance(row.get("context"), str)
+                or row["context"] not in allowed
+                or row["context"] in observed_contexts
+            ):
+                # Preserve unknown or duplicate native controls for an
+                # administrator to review instead of silently replacing them.
+                raise ApplyMainRulesetError(
+                    "additional required status checks must be preserved manually"
+                )
+            observed_contexts.add(row["context"])
     target = deepcopy(reviewed)
     if methods is not None:
         next_review = next(
