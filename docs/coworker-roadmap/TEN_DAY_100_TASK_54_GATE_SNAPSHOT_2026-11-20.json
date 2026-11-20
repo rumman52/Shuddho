@@ -1,0 +1,1302 @@
+{
+  "schema_version": 1,
+  "title": "Ten-day controlled-pilot issue inventory (read-only acceptance snapshot)",
+  "observed_date": "2026-11-20",
+  "main_sha": "f5090638be33d7e648736daf533e4b25c307d13d",
+  "authoritative_plan": {
+    "title": "Ruke_AI_10_Day_Completion_Plan_2026-11-10",
+    "url": "https://docs.google.com/document/d/1JvuAYTmP-0pp7VhOGdV4YnMYLvv0vffuRBqJ0P8Pd8E/edit"
+  },
+  "source_issue_board_url": "https://github.com/rumman52/Shuddho/issues/737",
+  "evidence_semantics": "ISSUE_REPORTED statuses are historical issue prose, not independently verified receipts. NOT_ATTESTED means this snapshot does not confer source acceptance, staging qualification, held-out custody, independent review, pilot approval or release authority.",
+  "historical_unreconciled_claims": [
+    "17/100 tasks",
+    "18/100 tasks",
+    "5/54 exit checks"
+  ],
+  "disposition": "SOURCE_ONLY / NO-GO",
+  "days": [
+    {
+      "day": 1,
+      "issue_number": 727,
+      "issue_state": "open",
+      "issue_updated_at": "2026-11-19T19:58:58Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/727",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 2,
+      "issue_number": 728,
+      "issue_state": "open",
+      "issue_updated_at": "2026-11-18T19:31:55Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/728",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 3,
+      "issue_number": 729,
+      "issue_state": "closed",
+      "issue_updated_at": "2026-11-17T06:32:30Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/729",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 4,
+      "issue_number": 730,
+      "issue_state": "closed",
+      "issue_updated_at": "2026-11-18T18:49:54Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/730",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 5,
+      "issue_number": 731,
+      "issue_state": "open",
+      "issue_updated_at": "2026-11-16T20:11:09Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/731",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 6,
+      "issue_number": 732,
+      "issue_state": "open",
+      "issue_updated_at": "2026-11-19T18:35:35Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/732",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 7,
+      "issue_number": 733,
+      "issue_state": "closed",
+      "issue_updated_at": "2026-11-20T08:19:14Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/733",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 8,
+      "issue_number": 734,
+      "issue_state": "open",
+      "issue_updated_at": "2026-11-19T19:59:00Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/734",
+      "task_count": 10,
+      "exit_count": 5,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 9,
+      "issue_number": 735,
+      "issue_state": "open",
+      "issue_updated_at": "2026-11-18T18:29:32Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/735",
+      "task_count": 10,
+      "exit_count": 6,
+      "checked_exit_count": 0
+    },
+    {
+      "day": 10,
+      "issue_number": 736,
+      "issue_state": "open",
+      "issue_updated_at": "2026-11-18T20:39:09Z",
+      "issue_url": "https://github.com/rumman52/Shuddho/issues/736",
+      "task_count": 10,
+      "exit_count": 8,
+      "checked_exit_count": 0
+    }
+  ],
+  "tasks": [
+    {
+      "id": "D01.T01",
+      "issue_number": 727,
+      "title": "Reconfirm the baseline and preserve completed PR #664 work",
+      "issue_reported_status": "source repair DONE; fresh-head verification required.",
+      "issue_reported_owner": "A + D · **Status:** source repair DONE; fresh-head verification required.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T02",
+      "issue_number": 727,
+      "title": "Make the final-head CI result unambiguous",
+      "issue_reported_status": "PARTIAL; governance and merge gate fail.",
+      "issue_reported_owner": "A + C · **Status:** PARTIAL; governance and merge gate fail.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T03",
+      "issue_number": 727,
+      "title": "Configure the repository-scoped ruleset audit identity",
+      "issue_reported_status": "BLOCKED_EXTERNAL.",
+      "issue_reported_owner": "C + repository administrator · **Status:** BLOCKED_EXTERNAL.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T04",
+      "issue_number": 727,
+      "title": "Prove the main ruleset with negative and positive controls",
+      "issue_reported_status": "PARTIAL; active ruleset exists, but current API readback reports zero required approving reviews.",
+      "issue_reported_owner": "C + independent reviewer · **Status:** PARTIAL; active ruleset exists, but current API readback reports zero required approving reviews.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T05",
+      "issue_number": 727,
+      "title": "Preserve the production/staging deployment boundary",
+      "issue_reported_status": "NEEDS FRESH READBACK.",
+      "issue_reported_owner": "C · **Status:** NEEDS FRESH READBACK.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T06",
+      "issue_number": 727,
+      "title": "Reconcile the real staging data and recovery inventory",
+      "issue_reported_status": "PARTIAL.",
+      "issue_reported_owner": "C · **Status:** PARTIAL.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T07",
+      "issue_number": 727,
+      "title": "Prepare two synthetic owners and the access-test matrix",
+      "issue_reported_status": "BLOCKED; current Auth user count is zero.",
+      "issue_reported_owner": "C + D · **Status:** BLOCKED; current Auth user count is zero.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T08",
+      "issue_number": 727,
+      "title": "Lock the 80-case development/evaluation registry",
+      "issue_reported_status": "SOURCE DONE in PR #664; verify registry distribution.",
+      "issue_reported_owner": "D · **Status:** SOURCE DONE in PR #664; verify registry distribution.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T09",
+      "issue_number": 727,
+      "title": "Establish genuinely independent holdout custody",
+      "issue_reported_status": "BLOCKED_EXTERNAL; tracked by [#665](https://github.com/rumman52/Shuddho/issues/665).",
+      "issue_reported_owner": "independent human D · **Status:** BLOCKED_EXTERNAL; tracked by [#665](https://github.com/rumman52/Shuddho/issues/665).",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.T10",
+      "issue_number": 727,
+      "title": "Freeze provider, budget and capacity assumptions",
+      "issue_reported_status": "PARTIAL; config exists, live spend authorization is separate.",
+      "issue_reported_owner": "A + C + Founder · **Status:** PARTIAL; config exists, live spend authorization is separate.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T01",
+      "issue_number": 728,
+      "title": "Revalidate the staging database and migration contract",
+      "issue_reported_status": "PARTIAL; database exists, live app data absent.",
+      "issue_reported_owner": "C · **Status:** PARTIAL; database exists, live app data absent.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T02",
+      "issue_number": 728,
+      "title": "Reconcile the staging API deployment",
+      "issue_reported_status": "BLOCKED on protected environment/release approval.",
+      "issue_reported_owner": "C + A · **Status:** BLOCKED on protected environment/release approval.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T03",
+      "issue_number": 728,
+      "title": "Verify private object storage and S3 credentials",
+      "issue_reported_status": "PARTIAL; private bucket exists, zero objects.",
+      "issue_reported_owner": "C · **Status:** PARTIAL; private bucket exists, zero objects.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T04",
+      "issue_number": 728,
+      "title": "Establish the Temporal namespace and task-queue connection",
+      "issue_reported_status": "BLOCKED_EXTERNAL; credentials/worker not present.",
+      "issue_reported_owner": "C + A · **Status:** BLOCKED_EXTERNAL; credentials/worker not present.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T05",
+      "issue_number": 728,
+      "title": "Obtain an explicit worker/billing decision before provisioning",
+      "issue_reported_status": "BLOCKED_EXTERNAL.",
+      "issue_reported_owner": "Founder + C · **Status:** BLOCKED_EXTERNAL.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T06",
+      "issue_number": 728,
+      "title": "Bind API, worker, schema and image to one immutable candidate",
+      "issue_reported_status": "SOURCE tooling exists; operated pairing missing.",
+      "issue_reported_owner": "A + C · **Status:** SOURCE tooling exists; operated pairing missing.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T07",
+      "issue_number": 728,
+      "title": "Execute one real self-contained task through the configured model",
+      "issue_reported_status": "BLOCKED on approved provider credentials and worker.",
+      "issue_reported_owner": "A + D · **Status:** BLOCKED on approved provider credentials and worker.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T08",
+      "issue_number": 728,
+      "title": "Prove two-owner document and artifact isolation",
+      "issue_reported_status": "BLOCKED; no synthetic Auth users or objects.",
+      "issue_reported_owner": "D + C · **Status:** BLOCKED; no synthetic Auth users or objects.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T09",
+      "issue_number": 728,
+      "title": "Run a real backup and isolated restore",
+      "issue_reported_status": "SOURCE/CI tooling exists; live restore pending.",
+      "issue_reported_owner": "C · **Status:** SOURCE/CI tooling exists; live restore pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.T10",
+      "issue_number": 728,
+      "title": "Interrupt and restart the worker during an active task",
+      "issue_reported_status": "BLOCKED on a real worker.",
+      "issue_reported_owner": "A + C + D · **Status:** BLOCKED on a real worker.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T01",
+      "issue_number": 729,
+      "title": "Audit the existing grounding resolver",
+      "issue_reported_status": "SOURCE PRESENT; live acceptance pending.",
+      "issue_reported_owner": "B + A · **Status:** SOURCE PRESENT; live acceptance pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T02",
+      "issue_number": 729,
+      "title": "Enforce the selected-source contract and five-source cap",
+      "issue_reported_status": "verify against current code/tests.",
+      "issue_reported_owner": "A · **Status:** verify against current code/tests.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T03",
+      "issue_number": 729,
+      "title": "Treat document instructions as untrusted content",
+      "issue_reported_status": "test/qualification required.",
+      "issue_reported_owner": "A + D · **Status:** test/qualification required.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T04",
+      "issue_number": 729,
+      "title": "Prevent stale answers after source deletion/revocation",
+      "issue_reported_status": "source mechanism exists; live race proof pending.",
+      "issue_reported_owner": "A · **Status:** source mechanism exists; live race proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T05",
+      "issue_number": 729,
+      "title": "Reject unknown or forged citation identifiers",
+      "issue_reported_status": "source validator exists; expand adversarial tests.",
+      "issue_reported_owner": "A + D · **Status:** source validator exists; expand adversarial tests.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T06",
+      "issue_number": 729,
+      "title": "Preserve claim, budget, cancellation and streaming behavior",
+      "issue_reported_status": "source exists; regression proof required.",
+      "issue_reported_owner": "A · **Status:** source exists; regression proof required.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T07",
+      "issue_number": 729,
+      "title": "Verify the API and schemas use the shared resolver",
+      "issue_reported_status": "source present.",
+      "issue_reported_owner": "A · **Status:** source present.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T08",
+      "issue_number": 729,
+      "title": "Verify the Coworker UI source-selection experience",
+      "issue_reported_status": "UI path requires browser proof.",
+      "issue_reported_owner": "B · **Status:** UI path requires browser proof.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T09",
+      "issue_number": 729,
+      "title": "Run the focused test and browser matrix",
+      "issue_reported_status": "source tests exist; live browser evidence pending.",
+      "issue_reported_owner": "D + B · **Status:** source tests exist; live browser evidence pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.T10",
+      "issue_number": 729,
+      "title": "Execute real Bangla and English Q&A with two owners",
+      "issue_reported_status": "BLOCKED on Day 2 staging identity/worker prerequisites.",
+      "issue_reported_owner": "B + D + C · **Status:** BLOCKED on Day 2 staging identity/worker prerequisites.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T01",
+      "issue_number": 730,
+      "title": "Finish the aggregate UTF-8 snapshot budget defect",
+      "issue_reported_status": "READY FOR INDEPENDENT REVIEW — [PR #746](https://github.com/rumman52/Shuddho/pull/746) (re-applied after #726 closed unmerged).",
+      "issue_reported_owner": "A + B · **Status:** READY FOR INDEPENDENT REVIEW — [PR #746](https://github.com/rumman52/Shuddho/pull/746) (re-applied after #726 closed unmerged).",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T02",
+      "issue_number": 730,
+      "title": "Validate the task brief schema at the server boundary",
+      "issue_reported_status": "SOURCE PRESENT; test edge bounds.",
+      "issue_reported_owner": "A · **Status:** SOURCE PRESENT; test edge bounds.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T03",
+      "issue_number": 730,
+      "title": "Keep model proposals non-authoritative",
+      "issue_reported_status": "SOURCE PRESENT; security review required.",
+      "issue_reported_owner": "A + D · **Status:** SOURCE PRESENT; security review required.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T04",
+      "issue_number": 730,
+      "title": "Bind the validated preview to canonical source/project/memory state",
+      "issue_reported_status": "SOURCE PRESENT; live proof pending.",
+      "issue_reported_owner": "A · **Status:** SOURCE PRESENT; live proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T05",
+      "issue_number": 730,
+      "title": "Invalidate the frontend preview on every relevant edit",
+      "issue_reported_status": "verify UI path.",
+      "issue_reported_owner": "B · **Status:** verify UI path.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T06",
+      "issue_number": 730,
+      "title": "Recompute the digest atomically during dispatch",
+      "issue_reported_status": "SOURCE PRESENT; concurrency acceptance pending.",
+      "issue_reported_owner": "A + C · **Status:** SOURCE PRESENT; concurrency acceptance pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T07",
+      "issue_number": 730,
+      "title": "Preserve idempotent replay and changed-brief conflict semantics",
+      "issue_reported_status": "PR #719 merged; verify exact current head.",
+      "issue_reported_owner": "A + D · **Status:** PR #719 merged; verify exact current head.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T08",
+      "issue_number": 730,
+      "title": "Pass the resolved brief into Runtime v3 without breaking legacy requests",
+      "issue_reported_status": "SOURCE PRESENT; regression verification required.",
+      "issue_reported_owner": "A · **Status:** SOURCE PRESENT; regression verification required.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T09",
+      "issue_number": 730,
+      "title": "Run migration, backend, browser and exact-head CI",
+      "issue_reported_status": "partial until PR #746 passes.",
+      "issue_reported_owner": "D + A + B · **Status:** partial until PR #746 passes.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.T10",
+      "issue_number": 730,
+      "title": "Execute a real multi-turn reviewed task",
+      "issue_reported_status": "BLOCKED on Day 2 live execution prerequisites.",
+      "issue_reported_owner": "B + A + D · **Status:** BLOCKED on Day 2 live execution prerequisites.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T01",
+      "issue_number": 731,
+      "title": "Verify the exact fact-ID/version pin contract",
+      "issue_reported_status": "SOURCE DONE in [PR #723](https://github.com/rumman52/Shuddho/pull/723).",
+      "issue_reported_owner": "A · **Status:** SOURCE DONE in [PR #723](https://github.com/rumman52/Shuddho/pull/723).",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T02",
+      "issue_number": 731,
+      "title": "Prevent category-wide memory retrieval",
+      "issue_reported_status": "SOURCE DONE; live isolation pending.",
+      "issue_reported_owner": "A + D · **Status:** SOURCE DONE; live isolation pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T03",
+      "issue_number": 731,
+      "title": "Revalidate owner, workspace and version at use time",
+      "issue_reported_status": "source code present; operated test pending.",
+      "issue_reported_owner": "A · **Status:** source code present; operated test pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T04",
+      "issue_number": 731,
+      "title": "Make current task constraints override conflicting old preferences",
+      "issue_reported_status": "test/UX verification required.",
+      "issue_reported_owner": "A + B · **Status:** test/UX verification required.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T05",
+      "issue_number": 731,
+      "title": "Show selected memory in the task preview",
+      "issue_reported_status": "verify frontend behavior.",
+      "issue_reported_owner": "B · **Status:** verify frontend behavior.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T06",
+      "issue_number": 731,
+      "title": "Preserve memory correction and deletion flows",
+      "issue_reported_status": "existing CRUD path; live proof pending.",
+      "issue_reported_owner": "B + A · **Status:** existing CRUD path; live proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T07",
+      "issue_number": 731,
+      "title": "Preserve empty selection and legacy run compatibility",
+      "issue_reported_status": "SOURCE DONE in PR #723; retain.",
+      "issue_reported_owner": "A · **Status:** SOURCE DONE in PR #723; retain.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T08",
+      "issue_number": 731,
+      "title": "Add security regression coverage for foreign and stale pins",
+      "issue_reported_status": "unit coverage exists; expand if required.",
+      "issue_reported_owner": "D · **Status:** unit coverage exists; expand if required.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T09",
+      "issue_number": 731,
+      "title": "Run the real two-owner memory workflow",
+      "issue_reported_status": "BLOCKED on synthetic staging identities.",
+      "issue_reported_owner": "C + D · **Status:** BLOCKED on synthetic staging identities.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.T10",
+      "issue_number": 731,
+      "title": "Prove memory improves the golden scenario without hidden context",
+      "issue_reported_status": "BLOCKED on Day 2 live execution.",
+      "issue_reported_owner": "B + D · **Status:** BLOCKED on Day 2 live execution.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T01",
+      "issue_number": 732,
+      "title": "Freeze the research workflow contract",
+      "issue_reported_status": "SOURCE PRESENT; live execution pending.",
+      "issue_reported_owner": "A + B · **Status:** SOURCE PRESENT; live execution pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T02",
+      "issue_number": 732,
+      "title": "Build the research comparison/brief template",
+      "issue_reported_status": "PARTIAL.",
+      "issue_reported_owner": "B + A · **Status:** PARTIAL.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T03",
+      "issue_number": 732,
+      "title": "Build the project-report template",
+      "issue_reported_status": "SOURCE PRESENT; integrated acceptance pending.",
+      "issue_reported_owner": "B · **Status:** SOURCE PRESENT; integrated acceptance pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T04",
+      "issue_number": 732,
+      "title": "Generate the email as a draft, not a send action",
+      "issue_reported_status": "existing action boundary; verify end-to-end.",
+      "issue_reported_owner": "A + B · **Status:** existing action boundary; verify end-to-end.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T05",
+      "issue_number": 732,
+      "title": "Produce native editable artifacts",
+      "issue_reported_status": "export code exists; real artifact proof pending.",
+      "issue_reported_owner": "A · **Status:** export code exists; real artifact proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T06",
+      "issue_number": 732,
+      "title": "Verify artifact persistence, integrity and ownership",
+      "issue_reported_status": "BLOCKED on Day 2 storage identity.",
+      "issue_reported_owner": "A + C + D · **Status:** BLOCKED on Day 2 storage identity.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T07",
+      "issue_number": 732,
+      "title": "Verify facts, references, language and completeness",
+      "issue_reported_status": "tests exist; human/live scoring pending.",
+      "issue_reported_owner": "D · **Status:** tests exist; human/live scoring pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T08",
+      "issue_number": 732,
+      "title": "Run the integrated multi-turn golden scenario",
+      "issue_reported_status": "BLOCKED on Day 2/4/5 live prerequisites.",
+      "issue_reported_owner": "A + B + D · **Status:** BLOCKED on Day 2/4/5 live prerequisites.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T09",
+      "issue_number": 732,
+      "title": "Test interruption, reconnect and artifact retrieval",
+      "issue_reported_status": "source coverage exists; operated proof pending.",
+      "issue_reported_owner": "A + D · **Status:** source coverage exists; operated proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.T10",
+      "issue_number": 732,
+      "title": "Evaluate development cases and repair the highest-impact failure",
+      "issue_reported_status": "40 development cases exist; real candidate run pending.",
+      "issue_reported_owner": "D leads; A/B repair · **Status:** 40 development cases exist; real candidate run pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T01",
+      "issue_number": 733,
+      "title": "Create an owner-scoped goal from selected project documents",
+      "issue_reported_status": "SOURCE PRESENT; staging execution blocked.",
+      "issue_reported_owner": "B + A · **Status:** SOURCE PRESENT; staging execution blocked.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T02",
+      "issue_number": 733,
+      "title": "Create the briefing automation with the approved profile",
+      "issue_reported_status": "SOURCE PRESENT; live acceptance pending.",
+      "issue_reported_owner": "B + A · **Status:** SOURCE PRESENT; live acceptance pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T03",
+      "issue_number": 733,
+      "title": "Configure the exact deterministic daily schedule",
+      "issue_reported_status": "BLOCKED on Temporal credentials.",
+      "issue_reported_owner": "B + C · **Status:** BLOCKED on Temporal credentials.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T04",
+      "issue_number": 733,
+      "title": "Pin source revisions at each occurrence",
+      "issue_reported_status": "source binding exists; live proof pending.",
+      "issue_reported_owner": "A · **Status:** source binding exists; live proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T05",
+      "issue_number": 733,
+      "title": "Observe the first natural occurrence",
+      "issue_reported_status": "BLOCKED on a real Temporal worker/schedule.",
+      "issue_reported_owner": "C + D · **Status:** BLOCKED on a real Temporal worker/schedule.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T06",
+      "issue_number": 733,
+      "title": "Make occurrence replay idempotent",
+      "issue_reported_status": "source/test coverage exists; operated proof pending.",
+      "issue_reported_owner": "A + D · **Status:** source/test coverage exists; operated proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T07",
+      "issue_number": 733,
+      "title": "Prove worker restart and schedule reconciliation",
+      "issue_reported_status": "BLOCKED on a real worker.",
+      "issue_reported_owner": "A + C · **Status:** BLOCKED on a real worker.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T08",
+      "issue_number": 733,
+      "title": "Prove pause, expiry and deleted-source behavior",
+      "issue_reported_status": "source contracts exist; staging proof pending.",
+      "issue_reported_owner": "A + D · **Status:** source contracts exist; staging proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T09",
+      "issue_number": 733,
+      "title": "Verify quiet hours and bounded missed-occurrence catch-up",
+      "issue_reported_status": "unit edge tests possible; real Temporal proof pending.",
+      "issue_reported_owner": "A + D · **Status:** unit edge tests possible; real Temporal proof pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.T10",
+      "issue_number": 733,
+      "title": "Verify briefing delivery and occurrence history",
+      "issue_reported_status": "BLOCKED on storage/notification integration.",
+      "issue_reported_owner": "B + D · **Status:** BLOCKED on storage/notification integration.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T01",
+      "issue_number": 734,
+      "title": "Confirm the correct PostHog project and privacy boundary",
+      "issue_reported_status": "BLOCKED_EXTERNAL; [#584](https://github.com/rumman52/Shuddho/issues/584).",
+      "issue_reported_owner": "C + Founder · **Status:** BLOCKED_EXTERNAL; [#584](https://github.com/rumman52/Shuddho/issues/584).",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T02",
+      "issue_number": 734,
+      "title": "Define the minimum sanitized event schema",
+      "issue_reported_status": "proposed, not approved.",
+      "issue_reported_owner": "A + C · **Status:** proposed, not approved.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T03",
+      "issue_number": 734,
+      "title": "Add environment-gated telemetry without changing default behavior",
+      "issue_reported_status": "code integration needs review after approval.",
+      "issue_reported_owner": "A · **Status:** code integration needs review after approval.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T04",
+      "issue_number": 734,
+      "title": "Add redaction and consent regression tests",
+      "issue_reported_status": "TODO after schema approval.",
+      "issue_reported_owner": "D + A · **Status:** TODO after schema approval.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T05",
+      "issue_number": 734,
+      "title": "Configure only owner-confirmed authorized URLs",
+      "issue_reported_status": "BLOCKED_EXTERNAL.",
+      "issue_reported_owner": "C + Founder · **Status:** BLOCKED_EXTERNAL.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T06",
+      "issue_number": 734,
+      "title": "Capture actual per-run usage, latency and reliability",
+      "issue_reported_status": "metric code exists; live run data absent.",
+      "issue_reported_owner": "A + D · **Status:** metric code exists; live run data absent.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T07",
+      "issue_number": 734,
+      "title": "Verify the second natural daily briefing occurrence",
+      "issue_reported_status": "BLOCKED on Day 7 schedule/worker.",
+      "issue_reported_owner": "C + D · **Status:** BLOCKED on Day 7 schedule/worker.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T08",
+      "issue_number": 734,
+      "title": "Compare baseline and bounded-context configurations on the same 40 development tasks",
+      "issue_reported_status": "comparison harness exists; real results pending.",
+      "issue_reported_owner": "D + A · **Status:** comparison harness exists; real results pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T09",
+      "issue_number": 734,
+      "title": "Evaluate stronger reasoning configuration only if supported and budgeted",
+      "issue_reported_status": "NOT AUTHORIZED until provider/budget review.",
+      "issue_reported_owner": "A + Founder + D · **Status:** NOT AUTHORIZED until provider/budget review.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.T10",
+      "issue_number": 734,
+      "title": "Resolve high-impact DB performance findings and freeze candidate configuration",
+      "issue_reported_status": "32 informational FK-index findings; optimization not yet qualified.",
+      "issue_reported_owner": "C + A · **Status:** 32 informational FK-index findings; optimization not yet qualified.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T01",
+      "issue_number": 735,
+      "title": "Freeze one immutable candidate manifest",
+      "issue_reported_status": "source validators exist; operated candidate missing.",
+      "issue_reported_owner": "C + A + D · **Status:** source validators exist; operated candidate missing.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T02",
+      "issue_number": 735,
+      "title": "Run all required final-head CI and canonical contract checks",
+      "issue_reported_status": "current main governance/merge gate failed; PR #726 open draft.",
+      "issue_reported_owner": "A + C · **Status:** current main governance/merge gate failed; PR #726 open draft.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T03",
+      "issue_number": 735,
+      "title": "Verify independent D custody before reading or scoring holdout",
+      "issue_reported_status": "BLOCKED_EXTERNAL; #665.",
+      "issue_reported_owner": "independent human D · **Status:** BLOCKED_EXTERNAL; #665.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T04",
+      "issue_number": 735,
+      "title": "Execute the frozen 40 held-out outcome tasks",
+      "issue_reported_status": "NOT RUN; cannot start before Task 3.",
+      "issue_reported_owner": "D · **Status:** NOT RUN; cannot start before Task 3.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T05",
+      "issue_number": 735,
+      "title": "Conduct blinded independent human scoring and adjudication",
+      "issue_reported_status": "NOT RUN.",
+      "issue_reported_owner": "two independent reviewers + D · **Status:** NOT RUN.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T06",
+      "issue_number": 735,
+      "title": "Run a blinded competitor comparison on the same tasks",
+      "issue_reported_status": "NOT RUN; disclose access limits.",
+      "issue_reported_owner": "D · **Status:** NOT RUN; disclose access limits.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T07",
+      "issue_number": 735,
+      "title": "Operate all 20 recovery/security scenarios against real boundaries",
+      "issue_reported_status": "matrix/validator exists; live operations absent.",
+      "issue_reported_owner": "C + D · **Status:** matrix/validator exists; live operations absent.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T08",
+      "issue_number": 735,
+      "title": "Enforce the independent security gate on every held-out row",
+      "issue_reported_status": "code gate exists; external evidence missing.",
+      "issue_reported_owner": "D + C · **Status:** code gate exists; external evidence missing.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T09",
+      "issue_number": 735,
+      "title": "Preserve first-run evidence and distinguish regression reruns",
+      "issue_reported_status": "validator supports immutable evidence; run artifacts pending.",
+      "issue_reported_owner": "D · **Status:** validator supports immutable evidence; run artifacts pending.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.T10",
+      "issue_number": 735,
+      "title": "Produce the Day 9 qualification report and fail closed",
+      "issue_reported_status": "NOT QUALIFIED.",
+      "issue_reported_owner": "D + C · **Status:** NOT QUALIFIED.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T01",
+      "issue_number": 736,
+      "title": "Resolve all blocking defects and rerun final-head checks",
+      "issue_reported_status": "NOT COMPLETE.",
+      "issue_reported_owner": "A + B + C + D · **Status:** NOT COMPLETE.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T02",
+      "issue_number": 736,
+      "title": "Freeze the exact rollout manifest and 43 capability flags",
+      "issue_reported_status": "source tooling exists; no operated release freeze.",
+      "issue_reported_owner": "A + C · **Status:** source tooling exists; no operated release freeze.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T03",
+      "issue_number": 736,
+      "title": "Run the live planner and curated-quality gates at existing thresholds",
+      "issue_reported_status": "NOT RUN against final candidate.",
+      "issue_reported_owner": "D + A · **Status:** NOT RUN against final candidate.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T04",
+      "issue_number": 736,
+      "title": "Verify Day 9 holdout and 20/20 recovery evidence on the same release",
+      "issue_reported_status": "NOT COMPLETE.",
+      "issue_reported_owner": "D + C · **Status:** NOT COMPLETE.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T05",
+      "issue_number": 736,
+      "title": "Operate and prove rollback, including worker stop and restoration",
+      "issue_reported_status": "NOT OPERATED; validator hardening is in draft PR #748, but no live rollback receipt exists.",
+      "issue_reported_owner": "C + A · **Status:** NOT OPERATED; validator hardening is in draft PR #748, but no live rollback receipt exists.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T06",
+      "issue_number": 736,
+      "title": "Operate cancellation and paused-schedule safety",
+      "issue_reported_status": "NOT OPERATED; validator hardening is in draft PR #748, but no live cancellation or paused-schedule receipt exists.",
+      "issue_reported_owner": "A + C + D · **Status:** NOT OPERATED; validator hardening is in draft PR #748, but no live cancellation or paused-schedule receipt exists.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T07",
+      "issue_number": 736,
+      "title": "Operate two-owner isolation and the final multi-turn golden scenario",
+      "issue_reported_status": "NOT OPERATED; validator hardening is in draft PR #748, but no live owner-isolation or golden-run receipt exists.",
+      "issue_reported_owner": "B + C + D · **Status:** NOT OPERATED; validator hardening is in draft PR #748, but no live owner-isolation or golden-run receipt exists.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T08",
+      "issue_number": 736,
+      "title": "Obtain separate authentic Founder and Owner-C approvals",
+      "issue_reported_status": "BLOCKED_EXTERNAL.",
+      "issue_reported_owner": "Founder + Owner C · **Status:** BLOCKED_EXTERNAL.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T09",
+      "issue_number": 736,
+      "title": "Admit only the controlled 5–10-user pilot, if and only if GO",
+      "issue_reported_status": "NOT AUTHORIZED.",
+      "issue_reported_owner": "Founder + C · **Status:** NOT AUTHORIZED.",
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.T10",
+      "issue_number": 736,
+      "title": "Deliver the CTO handoff package and ranked next backlog",
+      "issue_reported_status": "PARTIAL source handoff in draft PR #750; operational identity, metrics, receipts and controlled on-call details remain unavailable.",
+      "issue_reported_owner": "C + A + B + D · **Status:** PARTIAL source handoff in draft PR #750; operational identity, metrics, receipts and controlled on-call details remain unavailable.",
+      "acceptance": "NOT_ATTESTED"
+    }
+  ],
+  "exit_checks": [
+    {
+      "id": "D01.E01",
+      "issue_number": 727,
+      "criterion": "Exact-head required CI and governance pass.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.E02",
+      "issue_number": 727,
+      "criterion": "Ruleset negative/positive controls are evidenced.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.E03",
+      "issue_number": 727,
+      "criterion": "Staging inventory and recovery plan are verified.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.E04",
+      "issue_number": 727,
+      "criterion": "80-case registry is frozen; independent holdout custody is separately proven.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D01.E05",
+      "issue_number": 727,
+      "criterion": "Provider/budget configuration is bounded and approved.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.E01",
+      "issue_number": 728,
+      "criterion": "Same-SHA API/worker/schema/model identity is proven.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.E02",
+      "issue_number": 728,
+      "criterion": "Real provider inference produces a retrievable private artifact.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.E03",
+      "issue_number": 728,
+      "criterion": "Two-owner isolation passes.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.E04",
+      "issue_number": 728,
+      "criterion": "Backup/restore and worker restart are actually operated.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D02.E05",
+      "issue_number": 728,
+      "criterion": "Any paid resource has separate explicit owner authorization.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.E01",
+      "issue_number": 729,
+      "criterion": "Grounded Q&A is source-bound and citation-validated.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.E02",
+      "issue_number": 729,
+      "criterion": "Prompt injection cannot expand authority.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.E03",
+      "issue_number": 729,
+      "criterion": "Deleted/revoked sources cannot produce a committed stale answer.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.E04",
+      "issue_number": 729,
+      "criterion": "Bangla and English browser acceptance passes.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D03.E05",
+      "issue_number": 729,
+      "criterion": "Direct reply path creates no background AgentRun.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.E01",
+      "issue_number": 730,
+      "criterion": "PR #726 merged with exact-head review/CI.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.E02",
+      "issue_number": 730,
+      "criterion": "Preview digest is canonical and invalidated on edits.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.E03",
+      "issue_number": 730,
+      "criterion": "Dispatch is atomic, owner-scoped and idempotent.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.E04",
+      "issue_number": 730,
+      "criterion": "Runtime v3 receives the reviewed brief; legacy replay remains valid.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D04.E05",
+      "issue_number": 730,
+      "criterion": "Real multi-turn task executes once.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.E01",
+      "issue_number": 731,
+      "criterion": "Exact selected fact IDs/versions only.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.E02",
+      "issue_number": 731,
+      "criterion": "Use-time owner/version/expiry/deletion validation.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.E03",
+      "issue_number": 731,
+      "criterion": "Current instructions override old preferences.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.E04",
+      "issue_number": 731,
+      "criterion": "UI preview and digest track memory selection.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D05.E05",
+      "issue_number": 731,
+      "criterion": "Two-owner live memory isolation and golden workflow pass.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.E01",
+      "issue_number": 732,
+      "criterion": "Research brief has source provenance.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.E02",
+      "issue_number": 732,
+      "criterion": "Project report is fact-checked and editable.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.E03",
+      "issue_number": 732,
+      "criterion": "Email remains a reviewed draft; no external send.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.E04",
+      "issue_number": 732,
+      "criterion": "Artifact bytes/checksum/owner retrieval are verified.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D06.E05",
+      "issue_number": 732,
+      "criterion": "Bangla and English outputs pass the quality rubric.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.E01",
+      "issue_number": 733,
+      "criterion": "Owner-approved goal and exact schedule exist.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.E02",
+      "issue_number": 733,
+      "criterion": "First natural local-date occurrence runs on a real Temporal worker.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.E03",
+      "issue_number": 733,
+      "criterion": "Source pins and notification are visible.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.E04",
+      "issue_number": 733,
+      "criterion": "Replay is idempotent; pause/expiry prevents work.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D07.E05",
+      "issue_number": 733,
+      "criterion": "Day 8 is reserved for the second natural consecutive-date occurrence.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.E01",
+      "issue_number": 734,
+      "criterion": "Two natural daily occurrences are proven.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.E02",
+      "issue_number": 734,
+      "criterion": "Quality, latency, retries and actual usage are measured.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.E03",
+      "issue_number": 734,
+      "criterion": "PostHog is enabled only with explicit privacy approval.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.E04",
+      "issue_number": 734,
+      "criterion": "Configuration choice is evidence-based.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D08.E05",
+      "issue_number": 734,
+      "criterion": "Model/prompt/tool/capability candidate is frozen for Day 9.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.E01",
+      "issue_number": 735,
+      "criterion": "Independent custody proven before holdout execution.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.E02",
+      "issue_number": 735,
+      "criterion": "40/40 cases executed and independently reviewed.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.E03",
+      "issue_number": 735,
+      "criterion": "At least 36/40 overall and 9/10 in each cell.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.E04",
+      "issue_number": 735,
+      "criterion": "Every row has `security_passed=true`.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.E05",
+      "issue_number": 735,
+      "criterion": "20/20 operated scenarios pass with individual receipts.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D09.E06",
+      "issue_number": 735,
+      "criterion": "First-run evidence is immutable and preserved.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E01",
+      "issue_number": 736,
+      "criterion": "Exact immutable API/worker/schema/model release verified.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E02",
+      "issue_number": 736,
+      "criterion": "All 43 capability flags explicitly frozen.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E03",
+      "issue_number": 736,
+      "criterion": "Live planner and curated quality pass unchanged thresholds.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E04",
+      "issue_number": 736,
+      "criterion": "Day 9 holdout and 20/20 recovery evidence pass.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E05",
+      "issue_number": 736,
+      "criterion": "Rollback, cancellation, paused schedule and owner isolation operated.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E06",
+      "issue_number": 736,
+      "criterion": "Final golden run passes.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E07",
+      "issue_number": 736,
+      "criterion": "Founder and Owner C approvals are authentic and separate.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    },
+    {
+      "id": "D10.E08",
+      "issue_number": 736,
+      "criterion": "Only a 5–10-user controlled pilot is authorized.",
+      "issue_checkbox_checked": false,
+      "acceptance": "NOT_ATTESTED"
+    }
+  ]
+}
