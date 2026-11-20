@@ -175,7 +175,58 @@ def test_two_day_gate_checks_dst_local_calendar_not_24_hours():
     paused["paused_at"] = "2026-11-01T14:00:00+00:00"
     paused["post_pause_observation"]["due_at"] = "2026-11-02T13:00:00+00:00"
     paused["post_pause_observation"]["observed_at"] = "2026-11-02T14:10:00+00:00"
-    assert verify_two_day(first, second, paused)["scheduled_local_dates"] == ["2026-10-31", "2026-11-01"]
+    report = verify_two_day(first, second, paused)
+    assert report["scheduled_local_dates"] == ["2026-10-31", "2026-11-01"]
+    # A local date is not enough to audit a natural Temporal timer near DST.
+    # Every observed due/verification/pause timestamp must retain the IANA offset.
+    assert report["owner_local_receipts"] == {
+        "day7_due_at": "2026-10-31T08:00:00-04:00",
+        "day7_verified_at": "2026-10-31T08:07:00-04:00",
+        "day8_due_at": "2026-11-01T08:00:00-05:00",
+        "day8_verified_at": "2026-11-01T08:07:00-05:00",
+        "paused_at": "2026-11-01T09:00:00-05:00",
+        "post_pause_due_at": "2026-11-02T08:00:00-05:00",
+        "post_pause_observed_at": "2026-11-02T09:10:00-05:00",
+    }
+
+
+
+def test_two_day_gate_rejects_ambiguous_next_due_time_during_dst_fall_back():
+    # At 01:30 on 2026-11-01 New York repeats the same civil time with
+    # two *different* UTC offsets, so selecting fold=0 would falsely assert a
+    # verified Temporal opportunity without the operator resolving the fold.
+    first, second, paused = valid_pair()
+    for day in (first, second):
+        day["timezone"] = "America/New_York"
+        day["schedule"] = {"kind": "daily", "hour": 1, "minute": 30, "weekdays": []}
+        day["expires_at"] = "2026-11-03T00:00:00+00:00"
+    paused["expires_at"] = "2026-11-03T00:00:00+00:00"
+    first.update({
+        "due_at": "2026-10-30T05:30:00+00:00",
+        "prepared_at": "2026-10-30T05:00:00+00:00",
+        "verified_at": "2026-10-30T05:37:00+00:00",
+    })
+    second.update({
+        "due_at": "2026-10-31T05:30:00+00:00",
+        "prepared_at": "2026-10-31T05:00:00+00:00",
+        "verified_at": "2026-10-31T05:37:00+00:00",
+    })
+    paused["paused_at"] = "2026-10-31T05:45:00+00:00"
+    paused["post_pause_observation"].update({
+        "due_at": "2026-11-01T05:30:00+00:00",
+        "observed_at": "2026-11-01T07:10:00+00:00",
+    })
+    with pytest.raises(GateFailure, match="ambiguous"):
+        verify_two_day(first, second, paused)
+
+
+def test_day7_preflight_does_not_invent_post_pause_observation_offset():
+    first, second, paused = valid_pair()
+    del paused["post_pause_observation"]
+    report = verify_two_day(first, second, paused, require_paused_opportunity=False)
+    assert report["status"] == "preflight_only"
+    assert report["owner_local_receipts"]["day7_due_at"] == "2026-11-12T08:00:00+06:00"
+    assert report["owner_local_receipts"]["post_pause_observed_at"] is None
 
 
 def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path):
