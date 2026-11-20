@@ -38,6 +38,7 @@ PROOFS = ("rollback", "cancellation", "paused_schedule", "owner_isolation")
 ATTEMPT_FIELDS = (
     "run_id", "output_sha256", "attempt_status", "evidence_kind",
     "output_present", "failure_code", "failure_trace_sha256",
+    "attempt_started_at", "attempt_finished_at",
 )
 
 
@@ -111,7 +112,8 @@ def first_attempt_identity_ok(row: object) -> bool:
     output_hash = row.get("output_sha256")
     if (not isinstance(run_id, str) or not run_id.strip()
             or run_id != run_id.strip() or len(run_id) > 128
-            or not isinstance(output_hash, str) or not DIGEST.fullmatch(output_hash)):
+            or not isinstance(output_hash, str) or not DIGEST.fullmatch(output_hash)
+            or not ordered_times(row, "attempt_started_at", "attempt_finished_at")):
         return False
     status = row.get("attempt_status")
     if status == "succeeded":
@@ -200,6 +202,7 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
                     or type(supported) is not bool
                     or rubric.get("output_sha256") != row["output_sha256"]
                     or reviewed_at is None
+                    or reviewed_at <= timestamp(row["attempt_finished_at"])
                     or not isinstance(note_hash, str)
                     or DIGEST.fullmatch(note_hash) is None):
                 return False
@@ -412,8 +415,10 @@ def first_run_matches_holdout(
             or not nonempty_text(first_run.get("run_id"))):
         return False
     manifest_sha = first_run.get("manifest_sha256")
+    run_started_at = timestamp(first_run.get("run_started_at"))
     if (not isinstance(manifest_sha, str) or not DIGEST.fullmatch(manifest_sha)
-            or holdout.get("manifest_sha256") != manifest_sha):
+            or holdout.get("manifest_sha256") != manifest_sha
+            or run_started_at is None):
         return False
     scores = first_run.get("scores")
     if not isinstance(scores, dict) or type(scores.get("total")) is not int or scores["total"] != 40:
@@ -453,8 +458,7 @@ def first_run_matches_holdout(
                 or not first_attempt_identity_ok(receipt)
                 or receipt["run_id"] in run_ids):
             return False
-        if (receipt["attempt_status"] != "succeeded"
-                and not ordered_times(receipt, "attempt_started_at", "attempt_finished_at")):
+        if timestamp(receipt["attempt_started_at"]) < run_started_at:
             return False
         receipts_by_id[receipt["case_id"]] = receipt
         run_ids.add(receipt["run_id"])
