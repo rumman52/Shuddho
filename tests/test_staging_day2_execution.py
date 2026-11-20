@@ -625,6 +625,7 @@ def _synthetic_text_pdf(body: str) -> bytes:
 
 
 def _anchor_probe(monkeypatch, *, report_body: str, summary: str, source_body: str):
+    pytest.importorskip("pypdf", reason="Install the coworker extra for real PDF fidelity tests")
     anchor = "SYNTHETIC_BUDGET_42_UNITS"
     source = _synthetic_text_pdf(source_body)
     report = _synthetic_text_pdf(report_body)
@@ -662,6 +663,7 @@ def test_day2_english_summary_and_real_report_pdf_require_source_content_anchor(
 
 @pytest.mark.parametrize("invalid", ["missing_summary", "missing_pdf_marker", "invalid_pdf"])
 def test_day2_rejects_unrelated_or_unreadable_pdf_content(monkeypatch, invalid):
+    pytest.importorskip("pypdf", reason="Install the coworker extra for real PDF fidelity tests")
     anchor = "SYNTHETIC_BUDGET_42_UNITS"
     source = _synthetic_text_pdf(f"Selected English source fact: {anchor}")
     report = (
@@ -687,12 +689,14 @@ def test_day2_rejects_unrelated_or_unreadable_pdf_content(monkeypatch, invalid):
             )
 
 
-@pytest.mark.parametrize(("source", "anchor", "message"), [
-    (SOURCE, "SYNTHETIC_BUDGET_42_UNITS", "Selected synthetic PDF"),
-    (_synthetic_text_pdf("No marker in this text"), "SYNTHETIC_BUDGET_42_UNITS", "expected source marker"),
-    (_synthetic_text_pdf("SYNTHETIC_BUDGET_42_UNITS"), "unsafe anchor with spaces", "uppercase ASCII"),
+@pytest.mark.parametrize(("source_body", "anchor", "message"), [
+    (None, "SYNTHETIC_BUDGET_42_UNITS", "Selected synthetic PDF"),
+    ("No marker in this text", "SYNTHETIC_BUDGET_42_UNITS", "expected source marker"),
+    ("SYNTHETIC_BUDGET_42_UNITS", "unsafe anchor with spaces", "uppercase ASCII"),
 ])
-def test_day2_source_marker_is_validated_before_any_api_request(source, anchor, message):
+def test_day2_source_marker_is_validated_before_any_api_request(source_body, anchor, message):
+    pytest.importorskip("pypdf", reason="Install the coworker extra for real PDF fidelity tests")
+    source = SOURCE if source_body is None else _synthetic_text_pdf(source_body)
     api = BidirectionalDay2API(source=source)
     with httpx.Client(transport=httpx.MockTransport(api), base_url="https://stage.example.test") as client:
         with pytest.raises(day2.Day2Failure, match=message):
