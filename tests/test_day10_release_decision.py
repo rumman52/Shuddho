@@ -678,6 +678,7 @@ def test_day10_rejects_incomplete_or_rebound_first_run_case_set(monkeypatch, mut
 @pytest.mark.parametrize(("target", "field", "value"), [
     ("first_run", "candidate_outputs_sha256", None),
     ("receipt", "source_revision", "c" * 40),
+    ("receipt", "case_id", ["unhashable-case"]),
     ("receipt", "manifest_sha256", "d" * 64),
     ("receipt", "run_id", "other-run"),
     ("receipt", "output_sha256", "0" * 64),
