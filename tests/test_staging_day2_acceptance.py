@@ -85,9 +85,25 @@ def proofs():
     recovery['recovery_outbox'] = {
         'agent_run_id': 'agent-run-1', 'workflow_id': 'shuddho-agent-agent-run-1',
         'source_revision': SHA,
-        'agent_outbox_effect_count': 1, 'child_task_outbox_count': 0,
-        'child_task_outbox_expected_absent': True,
+        'agent_outbox_effect_count': 1, 'agent_outbox_delivered': True,
+        'child_task_outbox_count': 0, 'child_task_outbox_expected_absent': True,
+        'completed_children': [
+            {'ordinal': 1, 'task_id': 'child-1', 'state': 'completed',
+             'idempotency_key': 'agent:agent-run-1:1',
+             'started_at': '2026-11-12T11:02:00+00:00',
+             'finished_at': '2026-11-12T11:03:20+00:00'},
+            {'ordinal': 2, 'task_id': 'child-2', 'state': 'completed',
+             'idempotency_key': 'agent:agent-run-1:2',
+             'started_at': '2026-11-12T11:02:10+00:00',
+             'finished_at': '2026-11-12T11:03:25+00:00'},
+            {'ordinal': 3, 'task_id': 'child-3', 'state': 'completed',
+             'idempotency_key': 'agent:agent-run-1:3',
+             'started_at': '2026-11-12T11:03:30+00:00',
+             'finished_at': '2026-11-12T11:04:00+00:00'},
+        ],
         'worker_before_id': 'before-restart', 'worker_after_id': 'after-restart',
+        'worker_before_heartbeat_at': '2026-11-12T11:02:55+00:00',
+        'worker_after_heartbeat_at': '2026-11-12T11:03:06+00:00',
         'worker_after_started_at': '2026-11-12T11:03:05+00:00',
         'run_started_at': '2026-11-12T11:02:00+00:00',
         'run_finished_at': '2026-11-12T11:04:00+00:00',
@@ -117,6 +133,8 @@ def test_valid_proofs_are_consistent_without_claiming_platform_verification():
     assert result['artifact_sha256'] == '2' * 64
     assert result['owner_isolation']['owners']['b']['artifact_id'] == 'artifact-b'
     assert result['logical_agent_outbox_effect_count'] == 1
+    assert result['parent_agent_outbox_delivered'] is True
+    assert result['completed_child_task_count'] == 3
     assert result['logical_document_outbox_effect_count'] == 1
     assert result['recovered_agent_workflow_id'] == 'shuddho-agent-agent-run-1'
     assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'document_outbox', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'outbox_once', 'worker_replaced', 'backup_restore', 'pdf_content_fidelity']
@@ -363,4 +381,48 @@ def test_day2_acceptance_rejects_report_fidelity_field_swapped_after_execution()
     proof_set = list(proofs())
     proof_set[2]["content_anchor_verification"] = "unverified"
     with pytest.raises(gate.Day2AcceptanceFailure, match="content_anchor_verification"):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize("field, invalid", [
+    ("agent_outbox_delivered", False),
+    ("agent_outbox_delivered", None),
+    ("worker_before_heartbeat_at", "2026-11-12T11:03:01+00:00"),
+    ("worker_after_heartbeat_at", "2026-11-12T11:03:05+00:00"),
+    ("completed_children", []),
+    ("completed_children", None),
+])
+def test_recovery_requires_parent_delivery_child_receipts_and_worker_heartbeats(field, invalid):
+    proof_set = list(proofs())
+    proof_set[2]["recovery_outbox"][field] = invalid
+    proof_set[3]["recovery_outbox"][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize("ordinal, field, invalid", [
+    (0, "task_id", "child-2"),
+    (0, "state", "failed"),
+    (0, "ordinal", True),
+    (1, "ordinal", 1),
+    (1, "idempotency_key", "agent:unrelated:2"),
+    (0, "started_at", "2026-11-12T11:01:59+00:00"),
+    (2, "finished_at", "2026-11-12T11:04:01+00:00"),
+    (2, "started_at", "2026-11-12T11:03:19+00:00"),
+])
+def test_recovery_rejects_forged_or_non_completed_child_receipt(ordinal, field, invalid):
+    proof_set = list(proofs())
+    for receipt in proof_set[2:]:
+        receipt["recovery_outbox"]["completed_children"][ordinal][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure):
+        check(*proof_set)
+
+
+def test_recovery_rejects_restart_while_no_child_was_active():
+    proof_set = list(proofs())
+    for receipt in proof_set[2:]:
+        children = receipt["recovery_outbox"]["completed_children"]
+        children[0]["finished_at"] = "2026-11-12T11:02:59+00:00"
+        children[1]["finished_at"] = "2026-11-12T11:02:59+00:00"
+    with pytest.raises(gate.Day2AcceptanceFailure, match="active child task"):
         check(*proof_set)
