@@ -13,12 +13,15 @@ D02.T01 hosted task's acceptance state.
 
 Start a **disposable local PostgreSQL service** whose test administrator
 can create and drop temporary databases. Do not point
-`SHUDDHO_TEST_POSTGRES_URL` at Supabase or any customer database.
+`SHUDDHO_TEST_POSTGRES_URL` at Supabase or any customer database. The test harness refuses non-loopback
+hosts, non-PostgreSQL drivers and initial database names not ending in
+`_test` **before it opens a connection**; do not tunnel a managed database
+through a loopback alias.
 Provisioning such a local test service is separate from Render or Supabase
 staging and does not authorize remote access.
 
 ```bash
-SHUDDHO_TEST_POSTGRES_URL='postgresql+psycopg://LOCAL_TEST_USER:LOCAL_TEST_PASSWORD@127.0.0.1:5432/LOCAL_TEST_DATABASE' \
+SHUDDHO_TEST_POSTGRES_URL='postgresql+psycopg://LOCAL_TEST_USER:LOCAL_TEST_PASSWORD@127.0.0.1:5432/shuddho_coworker_test' \
   uv run --locked --extra coworker pytest tests/test_day2_dual_0071_postgres.py -q -rs
 ```
 
