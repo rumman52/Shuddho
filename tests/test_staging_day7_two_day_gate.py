@@ -348,7 +348,7 @@ def test_day7_gate_rejects_unapproved_goal_scope(defect):
 def test_two_day_gate_does_not_qualify_pause_acknowledgement_alone():
     first, second, paused = valid_pair()
     del paused["post_pause_observation"]
-    with pytest.raises(GateFailure, match="post-pause"):
+    with pytest.raises(GateFailure, match="Post-pause"):
         verify_two_day(first, second, paused)
 
 
