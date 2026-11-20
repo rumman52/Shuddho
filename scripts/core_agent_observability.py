@@ -567,9 +567,15 @@ def _day8_counts(value: object, fields: tuple[str, ...]) -> bool:
 def _day8_policy_valid(value: object) -> bool:
     return (
         isinstance(value, dict)
-        and set(value) == {"approved_p95_end_to_end_latency_ms", *DAY8_POLICY_HASH_FIELDS}
+        and set(value) == {
+            "approved_p95_end_to_end_latency_ms",
+            "approved_max_cost_microusd_per_accepted_output",
+            *DAY8_POLICY_HASH_FIELDS,
+        }
         and type(value["approved_p95_end_to_end_latency_ms"]) is int
         and value["approved_p95_end_to_end_latency_ms"] > 0
+        and type(value["approved_max_cost_microusd_per_accepted_output"]) is int
+        and value["approved_max_cost_microusd_per_accepted_output"] > 0
         and all(_day8_digest(value.get(field)) for field in DAY8_POLICY_HASH_FIELDS)
     )
 
@@ -964,6 +970,19 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             field: sum(int(r[field]) for r in all_rows) if metrics_complete else None
             for field in DAY8_CASE_FIELDS
         }
+        # Enforce the owner's all-in cost ceiling on the *accepted first-run*
+        # denominator. All priced reruns, including failed attempts, remain in
+        # totals["cost_microusd"]. Compare integers; rounding the displayed
+        # unit cost can otherwise qualify a just-over-budget profile.
+        cost_ceiling = (
+            policy["approved_max_cost_microusd_per_accepted_output"]
+            if policy_complete else None
+        )
+        cost_ok = (
+            cost_ceiling is not None and metrics_complete and bool(accepted)
+            and totals["cost_microusd"] is not None
+            and totals["cost_microusd"] <= cost_ceiling * len(accepted)
+        )
         summaries[label] = {
             "cases": 40,
             "rerun_attempts": len(rerun_rows),
@@ -981,6 +1000,8 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
                 policy["approved_p95_end_to_end_latency_ms"] if policy_complete else None
             ),
             "latency_gate_passed": latency_ok,
+            "approved_cost_ceiling_microusd_per_accepted_output": cost_ceiling,
+            "cost_gate_passed": cost_ok,
             "metric_available_cases": {
                 field: sum(_day8_uint(r.get(field)) for r in records)
                 for field in DAY8_CASE_FIELDS
@@ -1043,7 +1064,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     if not time_limits_complete:
         blockers.append("missing or invalid fixed per-task time limit in both profiles")
     if not policy_complete:
-        blockers.append("missing or invalid owner-approved latency, rubric and pricing decision policy")
+        blockers.append("missing or invalid owner-approved latency, cost ceiling, rubric and pricing decision policy")
     if not base_attempt_provenance or not candidate_attempt_provenance:
         blockers.append("missing explicit first-run and rerun attempt provenance in both profiles")
     if not a["metrics_complete"] or not b["metrics_complete"]:
@@ -1051,6 +1072,10 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "missing run/output/usage receipts, measured input/output tokens, end-to-end latency, "
             "model/tool time, failure/retry breakdown or verified all-in cost components"
         )
+    if policy_complete and a["metrics_complete"] and b["metrics_complete"] and not (
+        a["cost_gate_passed"] or b["cost_gate_passed"]
+    ):
+        blockers.append("neither profile meets the owner-approved cost ceiling per accepted output")
     # Regressed candidate is excluded; a qualified baseline may still be frozen.
     if not (a["quality_gate_passed"] or b["quality_gate_passed"]):
         blockers.append("neither profile meets 36/40, 9/10-per-cell, safety and artifact gates")
@@ -1065,6 +1090,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         (label, summary)
         for label, summary in summaries.items()
         if summary["quality_gate_passed"] and summary["latency_gate_passed"]
+        and summary["cost_gate_passed"]
         and (label == "baseline" or retained_quality)
     ]
     if not blockers and len(eligible) > 0:
@@ -1086,6 +1112,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         freeze_hashes_complete and time_limits_complete and policy_complete
         and a["quality_gate_passed"] and b["quality_gate_passed"]
         and a["latency_gate_passed"] and b["latency_gate_passed"]
+        and a["cost_gate_passed"] and b["cost_gate_passed"]
         and a["metrics_complete"] and b["metrics_complete"]
         and retained_quality
     )
@@ -1201,6 +1228,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             else "missing_operational_measurements_or_policy"
             if not b["metrics_complete"] or not policy_complete
             else "latency_slo_breached" if not b["latency_gate_passed"]
+            else "cost_ceiling_breached" if policy_complete and not b["cost_gate_passed"]
             else None
         ),
         "measured_cost_savings_microusd": cost_delta,
