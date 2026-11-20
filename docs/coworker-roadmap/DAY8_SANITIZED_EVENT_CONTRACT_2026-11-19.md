@@ -10,6 +10,9 @@ Existing private Agent run/model/usage evidence (access-controlled)
     -> EventPolicy gates: explicit feature enable AND approved privacy scope
        AND owner/user consent AND kill switch OFF AND staging only
        AND reviewed project ID / destination region / retention match
+       AND exact approved PostHog Cloud region-to-host pair matches:
+         US: us.i.posthog.com (ingest), us.posthog.com (private API)
+         EU: eu.i.posthog.com (ingest), eu.posthog.com (private API)
        AND a non-empty approval receipt fingerprint
        AND approved provider/model pair
     -> strict build_operational_event() (reject unknown keys, wrong types,
@@ -23,9 +26,20 @@ The module is inert unless an explicit sink is injected. Only
 incompatible experimental `operational_telemetry.py` was removed rather than
 risk two independently emitted event names or property dictionaries. `emit_operational_event` catches validation and sink errors so no analytics failure can affect task execution; it does **not** log exception messages or raw inputs. The extra policy fields bind an already-authenticated operator's exact project,
 region, retention days and approval digest; they are **not** an approval
-signature or cryptographic check of the connected service. This contract does
-not establish identity/authentication of a proposed sink, approval provenance,
-consent storage, or an approved deployment. Those require separate review before any runtime hook is installed.
+signature or cryptographic check of the connected service. The new default-deny host fields require independently supplied actual and approved
+ingestion/API hostnames, each exactly equal to the US/EU PostHog Cloud host
+pair for the authorized region. Missing hosts, wrong-region endpoints, URL
+strings, ports, paths and lookalike domains are rejected before any injected
+sink is called. Self-hosted instances or reverse proxies are **not** silently
+allowed; those need a separate, reviewed egress/host policy change. These
+values are policy only and are never included in the emitted event properties.
+
+This contract does
+not establish identity/authentication of a proposed sink, actual DNS/TLS
+routing, approval provenance, consent storage, or an approved deployment.
+The sink adapter must independently verify the authenticated destination
+project, concrete HTTPS endpoint/region and network egress against the
+approved readback before any runtime hook is installed.
 
 ## Fixed event and properties
 
