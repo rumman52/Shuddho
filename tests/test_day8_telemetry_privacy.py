@@ -144,3 +144,20 @@ def test_invalid_and_failed_sinks_do_not_break_task_execution():
     assert emit_operational_event(BASE, policy(), lambda *args: received.append(args)) is True
     assert len(received) == 1
     assert all("SYNTHETIC_PRIVATE" not in str(part) for part in received[0])
+
+
+def test_legacy_privacy_approval_cannot_emit_without_bound_posthog_hosts():
+    """A project/region/retention match alone does not select an egress host."""
+    legacy = EventPolicy(
+        enabled=True, environment="staging", privacy_scope_approved=True,
+        consent_granted=True, kill_switch=False,
+        approved_provider_models=frozenset({("deepseek", "deepseek-chat")}),
+        project_id="999999", approved_project_id="999999",
+        destination_region="us", approved_region="us",
+        destination_retention_days=30, approved_retention_days=30,
+        privacy_approval_sha256="a" * 64,
+    )
+    outbound = []
+    assert emit_operational_event(BASE, legacy, lambda *args: outbound.append(args)) is False
+    assert outbound == []
+
