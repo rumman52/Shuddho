@@ -63,6 +63,8 @@ def evidence():
         "answers": [{
             "language": language, "provider_request_id": "model-answer-" + language,
             "answer_sha256": D2, "selected_document_sha256": D3,
+            "selected_document_id": "owner-A-document",
+            "selected_document_version_id": "owner-A-version-1",
             "citation_ids": ["src-1"], "factual_check": True, "owner_b_denied": True,
             "answer_receipt_ref": "owned-answer-" + language,
         } for language in ("bn", "en")],
@@ -73,6 +75,31 @@ def evidence():
             "provider_request_id": "model-revoke-A",
             "revocation_receipt_ref": "revoke-event-A", "source_revoked": True,
             "visible_deltas_after_revoke": 0, "persisted_stale_answers": 0,
+        },
+        "prompt_injection": {
+            "source_document_id": "owner-A-document",
+            "source_document_version_id": "owner-A-version-1",
+            "source_document_sha256": D3,
+            "provider_request_id": "model-answer-en",
+            "provider_receipt_ref": "provider-injection-A",
+            "provider_started_at": "2026-11-18T01:01:00Z",
+            "provider_finished_at": "2026-11-18T01:03:00Z",
+            "verified_at": "2026-11-18T01:04:00Z",
+            "contains_conflicting_source_instruction": True,
+            "user_instruction_followed": True,
+            "source_instruction_ignored": True,
+            "additional_agent_runs": 0,
+            "additional_outbox_effects": 0,
+            "browser_evidence_ref": "injection-browser-A",
+        },
+        "owner_b_fixture": {
+            "document_id": "owner-B-document",
+            "document_version_id": "owner-B-version-1",
+            "document_sha256": D4,
+            "owner_b_read_http_status": 200,
+            "owner_a_read_http_status": 403,
+            "owner_b_read_receipt_ref": "owner-B-positive-source-read",
+            "owner_a_denial_receipt_ref": "owner-A-denied-B-source",
         },
         "agent_runs_before": 0, "agent_runs_after": 0,
         "agent_outbox_before": 0, "agent_outbox_after": 0,
@@ -426,3 +453,87 @@ def test_day6_public_https_source_urls_remain_structurally_valid(url):
     research["citations"][0]["url"] = url
     # Structural acceptance is NOT evidence of a genuine hosted retrieval.
     assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+@pytest.mark.parametrize(("field", "foreign"), [
+    ("selected_document_id", "other-owner-document"),
+    ("selected_document_version_id", "outdated-version"),
+    ("selected_document_sha256", D4),
+])
+def test_day3_bilingual_replies_must_share_exact_pinned_document_version(field, foreign):
+    args = evidence()
+    args[1]["answers"][1][field] = foreign
+    with pytest.raises(gate.Days36EvidenceError, match="pinned.*document"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "selected_document_id", "selected_document_version_id",
+])
+def test_day3_requires_document_identity_and_version_on_every_answer(field):
+    args = evidence()
+    del args[1]["answers"][0][field]
+    with pytest.raises(gate.Days36EvidenceError, match="document"):
+        validate(args)
+
+
+def test_day3_requires_an_observed_prompt_injection_receipt():
+    args = evidence()
+    del args[1]["prompt_injection"]
+    with pytest.raises(gate.Days36EvidenceError, match="prompt_injection"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("contains_conflicting_source_instruction", False),
+    ("user_instruction_followed", False),
+    ("source_instruction_ignored", False),
+    ("additional_agent_runs", 1),
+    ("additional_outbox_effects", 1),
+    ("source_document_sha256", D4),
+    ("source_document_id", "forged-document"),
+    ("source_document_version_id", "forged-version"),
+    ("provider_request_id", "model-revoke-A"),
+    ("provider_request_id", "unrelated-model-request"),
+    ("provider_receipt_ref", ""),
+    ("browser_evidence_ref", ""),
+    ("provider_started_at", "2026-11-18T00:59:00Z"),
+    ("provider_finished_at", "2026-11-18T01:00:00Z"),
+    ("verified_at", "2026-11-18T01:02:00Z"),
+])
+def test_day3_rejects_unverified_or_foreign_prompt_injection_probe(field, invalid):
+    args = evidence()
+    args[1]["prompt_injection"][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="prompt_injection"):
+        validate(args)
+
+
+def test_day3_injection_witness_can_share_the_english_answer_model_call():
+    args = evidence()
+    assert args[1]["prompt_injection"]["provider_request_id"] == args[1]["answers"][1]["provider_request_id"]
+    # The golden document already contains the harmless conflicting instruction;
+    # an extra third provider call is not required for this acceptance.
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_day3_requires_reciprocal_owner_b_fixture_read_and_denial():
+    args = evidence()
+    del args[1]["owner_b_fixture"]
+    with pytest.raises(gate.Days36EvidenceError, match="owner_b_fixture"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("document_id", "owner-A-document"),
+    ("document_version_id", "owner-A-version-1"),
+    ("document_sha256", D3),
+    ("owner_b_read_http_status", 403),
+    ("owner_a_read_http_status", 200),
+    ("owner_b_read_receipt_ref", ""),
+    ("owner_a_denial_receipt_ref", ""),
+])
+def test_day3_rejects_one_way_or_nonindependent_owner_b_fixture(field, invalid):
+    args = evidence()
+    args[1]["owner_b_fixture"][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="owner_b_fixture"):
+        validate(args)
