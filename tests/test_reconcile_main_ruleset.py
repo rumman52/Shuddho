@@ -363,6 +363,15 @@ def test_unreviewed_existing_check_publisher_requires_manual_reconciliation(api,
     })
     with pytest.raises(ApplyMainRulesetError, match="publisher"):
         call()
+    # Even a correctly confirmed operator apply may not rewrite this
+    # unreviewed native publisher; the test transport records any PUT.
+    with pytest.raises(ApplyMainRulesetError, match="publisher"):
+        call(
+            apply=True,
+            expected_current_ruleset_sha256=reconcile.ruleset_fingerprint(api["current"]),
+            confirm_repository=REPO,
+            confirm_ruleset_id=reconcile.RULESET_ID,
+        )
     assert api["writes"] == []
 
 
