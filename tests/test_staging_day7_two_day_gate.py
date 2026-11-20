@@ -229,7 +229,8 @@ def test_day7_preflight_does_not_invent_post_pause_observation_offset():
     assert report["owner_local_receipts"]["post_pause_observed_at"] is None
 
 
-def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path):
+@pytest.mark.parametrize("unexpected", [None, "occurrence", "run", "notification"])
+def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path, unexpected):
     import argparse
     import json
     from scripts import staging_pa10_scheduled_profile as probe
@@ -298,19 +299,35 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
             if path == "/api/v1/automations/automation-1":
                 return Response()
             if path == "/api/v1/automations/automation-1/history":
-                return Response({"history": [
+                history = [
                     {"occurrence_id": "occ-12", "run_id": "run-12"},
                     {"occurrence_id": "occ-13", "run_id": "run-13"},
-                ]})
+                ]
+                if unexpected == "occurrence":
+                    history.append({"occurrence_id": "occ-unexpected", "run_id": "run-unexpected"})
+                if unexpected == "run":
+                    history.append({"occurrence_id": "occ-13", "run_id": "run-unexpected"})
+                return Response({"history": history})
             if path == "/api/v1/notifications":
-                return Response({"notifications": [
+                notices = [
                     {"id": "completed-12", "automation_id": "automation-1"},
                     {"id": "completed-13", "automation_id": "automation-1"},
-                ]})
+                ]
+                if unexpected == "notification":
+                    notices.append({"id": "completed-unexpected", "automation_id": "automation-1"})
+                return Response({"notifications": notices})
             raise AssertionError(f"Unexpected request: {path}")
 
     client = Client()
     monkeypatch.setattr(probe.httpx, "Client", lambda **_args: client)
+    if unexpected:
+        with pytest.raises(probe.ScheduledProfileProbeFailure, match="Pause baseline"):
+            probe.pause_two_day(args)
+        assert client.posts == [(
+            "/api/v1/automations/automation-1/pause", {"expected_revision": 1},
+        )]
+        assert not args.output.exists()
+        return
     result = probe.pause_two_day(args)
     assert result["paused_revision"] == 2
     assert client.posts == [(
