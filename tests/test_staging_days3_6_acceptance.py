@@ -324,3 +324,23 @@ def test_timestamp_requires_timezone_and_attestation_after_all_days():
     args[5]["reviewed_at"] = "2026-11-18T06:00:00Z"
     with pytest.raises(gate.Days36EvidenceError, match="predates"):
         validate(args)
+
+
+@pytest.mark.parametrize(("first", "second", "extension"), [
+    (0, 1, "docx"),  # Same workflow, different output language.
+    (0, 2, "pdf"),   # Same language, different workflow.
+    (1, 3, "docx"),  # Cross-language and cross-workflow.
+])
+def test_day6_cannot_reuse_native_artifact_identity_across_cases(first, second, extension):
+    args = evidence()
+    files1 = args[4]["cases"][first]["native_files"]
+    files2 = args[4]["cases"][second]["native_files"]
+    source = next(item for item in files1 if item["extension"] == extension)
+    copy = next(item for item in files2 if item["extension"] == extension)
+    # Different bytes and independently named receipts cannot turn one stored
+    # artifact identity into two independently generated user deliverables.
+    copy["artifact_id"] = source["artifact_id"]
+    copy["sha256"] = D4
+    assert copy["download_receipt_ref"] != source["download_receipt_ref"]
+    with pytest.raises(gate.Days36EvidenceError, match="reused across"):
+        validate(args)

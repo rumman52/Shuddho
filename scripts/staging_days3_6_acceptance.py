@@ -238,6 +238,7 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
     cases = day.get("cases")
     need(isinstance(cases, list) and len(cases) == 4, "day6 needs both workflows in both languages")
     keys, runs, requests = set(), set(), set()
+    native_artifact_ids: set[str] = set()
     for case in cases:
         row = obj(case, "day6.case")
         key = (row.get("workflow"), row.get("language"))
@@ -263,7 +264,10 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
             extensions.add(ext)
             key_id = text(native.get("artifact_id"), "day6.artifact_id")
             need(key_id not in object_keys, "day6 duplicated a file artifact ID")
+            need(key_id not in native_artifact_ids,
+                 "day6 native artifact identity reused across workflow/language cases")
             object_keys.add(key_id)
+            native_artifact_ids.add(key_id)
             sha(native.get("sha256"), "day6.native_file.sha256")
             count(native.get("byte_size"), "day6.native_file.byte_size")
             need(native["byte_size"] > 0, "day6 native file has zero bytes")
