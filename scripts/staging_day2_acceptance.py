@@ -257,6 +257,34 @@ def validate_evidence(
             and started <= replacement_started <= finished
             and 0 <= (replacement_started - restarted).total_seconds() <= 300):
         raise Day2AcceptanceFailure("Recovery did not replace a worker during the same active Agent run.")
+    before_heartbeat = _time(effect.get("worker_before_heartbeat_at"), "recovery_outbox.worker_before_heartbeat_at")
+    after_heartbeat = _time(effect.get("worker_after_heartbeat_at"), "recovery_outbox.worker_after_heartbeat_at")
+    if before_heartbeat > restarted or after_heartbeat <= replacement_started:
+        raise Day2AcceptanceFailure("Worker heartbeat chronology does not corroborate replacement.")
+    if effect.get("agent_outbox_delivered") is not True:
+        raise Day2AcceptanceFailure("The parent AgentRun outbox delivery was not attested.")
+    children = effect.get("completed_children")
+    if not isinstance(children, list) or len(children) != 3:
+        raise Day2AcceptanceFailure("Recovery needs three structured completed child task receipts.")
+    child_ids: set[str] = set()
+    child_windows: list[tuple[datetime, datetime]] = []
+    for ordinal, raw_child in enumerate(children, start=1):
+        child = _object(raw_child, f"recovery_outbox.completed_children[{ordinal}]")
+        child_id = _nonempty(child.get("task_id"), f"completed_child_{ordinal}.task_id")
+        if (child_id in child_ids or type(child.get("ordinal")) is not int
+                or child["ordinal"] != ordinal or child.get("state") != "completed"
+                or child.get("idempotency_key") != f"agent:{agent_run_id}:{ordinal}"):
+            raise Day2AcceptanceFailure("Recovery child task identity, state or idempotency is inconsistent.")
+        child_ids.add(child_id)
+        child_start = _time(child.get("started_at"), f"completed_child_{ordinal}.started_at")
+        child_finish = _time(child.get("finished_at"), f"completed_child_{ordinal}.finished_at")
+        if not started <= child_start <= child_finish <= finished:
+            raise Day2AcceptanceFailure("Recovery child task occurred outside the recorded AgentRun.")
+        child_windows.append((child_start, child_finish))
+    if child_windows[2][0] < max(child_windows[0][1], child_windows[1][1]):
+        raise Day2AcceptanceFailure("Recovery fan-in started before both completed branches.")
+    if not any(begin <= restarted <= end for begin, end in child_windows):
+        raise Day2AcceptanceFailure("Recovery restart did not interrupt an active child task.")
     digest, restored_at = _stage(restore.get("backup_restore"), "restored.backup_restore",
                                  release_id=release_id, revision=expected_revision)
     if digest != rollout_digest:
@@ -280,6 +308,8 @@ def validate_evidence(
         "recovered_agent_run_id": agent_run_id,
         "recovered_agent_workflow_id": effect["workflow_id"],
         "logical_agent_outbox_effect_count": 1,
+        "parent_agent_outbox_delivered": True,
+        "completed_child_task_count": len(child_ids),
         "logical_document_outbox_effect_count": 1,
         "document_outbox_dispatch_attempts": document_outbox["dispatch_attempts"],
         "required_live_checks": list(_CHECKS),
