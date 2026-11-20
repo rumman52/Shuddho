@@ -227,8 +227,9 @@ def verify_two_day(
             "Daily briefing requires an explicit bounded catch-up window.")
     require(verified_timestamps[1] < paused_at < post_due,
             "Pause must occur after Day 8 verification and before the next scheduled opportunity.")
-    require(timestamp(first.get("expires_at"), "expires_at") > post_due,
-            "An expired schedule cannot establish a later paused opportunity.")
+    require(timestamp(first.get("expires_at"), "expires_at")
+            > post_due + timedelta(seconds=catchup),
+            "Schedule expiry must remain beyond the paused opportunity and catch-up window.")
     observation = None
     if require_paused_opportunity:
         for field, expected in (
