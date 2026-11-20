@@ -54,6 +54,10 @@ def test_validate_persisted_recovery_accepts_real_fan_in_and_restart_window():
         run, steps, tasks, base + timedelta(seconds=8)
     )
     assert result["child_tasks"] == 3
+    assert [child["task_id"] for child in result["completed_children"]] == [
+        "task-1", "task-2", "task-3",
+    ]
+    assert all(child["state"] == "completed" for child in result["completed_children"])
     assert result["fan_in_started_at"].endswith("+00:00")
 
 
@@ -257,6 +261,7 @@ def test_recovery_requires_one_logical_agent_outbox_and_no_child_task_outboxes()
     run, tasks, parent, children = _outbox_fixture()
     assert recovery.validate_outbox_effects(run, tasks, parent, children) == {
         "agent_outbox_effect_count": 1,
+        "agent_outbox_delivered": True,
         "child_task_outbox_count": 0,
         "child_task_outbox_expected_absent": True,
     }
@@ -316,6 +321,8 @@ def test_worker_replacement_proves_new_identity_and_heartbeat_during_run():
     assert got["worker_before_id"] == "old-worker"
     assert got["worker_after_id"] == "new-worker"
     assert got["worker_after_started_at"] == after["started_at"]
+    assert got["worker_before_heartbeat_at"] == before["heartbeat_at"]
+    assert got["worker_after_heartbeat_at"] == after["heartbeat_at"]
 
 
 @pytest.mark.parametrize("broken", [
