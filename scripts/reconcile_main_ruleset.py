@@ -90,7 +90,9 @@ def _require_unambiguous_existing_checks(existing: dict, reviewed: dict) -> None
         item["parameters"]["required_status_checks"]
         for item in reviewed["rules"] if item["type"] == "required_status_checks"
     )
-    allowed = {row["context"] for row in target_rows}
+    approved_publishers = {
+        row["context"]: row["integration_id"] for row in target_rows
+    }
     if not isinstance(rows, list):
         raise ApplyMainRulesetError("additional required status checks must be preserved manually")
     observed_contexts: set[str] = set()
@@ -99,7 +101,7 @@ def _require_unambiguous_existing_checks(existing: dict, reviewed: dict) -> None
             not isinstance(row, dict)
             or set(row) - {"context", "integration_id"}
             or not isinstance(row.get("context"), str)
-            or row["context"] not in allowed
+            or row["context"] not in approved_publishers
             or row["context"] in observed_contexts
         ):
             # Neither an "already configured" short-circuit nor a later PUT
@@ -108,6 +110,16 @@ def _require_unambiguous_existing_checks(existing: dict, reviewed: dict) -> None
                 "additional required status checks must be preserved manually"
             )
         observed_contexts.add(row["context"])
+        publisher = row.get("integration_id")
+        if publisher is not None and (
+            type(publisher) is not int
+            or publisher != approved_publishers[row["context"]]
+        ):
+            # A different native publisher is not an unscoped check. An
+            # administrator must review it before changing the source binding.
+            raise ApplyMainRulesetError(
+                "unexpected required status check publisher needs manual reconciliation"
+            )
 
 
 def _read_unique_existing(root: str, token: str, expected_main_sha: str) -> dict:
