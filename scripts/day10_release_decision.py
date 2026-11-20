@@ -35,6 +35,10 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 CELLS = {(workflow, language) for workflow in ("research_brief", "project_report_email") for language in ("bn", "en")}
 PROOFS = ("rollback", "cancellation", "paused_schedule", "owner_isolation")
+ATTEMPT_FIELDS = (
+    "run_id", "output_sha256", "attempt_status", "evidence_kind",
+    "output_present", "failure_code", "failure_trace_sha256",
+)
 
 
 def read_json(path: Path | None) -> dict | None:
@@ -99,6 +103,33 @@ def proof_ok(row: object, release: str, revision: str, digest: str) -> bool:
             and time_ok(row.get("verified_at")))
 
 
+def first_attempt_identity_ok(row: object) -> bool:
+    """Validate the claim's type and lineage, not the private source bytes."""
+    if not isinstance(row, dict):
+        return False
+    run_id = row.get("run_id")
+    output_hash = row.get("output_sha256")
+    if (not isinstance(run_id, str) or not run_id.strip()
+            or run_id != run_id.strip() or len(run_id) > 128
+            or not isinstance(output_hash, str) or not DIGEST.fullmatch(output_hash)):
+        return False
+    status = row.get("attempt_status")
+    if status == "succeeded":
+        return (row.get("evidence_kind") == "draft_output"
+                and row.get("output_present") is True
+                and row.get("failure_code") is None
+                and row.get("failure_trace_sha256") is None)
+    if status in ("failed", "timed_out"):
+        code = row.get("failure_code")
+        trace = row.get("failure_trace_sha256")
+        return (row.get("evidence_kind") == "failure_record"
+                and row.get("output_present") is False
+                and isinstance(code, str)
+                and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is not None
+                and isinstance(trace, str) and DIGEST.fullmatch(trace) is not None)
+    return False
+
+
 def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if not bound(value, release, revision, digest) or value.get("custody_established") is not True:
         return False
@@ -121,11 +152,17 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     rows = value.get("cases")
     if not isinstance(rows, list) or len(rows) != 40:
         return False
-    ids, counts, accepted = set(), Counter(), Counter()
+    ids, run_ids, counts, accepted = set(), set(), Counter(), Counter()
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"] or row["id"] in ids:
             return False
         ids.add(row["id"])
+        if not first_attempt_identity_ok(row) or row["run_id"] in run_ids:
+            return False
+        run_ids.add(row["run_id"])
+        if (row["attempt_status"] != "succeeded"
+                and (row["accepted"] is not False or row.get("deterministic_pass") is not False)):
+            return False
         cell = (row.get("workflow"), row.get("language"))
         if cell not in CELLS or type(row.get("accepted")) is not bool:
             return False
@@ -340,20 +377,54 @@ def first_run_matches_holdout(
             indexed[row["id"]] = row
     if set(first_by_id) != set(holdout_by_id):
         return False
+    # Day 9's original candidate ledger is the identity authority for every
+    # scored attempt. Both Day 10 score and holdout artifacts must agree with it;
+    # matching two editable scorecards alone cannot establish first-run lineage.
+    receipts = first_run.get("case_run_receipts")
+    candidate_digest = first_run.get("candidate_outputs_sha256")
+    if (not isinstance(receipts, list) or len(receipts) != 40
+            or not isinstance(candidate_digest, str) or not DIGEST.fullmatch(candidate_digest)):
+        return False
+    receipts_by_id: dict[str, dict] = {}
+    run_ids: set[str] = set()
+    for receipt in receipts:
+        if (not isinstance(receipt, dict)
+                or receipt.get("case_id") not in first_by_id
+                or receipt["case_id"] in receipts_by_id
+                or not bound(receipt, release, revision, rollout_hash)
+                or receipt.get("manifest_sha256") != manifest_sha
+                or not first_attempt_identity_ok(receipt)
+                or receipt["run_id"] in run_ids):
+            return False
+        if (receipt["attempt_status"] != "succeeded"
+                and not ordered_times(receipt, "attempt_started_at", "attempt_finished_at")):
+            return False
+        receipts_by_id[receipt["case_id"]] = receipt
+        run_ids.add(receipt["run_id"])
+    if set(receipts_by_id) != set(first_by_id):
+        return False
     bound_fields = (
         "id", "workflow", "language", "accepted", "security_passed",
         "source_supported", "deterministic_pass", "reviewer_scores", "reviewer_rubrics",
+        *ATTEMPT_FIELDS,
     )
     by_cell: Counter[str] = Counter()
     accepted: Counter[str] = Counter()
     for case_id, original in first_by_id.items():
         if any(original.get(field) != holdout_by_id[case_id].get(field) for field in bound_fields):
             return False
+        if (not first_attempt_identity_ok(original)
+                or any(original.get(field) != receipts_by_id[case_id].get(field)
+                       for field in ATTEMPT_FIELDS)):
+            return False
         if any(type(original.get(field)) is not bool for field in (
                 "accepted", "security_passed", "source_supported", "deterministic_pass")):
             return False
         if original["accepted"] and not all(original[key] for key in (
                 "security_passed", "source_supported", "deterministic_pass")):
+            return False
+        if original["attempt_status"] != "succeeded" and (
+                original["accepted"] or original["deterministic_pass"]):
             return False
         cell = original["workflow"] + "/" + original["language"]
         by_cell[cell] += 1
