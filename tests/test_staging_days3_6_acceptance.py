@@ -136,6 +136,18 @@ def evidence():
             "provider_receipt_ref": f"model-proof-{name}",
             "provider": freeze["provider"], "model_id": freeze["model_id"],
             "budget_tokens": freeze["budget_tokens"],
+            "owner_ref": freeze["owner_a_ref"],
+            "document_version_id": "owner-A-version-1",
+            "reviewed_brief_sha256": D2,
+            "tool_policy_sha256": D3,
+            "preview_selected_memory": [] if name == "none" else [
+                {"fact_id": "fact-A", "version": index}
+            ],
+            "worker_selected_memory": [] if name == "none" else [
+                {"fact_id": "fact-A", "version": index}
+            ],
+            "preview_receipt_ref": f"preview-{name}",
+            "worker_context_receipt_ref": f"worker-context-{name}",
             "fact_id": None if name == "none" else "fact-A",
             "fact_version": None if name == "none" else index,
             "observed_claim": ["No memory claim", "Original fact", "Corrected fact"][index],
@@ -148,8 +160,36 @@ def evidence():
         } for name in sorted(gate.NEGATIVES)],
         "unselected_memory": {
             "unselected_fact_id": "unselected-same-category",
+            "selected_category": "project-style",
+            "unselected_category": "project-style",
             "absent_from_all_model_inputs": True,
             "evidence_ref": "provider-context-digest-attestation",
+        },
+        "owner_access": {
+            "owner_a": {
+                "owner_ref": freeze["owner_a_ref"],
+                "own_fact_id": "fact-A",
+                "own_fact_http_status": 200,
+                "foreign_fact_http_status": 403,
+                "foreign_context_http_status": 403,
+                "foreign_output_http_status": 403,
+                "own_read_receipt_ref": "owner-A-positive-fact-read",
+                "foreign_fact_denial_ref": "owner-A-denied-B-fact",
+                "foreign_context_denial_ref": "owner-A-denied-B-context",
+                "foreign_output_denial_ref": "owner-A-denied-B-output",
+            },
+            "owner_b": {
+                "owner_ref": freeze["owner_b_ref"],
+                "own_fact_id": "fact-B",
+                "own_fact_http_status": 200,
+                "foreign_fact_http_status": 403,
+                "foreign_context_http_status": 403,
+                "foreign_output_http_status": 403,
+                "own_read_receipt_ref": "owner-B-positive-fact-read",
+                "foreign_fact_denial_ref": "owner-B-denied-A-fact",
+                "foreign_context_denial_ref": "owner-B-denied-A-context",
+                "foreign_output_denial_ref": "owner-B-denied-A-output",
+            },
         },
         "historical_replay": {
             "agent_run_id": "run-v1", "output_sha256": D4,
@@ -536,4 +576,90 @@ def test_day3_rejects_one_way_or_nonindependent_owner_b_fixture(field, invalid):
     args = evidence()
     args[1]["owner_b_fixture"][field] = invalid
     with pytest.raises(gate.Days36EvidenceError, match="owner_b_fixture"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("arm_index", "field", "value"), [
+    (1, "document_version_id", "old-owner-A-version"),
+    (2, "reviewed_brief_sha256", D4),
+    (0, "tool_policy_sha256", D4),
+    (2, "owner_ref", "synthetic-B"),
+    (0, "document_version_id", ""),
+    (1, "reviewed_brief_sha256", "invalid"),
+    (1, "tool_policy_sha256", "invalid"),
+])
+def test_day5_rejects_drift_in_frozen_memory_experiment_inputs(arm_index, field, value):
+    args = evidence()
+    args[3]["arms"][arm_index][field] = value
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("arm_index", "field", "pins"), [
+    (0, "preview_selected_memory", [{"fact_id": "fact-A", "version": 1}]),
+    (0, "worker_selected_memory", [{"fact_id": "fact-A", "version": 1}]),
+    (1, "preview_selected_memory", []),
+    (1, "worker_selected_memory", []),
+    (1, "preview_selected_memory", [{"fact_id": "fact-A", "version": 2}]),
+    (2, "worker_selected_memory", [{"fact_id": "fact-B", "version": 2}]),
+    (2, "preview_selected_memory", [
+        {"fact_id": "fact-A", "version": 2}, {"fact_id": "hidden-other", "version": 1},
+    ]),
+    (2, "worker_selected_memory", [{"fact_id": "fact-A", "version": True}]),
+    (0, "worker_selected_memory", None),
+])
+def test_day5_rejects_preview_or_worker_pins_that_differ_from_explicit_selection(
+    arm_index, field, pins
+):
+    args = evidence()
+    args[3]["arms"][arm_index][field] = pins
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", ["preview_receipt_ref", "worker_context_receipt_ref"])
+def test_day5_requires_preview_and_worker_context_receipts_per_arm(field):
+    args = evidence()
+    args[3]["arms"][1][field] = ""
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("selected_category", "other-category"),
+    ("unselected_category", "unrelated-category"),
+    ("unselected_category", ""),
+])
+def test_day5_same_category_unselected_fact_must_be_witnessed(field, value):
+    args = evidence()
+    args[3]["unselected_memory"][field] = value
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+def test_day5_cannot_claim_two_owner_memory_isolation_without_both_probes():
+    args = evidence()
+    del args[3]["owner_access"]
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("owner", "field", "invalid"), [
+    ("owner_a", "owner_ref", "synthetic-B"),
+    ("owner_b", "owner_ref", "synthetic-A"),
+    ("owner_b", "own_fact_id", "fact-A"),
+    ("owner_a", "own_fact_http_status", 403),
+    ("owner_b", "own_fact_http_status", 404),
+    ("owner_a", "foreign_fact_http_status", 200),
+    ("owner_b", "foreign_context_http_status", 200),
+    ("owner_a", "foreign_output_http_status", 200),
+    ("owner_a", "own_read_receipt_ref", ""),
+    ("owner_b", "foreign_fact_denial_ref", ""),
+    ("owner_b", "foreign_context_denial_ref", ""),
+    ("owner_a", "foreign_output_denial_ref", ""),
+])
+def test_day5_rejects_foreign_memory_fact_context_or_private_output_access(owner, field, invalid):
+    args = evidence()
+    args[3]["owner_access"][owner][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
         validate(args)

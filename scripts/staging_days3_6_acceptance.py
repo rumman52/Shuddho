@@ -239,6 +239,7 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
     need(isinstance(arms, list) and len(arms) == 3, "day5 needs none/v1/v2 model calls")
     keys, provider_ids, run_ids = set(), set(), set()
     facts, outputs = {}, {}
+    fixed_experiment_inputs = None
     for item in arms:
         arm = obj(item, "day5.arm")
         name = arm.get("name")
@@ -249,6 +250,40 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
         need(arm.get("provider") == release["provider"] and arm.get("model_id") == release["model_id"],
              "day5 model drifted")
         count(arm.get("budget_tokens"), "day5.arm.budget_tokens", release["budget_tokens"])
+        need(arm.get("owner_ref") == release["owner_a_ref"],
+             "day5 experiment arm must remain scoped to the frozen owner A")
+        fixed_input = (
+            text(arm.get("document_version_id"), "day5.arm.document_version_id"),
+            sha(arm.get("reviewed_brief_sha256"), "day5.arm.reviewed_brief_sha256"),
+            sha(arm.get("tool_policy_sha256"), "day5.arm.tool_policy_sha256"),
+        )
+        if fixed_experiment_inputs is None:
+            fixed_experiment_inputs = fixed_input
+        else:
+            need(fixed_input == fixed_experiment_inputs,
+                 "day5 document version, reviewed brief and tool policy drifted between arms")
+
+        # A context digest alone does not prove what the user explicitly
+        # selected. Bind the exact (fact ID, version) in both preview and
+        # actual worker context; even a version encoded as bool is invalid.
+        expected_pins = [] if name == "none" else [{
+            "fact_id": text(arm.get("fact_id"), "day5.arm.fact_id"),
+            "version": count(arm.get("fact_version"), "day5.arm.fact_version"),
+        }]
+        for stage in ("preview_selected_memory", "worker_selected_memory"):
+            selected = arm.get(stage)
+            need(isinstance(selected, list),
+                 f"day5.arm.{stage} must be an explicit selected-memory list")
+            for pin in selected:
+                row = obj(pin, f"day5.arm.{stage}.pin")
+                need(set(row) == {"fact_id", "version"}
+                     and type(row["version"]) is int and row["version"] > 0,
+                     f"day5.arm.{stage} has a noncanonical fact version or identity")
+                text(row["fact_id"], f"day5.arm.{stage}.fact_id")
+            need(selected == expected_pins,
+                 f"day5.arm.{stage} does not match the explicit selected fact/version")
+        referenced(arm.get("preview_receipt_ref"), "day5.arm.preview_receipt_ref")
+        referenced(arm.get("worker_context_receipt_ref"), "day5.arm.worker_context_receipt_ref")
         p = referenced(arm.get("provider_request_id"), "day5.provider_request_id")
         r = referenced(arm.get("agent_run_id"), "day5.agent_run_id")
         referenced(arm.get("provider_receipt_ref"), "day5.provider_receipt_ref")
@@ -277,7 +312,39 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
          and unselected.get("unselected_fact_id") != fact_id,
          "day5 has no same-category unselected-memory exclusion proof")
     referenced(unselected.get("unselected_fact_id"), "day5.unselected_fact_id")
+    selected_category = text(unselected.get("selected_category"), "day5.selected_category")
+    need(unselected.get("unselected_category") == selected_category,
+         "day5 unselected fact must belong to the same memory category")
     referenced(unselected.get("evidence_ref"), "day5.unselected.evidence_ref")
+
+    # The foreign-memory denial alone is not a two-owner isolation probe.
+    # Each managed owner must read a distinct owned fact and be denied the
+    # other owner's fact, model context and private output. These references
+    # still need independent live-platform authentication before a PASS.
+    owner_access = obj(day.get("owner_access"), "day5.owner_access")
+    need(set(owner_access) == {"owner_a", "owner_b"},
+         "day5.owner_access must contain both owner probes")
+    owned_fact_ids = set()
+    for owner_label, frozen_owner_key in (("owner_a", "owner_a_ref"), ("owner_b", "owner_b_ref")):
+        owner_proof = obj(owner_access[owner_label], f"day5.owner_access.{owner_label}")
+        need(owner_proof.get("owner_ref") == release[frozen_owner_key],
+             f"day5.owner_access.{owner_label} does not match the frozen managed owner")
+        owned_fact = text(owner_proof.get("own_fact_id"),
+                          f"day5.owner_access.{owner_label}.own_fact_id")
+        need(owned_fact not in owned_fact_ids,
+             "day5.owner_access requires two distinct owner-scoped facts")
+        if owner_label == "owner_a":
+            need(owned_fact == fact_id, "day5.owner_access.owner_a fact does not match the selected experiment")
+        owned_fact_ids.add(owned_fact)
+        need(owner_proof.get("own_fact_http_status") == 200,
+             f"day5.owner_access.{owner_label} lacks a positive owner read")
+        for resource in ("fact", "context", "output"):
+            need(owner_proof.get(f"foreign_{resource}_http_status") in {403, 404},
+                 f"day5.owner_access.{owner_label} did not deny foreign {resource}")
+            referenced(owner_proof.get(f"foreign_{resource}_denial_ref"),
+                       f"day5.owner_access.{owner_label}.foreign_{resource}_denial_ref")
+        referenced(owner_proof.get("own_read_receipt_ref"),
+                   f"day5.owner_access.{owner_label}.own_read_receipt_ref")
     exclusions = day.get("exclusions")
     need(isinstance(exclusions, list) and len(exclusions) == len(NEGATIVES),
          "day5 missing denial proofs")
