@@ -153,6 +153,46 @@ def test_custom_archive_restores_the_same_rows_on_a_disposable_postgres(tmp_path
     assert expected["tables"]["cw_conversations"]["rows"] == 1
 
 
+def test_catalog_schema_sha_changes_even_when_rows_and_revision_do_not(tmp_path):
+    """A missing index or changed column default must fail the restore comparison."""
+    pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
+    if not pg_bin:
+        pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
+    import psycopg
+
+    with backup.isolated_postgres(Path(pg_bin)) as db_env:
+        connect = dict(
+            host=db_env["PGHOST"], port=db_env["PGPORT"], user=db_env["PGUSER"],
+            dbname=db_env["PGDATABASE"], sslmode="disable",
+        )
+        with psycopg.connect(**connect) as fixture:
+            fixture.execute("CREATE SCHEMA shuddho_coworker")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_alembic_version (version_num text)")
+            fixture.execute("INSERT INTO shuddho_coworker.cw_alembic_version VALUES ('0070')")
+            fixture.execute(
+                "CREATE TABLE shuddho_coworker.cw_accounts "
+                "(id integer PRIMARY KEY, label text DEFAULT 'initial')"
+            )
+            fixture.execute("INSERT INTO shuddho_coworker.cw_accounts (id, label) VALUES (1, 'same')")
+            source = backup.inventory(fixture)
+            assert len(source["schema_sha256"]) == 64
+
+            fixture.execute("CREATE INDEX cw_accounts_label_idx ON shuddho_coworker.cw_accounts (label)")
+            with_index = backup.inventory(fixture)
+            assert source["revision"] == with_index["revision"]
+            assert source["tables"] == with_index["tables"]
+            assert source["schema_sha256"] != with_index["schema_sha256"]
+
+            fixture.execute(
+                "ALTER TABLE shuddho_coworker.cw_accounts "
+                "ALTER COLUMN label SET DEFAULT 'changed'"
+            )
+            with_new_default = backup.inventory(fixture)
+            assert with_index["tables"] == with_new_default["tables"]
+            assert with_index["schema_sha256"] != with_new_default["schema_sha256"]
+            assert with_new_default["schema_sha256"] == backup.inventory(fixture)["schema_sha256"]
+
+
 def test_private_schema_access_rejects_supabase_api_role_grants():
     class Result:
         def __init__(self, row):
