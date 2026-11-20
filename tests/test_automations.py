@@ -1629,8 +1629,7 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
             Notification.automation_id == automation["id"],
             Notification.kind == "automation_started",
         )).all()
-        assert len(started) == 1
-        assert started[0].title == "Briefing started"
+        assert started == []  # Daily briefings notify only after the result is ready.
 
     with automation_container.repository.sessions.begin() as db:
         run = db.get(AgentRun, first["run_id"])
@@ -1645,7 +1644,11 @@ def test_daily_briefing_starts_one_runtime_v3_daily_plan_run_and_notifies_comple
         )).all()
         assert len(completed) == 1
         assert completed[0].title == "Briefing ready"
+        assert completed[0].occurrence_id == first["occurrence_id"]
         assert "daily/weekly briefing" in completed[0].message
+        assert db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+        )).all() == completed
 
 
 def test_day7_occurrence_blocks_when_a_selected_document_is_unlinked_from_its_project(
@@ -1712,9 +1715,22 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
         started = db.scalars(select(Notification).where(
             Notification.automation_id == automation["id"], Notification.kind == "automation_started"
         )).all()
-        assert len(started) == 1 and started[0].visible_at.replace(tzinfo=timezone.utc) > due
+        assert started == []
+        # Quiet hours still apply to a due-at timestamp in the forbidden window.
+        assert automation_container.notifications.visible_at_after_quiet_hours(
+            due, "Asia/Dhaka", body["quiet_hours"],
+        ) > due
+    before_completion = utcnow()
     automation_container.automations.notify_run_completed(first["run_id"])
     automation_container.automations.notify_run_completed(first["run_id"])
+    with automation_container.repository.sessions() as db:
+        completed = db.scalars(select(Notification).where(
+            Notification.automation_id == automation["id"],
+            Notification.kind == "automation_completed",
+        )).all()
+        assert len(completed) == 1
+        assert completed[0].occurrence_id == first["occurrence_id"]
+        assert completed[0].visible_at.replace(tzinfo=timezone.utc) >= before_completion
     with automation_container.repository.sessions.begin() as db:
         db.add(DocumentVersion(
             id=v2, document_id=document_id, owner_id=owner_id, version=2,
@@ -1747,9 +1763,14 @@ def test_day7_briefing_refreshes_document_versions_replays_and_pauses(automation
         assert stopped["state"] == "skipped"
         with restarted.repository.sessions() as db:
             assert len(db.scalars(select(AgentRun).where(AgentRun.goal_id == goal["id"])).all()) == 2
-            assert len(db.scalars(select(Notification).where(
+            assert db.scalars(select(Notification).where(
                 Notification.automation_id == automation["id"], Notification.kind == "automation_started"
-            )).all()) == 2
+            )).all() == []
+            completed = db.scalars(select(Notification).where(
+                Notification.automation_id == automation["id"], Notification.kind == "automation_completed"
+            )).all()
+            assert len(completed) == 1
+            assert completed[0].occurrence_id == first["occurrence_id"]
     finally:
         restarted.repository.sessions.kw["bind"].dispose()
 
