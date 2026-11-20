@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlsplit
 
 from scripts.staging_prerequisite_preflight import PreflightFailure, _validate_postgresql_url
 from scripts.staging_migration_alignment import MigrationAlignmentError, source_schema_alignment
+from scripts.staging_postgres_schema_digest import SchemaCatalogError, catalog_schema_sha256
 from scripts.staging_release_evidence import write_private_json
 
 
@@ -204,6 +205,10 @@ def inventory(connection) -> dict:
     if len(revisions) != 1 or not revisions[0][0]:
         raise BackupError("Expected one Coworker migration revision.")
     access_control = private_schema_access(connection)
+    try:
+        schema_sha256 = catalog_schema_sha256(connection, SCHEMA)
+    except SchemaCatalogError:
+        raise BackupError("Private PostgreSQL structural catalog cannot be verified.") from None
 
     result = {}
     for (table,) in tables:
@@ -219,7 +224,10 @@ def inventory(connection) -> dict:
                 digest.update(row.encode("utf-8") + b"\n")
                 count += 1
         result[table] = {"rows": count, "sha256": digest.hexdigest()}
-    return {"revision": revisions[0][0], "tables": result, "access_control": access_control}
+    return {
+        "revision": revisions[0][0], "tables": result,
+        "access_control": access_control, "schema_sha256": schema_sha256,
+    }
 
 
 def dump_source(url: str, archive: Path, pg_bin: Path | None) -> tuple[dict, str]:
