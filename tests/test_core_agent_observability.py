@@ -925,6 +925,42 @@ def test_day8_missing_or_invalid_time_limit_blocks_freeze(bad_limit):
     assert any("time limit" in blocker for blocker in result["blockers"])
 
 
+@pytest.mark.parametrize("missing_control", [
+    "candidate_time_limit", "shared_flags_fingerprint", "shared_budgets_fingerprint",
+])
+def test_day8_unqualified_comparison_controls_never_claim_cost_savings(missing_control):
+    """Arithmetic deltas cannot qualify as savings without matched controls."""
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    if missing_control == "candidate_time_limit":
+        del candidate["configuration"]["time_limit_seconds"]
+    elif missing_control == "shared_flags_fingerprint":
+        del candidate["configuration"]["flags_sha256"]
+    else:
+        del candidate["configuration"]["budgets_sha256"]
+
+    report = compare_day8_development(baseline, candidate, suite)
+    # The provider usage and reviewer evidence remain complete and the raw
+    # observed cost difference still exists; the experiment isn't eligible.
+    assert report["status"] == "BLOCKED"
+    assert report["selected_least_cost_qualified_profile"] is None
+    assert report["freeze"] is None
+    assert report["profile_summaries"]["baseline"]["total_cost_microusd"] == 800
+    assert report["profile_summaries"]["bounded_context_compact_observations"][
+        "total_cost_microusd"
+    ] == 600
+    assert report["measured_cost_savings_microusd"] is None
+    assert all(
+        row["measured_cost_savings_microusd"] is None
+        for row in report["per_task_comparison"]
+    )
+    # Raw matched costs must remain visible as measurements, not qualified
+    # savings; the withheld claim cannot erase available provider receipts.
+    assert all(
+        row["paired_measured_deltas_candidate_minus_baseline"]["cost_microusd"] == -5
+        for row in report["per_task_comparison"]
+    )
+
+
 def test_day8_legacy_missing_time_limits_never_freezes():
     suite, baseline, candidate = _day8_complete_measurement_fixture()
     del baseline["configuration"]["time_limit_seconds"]

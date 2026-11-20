@@ -1078,8 +1078,13 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         blockers.append("no eligible candidate with retained quality")
     # Real token/cost differences from an unsafe or otherwise ineligible
     # candidate are not *qualified savings*. Do not surface them as such.
+    # A cost delta is only *qualified savings* after the entire matched
+    # comparison contract is complete. Without the shared freeze fingerprints
+    # or fixed execution-time budgets, costs can be arithmetically measured but
+    # cannot substantiate a decision against a controlled experiment.
     qualified_savings = (
-        a["quality_gate_passed"] and b["quality_gate_passed"]
+        freeze_hashes_complete and time_limits_complete and policy_complete
+        and a["quality_gate_passed"] and b["quality_gate_passed"]
         and a["latency_gate_passed"] and b["latency_gate_passed"]
         and a["metrics_complete"] and b["metrics_complete"]
         and retained_quality
