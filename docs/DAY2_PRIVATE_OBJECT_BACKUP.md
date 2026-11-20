@@ -26,7 +26,7 @@ directory and writes object files and the manifest with mode 0600. Object
 keys and SHA-256 belong only in this private directory, not GitHub or logs.
 
 The archive has a deliberate **64 MiB per-object ceiling**, and a
-**10,000-object ceiling**, to avoid unbounded in-memory downloads. If the
+**10,000-object ceiling** and a **256 MiB aggregate byte ceiling**, to avoid unbounded in-memory downloads. If the
 reviewed source exceeds these ceilings, use a separately reviewed streaming,
 version-aware backup method rather than deleting or skipping objects. Empty
 buckets do not qualify as an object-restore proof.
