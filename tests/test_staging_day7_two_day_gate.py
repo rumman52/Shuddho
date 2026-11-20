@@ -505,11 +505,14 @@ def test_paused_opportunity_collector_refuses_early_read_before_network(
 
     first, second, paused = valid_pair()
     del paused["post_pause_observation"]
-    # Move the complete two-day case far enough into the future that a valid
-    # after-opportunity receipt is impossible. The owner-approved schedule and
-    # local timestamps are preserved in the JSON, and no API call may occur.
-    first["due_at"] = "2030-11-12T02:00:00+00:00"
-    second["due_at"] = "2030-11-13T02:00:00+00:00"
+    # The source pair passes offline preflight, but the controlled read-only
+    # observer's local clock is still inside the following catch-up window.
+    class EarlyObservationClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 14, 2, 5, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(check, "datetime", EarlyObservationClock)
     files = [tmp_path / name for name in ("first.json", "second.json", "pause.json")]
     for path, item in zip(files, (first, second, paused)):
         path.write_text(json.dumps(item), encoding="utf-8")
@@ -523,6 +526,6 @@ def test_paused_opportunity_collector_refuses_early_read_before_network(
     monkeypatch.setattr(check.httpx, "Client", lambda **_kw: (_ for _ in ()).throw(
         AssertionError("No network access allowed before the due opportunity")
     ))
-    with pytest.raises(check.ScheduledProfileProbeFailure):
+    with pytest.raises(check.ScheduledProfileProbeFailure, match="full catch-up window"):
         check.collect_paused_opportunity(args)
     assert not args.output.exists()
