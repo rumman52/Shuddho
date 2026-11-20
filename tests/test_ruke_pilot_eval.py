@@ -1043,7 +1043,7 @@ def test_day9_first_attempt_scoring_handoff_rejects_missing_or_rebound_receipts(
     assert len(report["cases"]) == 40
     assert report["cases"][0]["run_id"] == receipts[0]["run_id"]
     assert report["cases"][0]["output_sha256"] == receipts[0]["output_sha256"]
-    with pytest.raises(EvidenceError, match="exactly"):
+    with pytest.raises(EvidenceError, match="wrong number"):
         day10_first_run_scores(scores, case_run_receipts=receipts[:-1])
     wrong = deepcopy(receipts)
     wrong[1]["case_id"] = wrong[0]["case_id"]
