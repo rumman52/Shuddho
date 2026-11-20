@@ -60,6 +60,56 @@ def ruleset_fingerprint(ruleset: dict) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _require_unambiguous_existing_checks(existing: dict, reviewed: dict) -> None:
+    """Do not treat ambiguous native checks as configured or safe to replace."""
+    rules = existing.get("rules")
+    if not isinstance(rules, list):
+        raise ApplyMainRulesetError("existing rules are not inspectable")
+    check_rules = [
+        item for item in rules
+        if isinstance(item, dict) and item.get("type") == "required_status_checks"
+    ]
+    if len(check_rules) > 1:
+        raise ApplyMainRulesetError("additional required status checks must be preserved manually")
+    if not check_rules:
+        return
+    entry = check_rules[0]
+    params = entry.get("parameters")
+    if (
+        set(entry) != {"type", "parameters"}
+        or not isinstance(params, dict)
+        or set(params) - {
+            "strict_required_status_checks_policy",
+            "do_not_enforce_on_create",
+            "required_status_checks",
+        }
+    ):
+        raise ApplyMainRulesetError("unknown status-check constraints require manual reconciliation")
+    rows = params.get("required_status_checks")
+    target_rows = next(
+        item["parameters"]["required_status_checks"]
+        for item in reviewed["rules"] if item["type"] == "required_status_checks"
+    )
+    allowed = {row["context"] for row in target_rows}
+    if not isinstance(rows, list):
+        raise ApplyMainRulesetError("additional required status checks must be preserved manually")
+    observed_contexts: set[str] = set()
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row) - {"context", "integration_id"}
+            or not isinstance(row.get("context"), str)
+            or row["context"] not in allowed
+            or row["context"] in observed_contexts
+        ):
+            # Neither an "already configured" short-circuit nor a later PUT
+            # can silently bless or discard an ambiguous native check.
+            raise ApplyMainRulesetError(
+                "additional required status checks must be preserved manually"
+            )
+        observed_contexts.add(row["context"])
+
+
 def _read_unique_existing(root: str, token: str, expected_main_sha: str) -> dict:
     branch = _request_json("GET", root + "/branches/main", token)
     if (
@@ -145,35 +195,7 @@ def _safe_target(existing: dict, reviewed: dict) -> dict:
     ):
         raise ApplyMainRulesetError("existing merge-method restrictions are ambiguous")
     if "required_status_checks" in by_type:
-        checks_params = by_type["required_status_checks"].get("parameters")
-        if not isinstance(checks_params, dict) or (
-            set(checks_params)
-            - {"strict_required_status_checks_policy", "do_not_enforce_on_create", "required_status_checks"}
-        ):
-            raise ApplyMainRulesetError("unknown status-check constraints require manual reconciliation")
-        rows = checks_params.get("required_status_checks", [])
-        target_rows = next(
-            x["parameters"]["required_status_checks"]
-            for x in candidate_rules if x["type"] == "required_status_checks"
-        )
-        allowed = {row["context"] for row in target_rows}
-        if not isinstance(rows, list):
-            raise ApplyMainRulesetError("additional required status checks must be preserved manually")
-        observed_contexts: set[str] = set()
-        for row in rows:
-            if (
-                not isinstance(row, dict)
-                or set(row) - {"context", "integration_id"}
-                or not isinstance(row.get("context"), str)
-                or row["context"] not in allowed
-                or row["context"] in observed_contexts
-            ):
-                # Preserve unknown or duplicate native controls for an
-                # administrator to review instead of silently replacing them.
-                raise ApplyMainRulesetError(
-                    "additional required status checks must be preserved manually"
-                )
-            observed_contexts.add(row["context"])
+        _require_unambiguous_existing_checks(existing, reviewed)
     target = deepcopy(reviewed)
     if methods is not None:
         next_review = next(
@@ -211,6 +233,7 @@ def reconcile_main_ruleset(
         )
     root = f"{API_ROOT}/repos/{EXPECTED_REPOSITORY}"
     existing = _read_unique_existing(root, token, expected_main_sha)
+    _require_unambiguous_existing_checks(existing, reviewed)
     observed = ruleset_fingerprint(existing)
     if expected_current_ruleset_sha256 is not None and observed != expected_current_ruleset_sha256:
         raise ApplyMainRulesetError("ruleset configuration changed since dry-run; restart review")
