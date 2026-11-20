@@ -758,6 +758,17 @@ jobs:
         with: { python-version: "3.11" }
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      - name: Rehearse both Day 2 0071 migration paths and replay without skips
+        run: |
+          uv run --extra coworker pytest tests/test_day2_dual_0071_postgres.py -q -rs --junitxml=/tmp/day2-dual-0071-postgres.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/day2-dual-0071-postgres.xml --required-module tests.test_day2_dual_0071_postgres
+      - name: Preserve dual-parent PostgreSQL 18 migration rehearsal receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day2-dual-0071-postgres-migration-rehearsal
+          path: /tmp/day2-dual-0071-postgres.xml
+          if-no-files-found: warn
       - name: Verify a staging PostgreSQL archive on an isolated local cluster
         run: |
           export SHUDDHO_TEST_PG_BIN="$(pg_config --bindir)"
