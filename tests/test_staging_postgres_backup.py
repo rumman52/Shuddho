@@ -78,7 +78,7 @@ def test_verified_pg_archive_never_publishes_missing_schema_fingerprint(tmp_path
         return source, "f" * 64
 
     destination = tmp_path / ("bad-schema-" + str(bad_schema))
-    with patch.object(backup, "dump_source", side_effect=dump), \\
+    with patch.object(backup, "dump_source", side_effect=dump), \
          patch.object(backup, "restore_inventory", return_value=source):
         with pytest.raises(backup.BackupError, match="structural schema"):
             backup.run_backup(SOURCE, destination)
