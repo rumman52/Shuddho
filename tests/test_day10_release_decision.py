@@ -577,6 +577,19 @@ def _bind_first_run_to_heldout_outcomes(artifacts):
             failure_code=None,
             failure_trace_sha256=None,
         )
+        for reviewer_index, reviewer in enumerate(case["reviewer_rubrics"]):
+            reviewer.update(
+                output_sha256=case["output_sha256"],
+                reviewed_at=(
+                    "2026-11-12T00:10:00Z" if reviewer_index == 0
+                    else "2026-11-12T00:11:00Z"
+                ),
+                evidence_note_sha256="e" * 64,
+            )
+        case["final_rubric"].update(
+            output_sha256=case["output_sha256"],
+            adjudicated_at="2026-11-12T00:12:00Z",
+        )
     by_cell = {
         f"{workflow}/{language}": {"total": 10, "accepted": 10}
         for workflow, language in sorted(day10.CELLS)
@@ -803,6 +816,8 @@ def test_day10_accepts_genuinely_unanimous_votes_without_fake_third_adjudicator(
         "source_supported": True,
         "adjudicator_id": None,
         "evidence_note_sha256": None,
+        "output_sha256": case["output_sha256"],
+        "adjudicated_at": None,
     }
     artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
