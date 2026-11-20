@@ -625,6 +625,14 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             raise EvidenceError("reviewer scores must be four integers in 0..2")
         if type(row.get("source_supported")) is not bool or not isinstance(row.get("evidence_note"), str) or not row["evidence_note"].strip():
             raise EvidenceError("source evidence and written reviewer rationale required")
+        # An independent vote is about the *original output*, not a later
+        # rerun or another case's output with a reused case ID.
+        if (not isinstance(row.get("output_sha256"), str)
+                or SHA.fullmatch(row["output_sha256"]) is None
+                or row["output_sha256"] != checks[row["case_id"]]["output_sha256"]):
+            raise EvidenceError("review output must match the original candidate hash")
+        if not timestamp_ok(row.get("reviewed_at")):
+            raise EvidenceError("independent blind review timestamp required")
         by_id[row["case_id"]][reviewer] = row
     if any(len(v) != 2 for v in by_id.values()) or len(by_id) != 40:
         raise EvidenceError("two independent reviewers per task required")
@@ -642,6 +650,17 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
             raise EvidenceError("bad adjudication")
         if any(type(row["scores"][d]) is not int or row["scores"][d] not in (0, 1, 2) for d in RUBRIC):
             raise EvidenceError("bad adjudication scores")
+        if (not isinstance(row.get("output_sha256"), str)
+                or SHA.fullmatch(row["output_sha256"]) is None
+                or row["output_sha256"] != checks[cid]["output_sha256"]):
+            raise EvidenceError("adjudication output must match the original candidate hash")
+        if (not timestamp_ok(row.get("adjudicated_at"))
+                or any(
+                    datetime.fromisoformat(row["adjudicated_at"].replace("Z", "+00:00")).astimezone(timezone.utc)
+                    <= datetime.fromisoformat(review["reviewed_at"].replace("Z", "+00:00")).astimezone(timezone.utc)
+                    for review in by_id[cid].values()
+                )):
+            raise EvidenceError("adjudication timestamp must follow both blind reviewer records")
     per_cell = defaultdict(lambda: {"total": 0, "accepted": 0})
     results = []
     for case in cases:
@@ -655,7 +674,12 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
                            for reviewer in reviewers]
         reviewer_rubrics = [
             {"reviewer_id": reviewer, "scores": dict(by_id[cid][reviewer]["scores"]),
-             "source_supported": by_id[cid][reviewer]["source_supported"]}
+             "source_supported": by_id[cid][reviewer]["source_supported"],
+             "output_sha256": by_id[cid][reviewer]["output_sha256"],
+             "reviewed_at": by_id[cid][reviewer]["reviewed_at"],
+             "evidence_note_sha256": hashlib.sha256(
+                 by_id[cid][reviewer]["evidence_note"].encode("utf-8")
+             ).hexdigest()}
             for reviewer in reviewers
         ]
         # An adjudicator's separate verdict cannot be reconstructed from
@@ -665,7 +689,9 @@ def score_reviews(cases: list[dict], reviews: list[dict], adjudications: list[di
         final_rubric = {
             "scores": dict(ratings),
             "source_supported": chosen["source_supported"],
+            "output_sha256": checks[cid]["output_sha256"],
             "adjudicator_id": reviewer_identity(chosen["adjudicator_id"]) if adjudicated else None,
+            "adjudicated_at": chosen["adjudicated_at"] if adjudicated else None,
             "evidence_note_sha256": (
                 hashlib.sha256(chosen["evidence_note"].encode("utf-8")).hexdigest()
                 if adjudicated else None
