@@ -806,3 +806,35 @@ def test_day10_accepts_genuinely_unanimous_votes_without_fake_third_adjudicator(
     }
     artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+
+
+@pytest.mark.parametrize(("section", "field", "forged"), [
+    ("reviewer", "output_sha256", "0" * 64),
+    ("reviewer", "reviewed_at", "not-a-timestamp"),
+    ("reviewer", "evidence_note_sha256", "not-a-sha"),
+    ("adjudicator", "output_sha256", "0" * 64),
+    ("adjudicator", "adjudicated_at", "2026-11-12T00:00:00Z"),
+])
+def test_day10_rejects_unbound_or_backdated_blind_review_receipts(
+    monkeypatch, section, field, forged
+):
+    rollout, artifacts = evidence()
+    case = artifacts["holdout"]["cases"][0]
+    target = (case["reviewer_rubrics"][0] if section == "reviewer"
+              else case["final_rubric"])
+    target[field] = forged
+    artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+def test_day10_rejects_review_later_than_adjudication_even_if_all_rubrics_pass(monkeypatch):
+    rollout, artifacts = evidence()
+    case = artifacts["holdout"]["cases"][0]
+    case["reviewer_rubrics"][1]["reviewed_at"] = "2026-11-12T00:13:00Z"
+    case["final_rubric"]["adjudicated_at"] = "2026-11-12T00:12:00Z"
+    artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
