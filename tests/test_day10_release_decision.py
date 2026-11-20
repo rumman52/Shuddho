@@ -50,7 +50,8 @@ def evidence():
               "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True, "provider_model": "model-r"}
     first = {"release_id": RELEASE, "source_revision": REV,
              "rollout_manifest_sha256": HASH, "run_kind": "first_run",
-             "run_id": "day9-first", "manifest_sha256": "f" * 64, "scores": {}}
+             "run_id": "day9-first", "run_started_at": "2026-11-12T00:00:00Z",
+             "manifest_sha256": "f" * 64, "scores": {}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
                "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
@@ -576,6 +577,8 @@ def _bind_first_run_to_heldout_outcomes(artifacts):
             output_present=True,
             failure_code=None,
             failure_trace_sha256=None,
+            attempt_started_at="2026-11-12T00:01:00Z",
+            attempt_finished_at="2026-11-12T00:02:00Z",
         )
         for reviewer_index, reviewer in enumerate(case["reviewer_rubrics"]):
             reviewer.update(
@@ -754,7 +757,10 @@ def test_day10_preserves_a_rejected_first_attempt_in_denominator(monkeypatch, st
     for row in (holdout_case, score_case):
         row["accepted"] = False
         row["deterministic_pass"] = False
-    receipt.update(attempt_started_at=STARTED, attempt_finished_at=STOPPED)
+    receipt.update(
+        attempt_started_at="2026-11-12T00:01:00Z",
+        attempt_finished_at="2026-11-12T00:02:00Z",
+    )
     scores = artifacts["day9_first_run"]["scores"]
     scores["accepted"] = 39
     scores["by_cell"][holdout_case["workflow"] + "/" + holdout_case["language"]]["accepted"] = 9
