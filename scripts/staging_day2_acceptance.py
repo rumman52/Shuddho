@@ -25,13 +25,14 @@ _BASE_FIELDS = (
     "document_id", "document_version_id", "document_sha256",
     "task_id", "workflow_id", "artifact_id", "artifact_sha256",
     "artifact_bytes", "model_attempts", "accounted_tokens",
-    "owner_isolation", "artifact_retrieval", "worker", "document_outbox",
+    "owner_isolation", "artifact_retrieval", "content_anchor_verification",
+    "worker", "document_outbox",
 )
 _RECOVERY = ("temporal", "parallel_restart", "fan_in")
 _CHECKS = [
     "model", "owner_isolation", "artifact_retrieval", "temporal", "document_outbox",
     "worker_heartbeat", "parallel_restart", "fan_in", "outbox_once",
-    "worker_replaced", "backup_restore",
+    "worker_replaced", "backup_restore", "pdf_content_fidelity",
 ]
 
 
@@ -205,6 +206,8 @@ def validate_evidence(
     )
     if run.get("artifact_retrieval") != "passed":
         raise Day2AcceptanceFailure("Document execution did not prove private artifact retrieval.")
+    if run.get("content_anchor_verification") != "passed":
+        raise Day2AcceptanceFailure("Document execution did not prove synthetic source-to-summary-to-PDF content fidelity.")
     worker = _object(run.get("worker"), "execution.worker")
     _nonempty(worker.get("id"), "execution.worker.id")
     _nonempty(worker.get("task_queue"), "execution.worker.task_queue")
