@@ -231,11 +231,15 @@ def test_generation_identity_receipt_and_day10_holdout_artifact_are_compatible()
         "receipt_sha256": "f" * 64, "verified_at": "2026-11-12T00:02:00Z",
     }
     reviews, checks = reviews_and_checks()
-    scores = score_reviews(tasks(), reviews, [], checks)
-    _, usage = candidate_ledger(
+    output_hashes, usage = candidate_ledger(
         tasks(), candidate_outputs_for_manifest(value, manifest_digest="9" * 64),
         manifest_sha256="9" * 64, manifest=value,
     )
+    for check in checks:
+        check["output_sha256"] = output_hashes[check["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = output_hashes[review["case_id"]]
+    scores = score_reviews(tasks(), reviews, [], checks, output_hashes=output_hashes)
     artifact = day10_holdout_receipt(
         value, scores, custody, case_run_receipts=usage["case_run_receipts"],
         manifest_sha256="9" * 64,
@@ -566,6 +570,8 @@ def test_candidate_outputs_bound_to_exact_bytes_and_unknown_usage():
     reviews, checks = reviews_and_checks()
     for row in checks:
         row["output_sha256"] = hashes[row["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = hashes[review["case_id"]]
     assert score_reviews(tasks(), reviews, [], checks, output_hashes=hashes)["accepted"] == 40
     checks[0]["output_sha256"] = "0" * 64
     with pytest.raises(EvidenceError, match="not bound"):
@@ -971,6 +977,8 @@ def test_day9_failed_first_attempt_is_preserved_in_all_forty_and_cannot_be_accep
     reviews, checks = reviews_and_checks()
     for check in checks:
         check["output_sha256"] = hashes[check["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = hashes[review["case_id"]]
     checks[0]["passed"] = False
     scored = score_reviews(
         tasks(), reviews, [], checks, output_hashes=hashes,
@@ -1065,6 +1073,8 @@ def test_day9_failed_attempt_handoff_retains_failure_digest_and_never_accepts():
     reviews, checks = reviews_and_checks()
     for check in checks:
         check["output_sha256"] = hashes[check["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = hashes[review["case_id"]]
     checks[0]["passed"] = False
     scores = score_reviews(
         tasks(), reviews, [], checks, output_hashes=hashes,
