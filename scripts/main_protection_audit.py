@@ -101,21 +101,25 @@ def _has_required_rules(rule: dict) -> bool:
         required = p.get("required_status_checks")
         if not isinstance(required, list):
             return False
-        # GitHub's required-status names alone do not authenticate a check
-        # publisher. Match the pinned first-party GitHub Actions app ID,
-        # including every duplicate entry for a required context.
-        for context in CHECKS:
-            matches = [
-                row for row in required
-                if isinstance(row, dict) and row.get("context") == context
-            ]
-            if not matches or any(
-                type(row.get("integration_id")) is not int
+        # Inspect every required row, not only those named in CHECKS:
+        # duplicate or untrusted extra checks make the native policy ambiguous.
+        # One additional uniquely named first-party check can strengthen the
+        # minimum policy without replacing any mandatory check.
+        observed: set[str] = set()
+        for row in required:
+            if not isinstance(row, dict) or set(row) != {"context", "integration_id"}:
+                return False
+            context = row.get("context")
+            if (
+                not isinstance(context, str)
+                or not context.strip()
+                or context in observed
+                or type(row.get("integration_id")) is not int
                 or row["integration_id"] != 15368
-                for row in matches
             ):
                 return False
-        return True
+            observed.add(context)
+        return CHECKS.issubset(observed)
 
     return any(valid_reviews(p) for p in reviews) and any(valid_checks(p) for p in checks)
 
