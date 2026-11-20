@@ -37,11 +37,11 @@
 - Consumes: `_require_unambiguous_existing_checks(existing: dict, reviewed: dict) -> None`.
 - Produces: `ApplyMainRulesetError` on unreviewed publisher; unchanged `reconcile_main_ruleset(...)` public interface.
 
-- [ ] **Step 1: Write failing regressions** for numeric mismatch, missing/null, and type-confused IDs. Assert fail before any `PUT`, and retain allowed null/missing and pinned publisher paths.
-- [ ] **Step 2: Verify RED** on an exact test-only revision using GitHub Actions or local pytest; capture the new test's missing-exception failure.
-- [ ] **Step 3: Implement the minimal guard.** Build context→reviewed integration lookup from already-validated policy, reject any explicit non-null unexpected publisher with type-strict comparison.
+- [x] **Step 1: Write failing regressions** for numeric mismatch, missing/null, and type-confused IDs. Assert fail before any `PUT`, and retain allowed null/missing and pinned publisher paths.
+- [x] **Step 2: Verify RED** on exact test-only SHA `cf2e4eec040f606eb824ffd7d357d13737697291`, [CI #44778941841](https://github.com/rumman52/Shuddho/actions/runs/44778941841): 5 new missing-exception FAIL, 2726 PASS, 102 SKIP, 6 WARN in test-and-build.
+- [x] **Step 3: Implement the minimal guard.** Build context→reviewed integration lookup from already-validated policy, reject any explicit non-null unexpected publisher with type-strict comparison.
 - [ ] **Step 4: Verify GREEN** using `uv run --locked --extra coworker pytest -q tests/test_reconcile_main_ruleset.py tests/test_day1_ruleset_drift.py` and required exact-head CI. Record incomplete/failed/skipped results without disguising them.
-- [ ] **Step 5: Commit, review patch, and create a draft PR** with RED/GREEN evidence and independent-review blocker.
+- [x] **Step 5: Commit, review patch, and create a draft PR** with RED/GREEN evidence and independent-review blocker.
 
 ### Task 2: Document the exact source-only handoff
 
@@ -49,7 +49,7 @@
 - Create: `docs/coworker-roadmap/DAY1_NATIVE_STATUS_PUBLISHER_GUARD_2026-11-20.md`
 - Modify: `docs/coworker-roadmap/PROGRESS.md`
 
-- [ ] **Step 1: Record the task template**, old and final SHA, test evidence, no-write scope, external administrator/reviewer/staging limitations.
+- [x] **Step 1: Record the task template**, old and final SHA, test evidence, no-write scope, external administrator/reviewer/staging limitations.
 - [ ] **Step 2: Confirm the final PR head, required CI, and draft status** before any acceptance claim.
 
 **Release state:** SOURCE_ONLY / NO-GO until administrator-controlled native negative/positive merge tests, independently approved current-head PR, actual staging restore and identity pairing, independent D holdout custody, and distinct Founder/Owner C release authorization.
