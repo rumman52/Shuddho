@@ -80,7 +80,7 @@ def evidence():
             "source_document_id": "owner-A-document",
             "source_document_version_id": "owner-A-version-1",
             "source_document_sha256": D3,
-            "provider_request_id": "model-injection-A",
+            "provider_request_id": "model-answer-en",
             "provider_receipt_ref": "provider-injection-A",
             "provider_started_at": "2026-11-18T01:01:00Z",
             "provider_finished_at": "2026-11-18T01:03:00Z",
@@ -493,7 +493,8 @@ def test_day3_requires_an_observed_prompt_injection_receipt():
     ("source_document_sha256", D4),
     ("source_document_id", "forged-document"),
     ("source_document_version_id", "forged-version"),
-    ("provider_request_id", "model-answer-en"),
+    ("provider_request_id", "model-revoke-A"),
+    ("provider_request_id", "unrelated-model-request"),
     ("provider_receipt_ref", ""),
     ("browser_evidence_ref", ""),
     ("provider_started_at", "2026-11-18T00:59:00Z"),
@@ -505,6 +506,14 @@ def test_day3_rejects_unverified_or_foreign_prompt_injection_probe(field, invali
     args[1]["prompt_injection"][field] = invalid
     with pytest.raises(gate.Days36EvidenceError, match="prompt_injection"):
         validate(args)
+
+
+def test_day3_injection_witness_can_share_the_english_answer_model_call():
+    args = evidence()
+    assert args[1]["prompt_injection"]["provider_request_id"] == args[1]["answers"][1]["provider_request_id"]
+    # The golden document already contains the harmless conflicting instruction;
+    # an extra third provider call is not required for this acceptance.
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
 
 
 def test_day3_requires_reciprocal_owner_b_fixture_read_and_denial():
