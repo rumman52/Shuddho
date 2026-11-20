@@ -32,8 +32,8 @@ CATALOG_QUERIES: tuple[tuple[str, str], ...] = (
             'view_definition', CASE WHEN c.relkind IN ('v', 'm')
                 THEN pg_get_viewdef(c.oid, false) ELSE NULL END,
             'options', COALESCE(
-                (SELECT jsonb_agg(option ORDER BY option)
-                 FROM unnest(c.reloptions) AS option), '[]'::jsonb)
+                (SELECT jsonb_agg(opts.option ORDER BY opts.option)
+                 FROM unnest(c.reloptions) AS opts(option)), '[]'::jsonb)
         )::text
         FROM pg_class AS c
         JOIN pg_namespace AS n ON n.oid = c.relnamespace
