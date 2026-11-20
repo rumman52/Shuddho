@@ -15,6 +15,17 @@ SHUDDHO_STAGING_TOKEN_A=<short-lived disposable staging account token>
 SHUDDHO_SOURCE_REVISION=<full-40-character-deployed-git-sha>
 ```
 
+**Pre-seeding zero-object state:** if the private source bucket is empty,
+preserve its inventory with the *explicit* object-helper
+`archive --allow-empty-baseline` and verify the isolated zero-object target
+with `restore --allow-empty-baseline` (see
+[Day 2 private object archive](DAY2_PRIVATE_OBJECT_BACKUP.md)).
+These produce **baseline-only** `baseline_archived` /
+`baseline_verified` receipts. Such receipts cannot replace the later
+nonempty private-PDF task archive and **must never** satisfy
+`staging_backup_restore.py verify`, D02.T09 or D02.G04. No staging cloud
+operation is authorized by these source instructions.
+
 ## Phase 1 — prepare synthetic restore evidence
 
 Run:

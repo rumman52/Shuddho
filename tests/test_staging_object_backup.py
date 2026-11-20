@@ -76,6 +76,89 @@ def test_empty_source_never_qualifies_an_archive(tmp_path):
     assert not (archive / "manifest.json").exists()
 
 
+def test_explicit_empty_baseline_archive_and_restore_are_marked_baseline_only(tmp_path):
+    source = LocalObjectStore(tmp_path / "empty-source")
+    archive = tmp_path / "preseed-baseline"
+    manifest = backup.archive_store(source, SRC, archive, allow_empty_baseline=True)
+    assert manifest["status"] == "baseline_archived"
+    assert manifest["object_count"] == 0
+    assert manifest["total_bytes"] == 0
+    assert manifest["objects"] == []
+    assert json.loads((archive / "manifest.json").read_text()) == manifest
+    verified, rows, _sha = backup._manifest(archive)
+    assert verified == manifest and rows == []
+
+    target = SpyTarget(tmp_path / "empty-target")
+    receipt = tmp_path / "baseline-receipt.json"
+    with pytest.raises(backup.ObjectArchiveError, match="baseline"):
+        backup.restore_store(target, DST, archive, receipt)
+    assert not receipt.exists() and target.puts == []
+
+    result = backup.restore_store(
+        target, DST, archive, receipt, allow_empty_baseline=True,
+    )
+    assert result["status"] == "baseline_verified"
+    assert result["object_count"] == 0
+    assert result["total_bytes"] == 0
+    assert result["objects"] == []
+    assert json.loads(receipt.read_text()) == result
+    assert target.puts == [] and target.inventory() == []
+
+
+def test_baseline_mode_rejects_nonempty_source(tmp_path):
+    source, _ = _source(tmp_path)
+    with pytest.raises(backup.ObjectArchiveError, match="baseline"):
+        backup.archive_store(source, SRC, tmp_path / "nonempty", allow_empty_baseline=True)
+
+
+def test_baseline_restore_rejects_occupied_target_and_same_resource(tmp_path):
+    source = LocalObjectStore(tmp_path / "empty-source")
+    archive = tmp_path / "empty-archive"
+    backup.archive_store(source, SRC, archive, allow_empty_baseline=True)
+    occupied = SpyTarget(tmp_path / "occupied-target")
+    occupied.wrapped.put("owner-a/inputs/v1/keep.txt", b"keep", "text/plain")
+    receipt = tmp_path / "baseline-receipt.json"
+    with pytest.raises(backup.ObjectArchiveError, match="empty"):
+        backup.restore_store(
+            occupied, DST, archive, receipt, allow_empty_baseline=True,
+        )
+    assert not receipt.exists() and occupied.puts == []
+
+    empty = SpyTarget(tmp_path / "same-target")
+    with pytest.raises(backup.ObjectArchiveError, match="distinct"):
+        backup.restore_store(
+            empty, SRC, archive, receipt, allow_empty_baseline=True,
+        )
+    assert not receipt.exists() and empty.puts == []
+
+
+def test_baseline_restore_mode_never_relabels_a_nonempty_archive(tmp_path):
+    archive, _, _ = _archive(tmp_path)
+    target = SpyTarget(tmp_path / "target")
+    receipt = tmp_path / "receipt.json"
+    with pytest.raises(backup.ObjectArchiveError, match="baseline"):
+        backup.restore_store(
+            target, DST, archive, receipt, allow_empty_baseline=True,
+        )
+    assert target.puts == [] and not receipt.exists()
+
+
+def test_manifest_rejects_forged_baseline_status_object_count_pairs(tmp_path):
+    source = LocalObjectStore(tmp_path / "empty-source")
+    empty_archive = tmp_path / "zero-archive"
+    baseline = backup.archive_store(source, SRC, empty_archive, allow_empty_baseline=True)
+    baseline["status"] = "archived"
+    (empty_archive / "manifest.json").write_text(json.dumps(baseline), encoding="utf-8")
+    with pytest.raises(backup.ObjectArchiveError, match="baseline"):
+        backup._manifest(empty_archive)
+
+    nonempty_archive, normal, _ = _archive(tmp_path)
+    normal["status"] = "baseline_archived"
+    (nonempty_archive / "manifest.json").write_text(json.dumps(normal), encoding="utf-8")
+    with pytest.raises(backup.ObjectArchiveError, match="baseline"):
+        backup._manifest(nonempty_archive)
+
+
 def test_source_mutation_during_archive_is_rejected(tmp_path):
     source, _ = _source(tmp_path)
     archive = tmp_path / "private-backup"

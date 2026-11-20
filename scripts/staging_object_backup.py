@@ -148,7 +148,7 @@ def _read_private_bytes(path: Path, size: int) -> bytes:
     return result
 
 
-def archive_store(store, source_fingerprint: str, directory: Path) -> dict:
+def archive_store(store, source_fingerprint: str, directory: Path, *, allow_empty_baseline: bool = False) -> dict:
     """Take a source inventory and copy every private object's exact bytes."""
     source_fingerprint = _fingerprint(source_fingerprint, "Source storage")
     if directory.exists() or directory.is_symlink() or not directory.parent.is_dir():
@@ -161,8 +161,10 @@ def archive_store(store, source_fingerprint: str, directory: Path) -> dict:
         raise ObjectArchiveError("Could not create private object archive directory.") from None
 
     initial = _inventory(store)
-    if not initial:
+    if not initial and not allow_empty_baseline:
         raise ObjectArchiveError("Private source bucket is empty; no object restore can be certified.")
+    if initial and allow_empty_baseline:
+        raise ObjectArchiveError("Empty-baseline archive mode requires exactly zero source objects.")
     entries = []
     total_bytes = 0
     for item in initial:
@@ -182,7 +184,7 @@ def archive_store(store, source_fingerprint: str, directory: Path) -> dict:
         raise ObjectArchiveError("Source object inventory changed during archive; discard partial backup.")
     manifest = {
         "schema_version": SCHEMA_VERSION,
-        "status": "archived",
+        "status": "baseline_archived" if not initial else "archived",
         "source_storage_fingerprint": source_fingerprint,
         "object_count": len(entries),
         "total_bytes": total_bytes,
@@ -211,16 +213,18 @@ def _manifest(directory: Path) -> tuple[dict, list[tuple[dict, bytes]], str]:
             }
             or type(manifest["schema_version"]) is not int
             or manifest["schema_version"] != SCHEMA_VERSION
-            or manifest["status"] != "archived"):
+            or manifest["status"] not in ("archived", "baseline_archived")):
         raise ObjectArchiveError("Source object manifest has an invalid schema.")
     _fingerprint(manifest["source_storage_fingerprint"], "Source storage")
     rows = manifest["objects"]
-    if (not isinstance(rows, list) or not 0 < len(rows) <= MAX_OBJECTS
+    if (not isinstance(rows, list) or not 0 <= len(rows) <= MAX_OBJECTS
             or type(manifest["object_count"]) is not int
             or manifest["object_count"] != len(rows)
             or type(manifest["total_bytes"]) is not int
             or not 0 <= manifest["total_bytes"] <= MAX_TOTAL_BYTES):
         raise ObjectArchiveError("Source object manifest has invalid object totals.")
+    if (manifest["status"] == "baseline_archived") != (len(rows) == 0):
+        raise ObjectArchiveError("Source object baseline status conflicts with the object count.")
 
     objects_root = directory / "objects"
     if objects_root.is_symlink() or not objects_root.is_dir():
@@ -278,10 +282,17 @@ def _preflight_receipt(path: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def restore_store(store, target_fingerprint: str, directory: Path, receipt_path: Path) -> dict:
+def restore_store(
+    store, target_fingerprint: str, directory: Path, receipt_path: Path,
+    *, allow_empty_baseline: bool = False,
+) -> dict:
     """Preflight *all* archived bytes, then restore into an empty distinct store."""
     target_fingerprint = _fingerprint(target_fingerprint, "Target storage")
     manifest, verified, manifest_sha = _manifest(directory)
+    if (manifest["status"] == "baseline_archived") != allow_empty_baseline:
+        raise ObjectArchiveError(
+            "Explicit empty-baseline restore mode must match the archived baseline status."
+        )
     if target_fingerprint == manifest["source_storage_fingerprint"]:
         raise ObjectArchiveError("Source and target object-storage resources must be distinct.")
     _preflight_receipt(receipt_path)
@@ -310,7 +321,7 @@ def restore_store(store, target_fingerprint: str, directory: Path, receipt_path:
 
     result = {
         "schema_version": SCHEMA_VERSION,
-        "status": "verified",
+        "status": "baseline_verified" if allow_empty_baseline else "verified",
         "verified_at": datetime.now(timezone.utc).isoformat(),
         "source_storage_fingerprint": manifest["source_storage_fingerprint"],
         "target_storage_fingerprint": target_fingerprint,
@@ -319,7 +330,12 @@ def restore_store(store, target_fingerprint: str, directory: Path, receipt_path:
         "total_bytes": manifest["total_bytes"],
         "objects": [{"key": row["key"], "byte_size": row["byte_size"], "sha256": row["sha256"]}
                     for row, _ in verified],
-        "caveat": "Isolated object restore only; independent database and hosted owner/API checks remain mandatory.",
+        "caveat": (
+            "Empty source baseline verified; no private PDF/task restoration proven, "
+            "and D02.T09/G04 remain blocked."
+            if allow_empty_baseline else
+            "Isolated object restore only; independent database and hosted owner/API checks remain mandatory."
+        ),
     }
     try:
         write_private_json(receipt_path, result)
@@ -333,9 +349,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     archive = sub.add_parser("archive")
     archive.add_argument("--directory", type=Path, required=True)
+    archive.add_argument("--allow-empty-baseline", action="store_true")
     restore = sub.add_parser("restore")
     restore.add_argument("--archive-directory", type=Path, required=True)
     restore.add_argument("--output", type=Path, required=True)
+    restore.add_argument("--allow-empty-baseline", action="store_true")
     args = parser.parse_args(argv)
 
     try:
@@ -362,11 +380,16 @@ def main(argv: list[str] | None = None) -> int:
         store = make_storage(settings)
         fingerprint = storage_fingerprint(settings)
         if args.command == "archive":
-            report = archive_store(store, fingerprint, args.directory)
-            print(json.dumps({"status": "archived", "object_count": report["object_count"]}))
+            report = archive_store(
+                store, fingerprint, args.directory, allow_empty_baseline=args.allow_empty_baseline,
+            )
+            print(json.dumps({"status": report["status"], "object_count": report["object_count"]}))
         else:
-            report = restore_store(store, fingerprint, args.archive_directory, args.output)
-            print(json.dumps({"status": "verified", "object_count": report["object_count"],
+            report = restore_store(
+                store, fingerprint, args.archive_directory, args.output,
+                allow_empty_baseline=args.allow_empty_baseline,
+            )
+            print(json.dumps({"status": report["status"], "object_count": report["object_count"],
                               "receipt": str(args.output)}))
         return 0
     except (ObjectArchiveError, StagingReleaseEvidenceError) as error:
