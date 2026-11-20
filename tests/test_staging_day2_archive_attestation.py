@@ -87,6 +87,7 @@ def test_source_snapshot_and_all_object_bytes_are_bound_to_isolated_targets(tmp_
     assert summary["postgres_row_count"] == 1
     assert summary["source_schema_revision"] == "0070"
     assert summary["postgres_archive_sha256"] == _sha(paths[1].read_bytes())
+    assert summary["postgres_schema_sha256"] == expected["source"]["schema_sha256"]
     assert summary["object_count"] == 1
     assert summary["object_total_bytes"] == expected["byte_size"]
     assert restored_objects == [{"key": expected["key"], "byte_size": expected["byte_size"],
