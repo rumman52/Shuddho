@@ -42,8 +42,9 @@ Use the actual managed-service backup mechanisms selected for Shuddho:
 
 1. take a PostgreSQL backup/snapshot. For Supabase staging, use the
    [private schema archive and isolated database verification](../infra/README.md#back-up-and-verify-the-staging-database);
-2. take or confirm the private object-storage backup/versioned copy;
-3. record durable backup references.
+2. copy and hash every private object with the [guarded Day 2 object archive tool](DAY2_PRIVATE_OBJECT_BACKUP.md), or use an approved immutable provider-native object snapshot;
+3. independently restore into a distinct empty object bucket and read back each SHA-256 byte digest before claiming the object part of D02.T09;
+4. retain the actual PostgreSQL archive verification.json plus private object manifest and restore receipt; free-text backup/restore references alone are **not** independent backup evidence.
 
 Do not claim the gate passed from backup creation alone.
 
@@ -67,7 +68,7 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --output /secure/path/staging-evidence.restore.json
 ```
 
-The gate becomes `passed` only if:
+This legacy synthetic-probe gate checks **one selected private object and account/task**. Its non-empty free-text backup and restore references are not authenticated evidence of a full archive or its independent restore. Require the private receipts from `staging_postgres_backup` and `staging_object_backup` as separate operator evidence before marking D02.T09 or D02.G04 complete.\n\nThe gate becomes `passed` only if:
 
 - the restored account and workspace exist;
 - the source document/version exists and is still uploaded;
