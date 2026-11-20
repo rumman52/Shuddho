@@ -7,6 +7,7 @@ platform receipts before anyone marks a roadmap acceptance row PASS.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -293,10 +294,23 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
                 referenced(citation.get("title"), "day6.source.title")
                 url = text(citation.get("url"), "day6.source.url")
                 parsed = urlsplit(url)
-                host = parsed.hostname or ""
-                need(parsed.scheme == "https" and bool(host) and "." in host
-                     and parsed.username is None and parsed.password is None
-                     and host != "localhost" and not host.startswith(("127.", "10.", "192.168.", "172.16.")),
+                host = (parsed.hostname or "").rstrip(".").casefold()
+                try:
+                    address = ipaddress.ip_address(host)
+                except ValueError:
+                    # Local DNS suffixes and noncanonical all-numeric IPv4
+                    # hosts are not public research provenance identifiers.
+                    labels = host.split(".")
+                    public_host = (
+                        len(labels) > 1 and all(labels)
+                        and not host.endswith((".local", ".localhost"))
+                        and not all(part.isdecimal() for part in labels)
+                    )
+                else:
+                    # IPv4 and IPv6 literals must be globally routable.
+                    public_host = address.is_global
+                need(parsed.scheme == "https" and public_host
+                     and parsed.username is None and parsed.password is None,
                      "day6 research source URL must be a public HTTPS source without credentials")
                 source_hash = sha(citation.get("sha256"), "day6.source.sha256")
                 # Fragments point to sections of the same document, not
