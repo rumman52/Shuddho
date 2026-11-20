@@ -1067,3 +1067,84 @@ def test_day8_rejects_cross_profile_rerun_identity_reuse(reused_identity):
     candidate["reruns"].append(rerun)
     with pytest.raises(ValueError, match=error):
         compare_day8_development(baseline, candidate, suite)
+
+
+def _with_day8_cost_ceiling(baseline, candidate, ceiling_microusd):
+    for report in (baseline, candidate):
+        report["evaluation_policy"]["approved_max_cost_microusd_per_accepted_output"] = ceiling_microusd
+
+
+def test_day8_legacy_policy_without_approved_cost_ceiling_cannot_freeze():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert result["profile_summaries"]["baseline"]["total_cost_microusd"] == 800
+    assert any("cost ceiling" in reason for reason in result["blockers"])
+
+
+def test_day8_candidate_at_exact_cost_ceiling_qualifies_even_when_baseline_exceeds():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    _with_day8_cost_ceiling(baseline, candidate, 15)
+    report = compare_day8_development(baseline, candidate, suite)
+    assert report["status"] == "FROZEN_FOR_DAY9"
+    assert report["selected_least_cost_qualified_profile"] == "bounded_context_compact_observations"
+    assert report["profile_summaries"]["baseline"]["cost_gate_passed"] is False
+    assert report["profile_summaries"]["bounded_context_compact_observations"]["cost_gate_passed"] is True
+    assert report["profile_summaries"]["bounded_context_compact_observations"][
+        "approved_cost_ceiling_microusd_per_accepted_output"
+    ] == 15
+    assert report["freeze"]["evaluation_policy"]["approved_max_cost_microusd_per_accepted_output"] == 15
+
+
+def test_day8_one_extra_rerun_microdollar_exceeds_exact_accepted_output_ceiling():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    _with_day8_cost_ceiling(baseline, candidate, 15)
+    candidate["reruns"].append(_day8_synthetic_rerun(candidate, cost=1))
+    report = compare_day8_development(baseline, candidate, suite)
+    assert report["status"] == "BLOCKED"
+    assert report["freeze"] is None
+    assert report["profile_summaries"]["bounded_context_compact_observations"]["total_cost_microusd"] == 601
+    assert report["profile_summaries"]["bounded_context_compact_observations"]["cost_gate_passed"] is False
+    assert any("cost ceiling" in reason for reason in report["blockers"])
+
+
+def test_day8_over_budget_but_cheaper_candidate_does_not_claim_qualified_savings():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    _with_day8_cost_ceiling(baseline, candidate, 14)
+    report = compare_day8_development(baseline, candidate, suite)
+    assert report["status"] == "BLOCKED"
+    assert report["measured_cost_savings_microusd"] is None
+    assert report["profile_summaries"]["baseline"]["cost_microusd_per_accepted_output"] == 20
+    assert report["profile_summaries"]["bounded_context_compact_observations"][
+        "cost_microusd_per_accepted_output"
+    ] == 15
+    assert report["per_task_comparison"][0]["paired_measured_deltas_candidate_minus_baseline"][
+        "cost_microusd"
+    ] == -5
+    assert all(r["measured_cost_savings_microusd"] is None
+               for r in report["per_task_comparison"])
+    assert any("cost ceiling" in reason for reason in report["blockers"])
+
+
+def test_day8_over_budget_candidate_falls_back_to_eligible_baseline():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    _with_day8_cost_ceiling(baseline, candidate, 20)
+    candidate["reruns"].append(_day8_synthetic_rerun(candidate, cost=500))
+    report = compare_day8_development(baseline, candidate, suite)
+    assert report["status"] == "FROZEN_FOR_DAY9"
+    assert report["selected_least_cost_qualified_profile"] == "baseline"
+    assert report["profile_summaries"]["baseline"]["cost_gate_passed"] is True
+    assert report["profile_summaries"]["bounded_context_compact_observations"]["cost_gate_passed"] is False
+    assert report["measured_cost_savings_microusd"] is None
+
+
+@pytest.mark.parametrize("invalid", [None, 0, -1, True, 15.0, "15"])
+def test_day8_invalid_owner_cost_ceiling_cannot_freeze(invalid):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    _with_day8_cost_ceiling(baseline, candidate, 20)
+    candidate["evaluation_policy"]["approved_max_cost_microusd_per_accepted_output"] = invalid
+    report = compare_day8_development(baseline, candidate, suite)
+    assert report["status"] == "BLOCKED"
+    assert report["freeze"] is None
+    assert report["measured_cost_savings_microusd"] is None
