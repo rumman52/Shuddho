@@ -212,6 +212,31 @@ def test_catalog_schema_sha_changes_even_when_rows_and_revision_do_not(tmp_path)
             assert with_new_default["schema_sha256"] == backup.inventory(fixture)["schema_sha256"]
 
 
+def test_schema_digest_ignores_only_dropped_column_slot_history(tmp_path):
+    """Replayed DDL can renumber attnum without changing the visible schema."""
+    pg_bin = os.getenv("SHUDDHO_TEST_PG_BIN")
+    if not pg_bin:
+        pytest.skip("Set SHUDDHO_TEST_PG_BIN to a PostgreSQL bin directory")
+    import psycopg
+
+    with backup.isolated_postgres(Path(pg_bin)) as db_env:
+        connect = dict(
+            host=db_env["PGHOST"], port=db_env["PGPORT"], user=db_env["PGUSER"],
+            dbname=db_env["PGDATABASE"], sslmode="disable",
+        )
+        with psycopg.connect(**connect) as fixture:
+            fixture.execute("CREATE SCHEMA shuddho_coworker")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_alembic_version (version_num text)")
+            fixture.execute("INSERT INTO shuddho_coworker.cw_alembic_version VALUES ('0070')")
+            fixture.execute("CREATE TABLE shuddho_coworker.cw_test (id integer, label text)")
+            initial = backup.inventory(fixture)
+            fixture.execute("ALTER TABLE shuddho_coworker.cw_test DROP COLUMN label")
+            fixture.execute("ALTER TABLE shuddho_coworker.cw_test ADD COLUMN label text")
+            replayed = backup.inventory(fixture)
+            assert initial["tables"] == replayed["tables"]
+            assert initial["schema_sha256"] == replayed["schema_sha256"]
+
+
 def test_private_schema_access_rejects_supabase_api_role_grants():
     class Result:
         def __init__(self, row):
