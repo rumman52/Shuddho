@@ -529,6 +529,7 @@ def _day8_fixture():
             },
             "evaluation_policy": {
                 "approved_p95_end_to_end_latency_ms": 1000,
+                "approved_max_cost_microusd_per_accepted_output": 1000,
                 "quality_rubric_sha256": "a" * 64,
                 "pricing_assumptions_sha256": "b" * 64,
                 "owner_approval_receipt_sha256": "c" * 64,
@@ -734,6 +735,7 @@ def _day8_complete_measurement_fixture():
         })
         report["evaluation_policy"] = {
             "approved_p95_end_to_end_latency_ms": 1000,
+                "approved_max_cost_microusd_per_accepted_output": 1000,
             "quality_rubric_sha256": "a" * 64,
             "pricing_assumptions_sha256": "b" * 64,
             "owner_approval_receipt_sha256": "c" * 64,
