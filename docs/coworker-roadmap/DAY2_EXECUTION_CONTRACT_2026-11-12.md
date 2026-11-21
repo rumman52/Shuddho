@@ -114,6 +114,16 @@ Before provider/model/storage calls:
 uv run --extra coworker python scripts/staging_prerequisite_preflight.py \
   --output /secure/day2/prerequisite.json
 
+# ORIGINAL STATE GATE: BEFORE any synthetic account, object or task writes,
+# and only after Founder/C approval, preserve 0070 PostgreSQL + empty bucket.
+# Use a separately protected original archive, not the post-synthetic archive.
+uv run --extra coworker python -m scripts.staging_postgres_backup \
+  --directory /secure/private-backups/original-db
+SHUDDHO_STAGING_ALLOW_OBJECT_ARCHIVE=true \
+uv run --extra coworker python -m scripts.staging_object_backup archive \
+  --directory /secure/private-backups/original-empty-objects \
+  --allow-empty-baseline
+
 export SHUDDHO_STAGING_ALLOW_RELEASE_FREEZE=true
 export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true
 uv run --extra coworker python scripts/staging_release_freeze.py prepare \
@@ -228,16 +238,6 @@ uv run --extra coworker python scripts/staging_temporal_recovery.py verify \
   --rollout /secure/day2/pa10-staging-rollout.json \
   --base-evidence /secure/day2/document-execution.json \
   --output /secure/day2/temporal-recovery.json
-
-# ORIGINAL STATE GATE: BEFORE any synthetic account, object or task writes,
-# and only after Founder/C approval, preserve 0070 PostgreSQL + empty bucket.
-# Use a separately protected original archive, not the post-synthetic archive.
-uv run --extra coworker python -m scripts.staging_postgres_backup \
-  --directory /secure/private-backups/original-db
-SHUDDHO_STAGING_ALLOW_OBJECT_ARCHIVE=true \
-uv run --extra coworker python -m scripts.staging_object_backup archive \
-  --directory /secure/private-backups/original-empty-objects \
-  --allow-empty-baseline
 
 export SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE=true
 uv run --extra coworker python scripts/staging_backup_restore.py prepare \
