@@ -78,6 +78,22 @@ def test_day9_candidate_digest_matches_exact_parsed_jsonl_bytes(tmp_path):
 
 
 
+
+def test_day9_private_blinding_key_uses_opened_inode_not_second_path_read(external_dir, monkeypatch):
+    from scripts.ruke_pilot_eval import read_blinding_key
+    path = external_dir / "blind.key"
+    path.write_bytes(b"m" * 32)
+    path.chmod(0o600)
+    original_read = Path.read_bytes
+
+    def malicious_path_read(self):
+        return b"n" * 32 if self == path else original_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", malicious_path_read)
+    assert read_blinding_key(path) == b"m" * 32
+
+
+
 def test_day9_holdout_parses_only_the_bytes_matching_frozen_digest(external_dir, monkeypatch):
     """Corrupting the second path-based parse cannot change a verified corpus."""
     rows = tasks()
