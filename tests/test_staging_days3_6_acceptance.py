@@ -993,6 +993,9 @@ def test_day5_owner_a_context_cannot_claim_isolation_from_an_empty_memory_arm():
     owner_a = args[3]["owner_access"]["owner_a"]
     owner_a["own_context_id"] = "run-none"
     owner_a["own_output_sha256"] = D3
+    # Preserve a correctly reciprocal B denial to isolate the forbidden
+    # empty-memory positive A context, rather than testing the old target gate.
+    args[3]["owner_access"]["owner_b"]["foreign_context_target_id"] = "run-none"
     with pytest.raises(gate.Days36EvidenceError, match="day5"):
         validate(args)
 
