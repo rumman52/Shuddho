@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import re
+import stat
 
 REPOSITORY = "rumman52/Shuddho"
 RULESET_ID = 27324410
@@ -257,9 +258,33 @@ def _reject_nonfinite_json_float(value: str) -> float:
 
 
 def _read_json(path: Path) -> tuple[dict, str]:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_READ_BYTES:
-        raise EvidenceError("a JSON input is missing, symlinked, or exceeds the size ceiling")
-    raw = path.read_bytes()
+    # A separate is_symlink/stat/read_bytes sequence can read an attacker-
+    # swapped symlink. Open once with no-follow and inspect that same inode.
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise EvidenceError("secure no-follow JSON input reading is unavailable")
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or details.st_size > MAX_READ_BYTES:
+                raise EvidenceError("a JSON input is not a regular file or exceeds the size ceiling")
+            # A file can grow after fstat. Never consume more than the ceiling
+            # plus one byte, even for an adversarial or concurrently written file.
+            remaining = MAX_READ_BYTES + 1
+            pieces: list[bytes] = []
+            while remaining:
+                piece = os.read(descriptor, min(65536, remaining))
+                if not piece:
+                    break
+                pieces.append(piece)
+                remaining -= len(piece)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise EvidenceError("a JSON input is missing, symlinked, or unreadable") from exc
+    raw = b"".join(pieces)
     if len(raw) > MAX_READ_BYTES:
         raise EvidenceError("JSON input exceeds the size ceiling")
     try:
