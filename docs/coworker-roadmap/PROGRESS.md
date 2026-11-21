@@ -1,3 +1,11 @@
+## 22 November 2026 — Day 9 evidence single-read integrity ([draft PR #876](https://github.com/rumman52/Shuddho/pull/876))
+
+**SOURCE_ONLY / controlled pilot NO-GO.** Against base `main=4b055bcaab83151cca1478ab52ee121f5b2f74f7`, reviewed `scripts/ruke_pilot_eval.py` exposed a file substitution window between the checked SHA/mode and a second pathname read of JSON, JSONL or the independent heldout. Three synthetic regressions were committed first (`e230ca0d3fd8cbeed708288155db6735f84cfd5b`), followed by three more tests for same-buffer manifest/candidate hashes and the D-only blind key. A descriptor-scoped, bounded no-follow reader now supplies bytes to parsing, digest computation, heldout validation and protected key readback. The frozen heldout SHA and exported release report hashes now cover the **same bytes parsed**. Exact final-head CI and independent review must be inspected before claiming repository verification. [Task contract](DAY9_EVIDENCE_BYTE_READ_INTEGRITY_2026-11-22.md).
+
+No real protected D custody, 40 first model attempts, 80 human reviews, 20 operated recovery traces, release-bound staging identity, 43 runtime flag freeze, native reviewed-and-protected merge, Founder/Owner C authorization or pilot membership is asserted. Do not increase per-day task/exit PASS denominators from this PR. No Supabase migration, Render/Vercel deployment, PostHog telemetry, provider expenditure, owner traffic or allowlist changes occurred in this source patch.
+
+---
+
 ## 21 November 2026 — Day 1 bilingual research citation padding ([draft PR #872](https://github.com/rumman52/Shuddho/pull/872))
 
 **SOURCE_ONLY / pilot NO-GO.** Reviewed the user's five-part Rukh AI instruction prompt, [primary 10-day Day 1 plan](https://docs.google.com/document/d/1JvuAYTmP-0pp7VhOGdV4YnMYLvv0vffuRBqJ0P8Pd8E/edit) ¶141–152, board [#737](https://github.com/rumman52/Shuddho/issues/737), Day 1 [#727](https://github.com/rumman52/Shuddho/issues/727), independent D custody [#665](https://github.com/rumman52/Shuddho/issues/665), `AGENTS.md`, `SPEC.md`, and actual `scripts/pilot_workflow_eval.py::score` and production `ResearchCitation` schema. Base `main=05e582d6a5e6174668b3287685966929d3b87460` includes prior exact-byte evaluator PR #870, so it is not duplicated.

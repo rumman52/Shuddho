@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import stat
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
@@ -71,10 +72,31 @@ def reviewer_identity(value: object) -> str | None:
     return identity if identity.strip() and len(identity) <= 128 else None
 
 
-def sha256(path: Path) -> str:
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_BYTES:
+def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
+    """Read one bounded regular inode without following a final symlink.
+
+    Parse and hash the same bytes: a pathname can change between two opens.
+    """
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise EvidenceError("no-follow evidence reads are unavailable")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+                raise EvidenceError("missing, linked, or oversized evidence file")
+            content = stream.read(MAX_BYTES + 1)
+    except OSError as exc:
+        raise EvidenceError("missing, linked, or oversized evidence file") from exc
+    # A regular file may grow after fstat, so always cap the actual read.
+    if len(content) > MAX_BYTES:
         raise EvidenceError("missing, linked, or oversized evidence file")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return content, metadata.st_mode
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(_read_evidence_bytes(path)[0]).hexdigest()
 
 
 def pairs_unique(pairs):
@@ -101,21 +123,33 @@ def strict_json_loads(content: str):
                       parse_constant=reject_constant, parse_float=finite_float)
 
 
+def _read_json_and_sha256(path: Path) -> tuple[object, str]:
+    content, _ = _read_evidence_bytes(path)
+    return strict_json_loads(content.decode("utf-8")), hashlib.sha256(content).hexdigest()
+
+
 def read_json(path: Path):
-    sha256(path)
-    return strict_json_loads(path.read_text(encoding="utf-8"))
+    return _read_json_and_sha256(path)[0]
 
 
-def read_jsonl(path: Path) -> list[dict]:
-    sha256(path)
+def _parse_jsonl_bytes(content: bytes) -> list[dict]:
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in content.decode("utf-8").splitlines():
         if line.strip():
             obj = strict_json_loads(line)
             if not isinstance(obj, dict):
                 raise EvidenceError("JSONL rows must be objects")
             rows.append(obj)
     return rows
+
+
+def _read_jsonl_and_sha256(path: Path) -> tuple[list[dict], str]:
+    content, _ = _read_evidence_bytes(path)
+    return _parse_jsonl_bytes(content), hashlib.sha256(content).hexdigest()
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    return _read_jsonl_and_sha256(path)[0]
 
 
 def canonical_sha256(value: dict) -> str:
@@ -358,11 +392,14 @@ def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT,
     if custody_verified is not True:
         raise EvidenceError("independent D custody must be verified before reading heldout bytes")
     outside_repo(path, repo_root)
-    if path.stat().st_mode & 0o222:
+    # Mode, digest and parsing must refer to the same opened inode.
+    corpus_bytes, corpus_mode = _read_evidence_bytes(path)
+    if corpus_mode & 0o222:
         raise EvidenceError("independent heldout fixture must be read-only")
-    if sha256(path) != corpus_sha256 or not SHA.fullmatch(corpus_sha256):
+    if (not isinstance(corpus_sha256, str) or not SHA.fullmatch(corpus_sha256)
+            or hashlib.sha256(corpus_bytes).hexdigest() != corpus_sha256):
         raise EvidenceError("external heldout hash mismatch")
-    rows = read_jsonl(path)
+    rows = _parse_jsonl_bytes(corpus_bytes)
     if len(rows) != 40 or Counter((r.get("workflow"), r.get("language")) for r in rows) != MATRIX:
         raise EvidenceError("heldout matrix requires 10 per workflow/language")
     ids = [r.get("case_id") for r in rows]
@@ -976,12 +1013,13 @@ def comparison_evidence_recorded(value: object) -> bool:
 def read_blinding_key(path: Path) -> bytes:
     """External secret custody, separate from reviewer packets and the repo."""
     outside_repo(path)
-    if not path.is_file() or path.stat().st_size != 32:
+    key, file_mode = _read_evidence_bytes(path)
+    if len(key) != 32:
         raise EvidenceError("blind mapping requires a separate 32-byte D-controlled key")
-    mode = path.stat().st_mode & 0o777
+    mode = file_mode & 0o777
     if not mode & 0o400 or mode & 0o077:
         raise EvidenceError("blinding key must be private to D (0600 or 0400)")
-    return path.read_bytes()
+    return key
 
 
 def position_map(case_id: str, corpus_sha256: str, *, blinding_key: bytes) -> dict:
@@ -1163,13 +1201,13 @@ def main(argv=None) -> int:
                 outside_repo(args.candidate)
             if args.competitor_outputs:
                 outside_repo(args.competitor_outputs)
-            manifest = read_json(args.manifest)
+            manifest, manifest_digest = _read_json_and_sha256(args.manifest)
             if not isinstance(manifest, dict):
                 raise EvidenceError("frozen candidate manifest must be an object")
-            manifest_digest = sha256(args.manifest)
             if not args.evidence:
                 raise EvidenceError("D custody and candidate readback evidence is required before reading heldout bytes")
-            evidence = validate_evidence_binding(read_json(args.evidence), manifest_digest)
+            evidence_input, evidence_digest = _read_json_and_sha256(args.evidence)
+            evidence = validate_evidence_binding(evidence_input, manifest_digest)
             if not custody_receipt_ok(evidence.get("custody"), manifest):
                 raise EvidenceError("independent D custody receipt is incomplete; heldout corpus was not read")
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
@@ -1183,7 +1221,7 @@ def main(argv=None) -> int:
             if args.action == "prepare-blind":
                 if not args.candidate or not args.competitor_outputs or not args.blinding_key:
                     raise EvidenceError("real outputs and D-only blinding key required for blind packet")
-                candidate_rows = read_jsonl(args.candidate)
+                candidate_rows, _ = _read_jsonl_and_sha256(args.candidate)
                 _, candidate_usage = candidate_ledger(
                     cases, candidate_rows, manifest_sha256=manifest_digest, manifest=manifest
                 )
@@ -1198,8 +1236,9 @@ def main(argv=None) -> int:
             else:
                 if not args.candidate:
                     raise EvidenceError("external independently scored evidence and candidate outputs required")
+                candidate_rows, candidate_digest = _read_jsonl_and_sha256(args.candidate)
                 output_hashes, usage = candidate_ledger(
-                    cases, read_jsonl(args.candidate), manifest_sha256=manifest_digest,
+                    cases, candidate_rows, manifest_sha256=manifest_digest,
                     manifest=manifest,
                 )
                 generation_verified = generation_identity_ok(evidence)
@@ -1259,8 +1298,8 @@ def main(argv=None) -> int:
                     "candidate_readbacks": evidence["candidate_readbacks"],
                     "manifest_sha256": manifest_digest,
                     "corpus_sha256": manifest["corpus_sha256"],
-                    "input_evidence_sha256": sha256(args.evidence),
-                    "candidate_outputs_sha256": sha256(args.candidate),
+                    "input_evidence_sha256": evidence_digest,
+                    "candidate_outputs_sha256": candidate_digest,
                     "case_run_receipts": usage["case_run_receipts"],
                     "generation_identity_verified": generation_verified,
                     "generation_identity_receipt_sha256": evidence.get("generation_identity_receipt_sha256"),
