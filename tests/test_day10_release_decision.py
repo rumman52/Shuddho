@@ -123,13 +123,25 @@ def evidence():
     }
     approval = {**proof(), "explicit_separate_authorization": True,
                 "reference": "founder-C-approved-change", "founder": "founder-signoff",
-                "owner_c": "C-signoff", "max_users": 5}
+                "owner_c": "C-signoff", "max_users": 5,
+                "rollback_owner": "operator-C",
+                # Separate dated, release-bound, privately retained receipt
+                # claims. These synthetic strings do NOT attest real signers.
+                "founder_decision": {**proof(), "signer_id": "founder-signoff",
+                                     "decision": "approve_controlled_pilot",
+                                     "evidence_ref": "sha256:" + "6" * 64,
+                                     "max_users": 5, "rollback_owner": "operator-C"},
+                "owner_c_decision": {**proof(), "signer_id": "C-signoff",
+                                     "decision": "approve_controlled_pilot",
+                                     "evidence_ref": "sha256:" + "7" * 64,
+                                     "max_users": 5, "rollback_owner": "operator-C"}}
     artifacts = {"api": api, "worker": worker, "schema": schema, "ci": ci, "golden": golden,
                  "day9_first_run": first, "holdout": holdout, "recovery": recovery,
                  "staging": {}, "quality": {**proof(), "provider_model": "model-r"},
                  "model": {**proof(), "provider_model": "model-r"}, "approval": approval}
     artifacts.update({key: proof() for key in day10.PROOFS})
     artifacts["rollback"].update(
+        rollback_owner="operator-C",
         kill_switches_verified=list(day10.EXPECTED_ROLLBACK.values()),
         capability_flags_after_rollback={**{key: False for key in day10.RUNTIME_CAPABILITY_KEYS}, "memory": True},
         new_admissions_stopped=True,
@@ -1142,3 +1154,62 @@ def test_day10_rejects_relabelled_custody_ref_even_if_both_holdout_copies_match(
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize("mutation", [
+    pytest.param(lambda a: a["approval"].pop("founder_decision"), id="missing-founder-signoff"),
+    pytest.param(lambda a: a["approval"].pop("owner_c_decision"), id="missing-owner-signoff"),
+    pytest.param(lambda a: a["approval"]["owner_c_decision"].update(
+        evidence_ref=a["approval"]["founder_decision"]["evidence_ref"]), id="one-shared-signature"),
+    pytest.param(lambda a: a["approval"]["founder_decision"].update(
+        status="failed"), id="founder-rejected"),
+    pytest.param(lambda a: a["approval"]["owner_c_decision"].pop(
+        "verified_at"), id="owner-undated"),
+    pytest.param(lambda a: a["approval"]["founder_decision"].update(
+        verified_at="2026-11-12T00:00:00Z"), id="founder-before-final-ci"),
+    pytest.param(lambda a: a["approval"]["founder_decision"].update(
+        source_revision="c" * 40), id="founder-wrong-release-sha"),
+    pytest.param(lambda a: a["approval"]["owner_c_decision"].update(
+        rollout_manifest_sha256="c" * 64), id="owner-wrong-rollout"),
+    pytest.param(lambda a: a["approval"]["founder_decision"].update(
+        max_users=6), id="founder-approved-different-cap"),
+    pytest.param(lambda a: a["approval"]["owner_c_decision"].update(
+        max_users=True), id="owner-approved-boolean-cap"),
+    pytest.param(lambda a: a["approval"]["owner_c_decision"].update(
+        rollback_owner="other-operator"), id="owner-approved-different-rollback"),
+    pytest.param(lambda a: a["approval"].update(
+        rollback_owner="other-operator"), id="approval-rollback-owner-drift"),
+    pytest.param(lambda a: a["rollback"].update(
+        rollback_owner="other-operator"), id="operated-rollback-owner-drift"),
+    pytest.param(lambda a: a["approval"]["founder_decision"].update(
+        signer_id="C-signoff"), id="founder-signature-claimed-by-owner"),
+    pytest.param(lambda a: a["approval"]["owner_c_decision"].update(
+        decision="rejected"), id="owner-rejected"),
+    pytest.param(lambda a: a["approval"]["founder_decision"].update(
+        evidence_ref="https://evidence.example.test/one-shared-email"), id="unbound-founder-reference"),
+    pytest.param(lambda a: a["approval"].update(
+        status="rejected"), id="top-level-approval-revoked"),
+    pytest.param(lambda a: a["approval"].pop(
+        "verified_at"), id="summary-undated"),
+])
+def test_day10_requires_distinct_dated_release_bound_owner_and_founder_signoffs(
+    monkeypatch, mutation
+):
+    rollout, artifacts = evidence()
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    mutation(artifacts)
+    result = decision(monkeypatch, rollout, artifacts)
+    # Even with ALL technically operated evidence in the fixture passing, the
+    # release is not READY when either authentic signoff cannot be verified.
+    assert result["decision"] == "STAGING_ONLY"
+    assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+    assert result["pilot_activated"] is False
+
+
+def test_day10_approvals_require_postqualification_dates_across_timezones(monkeypatch):
+    rollout, artifacts = evidence()
+    # Same instant as pre-qualification evidence, but with a +06:00 display.
+    artifacts["approval"]["owner_c_decision"]["verified_at"] = "2026-11-12T06:01:00+06:00"
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "STAGING_ONLY"
+    assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]

@@ -34,10 +34,40 @@ under `boundaries`. The operator verifies the receipts in the source systems.
 The `--holdout` reviewer IDs must identify two distinct reviewers under the
 same case and Unicode normalization as Day 9.
 
-The `--approval` receipt uses the stable identity of each signer in `founder`
-and `owner_c`. Both IDs must be valid and distinct under the same normalization
-as the holdout reviewer IDs. The operator verifies both written signoffs at the
-receipt's `reference`.
+The `--approval` receipt still contains the release-bound summary
+`release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`,
+`evidence_ref`, timezone-aware `verified_at`, `reference`,
+`explicit_separate_authorization=true`, `max_users`, `founder` and `owner_c`.
+The two signer IDs must be valid, distinct pseudonyms under the same NFKC/casefold
+normalization as independent Day 9 reviewer IDs. **A shared summary assertion and
+a single `reference` are not two signed decisions.** The release operator must
+also supply each signer's separately retained, attributable private decision
+in `founder_decision` and `owner_c_decision`, containing:
+
+- `release_id`, `source_revision`, `rollout_manifest_sha256`: exact same release
+  and frozen digest as the summary and the final Day 10 decision.
+- `status="passed"`, `decision="approve_controlled_pilot"`, `signer_id`:
+  signer pseudonym matching the corresponding `founder` or `owner_c` identity.
+- `verified_at`: timezone-aware nonfuture timestamp, **not before** final-head
+  CI, the final golden verification or operated rollback verification; it must
+  also be no later than the outer approval summary's `verified_at`.
+- `evidence_ref="sha256:<digest>"`: a unique lowercase 64-hex SHA-256 for this
+  signer's privately retained original written decision, **distinct from the
+  other signer's evidence reference**. A URL or reuse of the same receipt digest
+  is not a separate approval.
+- `max_users`: an integer equal to the exact frozen rollout cap (5–10);
+  `rollback_owner`: exact same nonempty pseudonymous identity as the summary's
+  `rollback_owner` **and** the `rollback` operated proof's `rollback_owner`.
+  D/C must authenticate the actual operator and private rollback evidence.
+
+A legacy one-document approval may be retained as an **archival / NOT QUALIFYING**
+record; never rewrite it retrospectively to claim two independent signoffs.
+This CLI verifies only claimed receipt shapes, relative dates, hashes, identity
+consistency and scope; it **cannot authenticate signatures, the private evidence,
+the people involved, or the operated rollback**. The designated human D and Owner C
+must verify both written signoffs and the real rollback owner against the original
+separate access-controlled source records before crediting D10.T08/D10.G07.
+An eligible decision still **does not** authorize automatic pilot admission.
 
 ```bash
 uv run --extra coworker python scripts/day10_release_decision.py \
