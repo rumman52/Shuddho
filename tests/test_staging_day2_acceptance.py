@@ -640,6 +640,7 @@ def test_day2_acceptance_reconciles_protected_operator_approval_without_claiming
 
 
 @pytest.mark.parametrize('path, bad', [
+    (('schema_version',), True),
     (('status',), 'passed'),
     (('environment',), 'production'),
     (('release_id',), 'another-release'),
