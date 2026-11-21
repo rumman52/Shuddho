@@ -248,6 +248,7 @@ def test_oversized_integrity_metadata_rejected_before_reading(tmp_path, filename
     with pytest.raises(ValueError, match='byte bound'):
         load_suite(copied)
 
+
 def test_verified_dossier_text_is_the_exact_hashed_snapshot(tmp_path, monkeypatch):
     """Changing the content at its second read must not corrupt source provenance."""
     import hashlib
