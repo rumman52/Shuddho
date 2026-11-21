@@ -13,6 +13,11 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.staging_day2_authorization import (
+    AuthorizationEvidenceFailure, read_private_authorization,
+    reconcile_authorization,
+)
+
 
 class Day2AcceptanceFailure(RuntimeError):
     pass
@@ -33,6 +38,7 @@ _CHECKS = [
     "model", "owner_isolation", "artifact_retrieval", "temporal", "document_outbox",
     "worker_heartbeat", "parallel_restart", "fan_in", "outbox_once",
     "worker_replaced", "backup_restore", "pdf_content_fidelity",
+    "founder_c_authorization",
 ]
 
 
@@ -160,7 +166,7 @@ def _stage(value: object, label: str, *, release_id: str, revision: str) -> tupl
 
 def validate_evidence(
     freeze: object, execution: object, recovery: object, restored: object,
-    *, expected_revision: str,
+    *, expected_revision: str, authorization: object = None,
 ) -> dict:
     """Reject mixed release/worker/task/artifact evidence; never claim live execution."""
     if not isinstance(expected_revision, str) or not _REVISION.fullmatch(expected_revision):
@@ -380,6 +386,22 @@ def validate_evidence(
         raise Day2AcceptanceFailure("Backup/restore does not match the frozen rollout manifest.")
     if restored_at < max(recovery_times):
         raise Day2AcceptanceFailure("Isolated backup/restore verification predates worker recovery.")
+    # Part 02 D02.T05 / G05 is separate from a green code test or a
+    # technically consistent restore. A private, dated Founder + C decision
+    # must cover the exact release, host, limit, duration and restore targets.
+    # This checks only the *shape and consistency* of operator-supplied data.
+    try:
+        authorization_evidence = reconcile_authorization(
+            authorization,
+            release=release,
+            freeze_prepared_at=frozen.get("prepared_at"),
+            preseed_attested_at=preseed.get("attested_at"),
+            integrity=integrity,
+            model_attempts=run.get("model_attempts"),
+            restore_verified_at=restored_at,
+        )
+    except AuthorizationEvidenceFailure as error:
+        raise Day2AcceptanceFailure(str(error)) from None
     return {
         "status": "evidence_consistent",
         "release_id": release_id,
@@ -402,6 +424,7 @@ def validate_evidence(
         "logical_document_outbox_effect_count": 1,
         "document_outbox_dispatch_attempts": document_outbox["dispatch_attempts"],
         "archive_integrity": integrity,
+        "authorization_evidence": authorization_evidence,
         "required_live_checks": list(_CHECKS),
         "caveat": "Only operator-supplied evidence consistency; independent live/platform verification remains mandatory.",
     }
@@ -413,6 +436,8 @@ def main() -> None:
     parser.add_argument("--execution", type=Path, required=True)
     parser.add_argument("--recovery", type=Path, required=True)
     parser.add_argument("--restored", type=Path, required=True)
+    parser.add_argument("--authorization", type=Path, required=True,
+                        help="Private mode-0600 dated Founder/C decision receipt, never pasted into CI")
     parser.add_argument("--expected-revision", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -425,13 +450,17 @@ def main() -> None:
         proofs = []
         for path in (args.freeze, args.execution, args.recovery, args.restored):
             proofs.append(json.loads(path.read_text(encoding="utf-8")))
-        value = validate_evidence(*proofs, expected_revision=args.expected_revision)
+        authorization = read_private_authorization(args.authorization)
+        value = validate_evidence(
+            *proofs, expected_revision=args.expected_revision,
+            authorization=authorization,
+        )
         # Avoid importing the runtime/SQLAlchemy modules for a read-only evidence gate.
         from scripts.staging_release_evidence import write_private_json
         write_private_json(args.output, value)
         print(json.dumps({"status": "evidence_consistent", "written": str(args.output)}, indent=2))
-    except (Day2AcceptanceFailure, OSError, ValueError, TypeError) as error:
-        message = str(error) if isinstance(error, Day2AcceptanceFailure) else type(error).__name__
+    except (Day2AcceptanceFailure, AuthorizationEvidenceFailure, OSError, ValueError, TypeError) as error:
+        message = str(error) if isinstance(error, (Day2AcceptanceFailure, AuthorizationEvidenceFailure)) else type(error).__name__
         print(json.dumps({"status": "failed", "error": message}, indent=2))
         raise SystemExit(1) from None
 
