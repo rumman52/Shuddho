@@ -527,6 +527,8 @@ def test_isolated_restore_never_publishes_pass_without_authenticated_api_readbac
     import hashlib
 
     settings, rollout_path, state = restore_state
+    settings.auth_issuer = "https://identity.example.test/auth/v1"
+    settings.auth_audience = "authenticated"
     bytes_to_restore = b"restored-private-probe\n"
     expected_sha = hashlib.sha256(bytes_to_restore).hexdigest()
     state.update(
