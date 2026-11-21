@@ -186,7 +186,7 @@ def verify_two_day(
     require(isinstance(quiet_hours, dict)
             and set(quiet_hours) == {"start", "end"}
             and all(type(quiet_hours[field]) is str
-                    and re.fullmatch(r"(?:[01]\\d|2[0-3]):[0-5]\\d", quiet_hours[field])
+                    and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", quiet_hours[field])
                     for field in ("start", "end"))
             and quiet_hours["start"] != quiet_hours["end"],
             "Day 7 quiet hours must have distinct valid HH:MM start/end values.")
