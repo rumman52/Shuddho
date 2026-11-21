@@ -247,6 +247,13 @@ def test_generation_identity_receipt_and_day10_holdout_artifact_are_compatible()
     )
     assert holdout_ok(artifact, value["release_id"], value["candidate_revision"],
                       value["rollout_manifest_sha256"])
+    # Preserve all three pseudonymous claimed roles in the exact Day 9 ->
+    # Day 10 custody handoff, without asserting real human authentication.
+    assert {k: artifact["custody_receipt"][k] for k in (
+        "custodian_id", "developer_id", "corpus_author_id",
+    )} == {k: custody[k] for k in (
+        "custodian_id", "developer_id", "corpus_author_id",
+    )}
     assert all(row["attempt_status"] == "succeeded" and row["evidence_kind"] == "draft_output"
                and row["output_present"] is True and len(row["output_sha256"]) == 64
                and row["run_id"] for row in artifact["cases"])
@@ -362,6 +369,13 @@ def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_pro
     value = manifest()
     assert custody_receipt_ok(receipt, value)
     assert not custody_receipt_ok(dict(receipt, custodian_id="developer-A"), value)
+    # Textually different ID spellings must not falsely count as separate
+    # custodian/developer humans, just as they cannot be separate reviewers.
+    assert not custody_receipt_ok(dict(receipt, custodian_id="DEVELOPER-A"), value)
+    assert not custody_receipt_ok(dict(receipt, custodian_id="ｄｅｖｅｌｏｐｅｒ－Ａ"), value)
+    assert not custody_receipt_ok(dict(receipt, custodian_id=" developer-A "), value)
+    assert not custody_receipt_ok(dict(receipt, developer_id=""), value)
+    assert not custody_receipt_ok(dict(receipt, corpus_author_id="bad\nidentity"), value)
     assert not custody_receipt_ok(dict(receipt, custodian_positive_read_test="denied"), value)
     assert not custody_receipt_ok(dict(receipt, exposure_history_reviewed=False), value)
     assert not custody_receipt_ok(dict(receipt, access_log_sha256="not-a-digest"), value)

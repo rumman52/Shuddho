@@ -215,11 +215,14 @@ def custody_receipt_ok(custody: object, manifest: dict | None = None) -> bool:
     """Fail closed unless D's independent access boundary binds the frozen corpus/answers/rubric."""
     if not isinstance(custody, dict):
         return False
-    identities = [custody.get("custodian_id"), custody.get("developer_id"),
-                  custody.get("corpus_author_id")]
-    if any(not isinstance(value, str) or not value.strip() for value in identities):
-        return False
-    if len(set(identities)) != 3:
+    # The same case/Unicode-width alias rules already used for the 80 human
+    # reviewer IDs also apply to custody role claims: spelling changes cannot
+    # turn one person into a distinct custodian, developer and corpus author.
+    identities = [
+        reviewer_identity(custody.get(role))
+        for role in ("custodian_id", "developer_id", "corpus_author_id")
+    ]
+    if None in identities or len(set(identities)) != 3:
         return False
     if (custody.get("independent_operator_review") != "verified"
             or custody.get("custodian_positive_read_test") != "allowed"
@@ -943,6 +946,12 @@ def day10_holdout_receipt(manifest: dict, scores: dict, custody: dict, *,
             "source_revision": manifest["candidate_revision"],
             "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
             "status": "passed" if custody_ok else "failed",
+            # These are pseudonymous *claimed* identities, NOT proof of real
+            # independent humans. Preserve their exact bytes for Day 10 and
+            # the external custodian to reconcile against private access logs.
+            "custodian_id": custody.get("custodian_id"),
+            "developer_id": custody.get("developer_id"),
+            "corpus_author_id": custody.get("corpus_author_id"),
             "evidence_ref": ("sha256:" + custody["receipt_sha256"]) if custody_ok else "",
             "verified_at": custody.get("verified_at"),
             "independent_d_controls_access": custody.get("custodian_positive_read_test") == "allowed",
