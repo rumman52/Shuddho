@@ -13,7 +13,7 @@ def valid_env() -> dict[str, str]:
             "postgresql://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-secret"
             "@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&sslrootcert=infra/supabase-root-2021.pem"
         ),
-        "SHUDDHO_AUTH_ISSUER": "https://auth.example.test/auth/v1",
+        "SHUDDHO_AUTH_ISSUER": "https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1",
         "SHUDDHO_AUTH_AUDIENCE": "authenticated",
         "SHUDDHO_TEMPORAL_ADDRESS": "example.tmprl.cloud:7233",
         "SHUDDHO_TEMPORAL_NAMESPACE": "shuddho-staging",
@@ -24,7 +24,7 @@ def valid_env() -> dict[str, str]:
         "SHUDDHO_TEMPORAL_TASK_QUEUE": "shuddho-documents-v1",
         "SHUDDHO_COWORKER_STORAGE": "s3",
         "SHUDDHO_COWORKER_BUCKET": "shuddho-coworker-staging",
-        "SHUDDHO_COWORKER_S3_ENDPOINT": "https://storage.example.test",
+        "SHUDDHO_COWORKER_S3_ENDPOINT": "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3",
         "AWS_DEFAULT_REGION": "us-west-1",
     }
 
@@ -36,7 +36,8 @@ def test_validate_passes_without_optional_model_secret():
     assert result["checks"]["temporal_task_queue"] == "shuddho-documents-v1"
     assert result["checks"]["environment"] == "staging"
     assert result["checks"]["database_url"] == "valid_postgresql_url"
-    assert result["checks"]["auth_issuer"] == "valid_https_endpoint"
+    assert result["checks"]["auth_issuer"] == "pinned_supabase_staging_issuer"
+    assert result["checks"]["storage_endpoint"] == "pinned_supabase_staging_s3_endpoint"
     assert result["checks"]["auth_audience"] == "authenticated"
 
 
@@ -159,7 +160,7 @@ def test_validate_requires_exact_staging_queue_bucket_and_tls():
 
 def test_validate_accepts_reviewed_s3_endpoint_path_and_rejects_unsafe_parts():
     env = valid_env()
-    env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "https://storage.example.test/storage/v1/s3"
+    env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3"
     assert preflight.validate(env)["status"] == "passed"
 
     env = valid_env()
@@ -175,4 +176,23 @@ def test_validate_accepts_reviewed_s3_endpoint_path_and_rejects_unsafe_parts():
     env = valid_env()
     env["SHUDDHO_COWORKER_S3_ENDPOINT"] = "https://storage.example.test/storage/v1/s3?token=x"
     with pytest.raises(preflight.PreflightFailure, match="SHUDDHO_COWORKER_S3_ENDPOINT"):
+        preflight.validate(env)
+
+
+@pytest.mark.parametrize(
+    ("name", "endpoint"),
+    [
+        ("SHUDDHO_AUTH_ISSUER", "https://auth.example.test/auth/v1"),
+        ("SHUDDHO_AUTH_ISSUER", "https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1/"),
+        ("SHUDDHO_AUTH_ISSUER", "https://different.supabase.co/auth/v1"),
+        ("SHUDDHO_COWORKER_S3_ENDPOINT", "https://storage.example.test/storage/v1/s3"),
+        ("SHUDDHO_COWORKER_S3_ENDPOINT", "https://different.storage.supabase.co/storage/v1/s3"),
+        ("SHUDDHO_COWORKER_S3_ENDPOINT", "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3/"),
+    ],
+)
+def test_preflight_rejects_public_https_endpoints_outside_approved_staging_project(name, endpoint):
+    """DNS-shaped public HTTPS alone must not authorize credential destinations."""
+    env = valid_env()
+    env[name] = endpoint
+    with pytest.raises(preflight.PreflightFailure, match=name):
         preflight.validate(env)

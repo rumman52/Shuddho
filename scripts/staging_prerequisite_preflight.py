@@ -11,6 +11,9 @@ EXPECTED_BUCKET = "shuddho-coworker-staging"
 EXPECTED_TASK_QUEUE = "shuddho-documents-v1"
 EXPECTED_ENVIRONMENT = "staging"
 EXPECTED_AUTH_AUDIENCE = "authenticated"
+# Day 2 is bound to one approved Supabase staging project, not any public HTTPS host.
+EXPECTED_AUTH_ISSUER = "https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1"
+EXPECTED_S3_ENDPOINT = "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3"
 POSTGRES_SCHEMES = {"postgres", "postgresql", "postgresql+psycopg"}
 STAGING_DB_HOST = "aws-0-us-west-1.pooler.supabase.com"
 STAGING_DB_USER = "shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax"
@@ -155,7 +158,12 @@ def validate(env: dict[str, str]) -> dict:
         raise PreflightFailure("SHUDDHO_COWORKER_ENV must be staging.")
 
     _validate_postgresql_url(env.get("SHUDDHO_COWORKER_DATABASE_URL", ""))
-    _validate_https_endpoint(env.get("SHUDDHO_AUTH_ISSUER", ""), "SHUDDHO_AUTH_ISSUER")
+    issuer = env.get("SHUDDHO_AUTH_ISSUER", "")
+    _validate_https_endpoint(issuer, "SHUDDHO_AUTH_ISSUER")
+    if issuer != EXPECTED_AUTH_ISSUER:
+        raise PreflightFailure(
+            "SHUDDHO_AUTH_ISSUER must exactly match the approved Supabase staging issuer."
+        )
     audience = env.get("SHUDDHO_AUTH_AUDIENCE", "").strip()
     if audience != EXPECTED_AUTH_AUDIENCE:
         raise PreflightFailure("SHUDDHO_AUTH_AUDIENCE must be authenticated.")
@@ -190,6 +198,10 @@ def validate(env: dict[str, str]) -> dict:
 
     endpoint = env.get("SHUDDHO_COWORKER_S3_ENDPOINT", "")
     _validate_https_endpoint(endpoint, "SHUDDHO_COWORKER_S3_ENDPOINT")
+    if endpoint != EXPECTED_S3_ENDPOINT:
+        raise PreflightFailure(
+            "SHUDDHO_COWORKER_S3_ENDPOINT must exactly match the approved Supabase staging S3 endpoint."
+        )
 
     region = env.get("AWS_DEFAULT_REGION", "").strip()
     if not region or any(char.isspace() for char in region):
@@ -201,7 +213,7 @@ def validate(env: dict[str, str]) -> dict:
             **{name: "present" for name in REQUIRED_SECRETS},
             "environment": EXPECTED_ENVIRONMENT,
             "database_url": "valid_postgresql_url",
-            "auth_issuer": "valid_https_endpoint",
+            "auth_issuer": "pinned_supabase_staging_issuer",
             "auth_audience": EXPECTED_AUTH_AUDIENCE,
             "DEEPSEEK_API_KEY": (
                 "present_optional"
@@ -214,7 +226,7 @@ def validate(env: dict[str, str]) -> dict:
             "temporal_task_queue": EXPECTED_TASK_QUEUE,
             "storage_backend": "s3",
             "storage_bucket": EXPECTED_BUCKET,
-            "storage_endpoint": "valid_https_endpoint",
+            "storage_endpoint": "pinned_supabase_staging_s3_endpoint",
             "storage_region": "present",
         },
     }
