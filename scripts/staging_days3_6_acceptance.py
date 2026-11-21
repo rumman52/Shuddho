@@ -93,7 +93,17 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
     day, completed = bound(release, data, "day3", after=frozen)
     answers = day.get("answers")
     need(isinstance(answers, list) and len(answers) == 2, "day3 requires both language answers")
-    seen, providers, document_pins = set(), set(), set()
+    seen, providers, document_pins, message_ids = set(), set(), set(), set()
+    provider_timings: dict[str, tuple[datetime, datetime, datetime]] = {}
+    day_started = when(day.get("started_at"), "day3.started_at")
+    # Direct answers (including a controlled revoked-source inference) must
+    # be read-only against the same A-scoped task history. Require witnessed
+    # before/after snapshots for EACH reply, not one global aggregate.
+    history_counts = {}
+    for label in ("agent_runs", "agent_outbox"):
+        original = count(day.get(label + "_before"), "day3." + label + "_before")
+        count(day.get(label + "_after"), "day3." + label + "_after", original)
+        history_counts[label] = original
     for i, item in enumerate(answers):
         answer = obj(item, f"day3.answers[{i}]")
         language = answer.get("language")
@@ -102,6 +112,33 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
         provider_id = referenced(answer.get("provider_request_id"), "day3.provider_request_id")
         need(provider_id not in providers, "day3 reuses a provider request")
         providers.add(provider_id)
+        need(answer.get("owner_ref") == release["owner_a_ref"],
+             "day3 bilingual answer must be scoped to frozen owner A")
+        message_id = referenced(answer.get("message_id"), "day3.answer.message_id")
+        need(message_id not in message_ids, "day3 bilingual replies cannot reuse an owner message")
+        message_ids.add(message_id)
+        inference_started = when(answer.get("provider_started_at"),
+                                 "day3.answer.provider_started_at")
+        inference_finished = when(answer.get("provider_finished_at"),
+                                  "day3.answer.provider_finished_at")
+        browser_checked = when(answer.get("browser_verified_at"),
+                               "day3.answer.browser_verified_at")
+        need(day_started <= inference_started < inference_finished <= browser_checked <= completed,
+             "day3 bilingual provider/browser answer proof is out of order")
+        provider_timings[provider_id] = (inference_started, inference_finished, browser_checked)
+        referenced(answer.get("provider_receipt_ref"), "day3.answer.provider_receipt_ref")
+        referenced(answer.get("browser_reply_receipt_ref"), "day3.answer.browser_reply_receipt_ref")
+        need(answer.get("owner_a_source_http_status") == 200
+             and answer.get("owner_b_source_http_status") in {403, 404},
+             "day3 bilingual answer lacks positive A / denied B source access")
+        referenced(answer.get("owner_a_source_read_receipt_ref"),
+                   "day3.answer.owner_a_source_read_receipt_ref")
+        referenced(answer.get("owner_b_source_denial_ref"),
+                   "day3.answer.owner_b_source_denial_ref")
+        for local, global_key in (("agent_runs", "agent_runs"), ("outbox", "agent_outbox")):
+            before = count(answer.get(local + "_before"), "day3.answer." + local + "_before",
+                           history_counts[global_key])
+            count(answer.get(local + "_after"), "day3.answer." + local + "_after", before)
         sha(answer.get("answer_sha256"), "day3.answer_sha256")
         document_pins.add((
             text(answer.get("selected_document_id"), "day3.selected_document_id"),
@@ -121,14 +158,46 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
     need(len(document_pins) == 1, "day3 bilingual answers must share one pinned private document version")
     selected_document_id, selected_version_id, selected_sha = next(iter(document_pins))
     rev = obj(day.get("revocation"), "day3.revocation")
+    need(rev.get("owner_ref") == release["owner_a_ref"]
+         and rev.get("source_document_id") == selected_document_id
+         and rev.get("source_document_version_id") == selected_version_id
+         and sha(rev.get("source_document_sha256"), "day3.revocation.source_document_sha256") == selected_sha,
+         "day3 revoked source is not the selected private document owned by A")
+    revoked_message = referenced(rev.get("message_id"), "day3.revocation.message_id")
+    need(revoked_message not in message_ids,
+         "day3 revocation must use a separate owned reply instead of a successful bilingual message")
+    need(rev.get("source_mutation") in {"delete", "revoke"},
+         "day3 revocation must delete or revoke the same selected source")
+    need(rev.get("owner_a_read_http_status_before") == 200
+         and rev.get("owner_a_read_http_status_after") in {403, 404, 410},
+         "day3 revocation lacks a positive pre-mutation and negative post-mutation A read")
+    for receipt in ("source_before_receipt_ref", "source_after_receipt_ref",
+                    "provider_receipt_ref", "browser_readback_ref", "database_readback_ref"):
+        referenced(rev.get(receipt), "day3.revocation." + receipt)
     start = when(rev.get("provider_started_at"), "day3.revocation.provider_started_at")
     revoked = when(rev.get("revoked_at"), "day3.revocation.revoked_at")
     finish = when(rev.get("provider_finished_at"), "day3.revocation.provider_finished_at")
-    need(frozen <= start < revoked < finish <= completed, "day3 revocation was not mid-inference")
+    browser_checked = when(rev.get("browser_verified_at"), "day3.revocation.browser_verified_at")
+    database_checked = when(rev.get("database_verified_at"), "day3.revocation.database_verified_at")
+    latest_prior_answer = max(verified for _, _, verified in provider_timings.values())
+    need(day_started <= latest_prior_answer < start < revoked < finish
+         <= browser_checked <= database_checked <= completed,
+         "day3 revocation must happen during an active new inference after both positive answers, "
+         "with browser and stored-reply readbacks after provider completion")
     referenced(rev.get("provider_request_id"), "day3.revocation.provider_request_id")
     referenced(rev.get("revocation_receipt_ref"), "day3.revocation.revocation_receipt_ref")
     count(rev.get("visible_deltas_after_revoke"), "day3.revocation.visible_deltas_after_revoke", 0)
     count(rev.get("persisted_stale_answers"), "day3.revocation.persisted_stale_answers", 0)
+    count(rev.get("browser_visible_stale_bytes"),
+          "day3.revocation.browser_visible_stale_bytes", 0)
+    count(rev.get("persisted_stale_bytes"),
+          "day3.revocation.persisted_stale_bytes", 0)
+    need(rev.get("reply_state") == "failed",
+         "day3 stale grounded reply must be failed without visible or stored text")
+    for local, global_key in (("agent_runs", "agent_runs"), ("outbox", "agent_outbox")):
+        before = count(rev.get(local + "_before"), "day3.revocation." + local + "_before",
+                       history_counts[global_key])
+        count(rev.get(local + "_after"), "day3.revocation." + local + "_after", before)
     need(rev.get("source_revoked") is True and rev["provider_request_id"] not in providers,
          "day3 needs a distinct revoked provider request")
     # An external reviewer must still authenticate the underlying browser,
@@ -153,9 +222,11 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
     probe_start = when(injection.get("provider_started_at"), "day3.prompt_injection.provider_started_at")
     probe_end = when(injection.get("provider_finished_at"), "day3.prompt_injection.provider_finished_at")
     probe_verified = when(injection.get("verified_at"), "day3.prompt_injection.verified_at")
+    witnessed = provider_timings[probe_request]
     need(
-        when(day.get("started_at"), "day3.started_at") <= probe_start < probe_end <= probe_verified <= completed,
-        "day3.prompt_injection provider and browser evidence is out of order",
+        day_started <= probe_start < probe_end <= probe_verified <= completed
+        and (probe_start, probe_end, probe_verified) == witnessed,
+        "day3.prompt_injection must cite the exact bilingual provider and browser readback interval",
     )
     need(
         injection.get("contains_conflicting_source_instruction") is True
@@ -186,11 +257,8 @@ def check_day3(release: dict, data: object, frozen: datetime) -> datetime:
     referenced(owner_b.get("owner_b_read_receipt_ref"), "day3.owner_b_fixture.owner_b_read_receipt_ref")
     referenced(owner_b.get("owner_a_denial_receipt_ref"), "day3.owner_b_fixture.owner_a_denial_receipt_ref")
 
-    # The owner may already have task history. Direct chat is read-only with
-    # respect to AgentRun and dispatch, so require *zero delta*, not zero history.
-    for prefix in ("agent_runs", "agent_outbox"):
-        before = count(day.get(prefix + "_before"), "day3." + prefix + "_before")
-        count(day.get(prefix + "_after"), "day3." + prefix + "_after", before)
+    # The aggregate same-owner counters were validated before any answer
+    # receipt and matched each individual reply and revoked-source probe.
     return completed
 
 

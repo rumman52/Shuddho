@@ -67,14 +67,46 @@ def evidence():
             "selected_document_version_id": "owner-A-version-1",
             "citation_ids": ["src-1"], "factual_check": True, "owner_b_denied": True,
             "answer_receipt_ref": "owned-answer-" + language,
+            "owner_ref": freeze["owner_a_ref"],
+            "message_id": "owner-A-question-" + language,
+            "provider_started_at": "2026-11-18T01:01:00Z" if language == "en" else "2026-11-18T01:05:00Z",
+            "provider_finished_at": "2026-11-18T01:03:00Z" if language == "en" else "2026-11-18T01:07:00Z",
+            "browser_verified_at": "2026-11-18T01:04:00Z" if language == "en" else "2026-11-18T01:08:00Z",
+            "provider_receipt_ref": "owner-A-provider-" + language,
+            "browser_reply_receipt_ref": "owner-A-browser-" + language,
+            "owner_a_source_http_status": 200,
+            "owner_b_source_http_status": 403,
+            "owner_a_source_read_receipt_ref": "owner-A-private-document-" + language,
+            "owner_b_source_denial_ref": "owner-B-denied-private-document-" + language,
+            "agent_runs_before": 0, "agent_runs_after": 0,
+            "outbox_before": 0, "outbox_after": 0,
         } for language in ("bn", "en")],
         "revocation": {
-            "provider_started_at": "2026-11-18T01:05:00Z",
+            "provider_started_at": "2026-11-18T01:10:00Z",
             "revoked_at": "2026-11-18T01:15:00Z",
             "provider_finished_at": "2026-11-18T01:20:00Z",
             "provider_request_id": "model-revoke-A",
             "revocation_receipt_ref": "revoke-event-A", "source_revoked": True,
             "visible_deltas_after_revoke": 0, "persisted_stale_answers": 0,
+            "owner_ref": freeze["owner_a_ref"],
+            "message_id": "owner-A-question-revoked",
+            "source_document_id": "owner-A-document",
+            "source_document_version_id": "owner-A-version-1",
+            "source_document_sha256": D3,
+            "source_mutation": "delete",
+            "owner_a_read_http_status_before": 200,
+            "owner_a_read_http_status_after": 404,
+            "source_before_receipt_ref": "owner-A-source-before-revoke",
+            "source_after_receipt_ref": "owner-A-source-after-revoke",
+            "provider_receipt_ref": "provider-inference-revoked",
+            "browser_verified_at": "2026-11-18T01:24:00Z",
+            "database_verified_at": "2026-11-18T01:25:00Z",
+            "browser_readback_ref": "owner-A-no-grounded-deltas",
+            "database_readback_ref": "owner-A-no-stale-reply-row",
+            "reply_state": "failed",
+            "browser_visible_stale_bytes": 0, "persisted_stale_bytes": 0,
+            "agent_runs_before": 0, "agent_runs_after": 0,
+            "outbox_before": 0, "outbox_after": 0,
         },
         "prompt_injection": {
             "source_document_id": "owner-A-document",
@@ -490,6 +522,13 @@ def test_day3_direct_chat_allows_existing_owner_runs_with_zero_new_effects():
         "agent_runs_before": 3, "agent_runs_after": 3,
         "agent_outbox_before": 7, "agent_outbox_after": 7,
     })
+    # Preserve preexisting owner history in each operated reply readback.
+    # Changing only the aggregate receipt is now an inconsistent witness.
+    for item in [*args[1]["answers"], args[1]["revocation"]]:
+        item.update({
+            "agent_runs_before": 3, "agent_runs_after": 3,
+            "outbox_before": 7, "outbox_after": 7,
+        })
     # Direct chat has no NEW AgentRun or outbox effects; old work may exist.
     assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
 
@@ -501,6 +540,13 @@ def test_day3_preexisting_counts_still_deny_new_chat_side_effects(field):
         "agent_runs_before": 3, "agent_runs_after": 3,
         "agent_outbox_before": 7, "agent_outbox_after": 7,
     })
+    # Preserve preexisting owner history in each operated reply readback.
+    # Changing only the aggregate receipt is now an inconsistent witness.
+    for item in [*args[1]["answers"], args[1]["revocation"]]:
+        item.update({
+            "agent_runs_before": 3, "agent_runs_after": 3,
+            "outbox_before": 7, "outbox_after": 7,
+        })
     args[1][field] += 1
     with pytest.raises(gate.Days36EvidenceError, match="day3"):
         validate(args)
@@ -1192,3 +1238,147 @@ def test_day4_missing_utf8_boundary_probes_never_proves_hosted_acceptance():
     del args[2]["utf8_boundary_probes"]
     with pytest.raises(gate.Days36EvidenceError, match="day4"):
         validate(args)
+
+
+# Day 3: a revocation receipt must concern the *same private source*
+# selected by the bilingual answer, not a different owner's arbitrary file.
+@pytest.mark.parametrize(("field", "bad"), [
+    ("owner_ref", "synthetic-B"),
+    ("source_document_id", "unrelated-document"),
+    ("source_document_version_id", "foreign-version"),
+    ("source_document_sha256", D4),
+    ("source_document_sha256", ""),
+    ("message_id", "owner-A-question-en"),
+    ("message_id", ""),
+    ("source_mutation", "none"),
+    ("owner_a_read_http_status_before", 403),
+    ("owner_a_read_http_status_after", 200),
+    ("owner_a_read_http_status_after", 500),
+    ("source_before_receipt_ref", ""),
+    ("source_after_receipt_ref", ""),
+    ("provider_receipt_ref", ""),
+    ("browser_readback_ref", ""),
+    ("database_readback_ref", ""),
+    ("reply_state", "completed"),
+    ("browser_visible_stale_bytes", 1),
+    ("persisted_stale_bytes", 1),
+    ("agent_runs_after", 1),
+    ("outbox_after", 1),
+    ("browser_verified_at", "2026-11-18T01:12:00Z"),
+    ("database_verified_at", "2026-11-18T01:16:00Z"),
+    ("database_verified_at", "2026-11-18T02:10:00Z"),
+])
+def test_day3_revocation_must_bind_same_authorized_source_and_no_stale_payload(field, bad):
+    args = evidence()
+    args[1]["revocation"][field] = bad
+    with pytest.raises(gate.Days36EvidenceError, match="day3"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "owner_ref", "source_document_id", "source_document_version_id",
+    "source_document_sha256", "source_mutation", "message_id",
+    "owner_a_read_http_status_before", "owner_a_read_http_status_after",
+    "source_before_receipt_ref", "source_after_receipt_ref", "provider_receipt_ref",
+    "browser_verified_at", "database_verified_at",
+    "browser_readback_ref", "database_readback_ref",
+    "reply_state", "browser_visible_stale_bytes", "persisted_stale_bytes",
+    "agent_runs_before", "agent_runs_after", "outbox_before", "outbox_after",
+])
+def test_day3_revocation_missing_owner_bound_source_or_readback_fails(field):
+    args = evidence()
+    del args[1]["revocation"][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day3"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("answer_index", "field", "bad"), [
+    (0, "owner_ref", "synthetic-B"),
+    (1, "owner_ref", ""),
+    (0, "message_id", "owner-A-question-en"),
+    (1, "message_id", "owner-A-question-revoked"),
+    (0, "provider_started_at", "2026-11-18T01:16:00Z"),
+    (1, "provider_finished_at", "2026-11-18T01:11:00Z"),
+    (1, "browser_verified_at", "2026-11-18T01:01:00Z"),
+    (0, "browser_verified_at", "2026-11-18T01:15:00Z"),
+    (0, "provider_receipt_ref", ""),
+    (1, "browser_reply_receipt_ref", ""),
+    (0, "owner_a_source_http_status", 403),
+    (1, "owner_b_source_http_status", 200),
+    (0, "owner_a_source_read_receipt_ref", ""),
+    (1, "owner_b_source_denial_ref", ""),
+    (0, "agent_runs_after", 1),
+    (1, "outbox_after", 1),
+])
+def test_day3_each_bilingual_reply_needs_positive_authorized_and_negative_foreign_source_proof(
+    answer_index, field, bad,
+):
+    args = evidence()
+    args[1]["answers"][answer_index][field] = bad
+    with pytest.raises(gate.Days36EvidenceError, match="day3"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "owner_ref", "message_id", "provider_started_at", "provider_finished_at",
+    "browser_verified_at", "provider_receipt_ref", "browser_reply_receipt_ref",
+    "owner_a_source_http_status", "owner_b_source_http_status",
+    "owner_a_source_read_receipt_ref", "owner_b_source_denial_ref",
+    "agent_runs_before", "agent_runs_after", "outbox_before", "outbox_after",
+])
+def test_day3_missing_per_answer_owned_browser_provider_or_delta_count_fails(field):
+    args = evidence()
+    del args[1]["answers"][0][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day3"):
+        validate(args)
+
+
+@pytest.mark.parametrize("case", [
+    "revoked_before_positive_reply", "browser_readback_precedes_model",
+    "revocation_source_version_differs", "duplicate_browser_message",
+    "revocation_second_owner", "revocation_provider_before_answers",
+    "different_existing_histories", "failed_source_but_visible_byte_count_false",
+])
+def test_day3_source_revocation_proof_cannot_be_unrelated_to_the_accepted_replies(case):
+    args = evidence()
+    day = args[1]
+    if case == "revoked_before_positive_reply":
+        day["revocation"]["revoked_at"] = "2026-11-18T01:02:00Z"
+    elif case == "browser_readback_precedes_model":
+        day["revocation"]["browser_verified_at"] = "2026-11-18T01:18:00Z"
+        day["revocation"]["provider_finished_at"] = "2026-11-18T01:20:00Z"
+    elif case == "revocation_source_version_differs":
+        day["revocation"]["source_document_version_id"] = "owner-A-version-2"
+    elif case == "duplicate_browser_message":
+        day["answers"][0]["message_id"] = day["answers"][1]["message_id"]
+    elif case == "revocation_second_owner":
+        day["revocation"]["owner_ref"] = day["owner_b_ref"]
+    elif case == "revocation_provider_before_answers":
+        day["revocation"]["provider_started_at"] = "2026-11-18T01:02:00Z"
+    elif case == "different_existing_histories":
+        day["answers"][0]["agent_runs_before"] = 12
+        day["answers"][0]["agent_runs_after"] = 12
+        day["answers"][1]["agent_runs_before"] = 8
+        day["answers"][1]["agent_runs_after"] = 8
+    else:
+        day["revocation"]["browser_visible_stale_bytes"] = True
+    with pytest.raises(gate.Days36EvidenceError, match="day3"):
+        validate(args)
+
+
+def test_day3_two_private_replies_preserve_existing_owner_history_and_no_new_effects():
+    args = evidence()
+    day = args[1]
+    day.update({"agent_runs_before": 3, "agent_runs_after": 3,
+                "agent_outbox_before": 5, "agent_outbox_after": 5})
+    for item in [*day["answers"], day["revocation"]]:
+        item.update({"agent_runs_before": 3, "agent_runs_after": 3,
+                     "outbox_before": 5, "outbox_after": 5})
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_day3_accepted_answers_first_and_revocation_same_source_are_still_structural_only():
+    args = evidence()
+    day = args[1]
+    assert day["revocation"]["source_document_version_id"] == day["answers"][0]["selected_document_version_id"]
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
