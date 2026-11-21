@@ -364,7 +364,7 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
 
 def recovery_ok(
     value: object, release: str, revision: str, digest: str, *,
-    manifest_sha256: str | None = None,
+    manifest_sha256: str | None = None, run_started_at: str | None = None,
 ) -> bool:
     """Verify precisely the recovery receipt shape emitted by the Day 9 evaluator.
 
@@ -372,6 +372,9 @@ def recovery_ok(
     the operator; matching claimed JSON and hashes does not prove a live fault.
     """
     if not bound(value, release, revision, digest):
+        return False
+    frozen_start = timestamp(run_started_at) if run_started_at is not None else None
+    if run_started_at is not None and frozen_start is None:
         return False
     reported_manifest = value.get("manifest_sha256")
     if (not isinstance(reported_manifest, str)
@@ -407,6 +410,10 @@ def recovery_ok(
                 or evidence_ref in refs
                 or not proof_ok(row, release, revision, digest)
                 or not ordered_times(row, "observed_at", "verified_at")
+                # Check chronological release provenance independently of
+                # the two equal JSON copies that a caller might relabel.
+                or (frozen_start is not None
+                    and timestamp(row["observed_at"]) < frozen_start)
                 or not operated_trace_ok(row, boundaries)):
             return False
         refs.add(evidence_ref)
@@ -608,11 +615,13 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
     # not a replacement independently prepared after the qualification run.
     recovery_qualified = (
         isinstance(first_run, dict)
+        and timestamp(first_run.get("run_started_at")) is not None
         and isinstance(first_run.get("day10_recovery"), dict)
         and first_run["day10_recovery"] == recovery
         and recovery_ok(
             recovery, release, revision, rollout_hash,
             manifest_sha256=first_run.get("manifest_sha256", ""),
+            run_started_at=first_run["run_started_at"],
         )
     )
     need("twenty_operated_recovery_scenarios", recovery_qualified)
