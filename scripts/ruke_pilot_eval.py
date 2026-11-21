@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import stat
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
@@ -71,10 +72,31 @@ def reviewer_identity(value: object) -> str | None:
     return identity if identity.strip() and len(identity) <= 128 else None
 
 
-def sha256(path: Path) -> str:
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_BYTES:
+def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
+    """Read one bounded regular inode without following a final symlink.
+
+    Parse and hash the same bytes: a pathname can change between two opens.
+    """
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise EvidenceError("no-follow evidence reads are unavailable")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+                raise EvidenceError("missing, linked, or oversized evidence file")
+            content = stream.read(MAX_BYTES + 1)
+    except OSError as exc:
+        raise EvidenceError("missing, linked, or oversized evidence file") from exc
+    # A regular file may grow after fstat, so always cap the actual read.
+    if len(content) > MAX_BYTES:
         raise EvidenceError("missing, linked, or oversized evidence file")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return content, metadata.st_mode
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(_read_evidence_bytes(path)[0]).hexdigest()
 
 
 def pairs_unique(pairs):
@@ -102,20 +124,22 @@ def strict_json_loads(content: str):
 
 
 def read_json(path: Path):
-    sha256(path)
-    return strict_json_loads(path.read_text(encoding="utf-8"))
+    return strict_json_loads(_read_evidence_bytes(path)[0].decode("utf-8"))
 
 
-def read_jsonl(path: Path) -> list[dict]:
-    sha256(path)
+def _parse_jsonl_bytes(content: bytes) -> list[dict]:
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in content.decode("utf-8").splitlines():
         if line.strip():
             obj = strict_json_loads(line)
             if not isinstance(obj, dict):
                 raise EvidenceError("JSONL rows must be objects")
             rows.append(obj)
     return rows
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    return _parse_jsonl_bytes(_read_evidence_bytes(path)[0])
 
 
 def canonical_sha256(value: dict) -> str:
@@ -358,11 +382,14 @@ def external_heldout(path: Path, *, corpus_sha256: str, repo_root: Path = ROOT,
     if custody_verified is not True:
         raise EvidenceError("independent D custody must be verified before reading heldout bytes")
     outside_repo(path, repo_root)
-    if path.stat().st_mode & 0o222:
+    # Mode, digest and parsing must refer to the same opened inode.
+    corpus_bytes, corpus_mode = _read_evidence_bytes(path)
+    if corpus_mode & 0o222:
         raise EvidenceError("independent heldout fixture must be read-only")
-    if sha256(path) != corpus_sha256 or not SHA.fullmatch(corpus_sha256):
+    if (not isinstance(corpus_sha256, str) or not SHA.fullmatch(corpus_sha256)
+            or hashlib.sha256(corpus_bytes).hexdigest() != corpus_sha256):
         raise EvidenceError("external heldout hash mismatch")
-    rows = read_jsonl(path)
+    rows = _parse_jsonl_bytes(corpus_bytes)
     if len(rows) != 40 or Counter((r.get("workflow"), r.get("language")) for r in rows) != MATRIX:
         raise EvidenceError("heldout matrix requires 10 per workflow/language")
     ids = [r.get("case_id") for r in rows]
