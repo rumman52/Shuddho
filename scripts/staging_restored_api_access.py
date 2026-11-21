@@ -7,7 +7,6 @@ cloud deployment-to-database/object-store bindings or authorize spending.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import uuid
