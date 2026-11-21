@@ -136,6 +136,10 @@ def test_restored_api_rejects_missing_explicit_guards_before_first_request(monke
     ("https://localhost", SOURCE_API),
     ("https://user:pass@restored.example.test", SOURCE_API),
     ("https://restored.example.test/surprise", SOURCE_API),
+    ("https://127.0.0.1", SOURCE_API),
+    ("https://169.254.169.254", SOURCE_API),
+    ("https://10.0.0.2", SOURCE_API),
+    ("https://metadata.google.internal", SOURCE_API),
 ])
 def test_restored_api_requires_distinct_public_https_origin(monkeypatch, restored_origin, source_origin):
     monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RESTORED_API_READBACK", "true")
