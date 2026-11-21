@@ -313,6 +313,13 @@ def validate_evidence(
         raise Day2AcceptanceFailure(
             "archive_integrity.preseed_baseline must prove the original 0070 zero-object state."
         )
+    observed_preseed = _time(
+        preseed.get("attested_at"), "archive_integrity.preseed_baseline.attested_at",
+    )
+    if observed_preseed > started:
+        raise Day2AcceptanceFailure(
+            "archive_integrity.preseed_baseline was recorded after worker recovery began."
+        )
     for field in (
         "postgres_archive_sha256", "postgres_schema_sha256",
         "object_manifest_sha256", "source_database_fingerprint",
