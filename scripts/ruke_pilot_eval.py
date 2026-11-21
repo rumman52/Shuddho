@@ -842,7 +842,10 @@ def operated_trace_ok(row: dict, required_boundaries: tuple[str, ...]) -> bool:
 def verify_operations(rows: list[dict], candidate_revision: str, *,
                       manifest_sha256: str | None = None,
                       release_id: str | None = None,
-                      rollout_manifest_sha256: str | None = None) -> dict:
+                      rollout_manifest_sha256: str | None = None,
+                      run_started_at: str | None = None) -> dict:
+    if run_started_at is not None and not timestamp_ok(run_started_at):
+        raise EvidenceError("invalid frozen run start for recovery receipts")
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise EvidenceError("operated scenario receipts must be a list of objects")
     ids = {str(i) for i in OPERATED}
@@ -870,6 +873,10 @@ def verify_operations(rows: list[dict], candidate_revision: str, *,
             and evidence_ref == "sha256:" + trace_sha
             and evidence_ref not in evidence_refs
             and timestamp_order_ok(row.get("observed_at"), row.get("verified_at"))
+            # A historical operation cannot qualify against a newly frozen
+            # run, even when its source and manifest hashes are relabeled.
+            and (run_started_at is None
+                 or timestamp_order_ok(run_started_at, row.get("observed_at")))
         )
         if isinstance(evidence_ref, str) and evidence_ref:
             evidence_refs.add(evidence_ref)
@@ -1188,6 +1195,7 @@ def main(argv=None) -> int:
                     evidence["operations"], manifest["candidate_revision"],
                     manifest_sha256=manifest_digest, release_id=manifest["release_id"],
                     rollout_manifest_sha256=manifest["rollout_manifest_sha256"],
+                    run_started_at=manifest["run_started_at"],
                 )
                 key = read_blinding_key(args.blinding_key) if args.blinding_key else None
                 comparative = compare(

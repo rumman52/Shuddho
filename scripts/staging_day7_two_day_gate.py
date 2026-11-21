@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import tempfile
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -341,6 +343,31 @@ def verify_two_day(
     }
 
 
+def write_private_report(path: Path, report: dict) -> None:
+    """Atomically replace restricted operator evidence without following output links.
+
+    The report contains owner, automation, run, document and source-version IDs.
+    A normal Path.write_text creates a potentially world-readable file under a
+    022 umask and follows preexisting symlinks. mkstemp creates mode 0600; an
+    os.replace in the same directory changes the directory entry atomically.
+    """
+    encoded = json.dumps(report, indent=2) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix="." + path.name + ".", dir=str(path.parent),
+    )
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--first", type=Path, required=True)
@@ -354,7 +381,11 @@ def main() -> None:
                                 load_json(args.pause, "pause"))
     except (GateFailure, OSError, ValueError) as error:
         parser.exit(1, f"Day 7 two-day evidence rejected: {error}\n")
-    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    try:
+        write_private_report(args.output, report)
+    except OSError as error:
+        # Do not print private report contents, paths or exception arguments.
+        parser.exit(1, f"Day 7 private operator report could not be committed: {type(error).__name__}.\n")
     print(json.dumps({"status": "passed", "output": str(args.output),
                       "natural_timer_provenance": "requires independent Temporal logs"}))
 

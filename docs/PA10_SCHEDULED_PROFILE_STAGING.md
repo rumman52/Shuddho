@@ -161,6 +161,19 @@ uv run --locked --extra coworker python -m scripts.staging_day7_two_day_gate \
   --output /tmp/day7-two-day-acceptance.json
 ```
 
+The `staging_day7_two_day_gate` report includes restricted owner, project,
+automation, run, document and immutable-version identifiers. Its CLI now writes
+the output as a **0600 private file using atomic same-directory replacement**,
+including when replacing a report created with unsafe 0644 permissions. It
+replaces an output symlink itself instead of following it into an unrelated
+target. A failed replacement leaves the previous report unchanged and removes
+the temporary file; the CLI exits nonzero without exposing the exception's path
+or contents. Operators should additionally set `umask 077` and create a
+dedicated `0700` evidence directory **before** capturing the first, second and
+pause JSON inputs; the `/tmp/` paths above are illustrative, not an approved
+shared-directory storage policy. File permissions alone do not authenticate
+Temporal timer origins or notification delivery.
+
 The pause collector also rejects *any extra stored occurrence, run or
 briefing notification* in the two-date synthetic automation's baseline. It
 must contain exactly the two independently observed natural occurrences,
