@@ -592,6 +592,73 @@ def first_run_matches_holdout(
             and scores.get("by_cell") == expected_cells)
 
 
+def separate_pilot_authorization_ok(
+    approval: object, rollback: object, ci: object, golden: object,
+    release: str, revision: str, digest: str, cohort_limit: object,
+) -> bool:
+    """Check two distinct, dated *claimed* owner decisions, never signer authenticity.
+
+    Each signoff is independently bound to the final release, 5-10 cohort cap,
+    operated rollback owner, and proof of its own private evidence reference.
+    C/D must authenticate the actual signed records outside this CLI.
+    """
+    if (not proof_ok(approval, release, revision, digest)
+            or approval.get("explicit_separate_authorization") is not True
+            or not nonempty_text(approval.get("reference"))
+            or type(cohort_limit) is not int or not 5 <= cohort_limit <= 10
+            or type(approval.get("max_users")) is not int
+            or approval["max_users"] != cohort_limit):
+        return False
+
+    founder_id = reviewer_identity(approval.get("founder"))
+    owner_id = reviewer_identity(approval.get("owner_c"))
+    if founder_id is None or owner_id is None or founder_id == owner_id:
+        return False
+
+    # A string in only the approval file cannot name the operated rollback
+    # owner. Its identity must be reconciled against the original rollback
+    # receipt; this still cannot prove who performed the real rollback.
+    rollback_owner = approval.get("rollback_owner")
+    if (reviewer_identity(rollback_owner) is None
+            or not isinstance(rollback, dict)
+            or rollback.get("rollback_owner") != rollback_owner):
+        return False
+
+    # Owner decisions must follow the exact-head CI, final golden and operated
+    # rollback verification. Datetimes are compared as UTC instants, not text.
+    release_proofs = (ci, golden, rollback)
+    timestamps = [
+        timestamp(row.get("verified_at")) if isinstance(row, dict) else None
+        for row in release_proofs
+    ]
+    outer_stamp = timestamp(approval.get("verified_at"))
+    if outer_stamp is None or any(stamp is None for stamp in timestamps):
+        return False
+    minimum_signoff_at = max(timestamps)
+    receipt_refs: set[str] = set()
+    for role, identity in (("founder", founder_id), ("owner_c", owner_id)):
+        receipt = approval.get(role + "_decision")
+        if not proof_ok(receipt, release, revision, digest):
+            return False
+        reference = receipt.get("evidence_ref")
+        signoff_at = timestamp(receipt.get("verified_at"))
+        if (reviewer_identity(receipt.get("signer_id")) != identity
+                or receipt.get("decision") != "approve_controlled_pilot"
+                or type(receipt.get("max_users")) is not int
+                or receipt["max_users"] != cohort_limit
+                or receipt.get("rollback_owner") != rollback_owner
+                or not isinstance(reference, str)
+                or not reference.startswith("sha256:")
+                or DIGEST.fullmatch(reference[len("sha256:"):]) is None
+                or reference in receipt_refs
+                or signoff_at is None
+                or signoff_at < minimum_signoff_at
+                or signoff_at > outer_stamp):
+            return False
+        receipt_refs.add(reference)
+    return True
+
+
 def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[str, dict | None]) -> dict:
     """Use the canonical cohort gate unchanged; add stricter Day-10 exact-release proofs."""
     release = rollout.get("release_id")
@@ -697,19 +764,13 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
         need(key + "_exact_sha_and_provider", bound(item, release, revision, rollout_hash)
              and isinstance(item.get("provider_model"), str) and bool(item["provider_model"].strip())
              and isinstance(artifacts.get("model"), dict) and item.get("provider_model") == artifacts["model"].get("provider_model"))
-    # Human authorization is not a deploy API call; the operator must verify its authenticity.
+    # A shared summary receipt cannot substitute for two independent,
+    # dated decisions; release authority still requires human authentication.
     approval = artifacts.get("approval")
-    approvers = (
-        {reviewer_identity(approval.get(role)) for role in ("founder", "owner_c")}
-        if isinstance(approval, dict) else set()
+    approved = separate_pilot_authorization_ok(
+        approval, artifacts.get("rollback"), ci, golden,
+        release, revision, rollout_hash, cohort_limit,
     )
-    approved = (bound(approval, release, revision, rollout_hash)
-                and approval.get("explicit_separate_authorization") is True
-                and isinstance(approval.get("reference"), str) and bool(approval["reference"].strip())
-                and len(approvers) == 2 and None not in approvers
-                and type(approval.get("max_users")) is int
-                and 5 <= approval["max_users"] <= 10
-                and approval["max_users"] == cohort_limit)
     if not approved:
         blockers.append("separate_founder_and_C_pilot_authorization")
     blockers = sorted(set(blockers))
