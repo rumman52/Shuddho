@@ -150,7 +150,8 @@ def load_suite(root: Path = FIXTURE_ROOT) -> dict:
     if heldout_digest != FROZEN_HOLDOUT_SHA256 or heldout_digest != manifest['holdout_integrity_sha256']:
         raise ValueError('holdout integrity manifest hash mismatch')
     checksum_path = root / 'holdout_integrity.sha256'
-    if _read_regular_bytes(checksum_path, 'checksum').decode('utf-8').split()[0] != heldout_digest:
+    checksum_record = _read_regular_bytes(checksum_path, 'checksum').decode('utf-8')
+    if checksum_record != f'{heldout_digest}  holdout_integrity.json\n':
         raise ValueError('holdout checksum mismatch')
     holdout = json.loads(heldout_bytes.decode('utf-8'), object_pairs_hook=_unique_keys)
     if holdout.get('access_isolation_established') is not False:
