@@ -239,6 +239,13 @@ def custody_receipt_ok(custody: object, manifest: dict | None = None) -> bool:
         custody["frozen_inputs_sha256"] != manifest.get("corpus_sha256")
         or custody["frozen_answers_sha256"] != manifest.get("answer_key_sha256")
         or custody["rubric_sha256"] != manifest.get("rubric_sha256")
+        # Custody, including the developer-access denial, must have been
+        # independently verified before the frozen holdout run began.
+        # Comparing parsed instants (rather than timestamp strings) also
+        # prevents a timezone-offset re-labeling of a post-freeze receipt.
+        or not timestamp_strictly_after(
+            custody["verified_at"], manifest.get("run_started_at")
+        )
     ):
         return False
     return True

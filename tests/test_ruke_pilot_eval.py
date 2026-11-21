@@ -228,7 +228,7 @@ def test_generation_identity_receipt_and_day10_holdout_artifact_are_compatible()
         "frozen_answers_sha256": value["answer_key_sha256"],
         "rubric_sha256": value["rubric_sha256"],
         "exposure_history_sha256": "d" * 64, "access_log_sha256": "e" * 64,
-        "receipt_sha256": "f" * 64, "verified_at": "2026-11-12T00:02:00Z",
+        "receipt_sha256": "f" * 64, "verified_at": "2026-11-11T23:59:00Z",
     }
     reviews, checks = reviews_and_checks()
     output_hashes, usage = candidate_ledger(
@@ -357,7 +357,7 @@ def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_pro
         "exposure_history_sha256": "d" * 64,
         "access_log_sha256": "e" * 64,
         "receipt_sha256": "f" * 64,
-        "verified_at": "2026-11-12T00:02:00Z",
+        "verified_at": "2026-11-11T23:59:00Z",
     }
     value = manifest()
     assert custody_receipt_ok(receipt, value)
@@ -1252,3 +1252,70 @@ def test_operated_recovery_allows_same_instant_as_manifest_freeze():
     )
     assert result["fault_gate_pass"] is True
     assert result["passed"] == 20
+
+
+@pytest.mark.parametrize("verified_at", [
+    "2026-11-12T00:00:00Z",       # exactly at freeze, not before it
+    "2026-11-12T00:00:01Z",       # after the 40-case clock begins
+    "2026-11-12T06:00:01+06:00",  # equivalent later instant, different offset
+])
+def test_day9_custody_must_be_authenticated_before_frozen_run(verified_at):
+    """A retrospective access receipt must never qualify the first holdout."""
+    frozen = manifest()
+    receipt = {
+        "custodian_id": "independent-D",
+        "developer_id": "developer-A",
+        "corpus_author_id": "corpus-author-B",
+        "independent_operator_review": "verified",
+        "custodian_positive_read_test": "allowed",
+        "developer_negative_read_test": "denied",
+        "exposure_history_reviewed": True,
+        "replacement_of_exposed_cases": True,
+        "frozen_inputs_sha256": frozen["corpus_sha256"],
+        "frozen_answers_sha256": frozen["answer_key_sha256"],
+        "rubric_sha256": frozen["rubric_sha256"],
+        "exposure_history_sha256": "d" * 64,
+        "access_log_sha256": "e" * 64,
+        "receipt_sha256": "f" * 64,
+        "verified_at": verified_at,
+    }
+    assert not custody_receipt_ok(receipt, frozen)
+    # A direct Day 10 holdout export must not claim custody is established
+    # when its independent access check allegedly happened after the freeze.
+    reviews, checks = reviews_and_checks()
+    hashes, usage = candidate_ledger(
+        tasks(), candidate_outputs_for_manifest(frozen, manifest_digest="9" * 64),
+        manifest_sha256="9" * 64, manifest=frozen,
+    )
+    for check in checks:
+        check["output_sha256"] = hashes[check["case_id"]]
+    for review in reviews:
+        review["output_sha256"] = hashes[review["case_id"]]
+    scores = score_reviews(tasks(), reviews, [], checks, output_hashes=hashes)
+    # Export uses the original custody validator; no network or humans mocked.
+    artifact = day10_holdout_receipt(
+        frozen, scores, receipt, case_run_receipts=usage["case_run_receipts"],
+        manifest_sha256="9" * 64,
+        generation_identity_verified=True,
+        generation_identity_receipt_sha256="a" * 64,
+    )
+    assert artifact["custody_established"] is False
+    assert artifact["custody_receipt"]["status"] == "failed"
+
+
+def test_day9_custody_before_freeze_accepts_timezone_normalization():
+    frozen = manifest()
+    receipt = {
+        "custodian_id": "independent-D", "developer_id": "developer-A",
+        "corpus_author_id": "corpus-author-B",
+        "independent_operator_review": "verified",
+        "custodian_positive_read_test": "allowed",
+        "developer_negative_read_test": "denied",
+        "exposure_history_reviewed": True, "replacement_of_exposed_cases": True,
+        "frozen_inputs_sha256": frozen["corpus_sha256"],
+        "frozen_answers_sha256": frozen["answer_key_sha256"],
+        "rubric_sha256": frozen["rubric_sha256"],
+        "exposure_history_sha256": "d" * 64, "access_log_sha256": "e" * 64,
+        "receipt_sha256": "f" * 64, "verified_at": "2026-11-12T05:59:59+06:00",
+    }
+    assert custody_receipt_ok(receipt, frozen)
