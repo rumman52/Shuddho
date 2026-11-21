@@ -653,6 +653,50 @@ def test_day6_rejects_duplicate_research_evidence_within_each_language(language,
 
 
 @pytest.mark.parametrize("language", ["bn", "en"])
+@pytest.mark.parametrize("alias", [
+    "https://example.org:443/study-1",
+    "https://example.org:0443/study-1",
+    "https://example.org./study-1",
+    "https://EXAMPLE.ORG.:443/study-1",
+])
+def test_day6_rejects_same_research_source_with_equivalent_https_origin(language, alias):
+    args = evidence()
+    research = next(row for row in args[4]["cases"]
+                    if row["workflow"] == "research" and row["language"] == language)
+    original, duplicate = research["citations"][:2]
+    assert original["url"] == "https://example.org/study-1"
+    assert original["sha256"] != duplicate["sha256"]
+    duplicate["url"] = alias
+
+    # Claimed different content hashes must not make an HTTPS origin alias
+    # count as a second independently retrieved research source.
+    with pytest.raises(gate.Days36EvidenceError, match="independent"):
+        validate(args)
+
+
+@pytest.mark.parametrize("invalid_url", [
+    "https://example.org:0/study-1",
+    "https://example.org:65536/study-1",
+    "https://example.org:not-a-port/study-1",
+])
+def test_day6_rejects_invalid_research_https_ports_with_actionable_error(invalid_url):
+    args = evidence()
+    research = next(row for row in args[4]["cases"]
+                    if row["workflow"] == "research" and row["language"] == "en")
+    research["citations"][0]["url"] = invalid_url
+    with pytest.raises(gate.Days36EvidenceError, match="day6.*HTTPS.*port"):
+        validate(args)
+
+
+def test_day6_distinct_nondefault_https_port_is_a_distinct_research_origin():
+    args = evidence()
+    research = next(row for row in args[4]["cases"]
+                    if row["workflow"] == "research" and row["language"] == "en")
+    research["citations"][1]["url"] = "https://example.org:8443/study-1"
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+@pytest.mark.parametrize("language", ["bn", "en"])
 @pytest.mark.parametrize("url", [
     "https://172.17.0.1/report",        # RFC1918 range missed by prefix checks
     "https://169.254.169.254/report",   # link-local / metadata address
