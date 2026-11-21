@@ -131,7 +131,44 @@ Restore both the database and object storage into separate staging resources.
 
 The verification environment must point to those restored resources. Before opening the restore target, the verifier requires the prepared state to contain both source fingerprints as lowercase SHA-256 digests. It rejects either target when its fingerprint matches the corresponding source.
 
-## Phase 4 — verify
+## Phase 4 — verify the isolated restore **and its authenticated API**
+
+Before running the verifier, the approved operator must deploy a **separate**
+staging API bound to the isolated restored PostgreSQL database **and**
+isolated restored private object bucket. A distinct hostname is not proof of
+backend isolation: independently check the API service's actual DB/storage
+environment binding and same-reviewed-SHA runtime. Retain deployment identity
+and nonsecret health/source readback in the private evidence directory.
+
+Require managed, distinct synthetic A/B JWTs accepted by this restored API,
+with enough validity for the readback. The source and isolated origins must
+be different clean public HTTPS origins. No bearer tokens or presigned URLs
+may be passed on the command line or written into a receipt.
+
+```bash
+export SHUDDHO_STAGING_ALLOW_RESTORED_API_READBACK=true
+export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true
+export SHUDDHO_STAGING_API_BASE_URL=https://source-staging.example.com
+export SHUDDHO_STAGING_RESTORED_API_BASE_URL=https://isolated-restore.example.com
+export SHUDDHO_STAGING_TOKEN_A="<approved-restore-owner-A-JWT>"
+export SHUDDHO_STAGING_TOKEN_B="<approved-restore-owner-B-JWT>"
+```
+
+The verifier performs the PostgreSQL schema/row and private object byte
+comparison **first**, then issues **read-only GETs** through the isolated API:
+staging runtime manifest at the reviewed SHA; both authenticated `/me`
+identities with distinct subjects/workspaces; A's source document contents
+matching the archived byte size and SHA-256; B's document content denied with
+404 and absent from B's document catalog; owner A's cancelled task read
+verified and B's task read denied with 404. Redirects fail closed; no HTTP
+writes, token values, private bytes or public signed URLs are emitted.
+
+`archive_integrity.restored_api_access` contains only statuses, booleans,
+digests and byte counts. Without this proof, neither `backup_restore: passed`
+nor the final Day 2 acceptance reconciliation may be emitted. The independent
+D reviewer must additionally validate the hosting provider's **actual isolated
+API resource bindings**; this check alone cannot cryptographically establish
+which backend a separate HTTPS hostname uses.
 
 Run in the restored environment:
 
@@ -176,6 +213,7 @@ The gate becomes `passed` only if:
 - the synthetic task still exists in its cancelled state;
 - task event history is present;
 - private restored object bytes match the exact pre-backup SHA-256 and byte size;
+- two distinct managed synthetic owner tokens are accepted by the **isolated restored** API, owner A retrieves identical document bytes and the cancelled task, and owner B receives document/task denials;
 - the database target differs from the source fingerprint;
 - the object-storage target differs from the source fingerprint;
 - non-empty backup and restore references are supplied.

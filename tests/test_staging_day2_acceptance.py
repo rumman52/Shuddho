@@ -123,6 +123,23 @@ def proofs():
         'source_storage_fingerprint': 'a' * 64,
         'target_storage_fingerprint': 'b' * 64,
         'probe_object_verified': True,
+        'probe_object_sha256': 'c' * 64,
+        'probe_object_bytes': 42,
+        'restored_api_access': {
+            'status': 'verified',
+            'runtime_source_revision': SHA,
+            'source_api_origin_sha256': '1' * 64,
+            'restored_api_origin_sha256': '2' * 64,
+            'owner_a_document_sha256': 'c' * 64,
+            'owner_a_document_bytes': 42,
+            'owner_a_document_retrievable': True,
+            'owner_b_document_denied': True,
+            'owner_b_document_unlisted': True,
+            'owner_a_cancelled_task_verified': True,
+            'owner_b_task_denied': True,
+            'owner_a_identity_verified': True,
+            'owner_b_identity_verified': True,
+        },
         'preseed_baseline': {
             'status': 'preseed_verified',
             'attested_at': '2026-11-12T10:00:00+00:00',
@@ -517,4 +534,32 @@ def test_day2_rejects_legacy_restore_without_original_state_baseline():
     proof_set = list(proofs())
     del proof_set[3]["archive_integrity"]["preseed_baseline"]
     with pytest.raises(gate.Day2AcceptanceFailure, match="preseed_baseline"):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize("field,invalid", [
+    ("status", "unverified"),
+    ("runtime_source_revision", "f" * 40),
+    ("owner_a_document_sha256", "f" * 64),
+    ("owner_a_document_bytes", 43),
+    ("owner_a_document_retrievable", False),
+    ("owner_b_document_denied", False),
+    ("owner_b_document_unlisted", False),
+    ("owner_a_cancelled_task_verified", False),
+    ("owner_b_task_denied", False),
+    ("owner_a_identity_verified", False),
+    ("owner_b_identity_verified", False),
+    ("restored_api_origin_sha256", "1" * 64),
+])
+def test_restored_api_access_is_mandatory_after_database_object_restore(field, invalid):
+    proof_set = list(proofs())
+    proof_set[3]["archive_integrity"]["restored_api_access"][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure, match="restored_api_access"):
+        check(*proof_set)
+
+
+def test_restored_api_access_cannot_be_omitted_from_final_day2_acceptance():
+    proof_set = list(proofs())
+    del proof_set[3]["archive_integrity"]["restored_api_access"]
+    with pytest.raises(gate.Day2AcceptanceFailure, match="restored_api_access"):
         check(*proof_set)

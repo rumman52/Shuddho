@@ -305,6 +305,45 @@ def validate_evidence(
         r"[A-Za-z0-9_]{1,128}", integrity["source_schema_revision"]
     ):
         raise Day2AcceptanceFailure("Restored archive schema revision is missing.")
+    # Privileged SQL/S3 restore reads are not user-facing authorization.
+    # Fail closed unless the restored API itself authenticated A and B,
+    # returned the same archived probe bytes, and denied B document/task reads.
+    restored_api = _object(
+        integrity.get("restored_api_access"),
+        "archive_integrity.restored_api_access",
+    )
+    if (restored_api.get("status") != "verified"
+            or restored_api.get("runtime_source_revision") != expected_revision):
+        raise Day2AcceptanceFailure(
+            "archive_integrity.restored_api_access is missing verified release identity."
+        )
+    for field in (
+        "source_api_origin_sha256", "restored_api_origin_sha256",
+        "owner_a_document_sha256",
+    ):
+        _digest(restored_api.get(field), "archive_integrity.restored_api_access." + field)
+    _digest(integrity.get("probe_object_sha256"), "archive_integrity.probe_object_sha256")
+    probe_bytes = _positive(integrity.get("probe_object_bytes"), "archive_integrity.probe_object_bytes")
+    readback_bytes = _positive(
+        restored_api.get("owner_a_document_bytes"),
+        "archive_integrity.restored_api_access.owner_a_document_bytes",
+    )
+    if (restored_api["source_api_origin_sha256"] == restored_api["restored_api_origin_sha256"]
+            or restored_api["owner_a_document_sha256"] != integrity["probe_object_sha256"]
+            or probe_bytes != readback_bytes):
+        raise Day2AcceptanceFailure(
+            "archive_integrity.restored_api_access differs from source API or archived probe bytes."
+        )
+    for field in (
+        "owner_a_identity_verified", "owner_b_identity_verified",
+        "owner_a_document_retrievable", "owner_b_document_denied",
+        "owner_b_document_unlisted", "owner_a_cancelled_task_verified",
+        "owner_b_task_denied",
+    ):
+        if restored_api.get(field) is not True:
+            raise Day2AcceptanceFailure(
+                "archive_integrity.restored_api_access is missing authenticated owner isolation: " + field
+            )
     preseed = _object(integrity.get("preseed_baseline"), "archive_integrity.preseed_baseline")
     if (preseed.get("status") != "preseed_verified"
             or preseed.get("source_schema_revision") != "0070"

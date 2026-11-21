@@ -218,6 +218,7 @@ jobs:
             tests/test_staging_day2_acceptance.py \
             tests/test_staging_migration_alignment.py \
             tests/test_staging_backup_restore.py \
+            tests/test_staging_restored_api_access.py \
             tests/test_staging_preseed_baseline.py \
             tests/test_staging_day2_archive_attestation.py \
             tests/test_staging_object_backup.py \
@@ -227,6 +228,7 @@ jobs:
             tests.test_staging_day2_acceptance \
             tests.test_staging_migration_alignment \
             tests.test_staging_backup_restore \
+            tests.test_staging_restored_api_access \
             tests.test_staging_preseed_baseline \
             tests.test_staging_day2_archive_attestation \
             tests.test_staging_object_backup; do

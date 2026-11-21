@@ -515,3 +515,157 @@ def test_restored_database_readback_is_repeatable_read_and_read_only(monkeypatch
         "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
         "inventory", "rollback", "close",
     ]
+
+
+
+@pytest.mark.parametrize("api_ready", [False, True])
+def test_isolated_restore_never_publishes_pass_without_authenticated_api_readback(
+    monkeypatch, tmp_path, restore_state, api_ready,
+):
+    """Even identical isolated SQL/S3 cannot replace owner A/B HTTP checks."""
+    from contextlib import contextmanager
+    import hashlib
+
+    settings, rollout_path, state = restore_state
+    settings.auth_issuer = "https://identity.example.test/auth/v1"
+    settings.auth_audience = "authenticated"
+    bytes_to_restore = b"restored-private-probe\n"
+    expected_sha = hashlib.sha256(bytes_to_restore).hexdigest()
+    state.update(
+        owner_id="owner",
+        document_id="11111111-1111-4111-8111-111111111111",
+        task_id="22222222-2222-4222-8222-222222222222",
+        sha256=expected_sha,
+        byte_size=len(bytes_to_restore),
+    )
+    baseline = {
+        "status": "preseed_verified",
+        "source_database_fingerprint": state["source_fingerprints"]["database"],
+        "source_storage_fingerprint": state["source_fingerprints"]["storage"],
+    }
+    state["preseed_baseline"] = baseline
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state))
+    evidence = tmp_path / "evidence.json"
+
+    class ReadonlyDatabase:
+        def get(self, model, owner):
+            assert owner == state["owner_id"]
+            return SimpleNamespace()
+
+        def scalar(self, query):
+            model = query.column_descriptions[0]["entity"]
+            if model is backup.Workspace:
+                return SimpleNamespace()
+            if model is backup.Document:
+                return SimpleNamespace()
+            if model is backup.DocumentVersion:
+                return SimpleNamespace(
+                    state="uploaded", sha256=expected_sha,
+                    byte_size=len(bytes_to_restore), object_key="synthetic-private-object",
+                )
+            if model is backup.Task:
+                return SimpleNamespace(state="cancelled")
+            pytest.fail("Unexpected restored database model")
+
+        def scalars(self, query):
+            assert query.column_descriptions[0]["entity"] is backup.TaskEvent
+            return SimpleNamespace(all=lambda: [SimpleNamespace()])
+
+    @contextmanager
+    def sessions():
+        yield ReadonlyDatabase()
+
+    sessions.kw = {"bind": SimpleNamespace(dispose=lambda: None)}
+    fake = SimpleNamespace(
+        repository=SimpleNamespace(sessions=sessions),
+        storage=SimpleNamespace(get=lambda key, size: bytes_to_restore),
+    )
+    monkeypatch.setattr(backup.Container, "create", lambda _: fake)
+    monkeypatch.setattr(
+        backup, "environment_fingerprints",
+        lambda _: {"database": backup.stable_hash("isolated-db"),
+                   "storage": backup.stable_hash("isolated-bucket")},
+    )
+    monkeypatch.setattr(
+        backup, "attest_preseed_baseline", lambda *_args: (baseline, {"revision": "0070"}),
+    )
+    monkeypatch.setattr(backup, "read_original_attestation", lambda *_args: baseline)
+    source_inventory = {"revision": "0072_merge_0071_heads", "tables": {}}
+    monkeypatch.setattr(backup, "restored_database_inventory", lambda _: source_inventory)
+    monkeypatch.setattr(
+        backup, "attest_archives",
+        lambda *_args: (
+            {"status": "verified"}, source_inventory,
+            [{"key": "synthetic-private-object", "sha256": expected_sha,
+              "byte_size": len(bytes_to_restore)}],
+        ),
+    )
+    file_paths = {
+        "postgres_verification": tmp_path / "later-verification.json",
+        "postgres_archive": tmp_path / "later.dump",
+        "object_archive": tmp_path / "later-objects",
+        "object_restore_receipt": tmp_path / "later-receipt.json",
+        "original_postgres_verification": tmp_path / "original-verification.json",
+        "original_postgres_archive": tmp_path / "original.dump",
+        "original_object_archive": tmp_path / "original-empty-objects",
+        "original_baseline_attestation": tmp_path / "original-attestation.json",
+    }
+    monkeypatch.delenv("SHUDDHO_STAGING_RESTORED_API_BASE_URL", raising=False)
+    monkeypatch.delenv("SHUDDHO_STAGING_API_BASE_URL", raising=False)
+    monkeypatch.delenv("SHUDDHO_STAGING_TOKEN_A", raising=False)
+    monkeypatch.delenv("SHUDDHO_STAGING_TOKEN_B", raising=False)
+
+    if not api_ready:
+        with pytest.raises(backup.BackupRestoreFailure, match="Restored API readback requires"):
+            backup.verify(
+                settings, state_path, "backup-123", "restore-456",
+                rollout_path, evidence, None, **file_paths,
+            )
+        assert not evidence.exists()
+        return
+
+    for key, value in {
+        "SHUDDHO_STAGING_API_BASE_URL": "https://source.example.test",
+        "SHUDDHO_STAGING_RESTORED_API_BASE_URL": "https://restored.example.test",
+        "SHUDDHO_STAGING_TOKEN_A": "private-A-token",
+        "SHUDDHO_STAGING_TOKEN_B": "private-B-token",
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    class MockClient:
+        def __init__(self, **kwargs):
+            assert kwargs["follow_redirects"] is False
+            assert kwargs["trust_env"] is False
+            assert kwargs["base_url"] == "https://restored.example.test"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    calls = []
+
+    def fake_access(_client, token_a, token_b, **kwargs):
+        calls.append((token_a, token_b, kwargs))
+        return {
+            "status": "verified",
+            "owner_a_document_sha256": kwargs["document_sha256"],
+            "owner_a_document_bytes": kwargs["document_size"],
+        }
+
+    monkeypatch.setattr(backup.httpx, "Client", MockClient)
+    monkeypatch.setattr(backup, "attest_restored_api_access", fake_access)
+    backup.verify(
+        settings, state_path, "backup-123", "restore-456",
+        rollout_path, evidence, None, **file_paths,
+    )
+    assert len(calls) == 1
+    assert calls[0][2]["expected_owner_id"] == state["owner_id"]
+    assert calls[0][2]["source_revision"] == settings.source_revision
+    saved = json.loads(evidence.read_text())
+    assert saved["backup_restore"]["status"] == "passed"
+    assert saved["archive_integrity"]["restored_api_access"]["status"] == "verified"
+    assert saved["archive_integrity"]["probe_object_sha256"] == expected_sha
+    assert saved["archive_integrity"]["probe_object_bytes"] == len(bytes_to_restore)
