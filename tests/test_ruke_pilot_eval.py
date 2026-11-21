@@ -1240,7 +1240,7 @@ def test_operated_recovery_cannot_predate_frozen_candidate_run():
     assert result["failed_rows"] == [1]
     assert result["passed"] == 19
     assert result["fault_gate_pass"] is False
-    # No failed first-attempt fault may silently disappear from the 20-case ledger.
+    # No failed recovery scenario may silently disappear from the 20-case ledger.
     assert len(result["day10_recovery"]["scenarios"]) == 20
 
 
