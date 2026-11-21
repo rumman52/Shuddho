@@ -362,7 +362,10 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
         if owner_label == "owner_a":
             need(owned["fact"] == fact_id,
                  "day5.owner_access.owner_a fact does not match the selected experiment")
-            owned_run_digests = {result[2]: result[0] for result in outputs.values()}
+            # An empty-selection context cannot stand in for evidence of
+            # owner A's privately *selected* v1/v2 memory reaching the model.
+            owned_run_digests = {outputs[name][2]: outputs[name][0]
+                                 for name in ("v1", "v2")}
             need(owned["context"] in owned_run_digests,
                  "day5.owner_access.owner_a context is not one of the selected runs")
             need(owner_proof.get("own_output_sha256") == owned_run_digests[owned["context"]],
@@ -422,6 +425,20 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
          and type(inflight.get("corrected_version")) is int
          and inflight["corrected_version"] == 2,
          "day5.inflight_correction must update the selected A fact from v1 to v2")
+    # The stale version must actually have entered this *in-flight*
+    # provider's worker context, rather than being mentioned only by an
+    # after-the-fact mutation record unrelated to the model invocation.
+    pinned = inflight.get("worker_selected_memory")
+    need(isinstance(pinned, list) and len(pinned) == 1,
+         "day5.inflight_correction requires exactly one selected old worker fact pin")
+    worker_pin = obj(pinned[0], "day5.inflight_correction.worker_selected_memory.pin")
+    need(set(worker_pin) == {"fact_id", "version"}
+         and worker_pin.get("fact_id") == fact_id
+         and type(worker_pin.get("version")) is int
+         and worker_pin["version"] == 1,
+         "day5.inflight_correction worker context did not carry the exact old v1 fact pin")
+    referenced(inflight.get("worker_context_receipt_ref"),
+               "day5.inflight_correction.worker_context_receipt_ref")
     pending_run = referenced(inflight.get("run_id"), "day5.inflight_correction.run_id")
     pending_provider = referenced(inflight.get("provider_request_id"),
                                   "day5.inflight_correction.provider_request_id")
