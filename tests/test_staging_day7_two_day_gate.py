@@ -738,14 +738,14 @@ def test_day7_cli_never_follows_output_symlink_into_another_file(monkeypatch, tm
 
 @pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file replacement contract")
 def test_day7_cli_failed_atomic_commit_preserves_previous_report(monkeypatch, tmp_path):
-    from scripts import staging_day7_two_day_gate as gate
+    import os
 
     output = tmp_path / "private-day7.json"
     output.write_text("verified-original-report", encoding="utf-8")
     output.chmod(0o600)
     def deny_replace(*_args, **_kwargs):
         raise OSError("simulated output replacement failure")
-    monkeypatch.setattr(gate.os, "replace", deny_replace, raising=False)
+    monkeypatch.setattr(os, "replace", deny_replace)
     with pytest.raises(SystemExit) as exc:
         _run_day7_gate_cli(monkeypatch, tmp_path, output)
     assert exc.value.code == 1
