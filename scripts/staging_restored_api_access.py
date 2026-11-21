@@ -15,7 +15,9 @@ import uuid
 import httpx
 
 from scripts.staging_api_exercise import ExerciseFailure, require_https_base
-from scripts.staging_day2_execution import Day2Failure, bearer, require_distinct_owners
+from scripts.staging_day2_execution import (
+    Day2Failure, _managed_identity_claims, bearer, require_distinct_owners,
+)
 
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -108,6 +110,27 @@ def attest_restored_api_access(
         raise RestoredAPIReadbackFailure("Restored probe has invalid owner, digest, size or source revision.")
     if client.follow_redirects:
         raise RestoredAPIReadbackFailure("Restored API client must not follow redirects.")
+
+    # Local JWT header/claim inspection comes BEFORE the first credentialed
+    # HTTP request. The restored API subsequently authenticates signatures
+    # and binds each subject to a distinct managed /me account/workspace.
+    try:
+        subject_a, derived_owner_a = _managed_identity_claims(
+            token_a, expected_issuer=expected_issuer,
+            expected_audience=expected_audience, minimum_validity_seconds=300,
+        )
+        subject_b, _ = _managed_identity_claims(
+            token_b, expected_issuer=expected_issuer,
+            expected_audience=expected_audience, minimum_validity_seconds=300,
+        )
+    except Day2Failure:
+        raise RestoredAPIReadbackFailure(
+            "Managed restored owner token claims are invalid before credentialed access."
+        ) from None
+    if token_a == token_b or subject_a == subject_b or derived_owner_a != expected_owner_id:
+        raise RestoredAPIReadbackFailure(
+            "Managed restored owner token subjects or archived owner identity do not match."
+        )
 
     runtime = _json(
         _get(client, "/api/v1/runtime-manifest", token_a, 200, "isolated runtime-manifest"),
