@@ -1308,6 +1308,12 @@ def test_day8_one_first_run_over_hard_deadline_excludes_cheaper_profile():
     assert bounded["deadline_evaluated_attempts"] == 40
     assert bounded["deadline_overrun_attempts"] == 1
     assert bounded["deadline_gate_passed"] is False
+    matched = next(
+        row for row in result["per_task_comparison"]
+        if row["id"] == candidate["results"][0]["id"]
+    )
+    assert matched["bounded_context_compact_observations"]["deadline_overrun_attempts"] == 1
+    assert matched["baseline"]["deadline_overrun_attempts"] == 0
     assert result["selected_least_cost_qualified_profile"] == "baseline"
     assert result["candidate_exclusion_reason"] == "execution_deadline_breached"
     assert result["measured_cost_savings_microusd"] is None
