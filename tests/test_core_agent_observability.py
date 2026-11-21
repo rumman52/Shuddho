@@ -552,8 +552,10 @@ def _day8_fixture():
                 ).encode("utf-8")).hexdigest(),
                 "source_snapshot_sha256": case["_source"]["sha256"],
                 "passed": True, "human_accepted": True, "safety_passed": True,
-                "accepted_outcome_ref": "review:" + case["id"],
-                "verified_artifact_refs": ["artifact:" + case["id"]],
+                # The 80 synthetic accepted outputs have separate custody
+                # in each arm, even if generated content is byte-identical.
+                "accepted_outcome_ref": f"review:{profile}:" + case["id"],
+                "verified_artifact_refs": [f"artifact:{profile}:" + case["id"]],
                 "input_tokens": 100, "output_tokens": 20,
                 "model_time_ms": 100, "tool_time_ms": 50,
                 "retry_count": 0, "cost_microusd": unit_cost,
