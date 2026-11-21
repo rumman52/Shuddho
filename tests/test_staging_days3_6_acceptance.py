@@ -1465,7 +1465,7 @@ def test_day6_original_first_attempt_receipt_is_required_not_optional(field):
     ("run_id", "dev-run-report_email-bn-0"),
     ("run_id", "run-research-bn"),
     ("provider_request_id", "development-model-report_email-bn-0"),
-    ("provider_request_id", "model-research-bn"),
+    ("provider_request_id", "provider-research-bn"),
     ("output_sha256", D3),
     ("output_sha256", "bad-digest"),
     ("scored_output_sha256", D3),
