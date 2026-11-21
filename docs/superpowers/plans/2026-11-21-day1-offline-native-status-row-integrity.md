@@ -35,19 +35,19 @@
 - Consumes: `analyze(branch, live_ruleset, policy, *, expected_main_sha, expected_ruleset_id=RULESET_ID) -> dict`; `EvidenceError`; existing `policy()/branch()/live()` synthetic fixtures.
 - Produces: Test-only additions, no API changes.
 
-- [ ] Step 1: Write parametrized negative tests for duplicate/untrusted/malformed additional live rows and altered reviewed policy, plus a positive extra trusted status.
-- [ ] Step 2: Commit tests **without** implementation and run GitHub CI against the test-only SHA; confirm actual expected failures because `analyze` returned `configuration_candidate` or accepted a malformed policy, not environment/collection failures.
-- [ ] Step 3: Record the RED run link, test-only SHA, exact fail/pass/skip counts.
+- [x] Step 1: Write parametrized negative tests for duplicate/untrusted/malformed additional live rows and altered reviewed policy, plus a positive extra trusted status.
+- [x] Step 2: Commit tests **without** implementation and run GitHub CI against the test-only SHA; confirm actual expected failures because `analyze` returned `configuration_candidate` or accepted a malformed policy, not environment/collection failures.
+- [x] Step 3: Record the RED run link, test-only SHA, exact fail/pass/skip counts.
 
 ### Task 2: GREEN implementation
 
 **Files:**
 - Modify: `scripts/day1_ruleset_drift.py`
 
-- [ ] Step 1: Reject reviewed policy entries unless `set(row) == {"context", "integration_id"}` while preserving mandatory context and exact publisher rules.
-- [ ] Step 2: Add local live-row predicate checking list type, each row's exact keys, nonblank string context, unique context and int publisher `15368`; append drift code `checks.unambiguous_first_party_rows` if it fails; keep the three existing individual missing-context gap codes.
+- [x] Step 1: Reject reviewed policy entries unless `set(row) == {"context", "integration_id"}` while preserving mandatory context and exact publisher rules.
+- [x] Step 2: Add local live-row predicate checking list type, each row's exact keys, nonblank string context, unique context and int publisher `15368`; append drift code `checks.unambiguous_first_party_rows` if it fails; keep the three existing individual missing-context gap codes.
 - [ ] Step 3: Run focused tests (`uv run --locked --extra coworker pytest -q tests/test_day1_ruleset_drift.py tests/test_main_protection_audit.py tests/test_reconcile_main_ruleset.py`) and full final-head GitHub CI. Do not mark skipped PR governance audit as success.
-- [ ] Step 4: Review diff for no new external actions, no policy modifications, and compatibility with exact source readback.
+- [x] Step 4: Review diff for no new external actions, no policy modifications, and compatibility with exact source readback.
 
 ### Task 3: Evidence and handoff
 
@@ -55,8 +55,16 @@
 - Create: `docs/coworker-roadmap/DAY1_OFFLINE_CHECK_ROW_INTEGRITY_2026-11-21.md`
 - Modify: `docs/coworker-roadmap/PROGRESS.md`
 
-- [ ] Step 1: Write task contract and checkpoint with RED and GREEN evidence, exact head and source-only status, and current platform blockers.
-- [ ] Step 2: Open a **draft** PR to `main`, include exact-head CI results and request real independent human review; post the evidence on Linear MD-5.
-- [ ] Step 3: Keep operational NO-GO until genuine native merge-control positive/negative receipts, protected audit App, owned staging recovery/worker identity, D-only holdout custody and independent Founder/C approval exist.
+- [x] Step 1: Write task contract and checkpoint with RED and GREEN evidence, exact head and source-only status, and current platform blockers.
+- [x] Step 2: Open a **draft** PR to `main`, include exact-head CI results and request real independent human review; post the evidence on Linear MD-5.
+- [x] Step 3: Keep operational NO-GO until genuine native merge-control positive/negative receipts, protected audit App, owned staging recovery/worker identity, D-only holdout custody and independent Founder/C approval exist.
 
 **Ruling:** The script detects minimum native status protection, not equality with the checked-in template: a unique extra trusted status is permitted in the offline report, while a duplicate or untrusted status is prohibited. This keeps parity with merged `main_protection_audit.py` and preserves separately guarded administrative reconciliation.
+
+
+### TDD evidence / bounded checkpoint
+
+- **Base:** `main` `1dc6422a51e0309c48ca8c26298e3dd4443842a7`.
+- **RED test-only SHA:** `017a958d7ad494b160cff0bb9ce8f4593e391ccb`; [GitHub Actions #44886807268](https://github.com/rumman52/Shuddho/actions/runs/44886807268), `test-and-build` **13 expected FAIL, 2930 PASS, 105 SKIP, 6 WARN**. Failures matched missing blocked status/unknown reviewed field, not collection errors.
+- **Minimal source fix:** `40cc5bb5cddb5f2c89cab7d27b267bb072800950`, private helper `_live_status_rows_are_unambiguous` plus reviewed template exact-key validation, preserving public report schema.
+- **Draft [PR #846](https://github.com/rumman52/Shuddho/pull/846)**. The final-head CI and independent review must be read separately; these RED numbers are not GREEN acceptance.
