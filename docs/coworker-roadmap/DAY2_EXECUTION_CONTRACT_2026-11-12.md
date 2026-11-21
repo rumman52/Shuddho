@@ -255,6 +255,16 @@ uv run --extra coworker python scripts/staging_backup_restore.py prepare \
   --original-baseline-attestation /secure/private-backups/original-attestation.json
 # Perform an independently verified real PostgreSQL + private object backup,
 # then restore both to distinct empty isolated targets, not live staging.
+# Deploy an independently approved API against those restored targets at the
+# reviewed immutable SHA; verify its actual DB/bucket bindings. This is NOT
+# satisfied by merely providing a different HTTPS hostname. Retain API
+# service/deploy readback as private evidence.
+export SHUDDHO_STAGING_ALLOW_RESTORED_API_READBACK=true
+export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true
+export SHUDDHO_STAGING_API_BASE_URL="https://<approved-source-staging-origin>"
+export SHUDDHO_STAGING_RESTORED_API_BASE_URL="https://<approved-isolated-restore-origin>"
+export SHUDDHO_STAGING_TOKEN_A="<approved-isolated-owner-A-token>"
+export SHUDDHO_STAGING_TOKEN_B="<approved-isolated-owner-B-token>"
 uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --state /secure/day2/backup-state.json \
   --backup-reference "<actual-private-backup-manifest-reference>" \
@@ -294,7 +304,12 @@ and the independent object restore receipt. The restore gate compares the
 source archive's per-table counts/digests against a read-only repeatable-read
 inventory of the isolated PostgreSQL target, rehashes every private source
 object byte, checks the isolated object inventory and probe object, and binds
-source/target resource fingerprints. Free-text backup/restore reference labels
+source/target resource fingerprints. It **also requires the isolated restored
+API** to authenticate managed owner A and B, serve A's source document with
+exact archived bytes, deny B's document read and listing, return A's cancelled
+task, and deny B's task read. A separate HTTPS origin and no-redirect client
+are mandatory; actual API-to-isolated-backend binding still needs an
+independent D provider configuration review. Free-text backup/restore reference labels
 alone are not proof. Older legacy receipts must be rerun, not edited to pass.
 Review hosted operator events and privileges independently; even an
 `archive_integrity` receipt alone does not establish live D02.T09/G04 PASS.
