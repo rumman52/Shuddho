@@ -83,3 +83,69 @@ The receipt is hashed into `authorization_evidence.receipt_sha256`. The final ev
 ## Source-only tests
 
 `tests/test_staging_day2_acceptance.py` supplies a synthetic mock approval receipt in source tests, then checks that no receipt, wrong authorizations, later approvals, expired windows, excessive model attempts, changed resource digests, duplicate approval references, public file modes, symlinks and duplicate JSON keys are rejected. These tests do **not** establish human consent.
+
+
+## Gate before PA-10 paid worker provisioning (D02.T05 / G05)
+
+The final acceptance check above happens **too late** to protect against
+unapproved paid compute. The manual
+`.github/workflows/provision-pa10-staging-worker.yml` workflow now requires
+an **independent pre-provision gate** before its first
+`render services create/update`. It remains a fail-closed gate even if
+someone types `PROVISION` into the workflow dispatch form.
+
+After separate **actual dated Founder and C approvals** have been
+independently inspected and protected by the environment owners, provision
+the `pa10-staging` GitHub Actions environment secret:
+
+- **Secret name:** `PA10_DAY2_FOUNDER_C_AUTHORIZATION_B64`. Its value is
+  base64 of the actual private **schema-v1** JSON decision. Do not put that
+  JSON in workflow-dispatch inputs, repository variables, public artifacts,
+  CI logs, PostHog, Linear comments, or GitHub PRs.
+- **Required scope:** `source_revision` equals the exact
+  `GITHUB_SHA` being provisioned; `environment=staging`;
+  `hosting.provider=Render`; `hosting.workspace_reference` equals
+  `tea-d6ok4okhg0os73erkdv0`;
+  `hosting.api_service_reference` equals the observed staging API
+  `srv-dav98otg1s2s73cod4gg`; and
+  `hosting.worker_service_reference` equals the **prospective** name
+  `shuddho-worker-staging`. A new paid worker does not yet have an ID;
+  D independently checks its returned Render ID **after** the operation.
+- **Budget:** `currency=USD`, positive
+  `budget.max_spend_minor_units` in USD cents,
+  `budget.maximum_duration_minutes` long enough for
+  `valid_from`–`valid_until` but at most seven days, and a positive
+  `max_provider_attempts` ceiling. The worker check does not measure
+  actual spend or grant approval for model calls. Independently obtain the
+  worker plan's current price, projected total including storage and
+  provider charges, billing guards, and a stop/rollback action before use.
+- **Decision timing:** distinct `approvals.founder` and
+  `approvals.operator_c` approved-decision references, both dated no
+  later than `valid_from`, and the **current actual UTC time** inside
+  the approved `valid_from`–`valid_until` window. Expired, pending,
+  mixed-source or self-declared `status=passed` records are rejected.
+- **Recovery and rollback:** nonempty rollback owner and procedure refs,
+  along with nonempty, distinct SHA-256 fingerprints for the approved
+  isolated PostgreSQL, object-storage and restored HTTPS API targets.
+  These references are placeholders for the independently reviewed actual
+  resources; the source-only validator cannot prove that resources exist
+  or are truly isolated. The existing final Day 2 restore verification
+  binds those fingerprints to observed targets.
+
+The protected job decodes the secret to a temporary local **0600** file,
+checks it with `python3 -m scripts.staging_paid_worker_authorization`
+against the exact dispatch commit and staging identity, emits only a redacted
+receipt SHA-256 and bounds, then deletes the temporary file. **An absent
+secret fails closed**; this patch deliberately does not install or invent
+an approval.
+
+Important: a plausible JSON file or its existence in GitHub Secrets is
+*not proof of Founder or C consent*. Authorized environment owners and
+independent reviewer D must inspect the original signed/ticketed decisions,
+their scope and change window, actual budget/cost, worker deployment and
+provider audit trail. The `PROVISION` input cannot replace those human
+decisions. Production is outside this workflow.
+
+For read-only inventory, continue using the nonprovisioning PA-10 preflight.
+Do not turn the new guard off to make a hosted gate pass. When authorization
+expires, do not provision or refresh a worker merely because source CI is green.
