@@ -25,7 +25,9 @@ Place a JSON object at `/secure/day2/founder-c-authorization.json` with file mod
     "provider": "<approved provider>",
     "workspace_reference": "<approved staging workspace>",
     "api_service_reference": "<approved staging API service ID>",
-    "worker_service_reference": "<distinct persistent staging worker ID>"
+    "worker_service_reference": "<staging worker service name at creation, independently verified deployed ID afterwards>",
+    "worker_region": "<approved Render region>",
+    "worker_plan": "<approved Render paid plan SKU>"
   },
   "budget": {
     "currency": "<ISO 4217 uppercase code>",
@@ -59,7 +61,7 @@ Place a JSON object at `/secure/day2/founder-c-authorization.json` with file mod
 }
 ```
 
-`max_spend_minor_units` is a **ceiling**, in the currency's standard minor units (for example, USD cents); it is not a spent amount or provider billing proof. `maximum_duration_minutes` must bound `valid_until - valid_from`, and the two dated approvals must precede the window. The window must cover the **original 0070 preseed attestation**, release preparation and the final isolated backup/restore verification. The worker and API service IDs must be distinct, and restore database/storage fingerprints and restored HTTPS API origin hash must match the actual verified archive receipt.
+`max_spend_minor_units` is a **ceiling**, in the currency's standard minor units (for example, USD cents); it is not a spent amount or provider billing proof. `maximum_duration_minutes` must bound `valid_until - valid_from`, and the two dated approvals must precede the window. The window must cover the **original 0070 preseed attestation**, release preparation and the final isolated backup/restore verification. The worker and API service references must be distinct, and `hosting.worker_region` and `hosting.worker_plan` must be included in the same dated decision. The preprovision guard binds the prospective name; after the worker exists, D must independently inspect its actual service ID, region and paid plan. Restore database/storage fingerprints and restored HTTPS API origin hash must match the actual verified archive receipt.
 
 `max_provider_attempts` is compared with **the primary owner-A PDF task only**. It is not authorization to spend money on a separate owner-B task-output control, cloud hosts, model retries outside that task, or object storage. The operator and reviewer must inspect actual invoices, API provider policies and service deployments separately.
 
@@ -109,8 +111,11 @@ the `pa10-staging` GitHub Actions environment secret:
   `hosting.api_service_reference` equals the observed staging API
   `srv-dav98otg1s2s73cod4gg`; and
   `hosting.worker_service_reference` equals the **prospective** name
-  `shuddho-worker-staging`. A new paid worker does not yet have an ID;
-  D independently checks its returned Render ID **after** the operation.
+  `shuddho-worker-staging`; `hosting.worker_region=oregon` and
+  `hosting.worker_plan=0.5c-512mb` must match the concrete
+  `render services create/update` command arguments. A new paid worker
+  does not yet have an ID; D independently checks its returned Render ID,
+  region, SKU and billed pricing **after** the operation.
 - **Budget:** `currency=USD`, positive
   `budget.max_spend_minor_units` in USD cents,
   `budget.maximum_duration_minutes` long enough for
@@ -119,6 +124,9 @@ the `pa10-staging` GitHub Actions environment secret:
   actual spend or grant approval for model calls. Independently obtain the
   worker plan's current price, projected total including storage and
   provider charges, billing guards, and a stop/rollback action before use.
+  The exact `worker_plan` and `worker_region` match ensures plan/region
+  scope; it **does not calculate or enforce a dollar ceiling**, stop an
+  instance on expiry, or prove the original approvals.
 - **Decision timing:** distinct `approvals.founder` and
   `approvals.operator_c` approved-decision references, both dated no
   later than `valid_from`, and the **current actual UTC time** inside
