@@ -362,27 +362,54 @@ def operated_proof_ok(kind: str, value: object, release: str, revision: str, dig
         )
     return False
 
-def recovery_ok(value: object, release: str, revision: str, digest: str) -> bool:
+def recovery_ok(
+    value: object, release: str, revision: str, digest: str, *,
+    manifest_sha256: str | None = None,
+) -> bool:
+    """Verify precisely the recovery receipt shape emitted by the Day 9 evaluator.
+
+    The separate Day 9 report must still be independently authenticated by
+    the operator; matching claimed JSON and hashes does not prove a live fault.
+    """
     if not bound(value, release, revision, digest):
         return False
+    reported_manifest = value.get("manifest_sha256")
+    if (not isinstance(reported_manifest, str)
+            or DIGEST.fullmatch(reported_manifest) is None
+            or (manifest_sha256 is not None and reported_manifest != manifest_sha256)):
+        return False
     rows = value.get("scenarios")
-    remaining = dict(OPERATED.values())
+    # Key the scenario ID to its canonical Day 9 sequence, not to any
+    # arbitrary unique string that an edited Day 10 report can invent.
+    remaining = {
+        scenario: (f"day9-scenario-{index:02d}", boundaries)
+        for index, (scenario, boundaries) in OPERATED.items()
+    }
     if not isinstance(rows, list) or len(rows) != len(remaining):
         return False
     ids, refs = set(), set()
     for row in rows:
-        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"] or row["id"] in ids:
+        if (not isinstance(row, dict) or not isinstance(row.get("id"), str)
+                or row["id"] in ids):
             return False
         ids.add(row["id"])
-        if not proof_ok(row, release, revision, digest) or row["evidence_ref"] in refs:
-            return False
-        refs.add(row["evidence_ref"])
         scenario = row.get("scenario")
         if not isinstance(scenario, str) or scenario not in remaining:
             return False
-        if not operated_trace_ok(row, remaining[scenario]) or not time_ok(row.get("observed_at")):
+        expected_id, boundaries = remaining.pop(scenario)
+        trace_digest = row.get("trace_sha256")
+        evidence_ref = row.get("evidence_ref")
+        if (row["id"] != expected_id
+                or row.get("manifest_sha256") != reported_manifest
+                or not isinstance(trace_digest, str)
+                or DIGEST.fullmatch(trace_digest) is None
+                or evidence_ref != "sha256:" + trace_digest
+                or evidence_ref in refs
+                or not proof_ok(row, release, revision, digest)
+                or not ordered_times(row, "observed_at", "verified_at")
+                or not operated_trace_ok(row, boundaries)):
             return False
-        del remaining[scenario]
+        refs.add(evidence_ref)
     return not remaining
 
 
@@ -575,7 +602,20 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
     need("separate_final_rerun", golden_ok(golden, release, revision, rollout_hash)
          and isinstance(first_run, dict) and first_run.get("run_id") != golden.get("run_id"))
     need("independent_day9_holdout_36_of_40", holdout_ok(artifacts.get("holdout"), release, revision, rollout_hash))
-    need("twenty_operated_recovery_scenarios", recovery_ok(artifacts.get("recovery"), release, revision, rollout_hash))
+    recovery = artifacts.get("recovery")
+    # The Day 9 first-run report embeds this exact recovery artifact before
+    # exporting the separate Day 10 file. Require that same original evidence,
+    # not a replacement independently prepared after the qualification run.
+    recovery_qualified = (
+        isinstance(first_run, dict)
+        and isinstance(first_run.get("day10_recovery"), dict)
+        and first_run["day10_recovery"] == recovery
+        and recovery_ok(
+            recovery, release, revision, rollout_hash,
+            manifest_sha256=first_run.get("manifest_sha256", ""),
+        )
+    )
+    need("twenty_operated_recovery_scenarios", recovery_qualified)
     canonical = {"decision": "NO-GO"}
     if all(artifacts.get(k) is not None for k in ("staging", "quality", "model")):
         try:
@@ -620,7 +660,7 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
             "day9_first_run_run_id": first_run.get("run_id") if isinstance(first_run, dict) else None,
             "final_golden_run_id": golden.get("run_id") if isinstance(golden, dict) else None,
             "heldout_human_accepted": sum(bool(c.get("accepted")) for c in artifacts["holdout"]["cases"]) if holdout_ok(artifacts.get("holdout"), release, revision, rollout_hash) else None,
-            "recovery_passed": 20 if recovery_ok(artifacts.get("recovery"), release, revision, rollout_hash) else None,
+            "recovery_passed": 20 if recovery_qualified else None,
         },
         "canonical_decision": canonical.get("decision"),
         "decision": ("READY_FOR_OWNER_CONTROLLED_PILOT" if not blockers else
