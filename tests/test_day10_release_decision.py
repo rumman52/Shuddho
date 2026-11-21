@@ -57,7 +57,8 @@ def evidence():
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
                "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
                "reviewers": ["human-D1", "human-D2"],
-               "custody_receipt": {**proof(), "independent_d_controls_access": True,
+               "custody_receipt": {**proof(), "verified_at": "2026-11-11T23:59:00Z",
+                                   "independent_d_controls_access": True,
                                    "developer_negative_read_denied": True},
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
                           "accepted": True, "reviewer_scores": [7, 8],
@@ -165,6 +166,9 @@ def evidence():
     # Day 9 embeds the same original recovery object in its first-run report
     # and exports a separate Day 10 recovery file.
     artifacts["day9_first_run"]["day10_recovery"] = deepcopy(recovery)
+    # The Day 9 evaluator writes this original object to the first-run report
+    # and exports identical bytes for the separate Day 10 holdout artifact.
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(holdout)
     return rollout, artifacts
 
 
@@ -1000,3 +1004,40 @@ def test_day10_rejects_recovery_operated_before_frozen_candidate_run(
     assert result["decision"] == "SOURCE_ONLY"
     assert "twenty_operated_recovery_scenarios" in result["blockers"]
     assert result["scorecard"]["recovery_passed"] is None
+
+
+@pytest.mark.parametrize("mutation", ["missing_original", "modified_export"])
+def test_day10_requires_original_day9_holdout_export_custody(mutation, monkeypatch):
+    rollout, artifacts = evidence()
+    # A well-formed copied holdout is NOT independent custody provenance.
+    assert day10.holdout_ok(artifacts["holdout"], RELEASE, REV, HASH)
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    if mutation == "missing_original":
+        artifacts["day9_first_run"].pop("day10_holdout")
+    else:
+        # Both scored case arrays remain unchanged and pass. Only the separate
+        # custody digest has been relabeled after the first report was written.
+        artifacts["holdout"]["custody_receipt"]["evidence_ref"] = "sha256:" + "a" * 64
+        assert day10.holdout_ok(artifacts["holdout"], RELEASE, REV, HASH)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize("retroactive_at", [
+    "2026-11-12T00:00:00Z",       # same instant as frozen run start
+    "2026-11-12T00:01:00Z",       # later than freeze
+    "2026-11-12T06:01:00+06:00",  # same later instant via local offset
+])
+def test_day10_rejects_retrospective_custody_even_if_both_exports_match(
+    monkeypatch, retroactive_at
+):
+    rollout, artifacts = evidence()
+    artifacts["holdout"]["custody_receipt"]["verified_at"] = retroactive_at
+    # Matching the editable Day 9 and Day 10 copies must not bypass the
+    # independent requirement: custody verified strictly before freeze.
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(artifacts["holdout"])
+    assert day10.holdout_ok(artifacts["holdout"], RELEASE, REV, HASH)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
