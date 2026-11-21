@@ -230,6 +230,102 @@ def check_day4(release: dict, data: object, frozen: datetime) -> datetime:
     count(race.get("additional_outbox"), "day4.start_edit_race.additional_outbox", 0)
     for key in ("retry_receipt_ref", "race_receipt_ref"):
         referenced(day.get(key), "day4." + key)
+
+    # Exact canonical UTF-8 bounds were covered by local source tests, but
+    # the hosted Day 4 contract must also require operated proof. Each limit
+    # uses a distinct owner-A conversation so the failed oversize requests
+    # cannot be mistaken for an idempotency conflict on the golden task.
+    probes = day.get("utf8_boundary_probes")
+    need(isinstance(probes, list) and len(probes) == 2,
+         "day4 requires both 4096/16000-byte Bangla hosted boundary probes")
+    tested_limits: set[int] = set()
+    conversations: set[str] = set()
+    accepted_runs: set[str] = {run_id}
+    accepted_digests: set[str] = set()
+    day_started = when(day.get("started_at"), "day4.started_at")
+    for raw_probe in probes:
+        probe = obj(raw_probe, "day4.utf8_boundary_probe")
+        limit = count(probe.get("byte_limit"), "day4.utf8_boundary_probe.byte_limit")
+        need(limit in {4096, 16000} and limit not in tested_limits,
+             "day4.utf8_boundary_probes must cover distinct 4096/16000-byte limits")
+        tested_limits.add(limit)
+        need(probe.get("owner_ref") == release["owner_a_ref"]
+             and probe.get("bangla_multibyte") is True,
+             "day4 UTF-8 boundary probe needs frozen owner A and multibyte Bangla")
+        conversation = referenced(probe.get("conversation_ref"),
+                                  "day4.utf8_boundary_probe.conversation_ref")
+        need(conversation not in conversations,
+             "day4 UTF-8 boundary probes reused the same conversation scope")
+        conversations.add(conversation)
+
+        oversized = obj(probe.get("over_case"), "day4.utf8_boundary_probe.over_case")
+        accepted = obj(probe.get("exact_case"), "day4.utf8_boundary_probe.exact_case")
+        oversized_digest = sha(oversized.get("canonical_payload_sha256"),
+                               "day4.utf8_boundary_probe.over_case.canonical_payload_sha256")
+        exact_digest = sha(accepted.get("canonical_payload_sha256"),
+                           "day4.utf8_boundary_probe.exact_case.canonical_payload_sha256")
+        need(oversized_digest != exact_digest,
+             "day4 exact and one-byte-over probes must have different canonical payloads")
+        count(oversized.get("canonical_utf8_bytes"),
+              "day4.utf8_boundary_probe.over_case.canonical_utf8_bytes", limit + 1)
+        count(accepted.get("canonical_utf8_bytes"),
+              "day4.utf8_boundary_probe.exact_case.canonical_utf8_bytes", limit)
+        for label, row in (("over_case", oversized), ("exact_case", accepted)):
+            referenced(row.get("canonical_byte_length_receipt_ref"),
+                       "day4.utf8_boundary_probe." + label + ".canonical_byte_length_receipt_ref")
+            referenced(row.get("database_readback_ref"),
+                       "day4.utf8_boundary_probe." + label + ".database_readback_ref")
+
+        need(oversized.get("preview_http_status") == 422
+             and oversized.get("dispatch_http_status") == 422
+             and oversized.get("error_code") == "task_brief_snapshot_too_large",
+             "day4 one-byte-over Bangla preview and dispatch must both deny with HTTP 422")
+        for label in ("preview_denial_receipt_ref", "dispatch_denial_receipt_ref"):
+            referenced(oversized.get(label), "day4.utf8_boundary_probe.over_case." + label)
+        no_run_before = count(oversized.get("agent_runs_before"),
+                              "day4.utf8_boundary_probe.over_case.agent_runs_before")
+        no_outbox_before = count(oversized.get("outbox_before"),
+                                 "day4.utf8_boundary_probe.over_case.outbox_before")
+        count(oversized.get("agent_runs_after"),
+              "day4.utf8_boundary_probe.over_case.agent_runs_after", no_run_before)
+        count(oversized.get("outbox_after"),
+              "day4.utf8_boundary_probe.over_case.outbox_after", no_outbox_before)
+
+        need(accepted.get("preview_http_status") == 200
+             and accepted.get("dispatch_http_status") == 202,
+             "day4 exact-boundary Bangla preview and explicit Start must be admitted")
+        preview_digest = sha(accepted.get("preview_digest_sha256"),
+                             "day4.utf8_boundary_probe.exact_case.preview_digest_sha256")
+        start_digest = sha(accepted.get("start_digest_sha256"),
+                           "day4.utf8_boundary_probe.exact_case.start_digest_sha256")
+        need(preview_digest == start_digest == exact_digest
+             and exact_digest not in accepted_digests,
+             "day4 exact-boundary Start must match its distinct canonical preview digest")
+        accepted_digests.add(exact_digest)
+        exact_run = referenced(accepted.get("run_id"),
+                               "day4.utf8_boundary_probe.exact_case.run_id")
+        need(exact_run not in accepted_runs,
+             "day4 exact-boundary probes reused a golden or another boundary run")
+        accepted_runs.add(exact_run)
+        for label in ("preview_receipt_ref", "dispatch_receipt_ref"):
+            referenced(accepted.get(label), "day4.utf8_boundary_probe.exact_case." + label)
+        admitted_before = count(accepted.get("agent_runs_before"),
+                                "day4.utf8_boundary_probe.exact_case.agent_runs_before", no_run_before)
+        outbox_before = count(accepted.get("outbox_before"),
+                              "day4.utf8_boundary_probe.exact_case.outbox_before", no_outbox_before)
+        count(accepted.get("agent_runs_after"),
+              "day4.utf8_boundary_probe.exact_case.agent_runs_after", admitted_before + 1)
+        count(accepted.get("outbox_after"),
+              "day4.utf8_boundary_probe.exact_case.outbox_after", outbox_before + 1)
+
+        denied_at = when(oversized.get("verified_at"),
+                         "day4.utf8_boundary_probe.over_case.verified_at")
+        admitted_at = when(accepted.get("verified_at"),
+                           "day4.utf8_boundary_probe.exact_case.verified_at")
+        need(day_started <= denied_at < admitted_at <= completed,
+             "day4 byte-boundary rejection must precede exact admission within hosted day")
+    need(tested_limits == {4096, 16000},
+         "day4 missing a documented UTF-8 byte boundary")
     return completed
 
 
