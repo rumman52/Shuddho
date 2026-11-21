@@ -26,9 +26,10 @@
 
 - [x] Add exact per-arm `preview_digest_sha256` and `admitted_preview_digest_sha256`; require equality within each arm and distinct digests across none/v1/v2.
 - [x] Require per-arm model started/finished timestamps with v1 before the corrected fact and v2 after it, within the Day 5 hosted window.
-- [x] Require `inflight_correction` bound to frozen owner A, selected fact v1→v2, a separate provider request and run, with provider started before correction, provider finished before the attempted fresh commit, and an observed `memory_pins_changed` rejection after the update. New committed decisions, tool invocations and outbox effects must all be zero. Require provider, memory update, rejection and decision store receipts.
+- [x] Require `inflight_correction` bound to frozen owner A, selected fact v1→v2, a **worker-context receipt with exactly the old `{fact_id, version: 1}` selection**, a separate provider request and run, with provider started before correction, provider finished before the attempted fresh commit, and an observed `memory_pins_changed` rejection after the update. New committed decisions, tool invocations and outbox effects must all be zero. Require provider, worker context, memory update, rejection and decision store receipts.
 - [x] Require v1 historical replay **after** the correction and v2 run: original run/output identity retained, zero new decisions and outbox effects, and decision readback reference.
 - [x] Verify RED using the test-only commit, then implement the minimal production guards.
+- [x] Follow-up test-only commits `183f63957055160a0e251ad42a654e91ca44a085` and `60b6e751a67afa96db72f8eaf1fa26a3185f15db`: independently require the in-flight provider's old selected worker pin and reject an owner A positive context from the empty-memory experiment. [GitHub Actions #44887052892](https://github.com/rumman52/Shuddho/actions/runs/44887052892) confirmed **11 required `DID NOT RAISE` failures**, **3,015 passed / 105 skipped**, then the production guards were added in `9d9258cc5762e2f179227d8f19f835316cc0472b`.
 
 ## Task 3 — Verify and hand off without inventing hosted PASS
 
