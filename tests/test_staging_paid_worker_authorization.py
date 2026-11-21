@@ -30,6 +30,8 @@ def example_private_decision() -> dict:
             "workspace_reference": WORKSPACE,
             "api_service_reference": API_ID,
             "worker_service_reference": WORKER,
+            "worker_region": "oregon",
+            "worker_plan": "0.5c-512mb",
         },
         "budget": {
             "currency": "USD", "max_spend_minor_units": 2500,
@@ -69,6 +71,8 @@ def verify(decision: object, *, at: datetime = NOW):
         workspace_id=WORKSPACE,
         api_service_id=API_ID,
         worker_name=WORKER,
+        worker_region="oregon",
+        worker_plan="0.5c-512mb",
         checked_at=at,
     )
 
@@ -84,6 +88,12 @@ def test_paid_worker_workflow_requires_private_decision_before_render_mutation()
     assert "trap" in prefix
     assert "env:\n          AUTHORIZATION_B64: ${{ secrets.PA10_DAY2_FOUNDER_C_AUTHORIZATION_B64 }}" in prefix
     assert "      - name: Revalidate protected main immediately before paid worker mutation" in prefix
+    # The *authorized* region and paid plan must equal the Render CLI flags.
+    assert '--worker-region "oregon"' in prefix
+    assert '--worker-plan "0.5c-512mb"' in prefix
+    assert "--region oregon" in workflow[mutation:]
+    assert "--plan 0.5c-512mb" in workflow[mutation:]
+    assert workflow.count("--plan 0.5c-512mb") == 2
 
 
 def test_worker_preprovision_decision_is_scoped_and_not_self_approving():
@@ -108,6 +118,10 @@ def test_worker_preprovision_decision_is_scoped_and_not_self_approving():
     (("hosting", "workspace_reference"), "other-team"),
     (("hosting", "api_service_reference"), "srv-wrong-api"),
     (("hosting", "worker_service_reference"), "shuddho-api"),
+    (("hosting", "worker_region"), "frankfurt"),
+    (("hosting", "worker_region"), ""),
+    (("hosting", "worker_plan"), "1c-2gb"),
+    (("hosting", "worker_plan"), "free"),
     (("budget", "currency"), "US"),
     (("budget", "max_spend_minor_units"), 0),
     (("budget", "max_spend_minor_units"), True),
@@ -147,3 +161,31 @@ def test_approval_window_rejects_live_clock_after_duration():
     receipt = example_private_decision()
     with pytest.raises(AuthorizationEvidenceFailure, match="authorization"):
         verify(receipt, at=datetime(2026, 11, 21, 16, 0, 1, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize("field", ["worker_region", "worker_plan"])
+def test_paid_worker_authorization_rejects_unreviewed_missing_plan_or_region(field):
+    from scripts.staging_day2_authorization import AuthorizationEvidenceFailure
+    record = example_private_decision()
+    record["hosting"].pop(field)
+    with pytest.raises(AuthorizationEvidenceFailure, match="authorization"):
+        verify(record)
+
+
+@pytest.mark.parametrize("worker_region,worker_plan", [
+    ("frankfurt", "0.5c-512mb"),
+    ("oregon", "1c-2gb"),
+    ("oregon", "free"),
+])
+def test_paid_worker_authorization_rejects_actual_provisioning_flags_not_approved(worker_region, worker_plan):
+    from scripts.staging_day2_authorization import AuthorizationEvidenceFailure
+    from scripts.staging_paid_worker_authorization import verify_paid_worker_authorization
+
+    with pytest.raises(AuthorizationEvidenceFailure, match="authorization"):
+        verify_paid_worker_authorization(
+            example_private_decision(),
+            source_revision=SHA, workspace_id=WORKSPACE,
+            api_service_id=API_ID, worker_name=WORKER,
+            worker_region=worker_region, worker_plan=worker_plan,
+            checked_at=NOW,
+        )

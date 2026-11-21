@@ -584,6 +584,8 @@ def authorization_receipt():
             'provider': 'Render', 'workspace_reference': 'rumman-staging-team',
             'api_service_reference': 'srv-staging-api',
             'worker_service_reference': 'srv-staging-worker',
+            'worker_region': 'oregon',
+            'worker_plan': '0.5c-512mb',
         },
         'budget': {
             'currency': 'USD', 'max_spend_minor_units': 2500,
@@ -651,6 +653,8 @@ def test_day2_acceptance_reconciles_protected_operator_approval_without_claiming
     (('deployment_reference',), 'unrelated-deployment'),
     (('hosting', 'worker_service_reference'), 'srv-staging-api'),
     (('hosting', 'worker_service_reference'), ''),
+    (('hosting', 'worker_region'), ''),
+    (('hosting', 'worker_plan'), ''),
     (('budget', 'currency'), 'US'),
     (('budget', 'max_spend_minor_units'), 0),
     (('budget', 'max_spend_minor_units'), True),
@@ -764,3 +768,15 @@ def test_private_approval_receipt_rejects_path_swapped_to_symlink_during_open(tm
     monkeypatch.setattr(os, 'open', swap_before_open)
     with pytest.raises(AuthorizationEvidenceFailure, match='authorization'):
         read_private_authorization(current)
+
+
+@pytest.mark.parametrize("field", ["worker_region", "worker_plan"])
+def test_day2_final_authorization_rejects_missing_host_plan_or_region(field):
+    freeze, run, recovery, restored = proofs()
+    receipt = authorization_receipt()
+    receipt["hosting"].pop(field)
+    with pytest.raises(gate.Day2AcceptanceFailure, match="authorization"):
+        gate.validate_evidence(
+            freeze, run, recovery, restored,
+            expected_revision=SHA, authorization=receipt,
+        )

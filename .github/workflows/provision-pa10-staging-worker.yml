@@ -226,7 +226,9 @@ jobs:
             --source-revision "${GITHUB_SHA}" \
             --workspace-id "${RENDER_WORKSPACE_ID}" \
             --api-service-id "srv-dav98otg1s2s73cod4gg" \
-            --worker-name "shuddho-worker-staging"
+            --worker-name "shuddho-worker-staging" \
+            --worker-region "oregon" \
+            --worker-plan "0.5c-512mb"
           # No decision text or credentials may appear in the logs or outputs.
           # C/D must verify original approval records and actual billing.
       - name: Create or repair shuddho-worker-staging

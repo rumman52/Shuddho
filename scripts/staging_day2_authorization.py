@@ -30,6 +30,13 @@ _ROOT_FIELDS = {
     "deployment_reference", "hosting", "budget", "isolated_restore", "rollback",
     "approvals", "valid_from", "valid_until",
 }
+# A named worker service alone does not authorize its region or paid compute
+# tier. These must be recorded on the same dated Founder/C decision that
+# covers the deployment, rather than supplied by an unreviewed workflow input.
+_HOSTING_FIELDS = {
+    "provider", "workspace_reference", "api_service_reference",
+    "worker_service_reference", "worker_region", "worker_plan",
+}
 
 
 def _object(value: object, fields: set[str], field: str) -> dict:
@@ -186,10 +193,7 @@ def reconcile_authorization(
                 "Day 2 authorization " + field + " differs from frozen deployment."
             )
 
-    hosting = _object(receipt.get("hosting"), {
-        "provider", "workspace_reference", "api_service_reference",
-        "worker_service_reference",
-    }, "hosting")
+    hosting = _object(receipt.get("hosting"), _HOSTING_FIELDS, "hosting")
     for field in hosting:
         _reference(hosting[field], "hosting." + field)
     if (hosting["api_service_reference"] == hosting["worker_service_reference"]

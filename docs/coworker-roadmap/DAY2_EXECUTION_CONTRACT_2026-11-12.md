@@ -327,7 +327,8 @@ The recovery gate is **not** satisfied by an arbitrary restart reference, a comp
 Founder/C decision through the protected `pa10-staging` environment's
 `PA10_DAY2_FOUNDER_C_AUTHORIZATION_B64` secret. Its source-only validator
 must accept the exact SHA, approved Render workspace, reviewed staging API,
-prospective `shuddho-worker-staging` name, USD budget/time window, distinct
+prospective `shuddho-worker-staging` name **and exact `oregon` region
+and `0.5c-512mb` paid plan**, USD budget/time window, distinct
 decision references and rollback/restore targets **before** the first Render
 service create/update. No secret means the paid resource remains blocked.
 Workflow-dispatch `PROVISION` is not spending authority, and C/D must
