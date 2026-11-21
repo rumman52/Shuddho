@@ -229,10 +229,23 @@ uv run --extra coworker python scripts/staging_temporal_recovery.py verify \
   --base-evidence /secure/day2/document-execution.json \
   --output /secure/day2/temporal-recovery.json
 
+# ORIGINAL STATE GATE: BEFORE any synthetic account, object or task writes,
+# and only after Founder/C approval, preserve 0070 PostgreSQL + empty bucket.
+# Use a separately protected original archive, not the post-synthetic archive.
+uv run --extra coworker python -m scripts.staging_postgres_backup \
+  --directory /secure/private-backups/original-db
+SHUDDHO_STAGING_ALLOW_OBJECT_ARCHIVE=true \
+uv run --extra coworker python -m scripts.staging_object_backup archive \
+  --directory /secure/private-backups/original-empty-objects \
+  --allow-empty-baseline
+
 export SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE=true
 uv run --extra coworker python scripts/staging_backup_restore.py prepare \
   --state /secure/day2/backup-state.json \
-  --rollout /secure/day2/pa10-staging-rollout.json
+  --rollout /secure/day2/pa10-staging-rollout.json \
+  --original-postgres-verification /secure/private-backups/original-db/verification.json \
+  --original-postgres-archive /secure/private-backups/original-db/coworker.dump \
+  --original-object-archive-directory /secure/private-backups/original-empty-objects
 # Perform an independently verified real PostgreSQL + private object backup,
 # then restore both to distinct empty isolated targets, not live staging.
 uv run --extra coworker python scripts/staging_backup_restore.py verify \
@@ -244,6 +257,9 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --postgres-archive /secure/private-backups/source-db/coworker.dump \
   --object-archive-directory /secure/private-backups/staging-source-objects \
   --object-restore-receipt /secure/private-backups/object-restore-receipt.json \
+  --original-postgres-verification /secure/private-backups/original-db/verification.json \
+  --original-postgres-archive /secure/private-backups/original-db/coworker.dump \
+  --original-object-archive-directory /secure/private-backups/original-empty-objects \
   --base-evidence /secure/day2/temporal-recovery.json \
   --output /secure/day2/restore-evidence.json
 ```
@@ -251,8 +267,14 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
 The existing recovery script has stronger agent-v2 configuration requirements
 than the one-document Day 2 smoke. If those are not present on the approved
 release, report the restart drill **blocked**, do not silently call it a
-document-only test. For backup, recover/export any retained original DB
-**before** adding a probe. The restore script rejects the original source
+document-only test. For backup, recover/export any retained original DB **and empty private bucket**
+**before** adding a probe. The `prepare` operator now requires actual
+verified original PostgreSQL 0070 dump and `baseline_archived` zero-object
+manifest paths, matches their fingerprints, 84+ table/schema/row digests and
+live source inventory before any API or object mutation. The later `verify`
+revalidates that same original baseline alongside the separate post-synthetic
+nonempty database/object archive; `preseed_baseline` remains only an
+original-state receipt and cannot qualify private task/PDF recovery by itself. The restore script rejects the original source
 database or original object storage as its target. **Four independent
 private artifact paths are now mandatory**: verified PostgreSQL archive JSON,
 its exact hashed dump bytes, the complete private-object archive directory,
