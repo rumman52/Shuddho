@@ -14,8 +14,12 @@ DIGEST = 'c' * 64
 def proofs():
     freeze = {
         'status': 'frozen', 'runtime_manifest_sha256': DIGEST,
+        'prepared_at': '2026-11-12T10:45:00+00:00',
         'release': {'release_id': 'day2-001', 'source_revision': SHA,
-                    'environment': 'staging', 'rollout_manifest_sha256': '3' * 64},
+                    'environment': 'staging', 'rollout_manifest_sha256': '3' * 64,
+                    'provider_policy_sha256': 'e' * 64,
+                    'build_reference': 'sha256:immutable-staging-api-worker-build',
+                    'deployment_reference': 'render-staging-change-ticket-123'},
     }
     run = {
         'status': 'passed', 'release_id': 'day2-001', 'source_revision': SHA,
@@ -164,7 +168,9 @@ def proofs():
 
 
 def check(*proof_set):
-    return gate.validate_evidence(*proof_set, expected_revision=SHA)
+    return gate.validate_evidence(
+        *proof_set, expected_revision=SHA, authorization=authorization_receipt(),
+    )
 
 
 def test_valid_proofs_are_consistent_without_claiming_platform_verification():
@@ -182,7 +188,7 @@ def test_valid_proofs_are_consistent_without_claiming_platform_verification():
     assert result['completed_child_task_count'] == 3
     assert result['logical_document_outbox_effect_count'] == 1
     assert result['recovered_agent_workflow_id'] == 'shuddho-agent-agent-run-1'
-    assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'document_outbox', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'outbox_once', 'worker_replaced', 'backup_restore', 'pdf_content_fidelity']
+    assert result['required_live_checks'] == ['model', 'owner_isolation', 'artifact_retrieval', 'temporal', 'document_outbox', 'worker_heartbeat', 'parallel_restart', 'fan_in', 'outbox_once', 'worker_replaced', 'backup_restore', 'pdf_content_fidelity', 'founder_c_authorization']
 
 
 @pytest.mark.parametrize('target, field, value', [
@@ -693,3 +699,39 @@ def test_day2_acceptance_rejects_provider_attempts_exceeding_approved_cap():
     with pytest.raises(gate.Day2AcceptanceFailure, match='authorization|provider'):
         gate.validate_evidence(freeze, run, recovery, restored,
                                expected_revision=SHA, authorization=receipt)
+
+
+def test_private_founder_c_authorization_file_must_be_mode_0600_and_not_a_symlink(tmp_path):
+    import json
+    import os
+
+    from scripts.staging_day2_authorization import (
+        AuthorizationEvidenceFailure, read_private_authorization,
+    )
+
+    source = tmp_path / 'founder-c-decision.json'
+    source.write_text(json.dumps(authorization_receipt()))
+    os.chmod(source, 0o600)
+    assert read_private_authorization(source)['status'] == 'operator_recorded'
+    os.chmod(source, 0o644)
+    with pytest.raises(AuthorizationEvidenceFailure, match='0600'):
+        read_private_authorization(source)
+    os.chmod(source, 0o600)
+    symlink = tmp_path / 'public-symlink.json'
+    symlink.symlink_to(source)
+    with pytest.raises(AuthorizationEvidenceFailure, match='symlink'):
+        read_private_authorization(symlink)
+
+
+def test_private_founder_c_authorization_file_rejects_duplicate_json_fields(tmp_path):
+    import os
+
+    from scripts.staging_day2_authorization import (
+        AuthorizationEvidenceFailure, read_private_authorization,
+    )
+
+    source = tmp_path / 'duplicate-approval.json'
+    source.write_text('{"status":"operator_recorded","status":"passed"}')
+    os.chmod(source, 0o600)
+    with pytest.raises(AuthorizationEvidenceFailure, match='duplicate'):
+        read_private_authorization(source)
