@@ -262,7 +262,7 @@ def test_verified_dossier_text_is_the_exact_hashed_snapshot(tmp_path, monkeypatc
     def switched_read_text(path, *args, **kwargs):
         text = original_read_text(path, *args, **kwargs)
         if path == target:
-            return text + '\\nUNREVIEWED_PROVENANCE_MARKER\\n'
+            return text + '\nUNREVIEWED_PROVENANCE_MARKER\n'
         return text
 
     monkeypatch.setattr(Path, 'read_text', switched_read_text)
@@ -287,7 +287,7 @@ def test_verified_case_rows_are_the_exact_hashed_snapshot(tmp_path, monkeypatch)
             first = json.loads(rows[0])
             first['UNREVIEWED_CASE_MARKER'] = True
             rows[0] = json.dumps(first, ensure_ascii=False)
-            return '\\n'.join(rows) + '\\n'
+            return '\n'.join(rows) + '\n'
         return text
 
     monkeypatch.setattr(Path, 'read_text', switched_read_text)
@@ -300,7 +300,7 @@ def test_evaluator_submission_does_not_follow_a_direct_symlink(tmp_path):
     from scripts.pilot_workflow_eval import read_outputs
 
     target = tmp_path / 'private-substitution.jsonl'
-    target.write_text('{"case_id":"case-a","draft":{}}\\n', encoding='utf-8')
+    target.write_text('{"case_id":"case-a","draft":{}}\n', encoding='utf-8')
     submitted = tmp_path / 'submitted.jsonl'
     submitted.symlink_to(target)
     with pytest.raises(ValueError, match='symlink|regular|no-follow'):
