@@ -62,7 +62,7 @@ class WorkerProvisioningTests(unittest.TestCase):
             "SHUDDHO_TEMPORAL_TASK_QUEUE": "shuddho-documents-v1",
             "SHUDDHO_COWORKER_STORAGE": "s3",
             "SHUDDHO_COWORKER_BUCKET": "shuddho-coworker-staging",
-            "SHUDDHO_COWORKER_S3_ENDPOINT": "https://storage.example.test/storage/v1/s3",
+            "SHUDDHO_COWORKER_S3_ENDPOINT": "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3",
             "AWS_DEFAULT_REGION": "us-west-1",
             "SHUDDHO_COWORKER_DATABASE_URL": (
                 "postgresql://shuddho_staging_runtime.bsmbvjenpvcyfjzwtuax:fixture-secret"

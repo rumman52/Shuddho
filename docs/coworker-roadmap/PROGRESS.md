@@ -6,6 +6,14 @@ No real protected D custody, 40 first model attempts, 80 human reviews, 20 opera
 
 ---
 
+## 22 November 2026 — Day 1 frozen holdout checksum record ([draft PR #873](https://github.com/rumman52/Shuddho/pull/873))
+
+**SOURCE_ONLY / controlled pilot NO-GO.** Starting main `4b055bcaab83151cca1478ab52ee121f5b2f74f7`. New checksum input defect in `scripts/pilot_workflow_eval.py::load_suite`: checking only `.split()[0]` accepted a wrong filename, missing filename, appended checksum record and trailing fields; an empty checksum crashed with `IndexError`. Five targeted regression cases reproduced **RED** on test-only `41ea1b143521a7bf346e6df5e814a91b67e35533`, [CI #44938484991](https://github.com/rumman52/Shuddho/actions/runs/44938484991): **5 failed / 3,541 passed / 105 skipped / 6 warnings**. This change compares the entire canonical one-line checksum record; no corpus, permissions, model, worker, privacy, production or API change. **Final-head GREEN and independent review are pending**, no row credited solely by a source PR. [Task contract](DAY1_HOLDOUT_CHECKSUM_RECORD_2026-11-22.md).
+
+Read-only operator inventory: staging Supabase PG17.11 revision `0070` vs source `0072_merge_0071_heads`; Render staging API last deployed `0e0b662f`, autoDeploy off, no dedicated worker in the available workspace; connected Vercel lacks a Shuddho-linked project. Native governance, owner-controlled staging restore, D-only external holdout, spend/privacy and separate Founder+Owner C approval remain unmet. No cloud mutation or pilot activation. Historical v4 18/100 task PASS, 5/54 exits, 0/10 accepted days are unchanged until private row receipts justify recalculation.
+
+---
+
 ## 21 November 2026 — Day 1 bilingual research citation padding ([draft PR #872](https://github.com/rumman52/Shuddho/pull/872))
 
 **SOURCE_ONLY / pilot NO-GO.** Reviewed the user's five-part Rukh AI instruction prompt, [primary 10-day Day 1 plan](https://docs.google.com/document/d/1JvuAYTmP-0pp7VhOGdV4YnMYLvv0vffuRBqJ0P8Pd8E/edit) ¶141–152, board [#737](https://github.com/rumman52/Shuddho/issues/737), Day 1 [#727](https://github.com/rumman52/Shuddho/issues/727), independent D custody [#665](https://github.com/rumman52/Shuddho/issues/665), `AGENTS.md`, `SPEC.md`, and actual `scripts/pilot_workflow_eval.py::score` and production `ResearchCitation` schema. Base `main=05e582d6a5e6174668b3287685966929d3b87460` includes prior exact-byte evaluator PR #870, so it is not duplicated.

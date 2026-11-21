@@ -207,3 +207,44 @@ def test_host_configuration_never_appears_in_validation_errors_or_events():
     with pytest.raises(ValueError) as error:
         build_operational_event(BASE, guard)
     assert sensitive_host not in str(error.value)
+
+
+def test_explicit_sink_rejection_is_not_reported_as_success():
+    """A sink that returns False did not accept the event for delivery."""
+    handoffs = []
+
+    def rejecting_sink(name, properties):
+        handoffs.append((name, properties))
+        return False
+
+    assert emit_operational_event(BASE, policy(), rejecting_sink) is False
+    assert len(handoffs) == 1
+    assert handoffs[0][0] == "rukh_agent_run_operational_v1"
+
+
+def test_async_sink_is_not_silently_reported_as_delivered():
+    """An unawaited coroutine is not proof of accepted transport delivery."""
+    executed = []
+
+    async def async_sink(name, properties):
+        executed.append((name, properties))
+
+    assert emit_operational_event(BASE, policy(), async_sink) is False
+    assert executed == []
+
+
+def test_sync_sink_returning_awaitable_is_not_counted_as_delivery():
+    """Close a returned coroutine rather than leak it or claim success."""
+    executed = []
+
+    async def deferred_send():
+        executed.append("executed")
+
+    assert emit_operational_event(
+        BASE, policy(), lambda *_: deferred_send(),
+    ) is False
+    assert executed == []
+
+
+def test_positive_explicit_sink_acknowledgement_remains_supported():
+    assert emit_operational_event(BASE, policy(), lambda *_: True) is True
