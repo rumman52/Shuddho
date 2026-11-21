@@ -17,6 +17,7 @@ from pathlib import Path
 from scripts.staging_day2_authorization import (
     AuthorizationEvidenceFailure,
     _ROOT_FIELDS,
+    _HOSTING_FIELDS,
     _bounded_int,
     _digest,
     _object,
@@ -36,14 +37,17 @@ def verify_paid_worker_authorization(
     workspace_id: str,
     api_service_id: str,
     worker_name: str,
+    worker_region: str,
+    worker_plan: str,
     checked_at: datetime,
 ) -> dict:
     """Reconcile proposed *paid* worker mutation with a dated private decision.
 
     Bind to the exact immutable dispatch commit and the intended Rumman
-    workspace, live staging API service and dedicated worker *name*. Because
-    a new Render worker has no ID yet, reviewer C/D must inspect the actual
-    ID, service, plan, billing and account bindings after provisioning.
+    workspace, live staging API service, dedicated worker *name*, explicit
+    paid plan and region. Because a new Render worker has no ID yet, C/D
+    must independently inspect the actual ID, price, billing and bindings
+    after provisioning. This match is not proof of actual spending.
     """
     receipt = _object(authorization, _ROOT_FIELDS, "paid-worker receipt")
     if (
@@ -69,10 +73,7 @@ def verify_paid_worker_authorization(
     for field in ("build_reference", "deployment_reference"):
         _reference(receipt.get(field), field)
 
-    hosting = _object(receipt.get("hosting"), {
-        "provider", "workspace_reference", "api_service_reference",
-        "worker_service_reference",
-    }, "hosting")
+    hosting = _object(receipt.get("hosting"), _HOSTING_FIELDS, "hosting")
     for field in hosting:
         _reference(hosting[field], "hosting." + field)
     if (
@@ -80,11 +81,13 @@ def verify_paid_worker_authorization(
         or hosting["workspace_reference"] != workspace_id
         or hosting["api_service_reference"] != api_service_id
         or hosting["worker_service_reference"] != worker_name
+        or hosting["worker_region"] != worker_region
+        or hosting["worker_plan"] != worker_plan
         or worker_name == api_service_id
         or "production" in worker_name.lower()
     ):
         raise AuthorizationEvidenceFailure(
-            "Day 2 authorization is not scoped to the reviewed Rumman staging API and paid worker."
+            "Day 2 authorization does not match the reviewed Rumman API, worker, region or paid plan."
         )
 
     budget = _object(receipt.get("budget"), {
@@ -193,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace-id", required=True)
     parser.add_argument("--api-service-id", required=True)
     parser.add_argument("--worker-name", required=True)
+    parser.add_argument("--worker-region", required=True)
+    parser.add_argument("--worker-plan", required=True)
     args = parser.parse_args(argv)
     try:
         record = read_private_authorization(args.authorization_file)
@@ -202,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
             workspace_id=args.workspace_id,
             api_service_id=args.api_service_id,
             worker_name=args.worker_name,
+            worker_region=args.worker_region,
+            worker_plan=args.worker_plan,
             checked_at=datetime.now(timezone.utc),
         )
     except AuthorizationEvidenceFailure as error:
