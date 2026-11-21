@@ -94,22 +94,45 @@ def _unique_fields(pairs: list[tuple[str, object]]) -> dict:
 
 
 def read_private_authorization(path: Path) -> dict:
-    """Require operator-controlled private evidence, never a public/symlinked path."""
+    """Open the exact protected inode once; never follow a replacement symlink.
+
+    A path.is_symlink()/stat()/read_text() sequence is vulnerable to a
+    path-swap between the initial checks and the credential-bearing read.
+    POSIX O_NOFOLLOW and fstat on the already-open fd close that gap.
+    """
     try:
-        if path.is_symlink() or not path.is_file():
+        if path.is_symlink():
             raise AuthorizationEvidenceFailure(
                 "Day 2 authorization must be a regular private receipt, never a symlink."
             )
-        details = path.stat()
-        if details.st_size < 1 or details.st_size > 32_768:
-            raise AuthorizationEvidenceFailure(
-                "Day 2 authorization receipt is empty or oversized."
-            )
-        if os.name == "posix" and stat.S_IMODE(details.st_mode) != 0o600:
-            raise AuthorizationEvidenceFailure(
-                "Day 2 authorization receipt must have mode 0600."
-            )
-        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_fields)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        if os.name == "posix":
+            if not hasattr(os, "O_NOFOLLOW"):
+                raise AuthorizationEvidenceFailure(
+                    "Day 2 authorization requires no-follow private file support."
+                )
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as handle:
+            details = os.fstat(handle.fileno())
+            if not stat.S_ISREG(details.st_mode):
+                raise AuthorizationEvidenceFailure(
+                    "Day 2 authorization must be a regular private receipt."
+                )
+            if details.st_size < 1 or details.st_size > 32_768:
+                raise AuthorizationEvidenceFailure(
+                    "Day 2 authorization receipt is empty or oversized."
+                )
+            if os.name == "posix" and stat.S_IMODE(details.st_mode) != 0o600:
+                raise AuthorizationEvidenceFailure(
+                    "Day 2 authorization receipt must have mode 0600."
+                )
+            content = handle.read(32_769)
+            if len(content) > 32_768:
+                raise AuthorizationEvidenceFailure(
+                    "Day 2 authorization receipt exceeded the allowed size while reading."
+                )
+        value = json.loads(content.decode("utf-8"), object_pairs_hook=_unique_fields)
     except (OSError, UnicodeError, ValueError):
         raise AuthorizationEvidenceFailure(
             "Day 2 authorization private receipt cannot be read as valid JSON."
