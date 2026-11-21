@@ -175,6 +175,21 @@ def verify_two_day(
             and type(schedule.get("hour")) is int and 0 <= schedule["hour"] <= 23
             and type(schedule.get("minute")) is int and 0 <= schedule["minute"] <= 59,
             "Expected an explicit daily calendar time.")
+    # A matching first/second schedule is not a valid daily schedule if it
+    # could not have been accepted by AutomationSchedule. For kind=daily the
+    # runtime schema requires an explicit *empty* weekdays array.
+    require(type(schedule.get("weekdays")) is list and schedule["weekdays"] == [],
+            "Day 7 daily schedule requires an empty weekdays list.")
+    # The owner-approved quiet-hours policy must be a real QuietHours value,
+    # not just an arbitrary matching object copied between two probe files.
+    quiet_hours = first.get("quiet_hours")
+    require(isinstance(quiet_hours, dict)
+            and set(quiet_hours) == {"start", "end"}
+            and all(type(quiet_hours[field]) is str
+                    and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", quiet_hours[field])
+                    for field in ("start", "end"))
+            and quiet_hours["start"] != quiet_hours["end"],
+            "Day 7 quiet hours must have distinct valid HH:MM start/end values.")
     try:
         zone = ZoneInfo(str(first.get("timezone", "")))
     except (ZoneInfoNotFoundError, ValueError, TypeError) as error:

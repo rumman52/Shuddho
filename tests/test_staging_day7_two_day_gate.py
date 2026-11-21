@@ -81,6 +81,46 @@ def valid_pair():
     return first, second, paused
 
 
+
+@pytest.mark.parametrize(("bad_setting", "expected_error"), [
+    ("weekdays_selected", "daily schedule.*weekdays"),
+    ("weekdays_missing", "daily schedule.*weekdays"),
+    ("weekdays_not_list", "daily schedule.*weekdays"),
+    ("quiet_hours_missing", "quiet hours"),
+    ("quiet_hours_incomplete", "quiet hours"),
+    ("quiet_hours_invalid_clock", "quiet hours"),
+    ("quiet_hours_equal", "quiet hours"),
+    ("quiet_hours_unexpected_property", "quiet hours"),
+])
+def test_day7_two_date_gate_rejects_unauthorized_daily_calendar_or_quiet_hours(
+    bad_setting, expected_error,
+):
+    """Matched day-one/day-two claims must still match the runtime schema."""
+    first, second, paused = valid_pair()
+    for evidence_record in (first, second):
+        if bad_setting == "weekdays_selected":
+            evidence_record["schedule"]["weekdays"] = ["mon"]
+        elif bad_setting == "weekdays_missing":
+            del evidence_record["schedule"]["weekdays"]
+        elif bad_setting == "weekdays_not_list":
+            evidence_record["schedule"]["weekdays"] = "mon"
+        elif bad_setting == "quiet_hours_missing":
+            evidence_record["quiet_hours"] = None
+        elif bad_setting == "quiet_hours_incomplete":
+            evidence_record["quiet_hours"] = {"start": "22:00"}
+        elif bad_setting == "quiet_hours_invalid_clock":
+            evidence_record["quiet_hours"] = {"start": "25:61", "end": "07:00"}
+        elif bad_setting == "quiet_hours_equal":
+            evidence_record["quiet_hours"] = {"start": "22:00", "end": "22:00"}
+        else:
+            evidence_record["quiet_hours"] = {
+                "start": "22:00", "end": "07:00",
+                "unapproved_field": "not-in-runtime-contract",
+            }
+    with pytest.raises(GateFailure, match=expected_error):
+        verify_two_day(first, second, paused)
+
+
 def test_two_day_gate_rejects_multiple_document_changes():
     first, second, paused = valid_pair()
     for item in (first, second, paused):
