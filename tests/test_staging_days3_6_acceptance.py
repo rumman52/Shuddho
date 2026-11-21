@@ -227,6 +227,8 @@ def evidence():
             "owner_ref": freeze["owner_a_ref"],
             "fact_id": "fact-A",
             "original_version": 1, "corrected_version": 2,
+            "worker_selected_memory": [{"fact_id": "fact-A", "version": 1}],
+            "worker_context_receipt_ref": "inflight-worker-pinned-context",
             "run_id": "inflight-run-A",
             "provider_request_id": "inflight-provider-A",
             "provider_started_at": "2026-11-18T03:37:00Z",
@@ -984,3 +986,43 @@ def test_day5_valid_reciprocal_targets_and_stale_decision_receipt_stay_structura
     assert args[3]["owner_access"]["owner_a"]["foreign_fact_target_id"] == "fact-B"
     assert args[3]["owner_access"]["owner_b"]["foreign_fact_target_id"] == "fact-A"
     assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_day5_owner_a_context_cannot_claim_isolation_from_an_empty_memory_arm():
+    args = evidence()
+    owner_a = args[3]["owner_access"]["owner_a"]
+    owner_a["own_context_id"] = "run-none"
+    owner_a["own_output_sha256"] = D3
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize("bad_pins", [
+    [],
+    [{"fact_id": "fact-A", "version": 2}],
+    [{"fact_id": "fact-B", "version": 1}],
+    [{"fact_id": "fact-A", "version": True}],
+    [{"fact_id": "fact-A", "version": 1}, {"fact_id": "fact-B", "version": 1}],
+    [{"fact_id": "fact-A", "version": 1, "owner_ref": "synthetic-B"}],
+    None,
+])
+def test_day5_inflight_provider_must_have_exact_old_selected_memory_in_its_context(bad_pins):
+    args = evidence()
+    args[3]["inflight_correction"]["worker_selected_memory"] = bad_pins
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", ["worker_selected_memory", "worker_context_receipt_ref"])
+def test_day5_missing_old_worker_memory_pin_witness_denies_inflight_acceptance(field):
+    args = evidence()
+    del args[3]["inflight_correction"][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+def test_day5_inflight_old_worker_context_requires_private_receipt():
+    args = evidence()
+    args[3]["inflight_correction"]["worker_context_receipt_ref"] = ""
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
