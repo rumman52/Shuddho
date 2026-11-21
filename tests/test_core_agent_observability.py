@@ -1296,3 +1296,58 @@ def test_day8_source_snapshot_is_not_accepted_without_suite_source_digest():
     del suite["cases"][0]["_source"]
     with pytest.raises(ValueError, match="source snapshot digest"):
         compare_day8_development(baseline, candidate, suite)
+
+def test_day8_one_first_run_over_hard_deadline_excludes_cheaper_profile():
+    """p95 may look green while one accepted attempt exceeds its task deadline."""
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["end_to_end_latency_ms"] = 60_001  # 60-second fixed limit
+    result = compare_day8_development(baseline, candidate, suite)
+    bounded = result["profile_summaries"]["bounded_context_compact_observations"]
+    assert bounded["human_accepted"] == 40
+    assert bounded["latency_gate_passed"] is True  # one outlier is below p95
+    assert bounded["deadline_evaluated_attempts"] == 40
+    assert bounded["deadline_overrun_attempts"] == 1
+    assert bounded["deadline_gate_passed"] is False
+    assert result["selected_least_cost_qualified_profile"] == "baseline"
+    assert result["candidate_exclusion_reason"] == "execution_deadline_breached"
+    assert result["measured_cost_savings_microusd"] is None
+
+
+def test_day8_failed_rerun_beyond_fixed_deadline_disqualifies_profile():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    rerun = _day8_synthetic_rerun(candidate, cost=0)
+    rerun["end_to_end_latency_ms"] = 60_001
+    candidate["reruns"].append(rerun)
+    result = compare_day8_development(baseline, candidate, suite)
+    bounded = result["profile_summaries"]["bounded_context_compact_observations"]
+    assert bounded["human_accepted"] == 40  # rerun does not expand denominator
+    assert bounded["rerun_attempts"] == 1
+    assert bounded["latency_gate_passed"] is True
+    assert bounded["deadline_evaluated_attempts"] == 41
+    assert bounded["deadline_overrun_attempts"] == 1
+    assert bounded["deadline_gate_passed"] is False
+    assert result["selected_least_cost_qualified_profile"] == "baseline"
+    assert result["measured_cost_savings_microusd"] is None
+
+
+def test_day8_both_profiles_with_measured_deadline_overruns_cannot_freeze():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    for report in (baseline, candidate):
+        report["results"][0]["end_to_end_latency_ms"] = 60_001
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert result["selected_least_cost_qualified_profile"] is None
+    assert any("execution deadline" in reason for reason in result["blockers"])
+
+
+def test_day8_measured_exact_deadline_is_allowed():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0]["end_to_end_latency_ms"] = 60_000
+    result = compare_day8_development(baseline, candidate, suite)
+    bounded = result["profile_summaries"]["bounded_context_compact_observations"]
+    assert bounded["deadline_evaluated_attempts"] == 40
+    assert bounded["deadline_overrun_attempts"] == 0
+    assert bounded["deadline_gate_passed"] is True
+    assert result["selected_least_cost_qualified_profile"] == "bounded_context_compact_observations"
+
