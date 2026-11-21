@@ -454,7 +454,12 @@ def first_run_matches_holdout(
     """
     if (not bound(first_run, release, revision, rollout_hash)
             or not isinstance(holdout, dict)
+            # A regression rerun or unversioned archival report is not
+            # first-run evidence, even when its run_kind is relabeled.
             or first_run.get("run_kind") != "first_run"
+            or first_run.get("result_kind") != "operator_submitted_first_run"
+            or type(first_run.get("schema_version")) is not int
+            or first_run["schema_version"] != 2
             or not nonempty_text(first_run.get("run_id"))):
         return False
     manifest_sha = first_run.get("manifest_sha256")
@@ -478,6 +483,31 @@ def first_run_matches_holdout(
     # start, even if the two editable JSON copies are changed consistently.
     if custody_verified_at is None or custody_verified_at >= run_started_at:
         return False
+    # Day 9's write-once report independently retains the original custody
+    # SHA and D's frozen corpus/answer/rubric access-audit digest claims.
+    # Cross-bind them here: editing BOTH copies of the exported holdout
+    # must not substitute a new receipt for the recorded first-run custody.
+    custody_digest = first_run.get("custody_receipt_sha256")
+    if (not isinstance(custody_digest, str)
+            or DIGEST.fullmatch(custody_digest) is None
+            or custody.get("evidence_ref") != "sha256:" + custody_digest):
+        return False
+    for field in ("custody_access_log_sha256", "custody_exposure_history_sha256"):
+        digest = first_run.get(field)
+        if not isinstance(digest, str) or DIGEST.fullmatch(digest) is None:
+            return False
+    for original, frozen in (
+        ("custody_frozen_inputs_sha256", "corpus_sha256"),
+        ("custody_frozen_answers_sha256", "answer_key_sha256"),
+        ("custody_rubric_sha256", "rubric_sha256"),
+    ):
+        original_digest, frozen_digest = first_run.get(original), first_run.get(frozen)
+        if (not isinstance(original_digest, str)
+                or DIGEST.fullmatch(original_digest) is None
+                or not isinstance(frozen_digest, str)
+                or DIGEST.fullmatch(frozen_digest) is None
+                or original_digest != frozen_digest):
+            return False
     scores = first_run.get("scores")
     if not isinstance(scores, dict) or type(scores.get("total")) is not int or scores["total"] != 40:
         return False
