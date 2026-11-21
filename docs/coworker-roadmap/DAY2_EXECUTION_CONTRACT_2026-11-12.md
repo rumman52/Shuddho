@@ -320,10 +320,48 @@ The recovery gate is **not** satisfied by an arbitrary restart reference, a comp
 
 **Scope limitation:** the restarted synthetic Agent run is separate from the owner-A document/report task. The document run is linked to its own Temporal workflow, source and artifact; the recovery gate establishes same-run worker takeover for its Agent run. Do not report that the PDF task itself was restarted unless a separate, directly observed PDF-task restart was also performed.
 
+## Dated Founder + C authorization evidence (D02.T05 / D02.G05)
+
+The four-page Part 02 prompt requires a **specific, dated Founder and C**
+decision before seeding synthetic data, applying staging migrations, deploying
+the persistent worker, restoring private material or incurring model/compute
+cost. This was previously a written blocker but was **not** a mandatory input
+to the final Day 2 evidence reconciler. The read-only source gate now requires
+a **private, mode-0600** `founder-c-authorization.json` file with the
+exact schema described in
+[`DAY2_FOUNDER_C_AUTHORIZATION.md`](../../DAY2_FOUNDER_C_AUTHORIZATION.md).
+
+Both decisions must separately identify the approved nonproduction host and
+workspace, API and dedicated worker service identities, immutable reviewed
+build and deployment/change reference, one explicit currency/spending ceiling,
+duration and maximum model/provider attempts, **distinct isolated PostgreSQL
+and object-store resource fingerprints plus restored API origin hash**, and
+rollback owner/procedure. The authorization window must begin before the
+original `0070` preseed archival receipt and remain valid through the
+completed isolated restore. The reconciler matches these references and the
+exact rollout/provider-policy SHA to the frozen release.
+
+**This is not self-authorizing JSON.** C must attach references to the real
+dated Founder and operator decisions in the protected operator directory; D
+must independently inspect those source decisions, provider resource bindings,
+billing, model limits and live times. The validator reports
+`operator_recorded_requires_independent_review` and outputs only a SHA-256
+digest and nonsecret budget limits, **never the raw decision references**.
+Without actual approvals, leave the hosted Day 2 gates BLOCKED and do not
+create a sample "approved" record to get a passing result. Source-only CI
+fixtures are explicitly synthetic and have no deployment authority.
+
+The declared `max_provider_attempts` constrains the owner-A PDF task's
+recorded model attempts. It does **not** authorize or measure any separately
+operated owner-B artifact-control task, retries outside that task, cloud
+compute/storage bills, or provider charges. Founder/C must approve those
+separately and reviewer D must inspect provider/billing statements.
+
 ## Evidence-chain reconciliation (after the real drills)
 
 Only after the real document task, active-worker restart and isolated
-PostgreSQL/object-storage restore have generated private receipt files,
+PostgreSQL/object-storage restore have generated private receipt files **and**
+the dated Founder/C authorization decisions are available,
 run the fail-closed source/identity gate:
 
 ```bash
@@ -332,14 +370,17 @@ uv run --extra coworker python scripts/staging_day2_acceptance.py \
   --execution /secure/day2/document-execution.json \
   --recovery /secure/day2/temporal-recovery.json \
   --restored /secure/day2/restore-evidence.json \
+  --authorization /secure/day2/founder-c-authorization.json \
   --expected-revision "<reviewed-40-character-SHA>" \
   --output /secure/day2/identity-consistency.json
 ```
 
 This reconciles the same frozen release, runtime-manifest digest, rollout
 digest, document/version/task/workflow/artifact IDs and hashes, worker source
-and heartbeat, and nested restart/restore receipts. An absent, altered,
-out-of-order or different-release proof **fails closed**. Its result is only
+and heartbeat, and nested restart/restore receipts, **plus** the independently sourced
+Founder/C dated authorization record, host/worker, budget and approval window,
+and exact isolated restore target identities. An absent, altered,
+expired, out-of-budget or different-release proof **fails closed**. Its result is only
 `evidence_consistent`, not an independent attestation of live platform
 events. An operator must still verify the real Render restart reference,
 model-usage records, source and target database/storage identities, backup
