@@ -140,6 +140,15 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
             or custody.get("independent_d_controls_access") is not True
             or custody.get("developer_negative_read_denied") is not True):
         return False
+    # The Day 9 export must preserve all three original pseudonymous role
+    # claims so an independent Day 10 decision cannot accept an anonymous or
+    # self-aliased custodian merely because its access booleans look good.
+    custody_identities = [
+        reviewer_identity(custody.get(role))
+        for role in ("custodian_id", "developer_id", "corpus_author_id")
+    ]
+    if None in custody_identities or len(set(custody_identities)) != 3:
+        return False
     if (value.get("mode") != "independent_human_holdout"
             or value.get("generation_identity_verified") is not True
             or not isinstance(value.get("generation_identity_receipt_sha256"), str)
