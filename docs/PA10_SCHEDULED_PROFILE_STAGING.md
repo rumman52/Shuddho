@@ -185,6 +185,13 @@ other edge cases rather than contaminating this clean two-date ledger.
 The gate checks release/account/automation consistency; one completed run and
 **exactly one unique completion notice per briefing occurrence**; exact scheduled
 local clock time; consecutive **local** calendar days (including DST transitions);
+an actual `kind=daily` calendar shape with an explicit **empty** `weekdays` list
+(as required by the runtime `AutomationSchedule` contract); and explicitly
+approved `quiet_hours` with only `start`/`end` keys, valid `HH:MM` times and
+different start/end values (matching `QuietHours`). Merely repeating the same
+invalid schedule or quiet-hours object in both probes does **not** satisfy the
+two-day gate. These are operator-evidence consistency checks, not an independent
+Temporal calendar or notification transport readback;
 identical authorized document IDs; a changed immutable version pin on Day 8;
 the unchanged original Day 7 pin when re-read; the persisted pause transition;
 and **zero** new owner-scoped stored occurrences, runs and notifications after
