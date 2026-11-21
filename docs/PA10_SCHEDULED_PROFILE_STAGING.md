@@ -185,18 +185,18 @@ other edge cases rather than contaminating this clean two-date ledger.
 The gate checks release/account/automation consistency; one completed run and
 **exactly one unique completion notice per briefing occurrence**; exact scheduled
 local clock time; consecutive **local** calendar days (including DST transitions);
-an actual `kind=daily` calendar shape with an explicit **empty** `weekdays` list
-(as required by the runtime `AutomationSchedule` contract); and explicitly
-approved `quiet_hours` with only `start`/`end` keys, valid `HH:MM` times and
-different start/end values (matching `QuietHours`). Merely repeating the same
-invalid schedule or quiet-hours object in both probes does **not** satisfy the
-two-day gate. These are operator-evidence consistency checks, not an independent
-Temporal calendar or notification transport readback;
+an actual `kind=daily` calendar with an explicit **empty** `weekdays` list
+(required by `AutomationSchedule`); owner-approved `quiet_hours` with only
+`start`/`end` keys, valid distinct `HH:MM` times (required by `QuietHours`);
 identical authorized document IDs; a changed immutable version pin on Day 8;
 the unchanged original Day 7 pin when re-read; the persisted pause transition;
 and **zero** new owner-scoped stored occurrences, runs and notifications after
-the following scheduled local time and catch-up window. The pause-only artifact
-is intentionally insufficient.
+the following scheduled local time and catch-up window.
+
+Repeating the same invalid daily calendar or quiet-hours object in both probe
+files does **not** satisfy the gate. These are evidence-shape and consistency
+checks, not independent proof of Temporal timer causation or notification
+transport. The pause-only artifact is intentionally insufficient.
 
 The generated report includes `owner_local_receipts`: the owner-IANA-zone
 `day7_due_at`, `day7_verified_at`, `day8_due_at`, `day8_verified_at`,
