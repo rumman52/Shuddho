@@ -11,7 +11,7 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 
-from scripts.staging_api_exercise import env_secret, require_https_base
+from scripts.staging_api_exercise import ExerciseFailure, env_secret, require_https_base
 from scripts.staging_day2_archive_attestation import (
     ArchiveAttestationFailure, attest_archives,
 )
@@ -408,8 +408,21 @@ def verify(
             raise BackupRestoreFailure(
                 "Restored API readback requires approved source/isolated HTTPS origins and two managed identity tokens."
             )
+        try:
+            source_api_origin = require_https_base(os.environ["SHUDDHO_STAGING_API_BASE_URL"])
+            restored_api_origin = require_https_base(
+                os.environ["SHUDDHO_STAGING_RESTORED_API_BASE_URL"]
+            )
+        except ExerciseFailure:
+            raise BackupRestoreFailure(
+                "Source and restored API must use separate clean, approved public HTTPS origins."
+            ) from None
+        if source_api_origin == restored_api_origin:
+            raise BackupRestoreFailure(
+                "Isolated restored API must not be the live source API origin."
+            )
         with httpx.Client(
-            base_url=os.environ["SHUDDHO_STAGING_RESTORED_API_BASE_URL"],
+            base_url=restored_api_origin,
             timeout=20,
             follow_redirects=False,
             trust_env=False,
@@ -418,8 +431,8 @@ def verify(
                 restored_api,
                 os.environ["SHUDDHO_STAGING_TOKEN_A"],
                 os.environ["SHUDDHO_STAGING_TOKEN_B"],
-                source_origin=os.environ["SHUDDHO_STAGING_API_BASE_URL"],
-                restored_origin=os.environ["SHUDDHO_STAGING_RESTORED_API_BASE_URL"],
+                source_origin=source_api_origin,
+                restored_origin=restored_api_origin,
                 expected_owner_id=owner,
                 document_id=document_id,
                 task_id=task_id,
