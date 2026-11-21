@@ -199,6 +199,36 @@ jobs:
         with:
           client-id: ${{ vars.V01_RULESET_APP_CLIENT_ID }}
           private-key: ${{ secrets.V01_RULESET_APP_PRIVATE_KEY }}
+      # Part 02 D02.T05/G05: the PROVISION input is never Founder/C consent.
+      # This must run before *any* paid Render service create/update. The
+      # pa10-staging environment's protected secret is intentionally absent
+      # until C records and D independently checks the two dated decisions.
+      - name: Verify dated Founder and C decision before paid worker mutation
+        shell: bash
+        env:
+          AUTHORIZATION_B64: ${{ secrets.PA10_DAY2_FOUNDER_C_AUTHORIZATION_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ -z "${AUTHORIZATION_B64:-}" ]]; then
+            echo "::error::BLOCKED_EXTERNAL — protected Founder/C paid-worker decision is not configured"
+            exit 1
+          fi
+          approval_file="$(mktemp "${RUNNER_TEMP}/day2-paid-worker-approval.XXXXXX")"
+          trap 'rm -f "$approval_file"' EXIT
+          if ! printf '%s' "${AUTHORIZATION_B64}" | base64 --decode > "${approval_file}"; then
+            echo "::error::BLOCKED_EXTERNAL — protected Founder/C decision is not valid base64"
+            exit 1
+          fi
+          chmod 600 "${approval_file}"
+          python3 -m scripts.staging_paid_worker_authorization \
+            --authorization-file "${approval_file}" \
+            --source-revision "${GITHUB_SHA}" \
+            --workspace-id "${RENDER_WORKSPACE_ID}" \
+            --api-service-id "srv-dav98otg1s2s73cod4gg" \
+            --worker-name "shuddho-worker-staging"
+          # No decision text or credentials may appear in the logs or outputs.
+          # C/D must verify original approval records and actual billing.
       - name: Create or repair shuddho-worker-staging
         id: worker
         shell: bash
