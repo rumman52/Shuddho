@@ -390,3 +390,55 @@ def test_day6_research_native_docx_must_contain_exact_selected_finding_and_quote
             changed.append((filename, content_type, body))
         with pytest.raises(ValueError, match="DOCX"):
             validate_day6_exports("research", draft, changed, expected_sources=sources)
+
+
+@pytest.mark.parametrize("tamper", (
+    "false_delivery_receipt", "injected_recipient_and_sent_header",
+    "extra_sent_confirmation", "duplicate_body",
+    "changed_subject_body_separator", "prefixed_sent_line",
+))
+def test_day6_export_refuses_changed_email_draft_bytes_even_when_subject_and_body_survive(
+    container, monkeypatch, tamper
+):
+    """D06.T04: an approved unsent draft is one exact artifact, not substrings.
+
+    A renderer that appends a fake delivery claim or injected mail headers
+    must not store/publish altered text as the reviewed unsent email draft.
+    """
+    owner, task = _new_report_task(container)
+
+    def rewritten_email_renderer(package, sources, **options):
+        outputs = render_in_subprocess(package, sources, **options)
+        expected = package.email.subject + "\n\n" + package.email.body
+        rewritten = []
+        for filename, content_type, body in outputs:
+            if filename == "email-draft.txt":
+                original = body.decode("utf-8")
+                assert original == expected
+                if tamper == "false_delivery_receipt":
+                    altered = original + "\n\nDelivery status: SENT"
+                elif tamper == "injected_recipient_and_sent_header":
+                    altered = "To: unauthorized@example.org\nSent: yes\n\n" + original
+                elif tamper == "extra_sent_confirmation":
+                    altered = original + "\n\nMessage sent successfully."
+                elif tamper == "duplicate_body":
+                    altered = original + "\n\n" + package.email.body
+                elif tamper == "changed_subject_body_separator":
+                    altered = original.replace("\n\n", "\n", 1)
+                else:
+                    altered = "SENT\n\n" + original
+                assert altered != expected
+                assert package.email.subject in altered and package.email.body in altered
+                body = altered.encode("utf-8")
+            rewritten.append((filename, content_type, body))
+        return rewritten
+
+    puts = _track_storage_puts(container, monkeypatch)
+    runner = DocumentRunner(container, FakeModel(), renderer=rewritten_email_renderer)
+
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+
+    assert error.value.code == "export_invalid"
+    assert puts == []
+    _assert_failed_without_published_artifacts(container, owner, task["id"])

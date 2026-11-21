@@ -57,12 +57,14 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
     if skill_id == "report_email":
         title = draft.report.title
         headings = [section.heading for section in draft.report.sections]
-        expected_text = (draft.email.subject, draft.email.body)
+        # The native renderer owns the full unsent email text. Substring
+        # matches would permit injected recipient headers, duplicate content
+        # or a fabricated "Sent" receipt to reach the owner's download.
+        expected_email_text = draft.email.subject + "\n\n" + draft.email.body
         docx_name, pdf_name, text_name = "report.docx", "report.pdf", "email-draft.txt"
     else:
         title = draft.title
         headings = [finding.heading for finding in draft.findings]
-        expected_text = ()
         docx_name, pdf_name, text_name = "research-report.docx", "research-report.pdf", "research-report.txt"
 
     try:
@@ -145,8 +147,8 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
         if not text_content.strip():
             raise ValueError("Text artifact is empty")
         if skill_id == "report_email":
-            if any(not value or value not in text_content for value in expected_text):
-                raise ValueError("Email draft does not contain its subject and body")
+            if text_content != expected_email_text:
+                raise ValueError("Email draft bytes differ from the reviewed unsent subject and body")
         elif title not in text_content or any(heading not in text_content for heading in headings):
             raise ValueError("Research text is missing its title or expected headings")
 
