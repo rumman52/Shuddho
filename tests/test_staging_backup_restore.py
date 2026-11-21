@@ -202,6 +202,34 @@ def _install_prepare_fakes(monkeypatch, calls):
     )
 
 
+def _install_original_baseline_fakes(monkeypatch, *, changed_source=False):
+    source = {
+        "revision": "0070", "schema_sha256": "c" * 64,
+        "tables": {"cw_alembic_version": {"rows": 1, "sha256": "d" * 64}},
+    }
+    summary = {
+        "status": "preseed_verified", "source_schema_revision": "0070",
+        "postgres_archive_sha256": "a" * 64,
+        "postgres_schema_sha256": "c" * 64,
+        "object_manifest_sha256": "b" * 64,
+        "postgres_table_count": 84, "postgres_row_count": 1,
+        "source_database_fingerprint": backup.stable_hash("source-db"),
+        "source_storage_fingerprint": backup.stable_hash("source-storage"),
+        "object_count": 0, "object_total_bytes": 0,
+    }
+    monkeypatch.setattr(backup, "attest_preseed_baseline", lambda *_: (summary, source))
+    monkeypatch.setattr(
+        backup, "restored_database_inventory",
+        lambda _: {**source, "schema_sha256": "changed"} if changed_source else source,
+    )
+    monkeypatch.setattr(backup, "private_object_inventory", lambda _: [])
+    return {
+        "original_postgres_verification": Path("fake-original-verification.json"),
+        "original_postgres_archive": Path("fake-original.dump"),
+        "original_object_archive": Path("fake-empty-baseline"),
+    }
+
+
 def test_prepare_rejects_existing_state_before_staging_mutations(monkeypatch, tmp_path):
     settings = SimpleNamespace(source_revision="a" * 40)
     rollout_path = tmp_path / "rollout.json"
@@ -265,9 +293,10 @@ def test_prepare_does_not_seed_records_if_source_identity_read_fails(
         raise backup.BackupRestoreFailure("source identity unavailable")
 
     monkeypatch.setattr(backup, "environment_fingerprints", fail_identity_read)
+    baseline_paths = _install_original_baseline_fakes(monkeypatch)
 
     with pytest.raises(backup.BackupRestoreFailure, match="source identity unavailable"):
-        backup.prepare(settings, state_path, rollout_path)
+        backup.prepare(settings, state_path, rollout_path, **baseline_paths)
 
     assert calls == ["container_create", "dispose"]
     assert not state_path.exists()
@@ -285,6 +314,7 @@ def test_prepare_preflights_state_destination_before_staging_mutations(monkeypat
     _install_prepare_fakes(monkeypatch, calls)
     monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
 
+    baseline_paths = _install_original_baseline_fakes(monkeypatch)
     original_writer = backup.write_private_json
     write_phases = []
 
@@ -294,7 +324,7 @@ def test_prepare_preflights_state_destination_before_staging_mutations(monkeypat
 
     monkeypatch.setattr(backup, "write_private_json", record_write)
 
-    result = backup.prepare(settings, state_path, rollout_path)
+    result = backup.prepare(settings, state_path, rollout_path, **baseline_paths)
 
     assert write_phases[0][0] == "preflight"
     assert write_phases[0][1] != state_path
@@ -302,8 +332,58 @@ def test_prepare_preflights_state_destination_before_staging_mutations(monkeypat
     assert result["document_id"] == "00000000-0000-4000-8000-000000000001"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["release_context"]["release_id"] == "backup-restore-test-release"
+    assert state["preseed_baseline"]["status"] == "preseed_verified"
     assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
     assert not list(tmp_path.glob(".state.json.*.preflight"))
+
+
+def test_prepare_refuses_stale_original_snapshot_before_owner_api_or_object_write(monkeypatch, tmp_path):
+    settings = SimpleNamespace(source_revision="a" * 40)
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps({"release_id": "baseline-test"}))
+    state_path = tmp_path / "state.json"
+    calls = []
+    _install_prepare_fakes(monkeypatch, calls)
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
+    paths = _install_original_baseline_fakes(monkeypatch, changed_source=True)
+
+    with pytest.raises(backup.PreseedBaselineFailure, match="changed"):
+        backup.prepare(settings, state_path, rollout_path, **paths)
+    assert calls == ["container_create", "dispose"]
+    assert not state_path.exists()
+
+
+def test_verify_demands_original_baseline_before_reading_task_rows(monkeypatch, tmp_path, restore_state):
+    settings, rollout_path, state = restore_state
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state))
+    target = {
+        "database": backup.stable_hash("other-db"),
+        "storage": backup.stable_hash("other-storage"),
+    }
+    monkeypatch.setattr(backup, "environment_fingerprints", lambda _: target)
+    disposed = []
+    fake = SimpleNamespace(
+        repository=SimpleNamespace(sessions=SimpleNamespace(
+            kw={"bind": SimpleNamespace(dispose=lambda: disposed.append(True))},
+        )),
+    )
+    monkeypatch.setattr(backup.Container, "create", lambda _: fake)
+    monkeypatch.setattr(
+        backup, "restored_database_inventory",
+        lambda _: pytest.fail("Target SQL rows must not be read without original baseline"),
+    )
+    with pytest.raises(backup.BackupRestoreFailure, match="original.*baseline"):
+        backup.verify(
+            settings, state_path, "backup-ref", "restore-ref",
+            rollout_path, tmp_path / "receipt.json", None,
+            postgres_verification=tmp_path / "task-verification.json",
+            postgres_archive=tmp_path / "task.dump",
+            object_archive=tmp_path / "task-objects",
+            object_restore_receipt=tmp_path / "task-restore.json",
+        )
+    assert disposed == [True]
+    assert not (tmp_path / "receipt.json").exists()
 
 
 def test_prepare_rejects_symlink_state_path_before_staging_mutations(monkeypatch, tmp_path):
