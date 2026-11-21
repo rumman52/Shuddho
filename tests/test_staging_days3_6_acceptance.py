@@ -140,6 +140,14 @@ def evidence():
             "document_version_id": "owner-A-version-1",
             "reviewed_brief_sha256": D2,
             "tool_policy_sha256": D3,
+            "preview_digest_sha256": [D3, D4, D5][index],
+            "admitted_preview_digest_sha256": [D3, D4, D5][index],
+            "provider_started_at": [
+                "2026-11-18T03:31:00Z", "2026-11-18T03:33:00Z", "2026-11-18T03:48:00Z"
+            ][index],
+            "provider_finished_at": [
+                "2026-11-18T03:32:00Z", "2026-11-18T03:34:00Z", "2026-11-18T03:49:00Z"
+            ][index],
             "preview_selected_memory": [] if name == "none" else [
                 {"fact_id": "fact-A", "version": index}
             ],
@@ -169,7 +177,19 @@ def evidence():
             "owner_a": {
                 "owner_ref": freeze["owner_a_ref"],
                 "own_fact_id": "fact-A",
+                "own_context_id": "run-v1", "own_output_id": "private-output-A",
+                "own_output_sha256": D4,
                 "own_fact_http_status": 200,
+                "own_context_http_status": 200,
+                "own_output_http_status": 200,
+                "own_context_read_receipt_ref": "owner-A-positive-context-read",
+                "own_output_read_receipt_ref": "owner-A-positive-output-read",
+                "foreign_fact_target_id": "fact-B",
+                "foreign_context_target_id": "run-owner-B",
+                "foreign_output_target_id": "private-output-B",
+                "foreign_fact_owner_ref": freeze["owner_b_ref"],
+                "foreign_context_owner_ref": freeze["owner_b_ref"],
+                "foreign_output_owner_ref": freeze["owner_b_ref"],
                 "foreign_fact_http_status": 403,
                 "foreign_context_http_status": 403,
                 "foreign_output_http_status": 403,
@@ -181,7 +201,19 @@ def evidence():
             "owner_b": {
                 "owner_ref": freeze["owner_b_ref"],
                 "own_fact_id": "fact-B",
+                "own_context_id": "run-owner-B", "own_output_id": "private-output-B",
+                "own_output_sha256": D5,
                 "own_fact_http_status": 200,
+                "own_context_http_status": 200,
+                "own_output_http_status": 200,
+                "own_context_read_receipt_ref": "owner-B-positive-context-read",
+                "own_output_read_receipt_ref": "owner-B-positive-output-read",
+                "foreign_fact_target_id": "fact-A",
+                "foreign_context_target_id": "run-v1",
+                "foreign_output_target_id": "private-output-A",
+                "foreign_fact_owner_ref": freeze["owner_a_ref"],
+                "foreign_context_owner_ref": freeze["owner_a_ref"],
+                "foreign_output_owner_ref": freeze["owner_a_ref"],
                 "foreign_fact_http_status": 403,
                 "foreign_context_http_status": 403,
                 "foreign_output_http_status": 403,
@@ -191,9 +223,34 @@ def evidence():
                 "foreign_output_denial_ref": "owner-B-denied-A-output",
             },
         },
+        "inflight_correction": {
+            "owner_ref": freeze["owner_a_ref"],
+            "fact_id": "fact-A",
+            "original_version": 1, "corrected_version": 2,
+            "worker_selected_memory": [{"fact_id": "fact-A", "version": 1}],
+            "worker_context_receipt_ref": "inflight-worker-pinned-context",
+            "run_id": "inflight-run-A",
+            "provider_request_id": "inflight-provider-A",
+            "provider_started_at": "2026-11-18T03:37:00Z",
+            "corrected_at": "2026-11-18T03:40:00Z",
+            "provider_finished_at": "2026-11-18T03:43:00Z",
+            "commit_attempted_at": "2026-11-18T03:44:00Z",
+            "rejection_verified_at": "2026-11-18T03:46:00Z",
+            "commit_error_code": "memory_pins_changed",
+            "new_decisions_committed": 0,
+            "new_tool_invocations": 0,
+            "new_outbox_effects": 0,
+            "provider_receipt_ref": "inflight-provider-readback",
+            "memory_update_receipt_ref": "inflight-memory-correction",
+            "decision_commit_denial_ref": "inflight-stale-commit-denial",
+            "decision_store_readback_ref": "inflight-decision-store-readback",
+        },
         "historical_replay": {
             "agent_run_id": "run-v1", "output_sha256": D4,
-            "new_outbox_effects": 0, "evidence_ref": "replay-v1",
+            "new_outbox_effects": 0, "new_decisions_committed": 0,
+            "replayed_at": "2026-11-18T03:54:00Z",
+            "decision_receipt_ref": "historical-v1-decision-readback",
+            "evidence_ref": "replay-v1",
         },
     }
 
@@ -779,3 +836,196 @@ def test_day6_can_have_no_artifacts_before_worker_restart_but_exact_expected_set
     args = evidence()
     args[4]["reconnect"]["artifacts_before"] = []
     assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+@pytest.mark.parametrize(("arm_index", "field", "bad_value"), [
+    (1, "admitted_preview_digest_sha256", D3),
+    (2, "preview_digest_sha256", D3),
+    (0, "preview_digest_sha256", "invalid-sha"),
+    (1, "admitted_preview_digest_sha256", ""),
+    (1, "provider_started_at", "2026-11-18T03:39:00Z"),
+    (1, "provider_finished_at", "2026-11-18T03:41:00Z"),
+    (2, "provider_started_at", "2026-11-18T03:39:00Z"),
+    (2, "provider_finished_at", "2026-11-18T03:47:00Z"),
+])
+def test_day5_rejects_stale_memory_preview_and_nonchronological_model_runs(
+    arm_index, field, bad_value
+):
+    args = evidence()
+    args[3]["arms"][arm_index][field] = bad_value
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+def test_day5_requires_distinct_canonical_preview_digests_across_all_three_arms():
+    args = evidence()
+    args[3]["arms"][2]["preview_digest_sha256"] = args[3]["arms"][1]["preview_digest_sha256"]
+    args[3]["arms"][2]["admitted_preview_digest_sha256"] = args[3]["arms"][1]["preview_digest_sha256"]
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("owner", "field", "bad_value"), [
+    ("owner_a", "own_context_id", "run-owner-B"),
+    ("owner_b", "own_context_id", "run-v1"),
+    ("owner_a", "own_output_id", "private-output-B"),
+    ("owner_b", "own_output_sha256", ""),
+    ("owner_a", "own_output_sha256", D5),
+    ("owner_b", "own_context_http_status", 404),
+    ("owner_a", "own_output_http_status", 403),
+    ("owner_a", "own_context_read_receipt_ref", ""),
+    ("owner_b", "own_output_read_receipt_ref", ""),
+    ("owner_a", "foreign_fact_target_id", "fact-A"),
+    ("owner_a", "foreign_fact_target_id", "unrelated-fact"),
+    ("owner_b", "foreign_fact_target_id", "fact-B"),
+    ("owner_a", "foreign_context_target_id", "run-v1"),
+    ("owner_b", "foreign_context_target_id", "nonexistent-run"),
+    ("owner_a", "foreign_output_target_id", "private-output-A"),
+    ("owner_b", "foreign_output_target_id", "nonexistent-output"),
+    ("owner_a", "foreign_fact_owner_ref", "synthetic-A"),
+    ("owner_b", "foreign_context_owner_ref", "synthetic-B"),
+    ("owner_a", "foreign_output_owner_ref", "synthetic-A"),
+])
+def test_day5_denied_target_must_really_belong_to_the_other_positive_owner(
+    owner, field, bad_value
+):
+    args = evidence()
+    args[3]["owner_access"][owner][field] = bad_value
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("owner", "field"), [
+    ("owner_a", "own_context_id"),
+    ("owner_b", "own_output_id"),
+    ("owner_a", "own_context_http_status"),
+    ("owner_b", "own_output_http_status"),
+    ("owner_a", "own_context_read_receipt_ref"),
+    ("owner_b", "own_output_read_receipt_ref"),
+    ("owner_a", "foreign_fact_target_id"),
+    ("owner_b", "foreign_context_target_id"),
+    ("owner_a", "foreign_output_target_id"),
+    ("owner_b", "foreign_fact_owner_ref"),
+    ("owner_a", "foreign_context_owner_ref"),
+    ("owner_b", "foreign_output_owner_ref"),
+])
+def test_day5_missing_owned_positive_or_cross_owner_denial_target_fails(owner, field):
+    args = evidence()
+    del args[3]["owner_access"][owner][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "bad_value"), [
+    ("owner_ref", "synthetic-B"),
+    ("fact_id", "unselected-same-category"),
+    ("original_version", 2),
+    ("original_version", True),
+    ("corrected_version", 3),
+    ("corrected_version", False),
+    ("run_id", "run-v1"),
+    ("provider_request_id", "model-request-v2"),
+    ("provider_started_at", "2026-11-18T03:41:00Z"),
+    ("corrected_at", "2026-11-18T03:36:00Z"),
+    ("provider_finished_at", "2026-11-18T03:39:00Z"),
+    ("commit_attempted_at", "2026-11-18T03:39:00Z"),
+    ("rejection_verified_at", "2026-11-18T04:30:00Z"),
+    ("commit_error_code", "timeout"),
+    ("new_decisions_committed", 1),
+    ("new_tool_invocations", 1),
+    ("new_outbox_effects", 1),
+    ("provider_receipt_ref", ""),
+    ("memory_update_receipt_ref", ""),
+    ("decision_commit_denial_ref", ""),
+    ("decision_store_readback_ref", ""),
+])
+def test_day5_rejects_unbound_or_unproven_inflight_stale_decision_commit(field, bad_value):
+    args = evidence()
+    args[3]["inflight_correction"][field] = bad_value
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "owner_ref", "fact_id", "original_version", "corrected_version",
+    "run_id", "provider_request_id", "provider_started_at", "corrected_at",
+    "provider_finished_at", "commit_attempted_at", "rejection_verified_at",
+    "commit_error_code", "new_decisions_committed", "new_tool_invocations",
+    "new_outbox_effects", "provider_receipt_ref", "memory_update_receipt_ref",
+    "decision_commit_denial_ref", "decision_store_readback_ref",
+])
+def test_day5_missing_inflight_mutation_or_commit_receipt_fails(field):
+    args = evidence()
+    del args[3]["inflight_correction"][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+def test_day5_must_observe_a_real_inflight_update_and_rejection():
+    args = evidence()
+    del args[3]["inflight_correction"]
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "bad_value"), [
+    ("replayed_at", "2026-11-18T03:39:00Z"),
+    ("replayed_at", "2026-11-18T04:30:00Z"),
+    ("new_decisions_committed", 1),
+    ("decision_receipt_ref", ""),
+])
+def test_day5_historical_v1_replay_must_follow_correction_without_new_decision(field, bad_value):
+    args = evidence()
+    args[3]["historical_replay"][field] = bad_value
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+def test_day5_valid_reciprocal_targets_and_stale_decision_receipt_stay_structural_only():
+    args = evidence()
+    assert args[3]["owner_access"]["owner_a"]["foreign_fact_target_id"] == "fact-B"
+    assert args[3]["owner_access"]["owner_b"]["foreign_fact_target_id"] == "fact-A"
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_day5_owner_a_context_cannot_claim_isolation_from_an_empty_memory_arm():
+    args = evidence()
+    owner_a = args[3]["owner_access"]["owner_a"]
+    owner_a["own_context_id"] = "run-none"
+    owner_a["own_output_sha256"] = D3
+    # Preserve a correctly reciprocal B denial to isolate the forbidden
+    # empty-memory positive A context, rather than testing the old target gate.
+    args[3]["owner_access"]["owner_b"]["foreign_context_target_id"] = "run-none"
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize("bad_pins", [
+    [],
+    [{"fact_id": "fact-A", "version": 2}],
+    [{"fact_id": "fact-B", "version": 1}],
+    [{"fact_id": "fact-A", "version": True}],
+    [{"fact_id": "fact-A", "version": 1}, {"fact_id": "fact-B", "version": 1}],
+    [{"fact_id": "fact-A", "version": 1, "owner_ref": "synthetic-B"}],
+    None,
+])
+def test_day5_inflight_provider_must_have_exact_old_selected_memory_in_its_context(bad_pins):
+    args = evidence()
+    args[3]["inflight_correction"]["worker_selected_memory"] = bad_pins
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", ["worker_selected_memory", "worker_context_receipt_ref"])
+def test_day5_missing_old_worker_memory_pin_witness_denies_inflight_acceptance(field):
+    args = evidence()
+    del args[3]["inflight_correction"][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+def test_day5_inflight_old_worker_context_requires_private_receipt():
+    args = evidence()
+    args[3]["inflight_correction"]["worker_context_receipt_ref"] = ""
+    with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)

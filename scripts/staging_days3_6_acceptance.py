@@ -239,6 +239,7 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
     need(isinstance(arms, list) and len(arms) == 3, "day5 needs none/v1/v2 model calls")
     keys, provider_ids, run_ids = set(), set(), set()
     facts, outputs = {}, {}
+    arm_times, preview_digests = {}, {}
     fixed_experiment_inputs = None
     for item in arms:
         arm = obj(item, "day5.arm")
@@ -282,6 +283,21 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
                 text(row["fact_id"], f"day5.arm.{stage}.fact_id")
             need(selected == expected_pins,
                  f"day5.arm.{stage} does not match the explicit selected fact/version")
+        # Each distinct selected memory is a distinct reviewed snapshot.
+        # The admitted worker run must use the exact digest shown in the
+        # current validated preview, not a previously approved selection.
+        preview_digest = sha(arm.get("preview_digest_sha256"), "day5.arm.preview_digest_sha256")
+        admitted_digest = sha(arm.get("admitted_preview_digest_sha256"),
+                              "day5.arm.admitted_preview_digest_sha256")
+        need(preview_digest == admitted_digest,
+             "day5 arm admitted a stale or differently selected memory preview")
+        preview_digests[name] = preview_digest
+        provider_started = when(arm.get("provider_started_at"), "day5.arm.provider_started_at")
+        provider_finished = when(arm.get("provider_finished_at"), "day5.arm.provider_finished_at")
+        need(when(day.get("started_at"), "day5.started_at") <= provider_started
+             < provider_finished <= completed,
+             "day5 provider model call does not fall within the operated day")
+        arm_times[name] = (provider_started, provider_finished)
         referenced(arm.get("preview_receipt_ref"), "day5.arm.preview_receipt_ref")
         referenced(arm.get("worker_context_receipt_ref"), "day5.arm.worker_context_receipt_ref")
         p = referenced(arm.get("provider_request_id"), "day5.provider_request_id")
@@ -293,6 +309,8 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
         facts[name] = (arm.get("fact_id"), arm.get("fact_version"))
         outputs[name] = (arm["output_sha256"], text(arm.get("observed_claim"), "day5.observed_claim"), r)
     need(keys == {"none", "v1", "v2"}, "day5 is missing an arm")
+    need(len(set(preview_digests.values())) == 3,
+         "day5 none/v1/v2 selected-memory previews must have distinct canonical digests")
     common = arms[0]
     for arm in arms[1:]:
         need(arm["prompt_sha256"] == common["prompt_sha256"]
@@ -324,27 +342,65 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
     owner_access = obj(day.get("owner_access"), "day5.owner_access")
     need(set(owner_access) == {"owner_a", "owner_b"},
          "day5.owner_access must contain both owner probes")
-    owned_fact_ids = set()
+    owner_positive: dict[str, dict[str, str]] = {}
+    # A negative 404 could refer to a nonexistent record or the caller's
+    # own record. Bind every denied target to a real resource positively
+    # retrievable by the reciprocal frozen owner.
     for owner_label, frozen_owner_key in (("owner_a", "owner_a_ref"), ("owner_b", "owner_b_ref")):
         owner_proof = obj(owner_access[owner_label], f"day5.owner_access.{owner_label}")
         need(owner_proof.get("owner_ref") == release[frozen_owner_key],
              f"day5.owner_access.{owner_label} does not match the frozen managed owner")
-        owned_fact = text(owner_proof.get("own_fact_id"),
-                          f"day5.owner_access.{owner_label}.own_fact_id")
-        need(owned_fact not in owned_fact_ids,
-             "day5.owner_access requires two distinct owner-scoped facts")
+        owned = {
+            resource: text(owner_proof.get(f"own_{resource}_id"),
+                           f"day5.owner_access.{owner_label}.own_{resource}_id")
+            for resource in ("fact", "context", "output")
+        }
+        for other in owner_positive.values():
+            need(all(other[resource] != owned[resource]
+                     for resource in ("fact", "context", "output")),
+                 "day5.owner_access must have distinct owned fact/context/output identities")
         if owner_label == "owner_a":
-            need(owned_fact == fact_id, "day5.owner_access.owner_a fact does not match the selected experiment")
-        owned_fact_ids.add(owned_fact)
-        need(owner_proof.get("own_fact_http_status") == 200,
-             f"day5.owner_access.{owner_label} lacks a positive owner read")
+            need(owned["fact"] == fact_id,
+                 "day5.owner_access.owner_a fact does not match the selected experiment")
+            # An empty-selection context cannot stand in for evidence of
+            # owner A's privately *selected* v1/v2 memory reaching the model.
+            owned_run_digests = {outputs[name][2]: outputs[name][0]
+                                 for name in ("v1", "v2")}
+            need(owned["context"] in owned_run_digests,
+                 "day5.owner_access.owner_a context is not one of the selected runs")
+            need(owner_proof.get("own_output_sha256") == owned_run_digests[owned["context"]],
+                 "day5.owner_access.owner_a output digest is unrelated to its run")
+        else:
+            need(owned["context"] not in run_ids,
+                 "day5.owner_access.owner_b context must come from a separate B-owned run")
+            sha(owner_proof.get("own_output_sha256"),
+                "day5.owner_access.owner_b.own_output_sha256")
         for resource in ("fact", "context", "output"):
+            need(owner_proof.get(f"own_{resource}_http_status") == 200,
+                 f"day5.owner_access.{owner_label} lacks positive {resource} read")
+            receipt_key = ("own_read_receipt_ref" if resource == "fact"
+                           else f"own_{resource}_read_receipt_ref")
+            referenced(owner_proof.get(receipt_key),
+                       f"day5.owner_access.{owner_label}.{receipt_key}")
             need(owner_proof.get(f"foreign_{resource}_http_status") in {403, 404},
                  f"day5.owner_access.{owner_label} did not deny foreign {resource}")
             referenced(owner_proof.get(f"foreign_{resource}_denial_ref"),
                        f"day5.owner_access.{owner_label}.foreign_{resource}_denial_ref")
-        referenced(owner_proof.get("own_read_receipt_ref"),
-                   f"day5.owner_access.{owner_label}.own_read_receipt_ref")
+            referenced(owner_proof.get(f"foreign_{resource}_target_id"),
+                       f"day5.owner_access.{owner_label}.foreign_{resource}_target_id")
+            referenced(owner_proof.get(f"foreign_{resource}_owner_ref"),
+                       f"day5.owner_access.{owner_label}.foreign_{resource}_owner_ref")
+        owner_positive[owner_label] = owned
+
+    for caller_label, target_label, target_key in (
+        ("owner_a", "owner_b", "owner_b_ref"),
+        ("owner_b", "owner_a", "owner_a_ref"),
+    ):
+        proof = owner_access[caller_label]
+        for resource in ("fact", "context", "output"):
+            need(proof[f"foreign_{resource}_target_id"] == owner_positive[target_label][resource]
+                 and proof[f"foreign_{resource}_owner_ref"] == release[target_key],
+                 f"day5.owner_access.{caller_label} denied the wrong owner's {resource}")
     exclusions = day.get("exclusions")
     need(isinstance(exclusions, list) and len(exclusions) == len(NEGATIVES),
          "day5 missing denial proofs")
@@ -358,7 +414,68 @@ def check_day5(release: dict, data: object, frozen: datetime) -> datetime:
              f"day5 {kind} did not return an explicit denial")
         count(e.get("model_calls_after_denial"), "day5.model_calls_after_denial", 0)
         referenced(e.get("evidence_ref"), "day5.exclusion.evidence_ref")
+    # The correction must occur *during* a distinct in-flight planner
+    # invocation, with the new decision commit rejected after model return.
+    # Merely denying a stale pin at initial admission is not this probe.
+    inflight = obj(day.get("inflight_correction"), "day5.inflight_correction")
+    need(inflight.get("owner_ref") == release["owner_a_ref"]
+         and inflight.get("fact_id") == fact_id
+         and type(inflight.get("original_version")) is int
+         and inflight["original_version"] == 1
+         and type(inflight.get("corrected_version")) is int
+         and inflight["corrected_version"] == 2,
+         "day5.inflight_correction must update the selected A fact from v1 to v2")
+    # The stale version must actually have entered this *in-flight*
+    # provider's worker context, rather than being mentioned only by an
+    # after-the-fact mutation record unrelated to the model invocation.
+    pinned = inflight.get("worker_selected_memory")
+    need(isinstance(pinned, list) and len(pinned) == 1,
+         "day5.inflight_correction requires exactly one selected old worker fact pin")
+    worker_pin = obj(pinned[0], "day5.inflight_correction.worker_selected_memory.pin")
+    need(set(worker_pin) == {"fact_id", "version"}
+         and worker_pin.get("fact_id") == fact_id
+         and type(worker_pin.get("version")) is int
+         and worker_pin["version"] == 1,
+         "day5.inflight_correction worker context did not carry the exact old v1 fact pin")
+    referenced(inflight.get("worker_context_receipt_ref"),
+               "day5.inflight_correction.worker_context_receipt_ref")
+    pending_run = referenced(inflight.get("run_id"), "day5.inflight_correction.run_id")
+    pending_provider = referenced(inflight.get("provider_request_id"),
+                                  "day5.inflight_correction.provider_request_id")
+    need(pending_run not in run_ids and pending_provider not in provider_ids,
+         "day5.inflight_correction must use a distinct active planner invocation")
+    inflight_start = when(inflight.get("provider_started_at"),
+                          "day5.inflight_correction.provider_started_at")
+    correction = when(inflight.get("corrected_at"), "day5.inflight_correction.corrected_at")
+    inflight_finish = when(inflight.get("provider_finished_at"),
+                           "day5.inflight_correction.provider_finished_at")
+    attempted = when(inflight.get("commit_attempted_at"),
+                     "day5.inflight_correction.commit_attempted_at")
+    denied = when(inflight.get("rejection_verified_at"),
+                  "day5.inflight_correction.rejection_verified_at")
+    need(
+        arm_times["none"][1] <= arm_times["v1"][0]
+        and arm_times["v1"][1] <= inflight_start
+        and inflight_start < correction < inflight_finish <= attempted <= denied
+        and denied < arm_times["v2"][0]
+        and arm_times["v2"][1] <= completed,
+        "day5.inflight_correction must be between v1 and v2 with a mid-model correction and rejected fresh commit",
+    )
+    need(inflight.get("commit_error_code") == "memory_pins_changed",
+         "day5.inflight_correction did not reject a stale selected-memory decision")
+    for effect in ("new_decisions_committed", "new_tool_invocations", "new_outbox_effects"):
+        count(inflight.get(effect), "day5.inflight_correction." + effect, 0)
+    for receipt in ("provider_receipt_ref", "memory_update_receipt_ref",
+                    "decision_commit_denial_ref", "decision_store_readback_ref"):
+        referenced(inflight.get(receipt), "day5.inflight_correction." + receipt)
+
     replay = obj(day.get("historical_replay"), "day5.historical_replay")
+    replayed = when(replay.get("replayed_at"), "day5.historical_replay.replayed_at")
+    need(arm_times["v2"][1] <= replayed <= completed and correction < replayed,
+         "day5 historical v1 replay did not occur after the v2 correction")
+    count(replay.get("new_decisions_committed"),
+          "day5.historical_replay.new_decisions_committed", 0)
+    referenced(replay.get("decision_receipt_ref"), "day5.historical_replay.decision_receipt_ref")
     need(replay.get("agent_run_id") == outputs["v1"][2]
          and replay.get("output_sha256") == outputs["v1"][0],
          "day5 historical v1 replay changed persisted run/output")
