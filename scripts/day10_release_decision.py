@@ -454,6 +454,21 @@ def first_run_matches_holdout(
             or holdout.get("manifest_sha256") != manifest_sha
             or run_started_at is None):
         return False
+    # The Day 9 evaluator embeds the original complete Day 10 holdout in
+    # its write-once first-run report before exporting the separate file.
+    # Matching scorecards alone cannot prove the D custody envelope wasn't
+    # replaced after the holdout run.
+    if (not isinstance(first_run.get("day10_holdout"), dict)
+            or first_run["day10_holdout"] != holdout):
+        return False
+    custody = holdout.get("custody_receipt")
+    custody_verified_at = (
+        timestamp(custody.get("verified_at")) if isinstance(custody, dict) else None
+    )
+    # Custody cannot be established retrospectively at or after the frozen
+    # start, even if the two editable JSON copies are changed consistently.
+    if custody_verified_at is None or custody_verified_at >= run_started_at:
+        return False
     scores = first_run.get("scores")
     if not isinstance(scores, dict) or type(scores.get("total")) is not int or scores["total"] != 40:
         return False
