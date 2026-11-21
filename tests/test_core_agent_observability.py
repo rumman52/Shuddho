@@ -1034,6 +1034,58 @@ def test_day8_rerun_cost_changes_least_cost_profile_without_changing_first_run_q
     assert row["measured_cost_savings_microusd"] == -495
 
 
+
+def test_day8_unsafe_candidate_rerun_cannot_make_cheapest_profile_eligible():
+    """All observed attempts, not only the 40 first runs, must pass safety."""
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    unsafe = _day8_synthetic_rerun(candidate, cost=0)
+    unsafe["safety_passed"] = False
+    candidate["reruns"].append(unsafe)
+    report = compare_day8_development(baseline, candidate, suite)
+
+    bounded = report["profile_summaries"]["bounded_context_compact_observations"]
+    assert bounded["human_accepted"] == 40  # fixed first-run denominator
+    assert bounded["rerun_attempts"] == 1
+    assert bounded["unsafe_attempts"] == 1
+    assert bounded["safety_gate_passed"] is False
+    assert bounded["quality_gate_passed"] is False
+    assert report["selected_least_cost_qualified_profile"] == "baseline"
+    assert report["candidate_exclusion_reason"] == "failed_quality_or_safety_gate"
+    assert report["measured_cost_savings_microusd"] is None
+
+
+def test_day8_safe_candidate_may_be_selected_when_baseline_has_unsafe_rerun():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    unsafe = _day8_synthetic_rerun(baseline, cost=0)
+    unsafe["safety_passed"] = False
+    baseline["reruns"].append(unsafe)
+    report = compare_day8_development(baseline, candidate, suite)
+
+    assert report["profile_summaries"]["baseline"]["unsafe_attempts"] == 1
+    assert report["profile_summaries"]["baseline"]["safety_gate_passed"] is False
+    assert report["profile_summaries"]["bounded_context_compact_observations"]["safety_gate_passed"] is True
+    assert report["selected_least_cost_qualified_profile"] == "bounded_context_compact_observations"
+    # A failed baseline safety gate must never be described as qualified savings.
+    assert report["measured_cost_savings_microusd"] is None
+
+
+def test_day8_both_profiles_with_unsafe_reruns_cannot_freeze():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    for profile in (baseline, candidate):
+        unsafe = _day8_synthetic_rerun(profile, cost=0)
+        unsafe["safety_passed"] = False
+        profile["reruns"].append(unsafe)
+    report = compare_day8_development(baseline, candidate, suite)
+
+    assert report["status"] == "BLOCKED"
+    assert report["freeze"] is None
+    assert report["selected_least_cost_qualified_profile"] is None
+    assert all(
+        report["profile_summaries"][name]["safety_gate_passed"] is False
+        for name in ("baseline", "bounded_context_compact_observations")
+    )
+    assert any("safety" in reason for reason in report["blockers"])
+
 def test_day8_missing_rerun_cost_or_attempt_provenance_blocks_freeze():
     suite, baseline, candidate = _day8_complete_measurement_fixture()
     candidate["reruns"].append(_day8_synthetic_rerun(candidate))
