@@ -736,3 +736,31 @@ def test_private_founder_c_authorization_file_rejects_duplicate_json_fields(tmp_
     os.chmod(source, 0o600)
     with pytest.raises(AuthorizationEvidenceFailure, match='duplicate'):
         read_private_authorization(source)
+
+
+def test_private_approval_receipt_rejects_path_swapped_to_symlink_during_open(tmp_path, monkeypatch):
+    """Protect against a credential/approval file swap after initial path checks."""
+    import json
+    import os
+
+    from scripts.staging_day2_authorization import (
+        AuthorizationEvidenceFailure, read_private_authorization,
+    )
+
+    current = tmp_path / 'approved-decision.json'
+    foreign = tmp_path / 'untrusted-content.json'
+    current.write_text(json.dumps(authorization_receipt()))
+    foreign.write_text(json.dumps(authorization_receipt()))
+    os.chmod(current, 0o600)
+    os.chmod(foreign, 0o600)
+    actual_open = os.open
+
+    def swap_before_open(path, flags, *args, **kwargs):
+        if str(path) == str(current):
+            current.unlink()
+            current.symlink_to(foreign)
+        return actual_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'open', swap_before_open)
+    with pytest.raises(AuthorizationEvidenceFailure, match='authorization'):
+        read_private_authorization(current)
