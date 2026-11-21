@@ -580,7 +580,9 @@ def _day8_policy_valid(value: object) -> bool:
     )
 
 
-def _day8_cases(report: dict, expected: dict, label: str) -> tuple[dict, dict, bool]:
+def _day8_cases(
+    report: dict, expected: dict, expected_lineage: dict, label: str,
+) -> tuple[dict, dict, bool, bool]:
     schema_version = report.get("schema_version") if isinstance(report, dict) else None
     if not isinstance(report, dict) or schema_version not in {1, 2} or report.get("split") != "development":
         raise ValueError(f"{label}: require development-only schema v1 or v2")
@@ -604,7 +606,25 @@ def _day8_cases(report: dict, expected: dict, label: str) -> tuple[dict, dict, b
     results = report.get("results")
     if not isinstance(results, list) or len(results) != 40:
         raise ValueError(f"{label}: exactly 40 first-run development task results required")
+    def binding_complete(row: dict, case_id: str) -> bool:
+        # Compare operator-supplied attempt metadata to the *actual immutable
+        # development suite* loaded and hash-verified by pilot_workflow_eval.
+        # This only checks consistency. An independent operator must also
+        # attest that the provider request used these exact input/source bytes.
+        complete = True
+        for field, name in (
+            ("case_input_sha256", "case input"),
+            ("source_snapshot_sha256", "source snapshot"),
+        ):
+            value = row.get(field)
+            if value is None:
+                complete = False  # Old reports remain parseable, never eligible.
+            elif not _day8_digest(value) or value != expected_lineage[case_id][field]:
+                raise ValueError(f"{label}: frozen {name} digest mismatch")
+        return complete
+
     by_id = {}
+    case_source_bindings_complete = True
     seen_accepted_artifact_refs = set()
     seen_accepted_review_refs = set()
     seen_run_ids = set()
@@ -617,6 +637,8 @@ def _day8_cases(report: dict, expected: dict, label: str) -> tuple[dict, dict, b
             raise ValueError(f"{label}: unknown or duplicated development task ID")
         if (row.get("workflow"), row.get("language")) != expected[case_id]:
             raise ValueError(f"{label}: task workflow/language differs from frozen corpus")
+        if not binding_complete(row, case_id):
+            case_source_bindings_complete = False
         if schema_version == 2 and (
             row.get("execution_kind") != "first_run"
             or type(row.get("attempt_number")) is not int
@@ -717,6 +739,8 @@ def _day8_cases(report: dict, expected: dict, label: str) -> tuple[dict, dict, b
                 raise ValueError(f"{label}: rerun references an unknown development task")
             if (row.get("workflow"), row.get("language")) != expected[case_id]:
                 raise ValueError(f"{label}: rerun workflow/language differs from frozen corpus")
+            if not binding_complete(row, case_id):
+                case_source_bindings_complete = False
             attempt_number = row.get("attempt_number")
             if row.get("execution_kind") != "rerun" or type(attempt_number) is not int or attempt_number < 2:
                 raise ValueError(f"{label}: reruns must have an explicit attempt number of at least two")
@@ -793,7 +817,7 @@ def _day8_cases(report: dict, expected: dict, label: str) -> tuple[dict, dict, b
         for case_id, attempts in attempts_by_case.items():
             if sorted(attempts) != list(range(2, max(attempts) + 1)):
                 raise ValueError(f"{label}: rerun attempt numbers must be consecutive from two")
-    return by_id, reruns_by_id, attempt_provenance_complete
+    return by_id, reruns_by_id, attempt_provenance_complete, case_source_bindings_complete
 
 def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> dict:
     """Compare two externally evidenced, matched 40-task development results.
@@ -802,12 +826,26 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     this function checks their completeness and consistency but cannot attest
     to remote receipt authenticity or replace independent human review.
     """
+    development = [item for item in suite["cases"] if item["split"] == "development"]
+    # Do not collapse duplicated IDs in a dict before checking the 40-case
+    # denominator. Repeated corpus rows are not independent test cases.
+    if len(development) != 40 or len({item["id"] for item in development}) != 40:
+        raise ValueError("expected exactly 40 distinct frozen development cases")
     expected = {
         item["id"]: (item["workflow"], item["language"])
-        for item in suite["cases"] if item["split"] == "development"
+        for item in development
     }
-    if len(expected) != 40:
-        raise ValueError("expected exactly 40 frozen development cases")
+    expected_lineage = {}
+    for item in development:
+        source = item.get("_source")
+        if not isinstance(source, dict) or not _day8_digest(source.get("sha256")):
+            raise ValueError("frozen development suite lacks a verified source snapshot digest")
+        expected_lineage[item["id"]] = {
+            "case_input_sha256": _sha256_json({
+                key: value for key, value in item.items() if key != "_source"
+            }),
+            "source_snapshot_sha256": source["sha256"],
+        }
     identity = {
         "suite_id": suite["manifest"]["suite_id"],
         "source_revision": suite["manifest"]["source_revision"],
@@ -816,9 +854,11 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     for label, report in (("baseline", baseline), ("bounded_context_compact_observations", candidate)):
         if any(report.get(key) != value for key, value in identity.items()):
             raise ValueError(f"{label}: development corpus identity mismatch")
-    base_cases, base_reruns, base_attempt_provenance = _day8_cases(baseline, expected, "baseline")
-    candidate_cases, candidate_reruns, candidate_attempt_provenance = _day8_cases(
-        candidate, expected, "bounded_context_compact_observations",
+    base_cases, base_reruns, base_attempt_provenance, base_lineage_complete = _day8_cases(
+        baseline, expected, expected_lineage, "baseline",
+    )
+    candidate_cases, candidate_reruns, candidate_attempt_provenance, candidate_lineage_complete = _day8_cases(
+        candidate, expected, expected_lineage, "bounded_context_compact_observations",
     )
 
     # First-run results are the fixed 40-case quality denominator. Reruns are
@@ -931,10 +971,10 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         }
 
     summaries = {}
-    for label, report, items, reruns, provenance_complete in (
-        ("baseline", baseline, base_cases, base_reruns, base_attempt_provenance),
+    for label, report, items, reruns, provenance_complete, lineage_complete in (
+        ("baseline", baseline, base_cases, base_reruns, base_attempt_provenance, base_lineage_complete),
         ("bounded_context_compact_observations", candidate, candidate_cases,
-         candidate_reruns, candidate_attempt_provenance),
+         candidate_reruns, candidate_attempt_provenance, candidate_lineage_complete),
     ):
         records = list(items.values())
         rerun_rows = [row for rows in reruns.values() for row in rows]
@@ -987,6 +1027,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "cases": 40,
             "rerun_attempts": len(rerun_rows),
             "attempt_provenance_complete": provenance_complete,
+            "case_source_bindings_complete": lineage_complete,
             "human_accepted": len(accepted),
             "by_cell": by_cell,
             "cell_metrics": cell_metrics,
@@ -1067,6 +1108,8 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         blockers.append("missing or invalid owner-approved latency, cost ceiling, rubric and pricing decision policy")
     if not base_attempt_provenance or not candidate_attempt_provenance:
         blockers.append("missing explicit first-run and rerun attempt provenance in both profiles")
+    if not base_lineage_complete or not candidate_lineage_complete:
+        blockers.append("missing frozen case input/source snapshot binding for first runs or reruns")
     if not a["metrics_complete"] or not b["metrics_complete"]:
         blockers.append(
             "missing run/output/usage receipts, measured input/output tokens, end-to-end latency, "
@@ -1114,6 +1157,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         and a["latency_gate_passed"] and b["latency_gate_passed"]
         and a["cost_gate_passed"] and b["cost_gate_passed"]
         and a["metrics_complete"] and b["metrics_complete"]
+        and base_lineage_complete and candidate_lineage_complete
         and retained_quality
     )
     cost_delta = (
@@ -1144,6 +1188,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             "source_file_sha256": {path: _sha256_file(root / path) for path in files},
             "baseline_evidence_sha256": a["evidence_sha256"],
             "candidate_evidence_sha256": b["evidence_sha256"],
+            "development_case_source_lineage_sha256": _sha256_json(expected_lineage),
             **identity,
             "promotion_authorized": False,
             "qualification_note": "Operator evidence must be independently checked; this freeze does not activate a deployment.",
@@ -1154,6 +1199,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
     per_task = []
     task_fields = (
         *DAY8_CASE_FIELDS, "run_id", "provider_usage_case_receipt_sha256",
+        "case_input_sha256", "source_snapshot_sha256",
         "output_sha256", "retry_breakdown", "failure_breakdown",
         "cost_components_microusd", "passed", "human_accepted",
         "safety_passed", "verified_artifact_refs", "accepted_outcome_ref",
