@@ -26,6 +26,66 @@ nonempty private-PDF task archive and **must never** satisfy
 `staging_backup_restore.py verify`, D02.T09 or D02.G04. No staging cloud
 operation is authorized by these source instructions.
 
+## Phase 0 — preserve and verify the **original** 0070 source before seeding
+
+After fresh Founder/C authorization for the hosts, private backup custody, cost,
+isolated destinations and rollback owner, obtain the protected source database
+and S3 credentials through the approved operator environment. Do this **before
+creating synthetic Auth accounts, uploading documents or starting tasks**.
+Use a new private mode-0700 parent, read-only source snapshot and frozen writers
+(or an approved cross-system snapshot) to prevent drift:
+
+```bash
+# Original source: stage 0070, *before* synthetic activity.
+uv run --extra coworker python -m scripts.staging_postgres_backup \
+  --directory /secure/private-backups/original-db
+SHUDDHO_STAGING_ALLOW_OBJECT_ARCHIVE=true \
+uv run --extra coworker python -m scripts.staging_object_backup archive \
+  --directory /secure/private-backups/original-empty-objects \
+  --allow-empty-baseline
+
+# EARLY: directly verify the archive against still-unmodified source 0070
+# before migrations, Auth provisioning or any synthetic API/object calls.
+SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE=true \
+uv run --extra coworker python scripts/staging_backup_restore.py attest-original \
+  --original-postgres-verification /secure/private-backups/original-db/verification.json \
+  --original-postgres-archive /secure/private-backups/original-db/coworker.dump \
+  --original-object-archive-directory /secure/private-backups/original-empty-objects \
+  --output /secure/private-backups/original-attestation.json
+```
+
+The original PostgreSQL helper generates
+`original-db/verification.json` and `original-db/coworker.dump`.
+The object helper generates `original-empty-objects/manifest.json`
+with `baseline_archived`, exactly zero objects and zero bytes. This
+zero-object source requirement deliberately blocks `prepare` if the private
+bucket already has documents; recover the true pre-seed baseline through an
+independently approved prior snapshot, not by deleting or skipping objects.
+
+The early `attest-original` command hashes the PostgreSQL dump and
+validates all 84+ table counts, row digests and structural schema SHA-256,
+migration ledger `0070`, checked-in schema graph to `0072_merge_0071_heads`
+and explicit zero-object archive. It reads both **current source**
+fingerprints and full PostgreSQL inventory under a read-only repeatable-read
+transaction, lists the current private bucket, and refuses any drift before
+writing an exclusive mode-0600 `original-attestation.json` receipt.
+No owner API or synthetic operation is performed at this stage.
+
+After the authorized 0070→0072 migration and real task activity, a later
+`prepare` **rehashes all three original archives and validates the early
+attestation**, requiring the same source database/bucket identities. It
+does **not** compare the already-migrated live rows to the old 0070
+snapshot. Missing/mismatched original evidence blocks `prepare` before
+its first owner API call, upload, object PUT or task creation. The protected
+prepared receipt includes a digest-only `preseed_baseline` summary and
+early attestation timestamp, never private object keys, rows, credentials
+or source bytes. Independent D must still corroborate the actual source
+snapshot timeline and hosted operator events.
+
+The pre-seeding archive preserves the **original** state, not a post-task
+backup. It does not qualify an owner PDF restore, provider inference, worker
+replacement or hosted D02.T09/G04 independently.
+
 ## Phase 1 — prepare synthetic restore evidence
 
 Run:
@@ -33,7 +93,11 @@ Run:
 ```bash
 uv run --extra coworker python scripts/staging_backup_restore.py prepare \
   --state /secure/path/backup-restore-state.json \
-  --rollout /secure/release/cohort-rollout.json
+  --rollout /secure/release/cohort-rollout.json \
+  --original-postgres-verification /secure/private-backups/original-db/verification.json \
+  --original-postgres-archive /secure/private-backups/original-db/coworker.dump \
+  --original-object-archive-directory /secure/private-backups/original-empty-objects \
+  --original-baseline-attestation /secure/private-backups/original-attestation.json
 ```
 
 The prepare step:
@@ -47,9 +111,11 @@ The prepare step:
 
 No customer content is used.
 
-## Phase 2 — take the real backups
+## Phase 2 — take a **separate post-synthetic** task-state backup
 
-Use the actual managed-service backup mechanisms selected for Shuddho:
+Only after the original-state baseline has been independently captured, the
+prepared synthetic task-state now exists and requires its **own later** full
+archive. Use the actual managed-service backup mechanisms selected for Shuddho:
 
 1. take a PostgreSQL backup/snapshot. For Supabase staging, use the
    [private schema archive and isolated database verification](../infra/README.md#back-up-and-verify-the-staging-database);
@@ -79,9 +145,22 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --postgres-archive /secure/private-backups/source-db/coworker.dump \
   --object-archive-directory /secure/private-backups/staging-source-objects \
   --object-restore-receipt /secure/private-backups/object-restore-receipt.json \
+  --original-postgres-verification /secure/private-backups/original-db/verification.json \
+  --original-postgres-archive /secure/private-backups/original-db/coworker.dump \
+  --original-object-archive-directory /secure/private-backups/original-empty-objects \
+  --original-baseline-attestation /secure/private-backups/original-attestation.json \
   --base-evidence /secure/path/staging-evidence.json \
   --output /secure/path/staging-evidence.restore.json
 ```
+
+The verifier independently rehashes the original three pre-seeding paths,
+revalidates the protected early attestation with its timestamp, requires that
+their nonsecret summary exactly equals the protected prepare state and that
+both original source resource fingerprints match the later source identity. It then verifies the **different, nonempty task-state**
+backup and isolated restoration. The final `archive_integrity.preseed_baseline`
+is strictly baseline-only; the main `archive_integrity` still requires a
+verified synthetic probe and private object SHA-256. Missing legacy original
+baseline receipts must not be retroactively invented or marked passed.
 
 The verifier now **rejects free-text-only evidence**: nonempty backup/restore references remain trace IDs, but four mandatory protected file paths supply the real verified PostgreSQL dump and readback, entire private-object byte archive and isolated object restore receipt. The PostgreSQL source archive must attest the same database fingerprint captured in the prepare state; its dump SHA-256 and 84+ per-table row counts/digests must be valid. The verifier runs a new read-only, repeatable-read inventory on the isolated PostgreSQL target and requires exact schema, revision, table and row-digest equality. It rehashes every archived object, matches the complete isolated object restore receipt, and proves the selected probe object occurs in that full manifest. The source and restored database/object resource fingerprints must differ.
 

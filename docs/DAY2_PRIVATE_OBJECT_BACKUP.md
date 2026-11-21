@@ -34,6 +34,22 @@ opt-in**. Its archive and restore statuses are `baseline_archived` and
 of the initial zero-object state, **not** proof of private PDF recovery;
 it cannot satisfy the Day 2 `archive_integrity` gate, D02.T09 or D02.G04.
 
+**Original-state sequencing:** preserving the currently empty source bucket
+is now a strict precursor to any Day 2 synthetic upload, worker/API migration
+or account reconciliation. First capture verified source PostgreSQL 0070 with
+`scripts.staging_postgres_backup`, then run
+`scripts.staging_object_backup archive --allow-empty-baseline`.
+While the source is still unchanged, run
+`scripts/staging_backup_restore.py attest-original` with both original
+PostgreSQL file paths and this zero-object archive, writing a private
+`original-attestation.json` receipt. Only *after* that early source-state
+attestation and separately approved migration may
+`staging_backup_restore.py prepare` create its synthetic TXT/task.
+Both `prepare` and later isolated `verify` require the original
+attestation and rehash all three original backup artifacts. See
+[controlled restore ordering](CONTROLLED_STAGING_BACKUP_RESTORE.md).
+This does not turn an empty-bucket receipt into private PDF recovery proof.
+
 ## Phase 1 — archive the approved source bucket (read only)
 
 Use the approved S3 server-side credentials from a **secure environment**.

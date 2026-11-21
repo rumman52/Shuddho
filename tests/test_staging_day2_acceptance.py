@@ -123,6 +123,20 @@ def proofs():
         'source_storage_fingerprint': 'a' * 64,
         'target_storage_fingerprint': 'b' * 64,
         'probe_object_verified': True,
+        'preseed_baseline': {
+            'status': 'preseed_verified',
+            'attested_at': '2026-11-12T10:00:00+00:00',
+            'source_schema_revision': '0070',
+            'postgres_schema_sha256': 'd' * 64,
+            'postgres_archive_sha256': 'e' * 64,
+            'object_manifest_sha256': 'f' * 64,
+            'source_database_fingerprint': '7' * 64,
+            'source_storage_fingerprint': 'a' * 64,
+            'postgres_table_count': 84,
+            'postgres_row_count': 1,
+            'object_count': 0,
+            'object_total_bytes': 0,
+        },
     }
     restore['backup_restore'] = {'status': 'passed', 'release_id': 'day2-001', 'source_revision': SHA,
                                  'rollout_manifest_sha256': '3' * 64,
@@ -477,4 +491,30 @@ def test_day2_gate_requires_structural_schema_digest(invalid_digest):
     else:
         proof_set[3]["archive_integrity"]["postgres_schema_sha256"] = invalid_digest
     with pytest.raises(gate.Day2AcceptanceFailure, match="postgres_schema_sha256"):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize("field,invalid", [
+    ("status", "verified"),
+    ("source_database_fingerprint", "8" * 64),
+    ("source_storage_fingerprint", "b" * 64),
+    ("object_count", 1),
+    ("object_total_bytes", 1),
+    ("source_schema_revision", "0072_merge_0071_heads"),
+    ("postgres_archive_sha256", ""),
+    ("postgres_table_count", 83),
+    ("attested_at", "2099-01-01T00:00:00+00:00"),
+    ("attested_at", "unqualified"),
+])
+def test_day2_original_state_baseline_is_mandatory_and_separate_from_task_restore(field, invalid):
+    proof_set = list(proofs())
+    proof_set[3]["archive_integrity"]["preseed_baseline"][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure, match="preseed_baseline"):
+        check(*proof_set)
+
+
+def test_day2_rejects_legacy_restore_without_original_state_baseline():
+    proof_set = list(proofs())
+    del proof_set[3]["archive_integrity"]["preseed_baseline"]
+    with pytest.raises(gate.Day2AcceptanceFailure, match="preseed_baseline"):
         check(*proof_set)
