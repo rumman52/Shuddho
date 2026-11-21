@@ -238,6 +238,32 @@ def test_false_dispatch_claims_in_artifact_headings_fail(workflow, field, claim)
     assert result['passed'] is False
 
 
+
+@pytest.mark.parametrize('corrupt_record', [
+    '',
+    'digest-only',
+    'wrong-filename',
+    'extra-record',
+    'extra-trailing-field',
+])
+def test_holdout_checksum_requires_one_exact_pinned_file_record(tmp_path, corrupt_record):
+    """The custody checksum must name only the pinned holdout manifest."""
+    from scripts.pilot_workflow_eval import FROZEN_HOLDOUT_SHA256
+
+    copied = tmp_path / 'fixtures'
+    shutil.copytree(FIXTURE_ROOT, copied)
+    valid = f'{FROZEN_HOLDOUT_SHA256}  holdout_integrity.json\n'
+    invalid = {
+        '': '',
+        'digest-only': f'{FROZEN_HOLDOUT_SHA256}\n',
+        'wrong-filename': f'{FROZEN_HOLDOUT_SHA256}  other.json\n',
+        'extra-record': valid + f'{FROZEN_HOLDOUT_SHA256}  extra.json\n',
+        'extra-trailing-field': valid.rstrip('\n') + ' trailing\n',
+    }
+    (copied / 'holdout_integrity.sha256').write_text(invalid[corrupt_record], encoding='utf-8')
+    with pytest.raises(ValueError, match='holdout checksum mismatch'):
+        load_suite(copied)
+
 @pytest.mark.parametrize('filename', ['holdout_integrity.json', 'holdout_integrity.sha256'])
 def test_oversized_integrity_metadata_rejected_before_reading(tmp_path, filename):
     from scripts.pilot_workflow_eval import MAX_FILE_BYTES
