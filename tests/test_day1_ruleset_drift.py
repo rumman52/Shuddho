@@ -43,6 +43,8 @@ def branch():
 def live():
     item = copy.deepcopy(policy())
     item["id"] = 27324410
+    item["source"] = "rumman52/Shuddho"
+    item["source_type"] = "Repository"
     item["conditions"]["ref_name"]["include"] = ["~DEFAULT_BRANCH"]
     return item
 
@@ -298,3 +300,46 @@ def test_one_unique_extra_first_party_native_check_remains_nonqualifying_candida
     assert report["drift"] == []
     assert report["qualified"] is False
     assert report["merge_enforcement_verified"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "untrusted_value"),
+    [
+        ("source", "foreign/Other"),
+        ("source", "rumman52/shuddho"),
+        ("source", None),
+        ("source", ""),
+        ("source_type", "Organization"),
+        ("source_type", "Enterprise"),
+        ("source_type", None),
+        ("source_type", ""),
+    ],
+)
+def test_offline_governance_rejects_missing_or_foreign_repository_origin(field, untrusted_value):
+    """A matching rule ID and check set do not establish repository ownership."""
+    snapshot = live()
+    snapshot[field] = untrusted_value
+    result = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert result["status"] == "blocked_configuration"
+    assert "ruleset.repository_origin" in result["drift"]
+    assert result["qualified"] is False
+
+
+@pytest.mark.parametrize("field", ["source", "source_type"])
+def test_offline_governance_rejects_omitted_repository_origin(field):
+    snapshot = live()
+    del snapshot[field]
+    result = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert result["status"] == "blocked_configuration"
+    assert "ruleset.repository_origin" in result["drift"]
+
+
+def test_repo_owned_ruleset_still_only_yields_nonqualifying_candidate():
+    snapshot = live()
+    assert snapshot["source"] == "rumman52/Shuddho"
+    assert snapshot["source_type"] == "Repository"
+    result = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert result["status"] == "configuration_candidate"
+    assert result["drift"] == []
+    assert result["qualified"] is False
+    assert result["independent_review_verified"] is False
