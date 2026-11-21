@@ -137,7 +137,7 @@ def reconcile_authorization(
     result cannot be substituted for an independent Founder/C/D readback.
     """
     receipt = _object(authorization, _ROOT_FIELDS, "receipt")
-    if receipt.get("schema_version") != 1 or receipt.get("status") != "operator_recorded":
+    if type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1 or receipt.get("status") != "operator_recorded":
         raise AuthorizationEvidenceFailure(
             "Day 2 authorization must be a schema-v1 operator-recorded decision, never an asserted PASS."
         )
