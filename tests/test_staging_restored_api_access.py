@@ -152,3 +152,35 @@ def test_restored_api_requires_distinct_public_https_origin(monkeypatch, restore
                 document_sha256=hashlib.sha256(DATA).hexdigest(), document_size=len(DATA),
                 source_revision=SHA, expected_issuer=ISSUER, expected_audience=AUDIENCE,
             )
+
+
+
+@pytest.mark.parametrize("wrong_a,wrong_b", [
+    (_token("wrong-source-owner"), B),
+    (A, A),
+    (A, _token("owner-A-subject")),
+])
+def test_wrong_restored_owner_tokens_fail_before_any_credentialed_request(
+    monkeypatch, wrong_a, wrong_b,
+):
+    """Operator must reject wrong owner/duplicate subject before sending JWTs."""
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RESTORED_API_READBACK", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+
+    def forbidden_transport(request):
+        pytest.fail("Do not send unmanaged or wrong-owner tokens to the restored HTTPS API")
+
+    with httpx.Client(
+        base_url=RESTORE_API,
+        transport=httpx.MockTransport(forbidden_transport),
+        follow_redirects=False,
+    ) as client:
+        with pytest.raises(access.RestoredAPIReadbackFailure, match="owner|subject|token"):
+            access.attest_restored_api_access(
+                client, wrong_a, wrong_b,
+                source_origin=SOURCE_API, restored_origin=RESTORE_API,
+                expected_owner_id=OWNER_A, document_id=DOC, task_id=TASK,
+                document_sha256=hashlib.sha256(DATA).hexdigest(),
+                document_size=len(DATA), source_revision=SHA,
+                expected_issuer=ISSUER, expected_audience=AUDIENCE,
+            )
