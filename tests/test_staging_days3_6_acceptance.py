@@ -125,6 +125,42 @@ def evidence():
             "responded_at": "2026-11-18T02:48:00Z",
         },
         "retry_receipt_ref": "retry-event-A", "race_receipt_ref": "race-event-A",
+        "utf8_boundary_probes": [{
+            "byte_limit": limit,
+            "owner_ref": freeze["owner_a_ref"],
+            "conversation_ref": f"day4-utf8-boundary-{limit}",
+            "bangla_multibyte": True,
+            "over_case": {
+                "canonical_utf8_bytes": limit + 1,
+                "canonical_payload_sha256": D5,
+                "preview_http_status": 422,
+                "dispatch_http_status": 422,
+                "error_code": "task_brief_snapshot_too_large",
+                "agent_runs_before": 0, "agent_runs_after": 0,
+                "outbox_before": 0, "outbox_after": 0,
+                "verified_at": f"2026-11-18T02:{31 + offset * 2}:00Z",
+                "preview_denial_receipt_ref": f"day4-{limit}-over-preview-denial",
+                "dispatch_denial_receipt_ref": f"day4-{limit}-over-dispatch-denial",
+                "database_readback_ref": f"day4-{limit}-over-no-effects",
+                "canonical_byte_length_receipt_ref": f"day4-{limit}-over-byte-readback",
+            },
+            "exact_case": {
+                "canonical_utf8_bytes": limit,
+                "canonical_payload_sha256": D3 if offset == 0 else D4,
+                "preview_http_status": 200,
+                "dispatch_http_status": 202,
+                "preview_digest_sha256": D3 if offset == 0 else D4,
+                "start_digest_sha256": D3 if offset == 0 else D4,
+                "run_id": f"day4-{limit}-exact-run",
+                "agent_runs_before": 0, "agent_runs_after": 1,
+                "outbox_before": 0, "outbox_after": 1,
+                "verified_at": f"2026-11-18T02:{32 + offset * 2}:00Z",
+                "preview_receipt_ref": f"day4-{limit}-exact-preview",
+                "dispatch_receipt_ref": f"day4-{limit}-exact-dispatch",
+                "database_readback_ref": f"day4-{limit}-exact-one-run-one-outbox",
+                "canonical_byte_length_receipt_ref": f"day4-{limit}-exact-byte-readback",
+            },
+        } for offset, limit in enumerate((4096, 16000))],
     }
     arms = []
     for name, index in (("none", 0), ("v1", 1), ("v2", 2)):
@@ -1028,4 +1064,131 @@ def test_day5_inflight_old_worker_context_requires_private_receipt():
     args = evidence()
     args[3]["inflight_correction"]["worker_context_receipt_ref"] = ""
     with pytest.raises(gate.Days36EvidenceError, match="day5"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("byte_limit", 4095),
+    ("byte_limit", 16000),
+    ("byte_limit", True),
+    ("owner_ref", "synthetic-B"),
+    ("conversation_ref", ""),
+    ("bangla_multibyte", False),
+])
+def test_day4_rejects_unbound_or_noncanonical_bangla_byte_boundary_probe(field, invalid):
+    args = evidence()
+    args[2]["utf8_boundary_probes"][0][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="day4"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("case", "field", "invalid"), [
+    ("over_case", "canonical_utf8_bytes", 4096),
+    ("over_case", "canonical_utf8_bytes", 4098),
+    ("over_case", "canonical_utf8_bytes", True),
+    ("over_case", "canonical_payload_sha256", "invalid"),
+    ("over_case", "preview_http_status", 200),
+    ("over_case", "dispatch_http_status", 409),
+    ("over_case", "error_code", "idempotency_conflict"),
+    ("over_case", "agent_runs_after", 1),
+    ("over_case", "outbox_after", 1),
+    ("over_case", "verified_at", "2026-11-18T02:36:00Z"),
+    ("over_case", "preview_denial_receipt_ref", ""),
+    ("over_case", "dispatch_denial_receipt_ref", ""),
+    ("over_case", "database_readback_ref", ""),
+    ("over_case", "canonical_byte_length_receipt_ref", ""),
+    ("exact_case", "canonical_utf8_bytes", 4095),
+    ("exact_case", "canonical_utf8_bytes", 4097),
+    ("exact_case", "canonical_payload_sha256", "invalid"),
+    ("exact_case", "preview_http_status", 422),
+    ("exact_case", "dispatch_http_status", 409),
+    ("exact_case", "preview_digest_sha256", "invalid"),
+    ("exact_case", "start_digest_sha256", D2),
+    ("exact_case", "run_id", "run-day4-A"),
+    ("exact_case", "agent_runs_after", 2),
+    ("exact_case", "outbox_after", 2),
+    ("exact_case", "verified_at", "2026-11-18T02:30:00Z"),
+    ("exact_case", "preview_receipt_ref", ""),
+    ("exact_case", "dispatch_receipt_ref", ""),
+    ("exact_case", "database_readback_ref", ""),
+    ("exact_case", "canonical_byte_length_receipt_ref", ""),
+])
+def test_day4_rejects_invalid_4096_byte_exact_and_one_byte_over_receipts(case, field, invalid):
+    args = evidence()
+    args[2]["utf8_boundary_probes"][0][case][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="day4"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("case", "field", "invalid"), [
+    ("over_case", "canonical_utf8_bytes", 16002),
+    ("over_case", "dispatch_http_status", 200),
+    ("over_case", "outbox_after", 1),
+    ("over_case", "verified_at", "2026-11-18T02:35:00Z"),
+    ("exact_case", "canonical_utf8_bytes", 15999),
+    ("exact_case", "preview_http_status", 422),
+    ("exact_case", "agent_runs_after", 0),
+    ("exact_case", "verified_at", "2026-11-18T03:05:00Z"),
+])
+def test_day4_rejects_invalid_16000_byte_exact_and_one_byte_over_receipts(case, field, invalid):
+    args = evidence()
+    args[2]["utf8_boundary_probes"][1][case][field] = invalid
+    with pytest.raises(gate.Days36EvidenceError, match="day4"):
+        validate(args)
+
+
+@pytest.mark.parametrize("change", [
+    "missing", "duplicate", "extra", "same_conversation", "same_run",
+    "shared_digest", "inverted_approval", "missing_case", "changed_effect_scope",
+])
+def test_day4_byte_boundary_matrix_cannot_be_faked_or_reused(change):
+    args = evidence()
+    rows = args[2]["utf8_boundary_probes"]
+    if change == "missing":
+        rows.pop()
+    elif change == "duplicate":
+        rows[1] = deepcopy(rows[0])
+    elif change == "extra":
+        rows.append(deepcopy(rows[1]))
+    elif change == "same_conversation":
+        rows[1]["conversation_ref"] = rows[0]["conversation_ref"]
+    elif change == "same_run":
+        rows[1]["exact_case"]["run_id"] = rows[0]["exact_case"]["run_id"]
+    elif change == "shared_digest":
+        rows[1]["exact_case"]["preview_digest_sha256"] = rows[0]["exact_case"]["preview_digest_sha256"]
+        rows[1]["exact_case"]["start_digest_sha256"] = rows[0]["exact_case"]["start_digest_sha256"]
+    elif change == "inverted_approval":
+        rows[0]["exact_case"]["verified_at"] = rows[0]["over_case"]["verified_at"]
+    elif change == "missing_case":
+        del rows[0]["over_case"]
+    else:
+        rows[0]["exact_case"]["agent_runs_before"] = 1
+    with pytest.raises(gate.Days36EvidenceError, match="day4"):
+        validate(args)
+
+
+def test_day4_multibyte_bangla_boundary_receipts_allow_existing_scoped_history():
+    args = evidence()
+    row = args[2]["utf8_boundary_probes"][0]
+    row["over_case"].update({
+        "agent_runs_before": 7, "agent_runs_after": 7,
+        "outbox_before": 2, "outbox_after": 2,
+    })
+    row["exact_case"].update({
+        "agent_runs_before": 7, "agent_runs_after": 8,
+        "outbox_before": 2, "outbox_after": 3,
+    })
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_day4_bangla_boundary_probe_order_is_not_conflated_with_schema_order():
+    args = evidence()
+    args[2]["utf8_boundary_probes"].reverse()
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_day4_missing_utf8_boundary_probes_never_proves_hosted_acceptance():
+    args = evidence()
+    del args[2]["utf8_boundary_probes"]
+    with pytest.raises(gate.Days36EvidenceError, match="day4"):
         validate(args)
