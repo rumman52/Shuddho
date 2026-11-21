@@ -10,8 +10,10 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import unicodedata
 
 from services.coworker.schemas import parse_draft, source_references
@@ -30,16 +32,47 @@ class HeldoutAccessBlocked(ValueError):
     """No independently controlled heldout custody exists yet."""
 
 
+def _read_regular_bytes(path: Path, label: str) -> bytes:
+    """Read one regular inode once, never following a direct symlink or overreading."""
+    nofollow = getattr(os, 'O_NOFOLLOW', None)
+    if nofollow is None:
+        raise ValueError('secure no-follow evaluator input reading is unavailable')
+    flags = os.O_RDONLY | nofollow | getattr(os, 'O_CLOEXEC', 0) | getattr(os, 'O_NONBLOCK', 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f'{label} requires a readable regular non-symlink input') from exc
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            raise ValueError(f'{label} requires a regular file')
+        if details.st_size > MAX_FILE_BYTES:
+            raise ValueError(f'{label} exceeds byte bound')
+        remaining = MAX_FILE_BYTES + 1
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b''.join(chunks)
+        if len(data) > MAX_FILE_BYTES:
+            raise ValueError(f'{label} exceeds byte bound')
+        return data
+    except OSError as exc:
+        raise ValueError(f'{label} cannot be read securely') from exc
+    finally:
+        os.close(descriptor)
+
+
 def sha256_file(path: Path) -> str:
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError('fixture exceeds byte bound')
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(_read_regular_bytes(path, 'fixture')).hexdigest()
 
 
 def _json(path: Path):
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError('manifest exceeds byte bound')
-    return json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=_unique_keys)
+    return json.loads(_read_regular_bytes(path, 'manifest').decode('utf-8'),
+                      object_pairs_hook=_unique_keys)
 
 
 def _unique_keys(pairs):
@@ -63,26 +96,29 @@ def _relative(root: Path, value: str) -> Path:
     return resolved
 
 
-def _verified(root: Path, entry: dict) -> Path:
+def _verified(root: Path, entry: dict) -> bytes:
+    # Return the exact checked bytes; callers must not reopen the path after
+    # attesting its digest, even if the checkout is concurrently modified.
     path = _relative(root, entry['path'])
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError('fixture exceeds byte bound')
-    if sha256_file(path) != entry['sha256']:
+    raw = _read_regular_bytes(path, 'fixture')
+    if hashlib.sha256(raw).hexdigest() != entry['sha256']:
         raise ValueError(f'hash mismatch: {entry["path"]}')
-    return path
+    return raw
 
 
-def read_outputs(path: Path) -> list[dict]:
-    if path.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError('submission exceeds byte bound')
+def _parse_rows(raw: bytes) -> list[dict]:
     rows = []
-    for line in path.read_text(encoding='utf-8').splitlines():
+    for line in raw.decode('utf-8').splitlines():
         if line.strip():
             value = json.loads(line, object_pairs_hook=_unique_keys)
             if not isinstance(value, dict):
                 raise ValueError('JSONL row must be an object')
             rows.append(value)
     return rows
+
+
+def read_outputs(path: Path) -> list[dict]:
+    return _parse_rows(_read_regular_bytes(path, 'submission'))
 
 
 def _norm(text: str) -> str:
@@ -102,24 +138,24 @@ def _fact_in(text: str, fact: dict) -> bool:
 
 def load_suite(root: Path = FIXTURE_ROOT) -> dict:
     root = Path(root)
-    manifest = _json(root / 'suite_manifest.json')
+    manifest_bytes = _read_regular_bytes(root / 'suite_manifest.json', 'manifest')
+    manifest = json.loads(manifest_bytes.decode('utf-8'), object_pairs_hook=_unique_keys)
     if manifest.get('schema_version') != 1:
         raise ValueError('unsupported suite schema')
     if not re.fullmatch(r'[0-9a-f]{40}', manifest.get('source_revision', '')):
         raise ValueError('invalid source revision')
     heldout_path = root / 'holdout_integrity.json'
-    heldout_digest = sha256_file(heldout_path)
+    heldout_bytes = _read_regular_bytes(heldout_path, 'holdout integrity manifest')
+    heldout_digest = hashlib.sha256(heldout_bytes).hexdigest()
     if heldout_digest != FROZEN_HOLDOUT_SHA256 or heldout_digest != manifest['holdout_integrity_sha256']:
         raise ValueError('holdout integrity manifest hash mismatch')
     checksum_path = root / 'holdout_integrity.sha256'
-    if checksum_path.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError('checksum exceeds byte bound')
-    if checksum_path.read_text().split()[0] != heldout_digest:
+    if _read_regular_bytes(checksum_path, 'checksum').decode('utf-8').split()[0] != heldout_digest:
         raise ValueError('holdout checksum mismatch')
-    holdout = _json(heldout_path)
+    holdout = json.loads(heldout_bytes.decode('utf-8'), object_pairs_hook=_unique_keys)
     if holdout.get('access_isolation_established') is not False:
         raise ValueError('same-checkout manifest cannot establish access isolation')
-    if sha256_file(root / 'suite_manifest.json') != FROZEN_SUITE_MANIFEST_SHA256:
+    if hashlib.sha256(manifest_bytes).hexdigest() != FROZEN_SUITE_MANIFEST_SHA256:
         raise ValueError('suite manifest fingerprint mismatch; reviewed corpus update required')
     source_entries = manifest['sources']
     source_ids = [s['id'] for s in source_entries]
@@ -127,19 +163,19 @@ def load_suite(root: Path = FIXTURE_ROOT) -> dict:
         raise ValueError('expected 20 distinct source dossiers')
     sources = {}
     for entry in source_entries:
-        path = _verified(root, entry)
+        source_bytes = _verified(root, entry)
         if entry['original_sha256'] != entry['sha256'] or entry['source_revision'] != manifest['source_revision']:
             raise ValueError('invalid snapshot provenance')
         if entry.get('kind') != 'repository_document_snapshot' or entry.get('current_deployment_verified') is not False:
             raise ValueError('misleading source provenance')
-        sources[entry['id']] = {**entry, 'text': path.read_text(encoding='utf-8')}
+        sources[entry['id']] = {**entry, 'text': source_bytes.decode('utf-8')}
     if holdout['sources'] != [s for s in source_entries if s['id'].startswith('holdout-')]:
         raise ValueError('holdout source inventory mismatch')
     if holdout['case_file'] != manifest['files']['holdout']:
         raise ValueError('holdout case inventory mismatch')
     cases = []
     for split in ('development', 'holdout'):
-        rows = read_outputs(_verified(root, manifest['files'][split]))
+        rows = _parse_rows(_verified(root, manifest['files'][split]))
         if len(rows) != 40 or Counter((c['workflow'], c['language']) for c in rows) != MATRIX:
             raise ValueError('scenario matrix must have 10 per workflow/language cell')
         if len({c['dossier_id'] for c in rows}) != 10:
@@ -176,7 +212,7 @@ def load_suite(root: Path = FIXTURE_ROOT) -> dict:
     held = {c['dossier_id'] for c in cases if c['split'] == 'holdout'}
     if dev & held:
         raise ValueError('development/holdout dossier overlap')
-    outputs = read_outputs(_verified(root, manifest['files']['development_reference_outputs']))
+    outputs = _parse_rows(_verified(root, manifest['files']['development_reference_outputs']))
     expected_ids = {c['id'] for c in cases if c['split'] == 'development'}
     if len(outputs) != 40 or {o['case_id'] for o in outputs} != expected_ids:
         raise ValueError('calibration output inventory mismatch')
