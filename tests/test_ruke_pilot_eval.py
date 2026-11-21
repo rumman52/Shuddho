@@ -1226,3 +1226,29 @@ def test_blind_reviews_cannot_predate_original_attempt_finish():
             tasks(), reviews, [], checks, output_hashes=hashes,
             case_run_receipts=usage["case_run_receipts"],
         )
+
+
+def test_operated_recovery_cannot_predate_frozen_candidate_run():
+    rows = operations()
+    # The operation claims matching source/manifest but occurred before
+    # the frozen candidate's run_started_at: it must not earn Day 9 credit.
+    rows[0]["observed_at"] = "2026-11-11T23:59:59Z"
+    result = verify_operations(
+        rows, "a" * 40,
+        run_started_at=manifest()["run_started_at"],
+    )
+    assert result["failed_rows"] == [1]
+    assert result["passed"] == 19
+    assert result["fault_gate_pass"] is False
+    # No failed first-attempt fault may silently disappear from the 20-case ledger.
+    assert len(result["day10_recovery"]["scenarios"]) == 20
+
+
+def test_operated_recovery_allows_same_instant_as_manifest_freeze():
+    rows = operations()
+    result = verify_operations(
+        rows, "a" * 40,
+        run_started_at=manifest()["run_started_at"],
+    )
+    assert result["fault_gate_pass"] is True
+    assert result["passed"] == 20
