@@ -4,7 +4,7 @@
 
 **Goal:** Enforce Part 02's "preserve original state before any synthetic account or document is seeded" requirement within the Day 2 source operator, while keeping the later task-state archive separate.
 
-**Architecture:** A read-only baseline reconciler checks an existing verified PostgreSQL `0070` dump, private table inventory and structural SHA against the genuine empty-object archive manifest. The `staging_backup_restore.prepare` operator requires these paths, binds their hashed source database/object identities to a fresh live read-only inventory, and refuses any upload/task if missing or stale. The later isolated `verify` operation rechecks original baseline evidence against the prepared-state summary, while its existing separate nonempty task-state archive proof remains mandatory. The final acceptance receipt indicates the original-state gate without treating it as hosted D02.T09/G04 proof.
+**Architecture:** A read-only baseline reconciler checks a verified PostgreSQL `0070` dump, full private-table inventory and structural SHA against a real zero-object source manifest. An **early** `attest-original` operator reads the still-unmodified live database/object inventories and writes an exclusive timestamped receipt before any migration, synthetic account or document. Later `staging_backup_restore.prepare` rehashes the three original artifacts, validates that early receipt and matches the original source resource identities, **without comparing post-migration rows to 0070**. Isolated `verify` rechecks the same original artifacts/attestation plus the separately required post-task nonempty archive, and final acceptance binds the observed early timestamp.
 
 **Tech stack:** Python 3.11, psycopg3, SQLAlchemy, existing `staging_postgres_backup` / `staging_object_backup` / `staging_day2_archive_attestation` utilities and pytest CI.
 
@@ -23,6 +23,8 @@
 
 - [ ] Archive source is byte-hash matched and its verified inventory includes `0070`, structural fingerprint, 84 tables, private ACL.
 - [ ] The empty-object manifest cannot be replaced by a nonempty one or a claimed empty receipt.
+- [ ] The **early** attest-original command checks full live original rows at 0070; the **later** prepare does not reject legitimately migrated 0072 rows.
+- [ ] The early attestation file is exclusive, mode 0600, timestamped, and bound to the original dump/manifest digests; forged/late receipts are rejected.
 - [ ] Correct original database and object-store identities match live source before any `create_upload`, `put`, `create_task` or `cancel`.
 - [ ] Tables/rows/schema that drift after the archived source snapshot block synthetic seeding.
 - [ ] Missing paths, wrong source identity and corrupt receipts block before contacting hosted owner API.
@@ -39,9 +41,10 @@
 ### Task 2: GREEN source changes
 
 - [ ] Create `scripts/staging_preseed_baseline.py` purely read-only baseline validator.
-- [ ] Require baseline paths in `scripts/staging_backup_restore.py prepare`, live source fingerprint and private schema/object inventory equality **before any API call**.
+- [ ] Add `scripts/staging_backup_restore.py attest-original` to compare original 0070 live fingerprints, full schema/table inventories and empty source listing, writing a protected timestamped receipt **before migration/seeding**.
+- [ ] Require the three original archive paths and early attestation in later `prepare`, validating their hashes and same DB/storage resource identity before any API call while allowing legitimate 0072 schema/row changes.
 - [ ] Persist only baseline hashes/counts in the prepared state.
-- [ ] Require and rehash the same baseline paths on `verify`; attach the validated baseline summary in the private `archive_integrity` evidence.
+- [ ] Require and rehash the same baseline paths **and early attestation** on `verify`; attach the validated baseline summary and attestation timestamp to `archive_integrity` evidence.
 - [ ] Require the summary in `staging_day2_acceptance.py` without claiming independent hosted authorization.
 
 ### Task 3: Tests, docs, PR
