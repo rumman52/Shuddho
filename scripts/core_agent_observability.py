@@ -861,6 +861,37 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         candidate, expected, expected_lineage, "bounded_context_compact_observations",
     )
 
+    # A per-arm uniqueness check cannot demonstrate an *independent paired*
+    # generation: the same artifact/review receipt could otherwise qualify
+    # both arms. Compare accepted first runs AND accepted reruns across arms.
+    # Never reject equal output SHA-256 values: two independently generated
+    # artifacts may contain identical bytes. Review/artifact custody, not
+    # content equality, is the identity being checked here.
+    def accepted_custody(cases: dict, reruns: dict) -> tuple[set[str], set[str]]:
+        artifacts: set[str] = set()
+        reviews: set[str] = set()
+        rows = [*cases.values(), *(row for attempts in reruns.values() for row in attempts)]
+        for row in rows:
+            if row.get("human_accepted") is not True:
+                continue
+            review = row.get("accepted_outcome_ref")
+            if isinstance(review, str) and review.strip():
+                reviews.add(review.strip())
+            refs = row.get("verified_artifact_refs")
+            if isinstance(refs, list):
+                artifacts.update(
+                    ref.strip() for ref in refs
+                    if isinstance(ref, str) and ref.strip()
+                )
+        return artifacts, reviews
+
+    base_artifacts, base_reviews = accepted_custody(base_cases, base_reruns)
+    candidate_artifacts, candidate_reviews = accepted_custody(candidate_cases, candidate_reruns)
+    if base_artifacts & candidate_artifacts:
+        raise ValueError("reused accepted artifact reference across profiles")
+    if base_reviews & candidate_reviews:
+        raise ValueError("reused accepted outcome reference across profiles")
+
     # First-run results are the fixed 40-case quality denominator. Reruns are
     # separate attempts, but their cost and receipt identities must still be
     # accounted for before any Day 9 freeze can be selected.
