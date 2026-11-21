@@ -150,8 +150,28 @@ def attest_restored_api_access(
             "Owner B could enumerate owner A's restored document or has an invalid catalog."
         )
 
-    body = _get(client, document_route, token_a, 200, "restored owner A document content").content
-    if len(body) != document_size or hashlib.sha256(body).hexdigest() != document_sha256:
+    # Stream and hash with an exact byte ceiling. Even a misconfigured API
+    # cannot make this privileged operator retain an unbounded private body.
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with client.stream("GET", document_route, headers=bearer(token_a)) as response:
+            if response.status_code != 200:
+                raise RestoredAPIReadbackFailure(
+                    f"restored owner A document content expected HTTP 200 but received HTTP {response.status_code}."
+                )
+            for block in response.iter_bytes():
+                total += len(block)
+                if total > document_size:
+                    raise RestoredAPIReadbackFailure(
+                        "Restored owner A document exceeded the archived private byte size."
+                    )
+                digest.update(block)
+    except httpx.HTTPError:
+        raise RestoredAPIReadbackFailure(
+            "Restored owner A document could not be streamed over HTTPS."
+        ) from None
+    if total != document_size or digest.hexdigest() != document_sha256:
         raise RestoredAPIReadbackFailure(
             "Authenticated owner A document bytes differ from the isolated archive manifest."
         )
