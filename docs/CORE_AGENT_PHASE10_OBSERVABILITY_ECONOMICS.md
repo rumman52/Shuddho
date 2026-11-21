@@ -290,3 +290,32 @@ immutable provider requests, source/dossier versions, owner approvals, original
 generation receipts and reviewer outcomes before setting the existing verified
 receipt flags. Never treat matching operator-supplied digests as evidence of 80
 real paid runs, successful natural Temporal firings or an approved release.
+
+### Day 8 measured hard-deadline gate — 21 November 2026 (PR #858)
+
+The experiment's `configuration.time_limit_seconds` is the same declared
+per-task deadline for both profiles. Merely matching the configuration hashes
+and deadlines does **not** demonstrate that the observed executions respected
+them. In particular, a single 60,001ms execution can be absent from a 40-case
+p95 percentile despite violating an agreed 60s hard limit.
+
+The Day 8 comparison now independently enforces the fixed per-task limit on
+`end_to_end_latency_ms` for **every first-run and rerun execution**, whether
+accepted or failed. An execution at exactly the deadline is permitted; one
+millisecond later makes that profile ineligible for `FROZEN_FOR_DAY9`.
+The full cohort still uses the original **40 first-run** acceptance/latency
+denominator and the owner-approved p95 SLO, while usage, retries and all-in
+cost retain the full first-run-plus-rerun attempt ledger. The hard deadline
+and aggregate latency target are both required: neither substitutes for the
+other. If both arms violate the deadline, the comparison remains BLOCKED;
+an independently qualifying baseline may still win when only the candidate
+violates it. Qualified cost savings are withheld unless **both** arms meet
+the hard deadline.
+
+Private report summaries expose `deadline_evaluated_attempts`,
+`deadline_overrun_attempts` and `deadline_gate_passed`, and each paired task
+records `deadline_overrun_attempts` across its first run and any reruns.
+Absent measurements leave the limit unverified and cannot yield an eligible
+freeze; no missing latency is interpreted as zero. These are checks on
+operator-supplied data, not independent authentication of provider run
+timestamps or a completed paid experiment.

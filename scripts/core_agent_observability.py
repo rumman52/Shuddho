@@ -995,6 +995,26 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
                                            if (row["workflow"], row["language"]) == (workflow, language))]
                 cell_metrics[name] = cell_summary(cell, cell_attempts, provenance_complete)
         metrics_complete = provenance_complete and complete_metrics(all_rows)
+        # A cohort's p95 can conceal one very slow task. The *hard per-task*
+        # time limit is an additional bound, independently checked against
+        # every first execution and explicit rerun, including failed attempts.
+        # Missing latency is not an on-time observation.
+        deadline_ms = (
+            report["configuration"]["time_limit_seconds"] * 1000
+            if time_limits_complete else None
+        )
+        deadline_evaluated_attempts = sum(
+            _day8_uint(row.get("end_to_end_latency_ms")) for row in all_rows
+        )
+        deadline_overrun_attempts = (
+            sum(row["end_to_end_latency_ms"] > deadline_ms for row in all_rows
+                if _day8_uint(row.get("end_to_end_latency_ms")))
+            if deadline_ms is not None else None
+        )
+        deadline_gate_passed = (
+            deadline_ms is not None and deadline_evaluated_attempts == len(all_rows)
+            and deadline_overrun_attempts == 0
+        )
         # Safety applies to every observed execution, including explicit
         # failed/retried reruns whose costs are already in the denominator.
         # A missing rerun review is unknown, never implicitly safe; a false
@@ -1034,6 +1054,9 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         summaries[label] = {
             "cases": 40,
             "rerun_attempts": len(rerun_rows),
+            "deadline_evaluated_attempts": deadline_evaluated_attempts,
+            "deadline_overrun_attempts": deadline_overrun_attempts,
+            "deadline_gate_passed": deadline_gate_passed,
             "safety_assessed_attempts": safety_assessed_attempts,
             "unsafe_attempts": unsafe_attempts,
             "attempt_provenance_complete": provenance_complete,
@@ -1129,6 +1152,10 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         a["cost_gate_passed"] or b["cost_gate_passed"]
     ):
         blockers.append("neither profile meets the owner-approved cost ceiling per accepted output")
+    if time_limits_complete and a["metrics_complete"] and b["metrics_complete"] and not (
+        a["deadline_gate_passed"] or b["deadline_gate_passed"]
+    ):
+        blockers.append("neither profile respects the fixed per-task execution deadline")
     # Regressed candidate is excluded; a qualified baseline may still be frozen.
     if not (a["quality_gate_passed"] or b["quality_gate_passed"]):
         blockers.append("neither profile meets 36/40, 9/10-per-cell, safety and artifact gates")
@@ -1143,7 +1170,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         (label, summary)
         for label, summary in summaries.items()
         if summary["quality_gate_passed"] and summary["latency_gate_passed"]
-        and summary["cost_gate_passed"]
+        and summary["deadline_gate_passed"] and summary["cost_gate_passed"]
         and (label == "baseline" or retained_quality)
     ]
     if not blockers and len(eligible) > 0:
@@ -1165,6 +1192,7 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         freeze_hashes_complete and time_limits_complete and policy_complete
         and a["quality_gate_passed"] and b["quality_gate_passed"]
         and a["latency_gate_passed"] and b["latency_gate_passed"]
+        and a["deadline_gate_passed"] and b["deadline_gate_passed"]
         and a["cost_gate_passed"] and b["cost_gate_passed"]
         and a["metrics_complete"] and b["metrics_complete"]
         and base_lineage_complete and candidate_lineage_complete
@@ -1226,6 +1254,17 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             case_reruns = reruns.get(case_id, [])
             economics = {field: item.get(field) for field in task_fields}
             economics["rerun_attempts"] = len(case_reruns)
+            case_deadline_ms = (
+                (base_config if label == "baseline" else candidate_config)["time_limit_seconds"] * 1000
+                if time_limits_complete else None
+            )
+            case_attempts = [item, *case_reruns]
+            economics["deadline_overrun_attempts"] = (
+                sum(row["end_to_end_latency_ms"] > case_deadline_ms for row in case_attempts)
+                if case_deadline_ms is not None and all(
+                    _day8_uint(row.get("end_to_end_latency_ms")) for row in case_attempts
+                ) else None
+            )
             economics["unsafe_rerun_attempts"] = sum(
                 attempt.get("safety_passed") is False for attempt in case_reruns
             )
@@ -1286,6 +1325,8 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             else "failed_quality_or_safety_gate" if not b["quality_gate_passed"]
             else "missing_operational_measurements_or_policy"
             if not b["metrics_complete"] or not policy_complete
+            else "execution_deadline_breached"
+            if b["deadline_overrun_attempts"] is not None and b["deadline_overrun_attempts"] > 0
             else "latency_slo_breached" if not b["latency_gate_passed"]
             else "cost_ceiling_breached" if policy_complete and not b["cost_gate_passed"]
             else None
