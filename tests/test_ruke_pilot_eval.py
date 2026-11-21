@@ -17,11 +17,108 @@ from scripts.ruke_pilot_eval import (
     day10_holdout_receipt, generation_identity_ok, immutable_write, main,
     position_map, prepare_blind, registry_cases, read_blinding_key, score_reviews, source_checks_ok,
     validate_candidate_identity, validate_candidate_readbacks, validate_evidence_binding,
-    validate_manifest, verify_operations, read_jsonl, strict_json_loads,
+    validate_manifest, verify_operations, read_json, read_jsonl, strict_json_loads,
 )
 
 
 BLIND_KEY = b"m" * 32  # Synthetic TEST secret; never use for operated comparisons.
+
+
+def test_day9_json_reader_parses_exact_bytes_it_validated(tmp_path, monkeypatch):
+    """A second pathname read must not replace the first validated evidence."""
+    path = tmp_path / "evidence.json"
+    path.write_text('{"release_id":"frozen"}', encoding="utf-8")
+    original_read = Path.read_bytes
+
+    def change_after_digest(self):
+        data = original_read(self)
+        if self == path:
+            path.write_text('{"release_id":"substituted"}', encoding="utf-8")
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", change_after_digest)
+    assert read_json(path) == {"release_id": "frozen"}
+
+
+def test_day9_jsonl_reader_parses_exact_bytes_it_validated(tmp_path, monkeypatch):
+    """A second pathname read must not replace JSONL after the bounded read."""
+    path = tmp_path / "candidate.jsonl"
+    path.write_text('{"case_id":"frozen"}\n', encoding="utf-8")
+    original_read = Path.read_bytes
+
+    def change_after_digest(self):
+        data = original_read(self)
+        if self == path:
+            path.write_text('{"case_id":"substituted"}\n', encoding="utf-8")
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", change_after_digest)
+    assert read_jsonl(path) == [{"case_id": "frozen"}]
+
+
+
+def test_day9_manifest_digest_matches_exact_parsed_json_bytes(tmp_path):
+    from scripts.ruke_pilot_eval import _read_json_and_sha256
+    path = tmp_path / "manifest.json"
+    raw = b'{"release_id": "one","model": "test"}'
+    path.write_bytes(raw)
+    payload, digest = _read_json_and_sha256(path)
+    assert payload == {"release_id": "one", "model": "test"}
+    assert digest == hashlib.sha256(raw).hexdigest()
+
+
+def test_day9_candidate_digest_matches_exact_parsed_jsonl_bytes(tmp_path):
+    from scripts.ruke_pilot_eval import _read_jsonl_and_sha256
+    path = tmp_path / "candidate.jsonl"
+    raw = b'{"case_id":"one"}\n{"case_id":"two"}\n'
+    path.write_bytes(raw)
+    rows, digest = _read_jsonl_and_sha256(path)
+    assert rows == [{"case_id": "one"}, {"case_id": "two"}]
+    assert digest == hashlib.sha256(raw).hexdigest()
+
+
+
+
+def test_day9_private_blinding_key_uses_opened_inode_not_second_path_read(external_dir, monkeypatch):
+    from scripts.ruke_pilot_eval import read_blinding_key
+    path = external_dir / "blind.key"
+    path.write_bytes(b"m" * 32)
+    path.chmod(0o600)
+    original_read = Path.read_bytes
+
+    def malicious_path_read(self):
+        return b"n" * 32 if self == path else original_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", malicious_path_read)
+    assert read_blinding_key(path) == b"m" * 32
+
+
+
+def test_day9_holdout_parses_only_the_bytes_matching_frozen_digest(external_dir, monkeypatch):
+    """Corrupting the second path-based parse cannot change a verified corpus."""
+    rows = tasks()
+    path = external_dir / "independent-heldout.jsonl"
+    original = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    path.write_text(original, encoding="utf-8")
+    path.chmod(0o444)
+    expected_digest = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    other = deepcopy(rows)
+    other[0]["source_sha256"] = "e" * 64
+    substituted = "".join(json.dumps(row, sort_keys=True) + "\n" for row in other)
+    original_read_text = Path.read_text
+
+    def changed_on_second_read(self, *args, **kwargs):
+        if self == path:
+            return substituted
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", changed_on_second_read)
+    observed = external_heldout(
+        path, corpus_sha256=expected_digest, custody_verified=True,
+    )
+    assert observed[0]["source_sha256"] == rows[0]["source_sha256"]
+
+
 
 
 def tasks():
