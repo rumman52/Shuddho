@@ -20,24 +20,31 @@
 
 **Files:** `tests/test_day1_ruleset_drift.py`, `tests/test_main_protection_audit.py`
 
-- [ ] Add offline negative cases for an extra branch selector, mixed `~DEFAULT_BRANCH`/literal, duplicate selector, unreviewed glob, unknown conditions or ref_name properties; test both reviewed policy tampering and live readback. Preserve positive candidate for each sole exact selector.
-- [ ] Add live native-audit negative cases for identical invalid scopes, plus redacted-bypass diagnostic: malformed/broader rule must not claim redaction is the *only* missing evidence. Preserve good exact main and alias candidates.
-- [ ] Push test-only commit and inspect real GitHub Actions RED logs; expected target failures should be incorrect `configuration_candidate` or missed `EvidenceError`, not environment/collection faults.
+- [x] Add offline negative cases for an extra branch selector, mixed `~DEFAULT_BRANCH`/literal, duplicate selector, unreviewed glob, unknown conditions or ref_name properties; test both reviewed policy tampering and live readback. Preserve positive candidate for each sole exact selector.
+- [x] Add live native-audit negative cases for identical invalid scopes, plus redacted-bypass diagnostic: malformed/broader rule must not claim redaction is the *only* missing evidence. Preserve good exact main and alias candidates.
+- [x] Push test-only commit and inspect real GitHub Actions RED logs; expected target failures should be incorrect `configuration_candidate` or missed `EvidenceError`, not environment/collection faults.
 
 ## Task 2 — minimal GREEN
 
 **Files:** `scripts/day1_ruleset_drift.py`, `scripts/main_protection_audit.py`
 
-- [ ] Tighten `validate_reviewed_policy` to reject extra selector keys; add exact readback predicate to existing `ruleset.main_scope` drift code while leaving `ruleset.no_exclusions` unchanged.
-- [ ] Add private helper `_exact_main_scope` in live auditor, enforced **only in `audit_governance` candidate and redacted-bypass diagnostic**; preserve `_targets_main` and `_active_main_ruleset` for creation-template and conservative overlap use.
+- [x] Tighten `validate_reviewed_policy` to reject extra selector keys; add exact readback predicate to existing `ruleset.main_scope` drift code while leaving `ruleset.no_exclusions` unchanged.
+- [x] Add private helper `_exact_main_scope` in live auditor, enforced **only in `audit_governance` candidate and redacted-bypass diagnostic**; preserve `_targets_main` and `_active_main_ruleset` for creation-template and conservative overlap use.
 - [ ] Run full GitHub Actions at final PR head; separately inspect `test-and-build`, Coworker, PostgreSQL-18, frontend, browser, ancestry, `ci-merge-gate` and PR-skipped `governance-audit`. Run `uv run --extra coworker pytest tests/test_day1_ruleset_drift.py tests/test_main_protection_audit.py tests/test_apply_main_ruleset.py tests/test_reconcile_main_ruleset.py -q -rs` locally if an authorized checkout exists. Never claim unrun local commands.
 
 ## Task 3 — handoff
 
 **Files:** `docs/coworker-roadmap/DAY1_EXACT_MAIN_RULESET_SCOPE_2026-11-21.md`, `docs/coworker-roadmap/PROGRESS.md`, this plan.
 
-- [ ] Record exact RED/GREEN SHAs, CI links, scope, reviewer and external blockers in task contract and progress.
-- [ ] Open draft PR to `main` (never merge without independent human review); link to GitHub #727 and Linear MD-5.
-- [ ] Preserve source-only / NO-GO: no privileged App provisioning, native ruleset PUT, production promotion, paid Render worker, Supabase migration/restore without approval, PostHog user telemetry, private D custody, or exact-release Founder/Owner-C GO.
+- [x] Record exact RED/GREEN SHAs, CI links, scope, reviewer and external blockers in task contract and progress.
+- [x] Open draft PR to `main` (never merge without independent human review); link to GitHub #727 and Linear MD-5.
+- [x] Preserve source-only / NO-GO: no privileged App provisioning, native ruleset PUT, production promotion, paid Render worker, Supabase migration/restore without approval, PostHog user telemetry, private D custody, or exact-release Founder/Owner-C GO.
 
 **Verification standard:** Passing unit tests and a draft PR are *repository evidence* only; they do not demonstrate protected-main negative+positive merge controls, independent reviewer, recoverable staging, held-out evaluation, or pilot qualification.
+
+### Test-first checkpoint — 21 November 2026 (Asia/Dhaka)
+
+- **Test-only RED head:** `68c6ea6112d5fce3d42d2c1435e2326adbe828c7`; [run #44914417577](https://github.com/rumman52/Shuddho/actions/runs/44914417577) `test-and-build` **19 expected FAILED / 3,214 PASSED / 105 SKIPPED / 6 WARNINGS**. All targeted failures were scope acceptance / wrong error routing, not infrastructure or test collection.
+- **Source corrections:** offline `d700b88691fef714cbf71ba4a9ee58b7207357a7`, live `2953f1c407c870f1f2cbb3cefdeb77ca5be2b13f`.
+- **Task contract:** [DAY1_EXACT_MAIN_RULESET_SCOPE_2026-11-21.md](../../coworker-roadmap/DAY1_EXACT_MAIN_RULESET_SCOPE_2026-11-21.md); [draft PR #861](https://github.com/rumman52/Shuddho/pull/861). Exact final-head CI and independent human review remain separate checks.
+- **Ruling:** Keep the conservative candidate/overlap discovery helper unchanged; only the live native evidence decision becomes exact-scope. This prevents breaking `apply_main_ruleset._validate_candidate` while making V-01 audit consistent with `reconcile_main_ruleset._read_unique_existing`.
