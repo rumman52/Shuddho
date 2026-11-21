@@ -125,15 +125,21 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
         # for Bangla. Require the unchanged ASCII claims/reference IDs that
         # can be unambiguously extracted, without falsely rejecting a valid
         # Bengali native document because glyph shaping changes transcription.
-        compact_pdf = "".join(pdf_text.split())
-        # A section heading can repeat the report title. Merely finding
-        # that string somewhere in the PDF would accept an unrelated cover
-        # title; the renderer writes the reviewed title before its sections.
-        if title.isascii() and not compact_pdf.startswith("".join(title.split())):
-            raise ValueError("PDF does not open with the reviewed report title")
-        if any("".join(claim.split()) not in compact_pdf
-               for claim in pdf_claims if claim and claim.isascii()):
-            raise ValueError("PDF text differs from the reviewed title, facts or references")
+        # In right-to-left languages, pypdf can reorder even ASCII source
+        # quotations inside Arabic/Hebrew text. Do not reject valid native
+        # exports based on a visual-order vs extracted-order mismatch.
+        # The source-bound DOCX, manifest, and PDF parseability checks still
+        # apply; independent hosted review must inspect RTL glyph fidelity.
+        if draft.output_language.split("-")[0].lower() not in RTL_LANGUAGES:
+            compact_pdf = "".join(pdf_text.split())
+            # A section heading can repeat the report title. Merely finding
+            # that string somewhere in the PDF would accept an unrelated
+            # cover title; the renderer writes the reviewed title first.
+            if title.isascii() and not compact_pdf.startswith("".join(title.split())):
+                raise ValueError("PDF does not open with the reviewed report title")
+            if any("".join(claim.split()) not in compact_pdf
+                   for claim in pdf_claims if claim and claim.isascii()):
+                raise ValueError("PDF text differs from the reviewed title, facts or references")
 
         text_content = rows[text_name].decode("utf-8")
         if not text_content.strip():
