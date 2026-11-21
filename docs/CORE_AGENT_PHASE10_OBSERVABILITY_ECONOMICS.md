@@ -234,3 +234,41 @@ the permitted local analysis path.
 ### Day 8 owner budget-policy gate — 21 November 2026 (PR #842)
 
 The numeric cost ceiling is a decision parameter, **not** a hard-coded provider rate or grant of budget authority. Before qualification, C/Founder must approve its exact integer micro-USD amount, retention/receipt provenance and pricing policy at the same evidence revision as both arms. Provider input/output usage, cache-hit/miss treatment, retries and failed attempts need the contemporaneous independently reviewed provider billing evidence and an attributable compute/tools/storage ledger. A SHA-256 receipt is a locator and integrity checksum, not authentication or approval. This comparator does not send inference requests or certify historical billing.
+
+
+### Day 8 exact case input / source lineage gate — 21 November 2026 (PR #844)
+
+The development corpus is immutable: precisely 40 **distinct** development entries,
+ten per workflow/language cell. Counting a Python dictionary after duplicates are
+discarded is not sufficient; a 41-row inventory with one repeated case ID is
+rejected before aggregation. The original `scripts.pilot_workflow_eval.load_suite`
+verifies the frozen manifest, original source snapshots and development case file
+hashes before Day 8 comparison. The comparator now binds *every* primary attempt
+and any subsequent rerun to those canonical inputs, not just to a case ID and
+workflow/language combination.
+
+In the restricted operator report, each first-run and rerun row must include:
+
+- `case_input_sha256`: lowercase SHA-256 of UTF-8 JSON for the original case
+  record **excluding** only the loader's `_source` attachment, serialized with
+  `sort_keys=True`, `separators=(",", ":")`, `ensure_ascii=False`, and
+  `allow_nan=False`. This binds the frozen instruction, expected facts,
+  workflow, language and case-level limits without copying instruction text into
+  the report.
+- `source_snapshot_sha256`: the verified `case["_source"]["sha256"]` from
+  the frozen pilot suite. Its source text remains in the private source dossier,
+  not in the event payload.
+
+A present but nonmatching or malformed hash rejects the comparison. An absent
+hash on a historical first run or rerun is readable but makes the comparison
+**BLOCKED**, with no freeze or qualified cost savings. Metrics and signed
+per-case raw deltas remain available for investigation. The freeze includes
+`development_case_source_lineage_sha256`, a deterministic SHA-256 of the
+case-ID-to-two-digests mapping, in addition to the development file hash.
+
+**Authenticity boundary:** this is consistency validation, not cryptographic
+authentication of the actual provider request. D must independently reconcile
+immutable provider requests, source/dossier versions, owner approvals, original
+generation receipts and reviewer outcomes before setting the existing verified
+receipt flags. Never treat matching operator-supplied digests as evidence of 80
+real paid runs, successful natural Temporal firings or an approved release.
