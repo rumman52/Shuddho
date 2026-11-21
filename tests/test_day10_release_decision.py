@@ -896,3 +896,56 @@ def test_day10_rejects_rewritten_attempt_finish_even_if_both_scores_match(monkey
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+@pytest.mark.parametrize(("mutation", "why"), [
+    (lambda evidence: evidence["recovery"].update(manifest_sha256="0" * 64),
+     "foreign-manifest"),
+    (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
+        verified_at=STARTED
+    ), "verified-before-observed"),
+    (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
+        evidence_ref="https://example.test/unbound-recovery"
+    ), "reference-not-trace-digest"),
+    (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
+        id="unrelated-successful-recovery"
+    ), "scenario-id-not-canonical"),
+])
+def test_day10_recovery_cannot_relabel_unbound_or_unordered_receipts(
+    monkeypatch, mutation, why
+):
+    rollout, artifacts = evidence()
+    mutation(artifacts)
+    # Even when all 20 rows claim success, Day 10 must independently verify
+    # the receipt contract that Day 9 actually emits.
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY", why
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
+
+
+def test_day10_rejects_recovery_without_original_first_run_handoff(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["day9_first_run"].pop("day10_recovery", None)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
+
+
+def test_day10_rejects_modified_recovery_after_original_first_run(monkeypatch):
+    rollout, artifacts = evidence()
+    # A separate recovery artifact cannot be replaced after Day 9 scoring,
+    # even when the replacement has the same status, source and trace digest.
+    row = artifacts["recovery"]["scenarios"][0]
+    row["boundaries"]["postgres"]["instance"] = "different-postgres-instance"
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
+
+
+def test_day10_recovery_shape_rejects_noncustodial_operator_reference():
+    _, artifacts = evidence()
+    row = artifacts["recovery"]["scenarios"][0]
+    assert not day10.recovery_ok(
+        artifacts["recovery"], RELEASE, REV, HASH,
+        manifest_sha256=artifacts["day9_first_run"]["manifest_sha256"],
+    )
