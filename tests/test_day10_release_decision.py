@@ -1,6 +1,7 @@
 """Release decision must reject unsigned, simulated and mismatched evidence."""
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from copy import deepcopy
@@ -76,14 +77,32 @@ def evidence():
                           },
                           "security_passed": True}
                          for w, l in cells for i in range(10)]}
-    recovery = {**proof(), "scenarios": [dict(
-        proof(), id=f"recovery-{i}", scenario=name,
-        evidence_ref=f"https://evidence.example.test/recovery-{i}",
-        execution="operated", observed_at=NOW, trace_sha256="e" * 64,
-        unauthorized_access=False, unauthorized_mutation=False,
-        boundaries={target: {"mode": "real", "instance": f"staging-{target}", "trace_sha256": "f" * 64}
-                    for target in targets},
-    ) for i, (name, targets) in OPERATED.items()]}
+    # Synthetic release-bound receipts using the exact envelope emitted by
+    # Day 9's verify_operations(), not arbitrary independent success claims.
+    recovery = {
+        "release_id": RELEASE, "source_revision": REV,
+        "rollout_manifest_sha256": HASH,
+        "manifest_sha256": first["manifest_sha256"],
+        "scenarios": [{
+            "id": f"day9-scenario-{i:02d}", "scenario": name,
+            "release_id": RELEASE, "source_revision": REV,
+            "rollout_manifest_sha256": HASH,
+            "manifest_sha256": first["manifest_sha256"],
+            "evidence_ref": "sha256:" + hashlib.sha256(f"synthetic-scenario-{i}".encode()).hexdigest(),
+            "trace_sha256": hashlib.sha256(f"synthetic-scenario-{i}".encode()).hexdigest(),
+            "verified_at": NOW, "observed_at": STARTED, "status": "passed",
+            "execution": "operated", "unauthorized_access": False,
+            "unauthorized_mutation": False,
+            "boundaries": {
+                target: {
+                    "mode": "real", "instance": f"staging-{target}",
+                    "trace_sha256": hashlib.sha256(
+                        f"synthetic-boundary-{i}-{target}".encode()
+                    ).hexdigest(),
+                } for target in targets
+            },
+        } for i, (name, targets) in OPERATED.items()],
+    }
     approval = {**proof(), "explicit_separate_authorization": True,
                 "reference": "founder-C-approved-change", "founder": "founder-signoff",
                 "owner_c": "C-signoff", "max_users": 5}
@@ -143,6 +162,9 @@ def evidence():
         denied_resource_types=["documents", "memory", "artifacts", "activity"],
     )
     _bind_first_run_to_heldout_outcomes(artifacts)
+    # Day 9 embeds the same original recovery object in its first-run report
+    # and exports a separate Day 10 recovery file.
+    artifacts["day9_first_run"]["day10_recovery"] = deepcopy(recovery)
     return rollout, artifacts
 
 
@@ -896,3 +918,63 @@ def test_day10_rejects_rewritten_attempt_finish_even_if_both_scores_match(monkey
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+@pytest.mark.parametrize(("mutation", "why"), [
+    (lambda evidence: evidence["recovery"].update(manifest_sha256="0" * 64),
+     "foreign-manifest"),
+    (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
+        observed_at=NOW, verified_at=STARTED
+    ), "verified-before-observed"),
+    (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
+        evidence_ref="https://example.test/unbound-recovery"
+    ), "reference-not-trace-digest"),
+    (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
+        id="unrelated-successful-recovery"
+    ), "scenario-id-not-canonical"),
+])
+def test_day10_recovery_cannot_relabel_unbound_or_unordered_receipts(
+    monkeypatch, mutation, why
+):
+    rollout, artifacts = evidence()
+    mutation(artifacts)
+    # Test the receipt validator independently of the original-report equality
+    # check, so each mutation exercises the actual Day 9 evidence contract.
+    assert not day10.recovery_ok(
+        artifacts["recovery"], RELEASE, REV, HASH,
+        manifest_sha256=artifacts["day9_first_run"]["manifest_sha256"],
+    ), why
+    # Even when all 20 rows claim success, Day 10 must independently verify
+    # the receipt contract that Day 9 actually emits.
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY", why
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
+
+
+def test_day10_rejects_recovery_without_original_first_run_handoff(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["day9_first_run"].pop("day10_recovery", None)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
+
+
+def test_day10_rejects_modified_recovery_after_original_first_run(monkeypatch):
+    rollout, artifacts = evidence()
+    # A separate recovery artifact cannot be replaced after Day 9 scoring,
+    # even when the replacement has the same status, source and trace digest.
+    row = artifacts["recovery"]["scenarios"][0]
+    row["boundaries"]["postgres"]["instance"] = "different-postgres-instance"
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
+
+
+def test_day10_recovery_shape_rejects_noncustodial_operator_reference():
+    _, artifacts = evidence()
+    row = artifacts["recovery"]["scenarios"][0]
+    row["evidence_ref"] = "https://example.test/unbound-recovery"
+    assert not day10.recovery_ok(
+        artifacts["recovery"], RELEASE, REV, HASH,
+        manifest_sha256=artifacts["day9_first_run"]["manifest_sha256"],
+    )
