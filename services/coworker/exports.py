@@ -67,11 +67,53 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
 
     try:
         document = Document(io.BytesIO(rows[docx_name]))
-        document_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        document_paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
+        document_text = "\n".join(document_paragraphs)
         if not document_text.strip() or not title or title not in document_text:
             raise ValueError("DOCX title or readable content is missing")
         if any(not heading or heading not in document_text for heading in headings):
             raise ValueError("DOCX is missing an expected section heading")
+
+        # Opening a well-formed native file is not sufficient. A renderer (or
+        # an altered checkpoint at completion) could replace all report facts,
+        # section source IDs or bibliography entries while preserving the
+        # filename, title, and headings. For report/email the native renderer
+        # produces a deterministic paragraph sequence: verify it in full,
+        # including duplicates, rather than accepting substring matches.
+        pdf_claims = [title]
+        if skill_id == "report_email":
+            expected_paragraphs = [draft.report.title, draft.report.summary]
+            pdf_claims.append(draft.report.summary)
+            for section in draft.report.sections:
+                section_ref = "[" + ", ".join(section.source_ids) + "]"
+                expected_paragraphs.extend([section.heading, *section.paragraphs, section_ref])
+                pdf_claims.extend([section.heading, *section.paragraphs, section_ref])
+            for source in expected_sources:
+                source_ref = f'[{source["id"]}] {source["label"]}'
+                expected_paragraphs.append(source_ref)
+                pdf_claims.append(source_ref)
+            for gap in draft.missing_information:
+                expected_paragraphs.append("[ ] " + gap)
+                pdf_claims.append(gap)
+            if document_paragraphs != expected_paragraphs:
+                raise ValueError("DOCX content differs from the reviewed report, references or evidence gaps")
+        else:
+            # Research DOCX links can live in w:hyperlink nodes, which some
+            # python-docx versions exclude from paragraph.text. Check the
+            # explicit findings and quotations using the reliable paragraphs
+            # while the source-manifest remains the exact authorized snapshot.
+            for finding in draft.findings:
+                if finding.text not in document_paragraphs:
+                    raise ValueError("DOCX is missing a reviewed research finding")
+                pdf_claims.extend([finding.heading, finding.text])
+                for citation in finding.citations:
+                    if not any(citation.quote in paragraph for paragraph in document_paragraphs):
+                        raise ValueError("DOCX is missing a selected research quotation")
+                    pdf_claims.append(citation.quote)
+            for gap in draft.missing_information:
+                if gap not in document_paragraphs:
+                    raise ValueError("DOCX is missing an evidence gap")
+                pdf_claims.append(gap)
 
         reader = PdfReader(io.BytesIO(rows[pdf_name]))
         if reader.is_encrypted or not reader.pages:
@@ -79,6 +121,14 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
         pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
         if not pdf_text.strip():
             raise ValueError("PDF contains no extractable text")
+        # PDF text extraction is whitespace- and shaping-dependent, notably
+        # for Bangla. Require the unchanged ASCII claims/reference IDs that
+        # can be unambiguously extracted, without falsely rejecting a valid
+        # Bengali native document because glyph shaping changes transcription.
+        compact_pdf = "".join(pdf_text.split())
+        if any("".join(claim.split()) not in compact_pdf
+               for claim in pdf_claims if claim and claim.isascii()):
+            raise ValueError("PDF text differs from the reviewed title, facts or references")
 
         text_content = rows[text_name].decode("utf-8")
         if not text_content.strip():
