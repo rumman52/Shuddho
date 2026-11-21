@@ -28,6 +28,8 @@ def protected_branch() -> dict:
 def approved_ruleset() -> dict:
     return {
         "id": 123,
+        "source": "rumman52/Shuddho",
+        "source_type": "Repository",
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}},
@@ -194,7 +196,10 @@ def test_repository_inspection_reads_actual_ruleset_detail_and_branch(monkeypatc
         if url.endswith("/rulesets?includes_parents=true&per_page=100"):
             return [{"id": 123, "target": "branch", "enforcement": "active"}]
         if url.endswith("/rulesets/123"):
-            return approved_ruleset()
+            # The full GitHub detail must identify the requested REST repository.
+            snapshot = approved_ruleset()
+            snapshot["source"] = "owner/repo"
+            return snapshot
         raise AssertionError(f"unexpected API request: {url}")
 
     monkeypatch.setattr(mod, "_get_json", fake_get_json)
@@ -206,6 +211,7 @@ def test_installation_token_reads_branch_and_ruleset_details(monkeypatch):
     from scripts import main_protection_audit as mod
 
     rule = approved_ruleset()
+    rule["source"] = "owner/repo"
 
     def fake_get_json(url, token):
         if url.endswith("/branches/main"):
@@ -438,6 +444,10 @@ def test_operator_ruleset_template_satisfies_both_configuration_auditors():
     candidate = json.loads(Path("infra/github/main-ruleset.json").read_text(encoding="utf-8"))
     # GitHub assigns this field on creation; this is fixture identity only.
     candidate["id"] = 123
+    # GitHub sets these provenance fields on the native detail readback;
+    # the checked-in creation template must not pretend to have them.
+    candidate["source"] = "rumman52/Shuddho"
+    candidate["source_type"] = "Repository"
     assert audit_governance(protected_branch(), [candidate]) == 123
     result = assess_native_policy(rulesets=[candidate])
     assert result["classification"] == "configuration_candidate"
@@ -508,3 +518,81 @@ def test_governance_audit_allows_one_additional_unique_first_party_check():
         {"context": "additional-first-party-check", "integration_id": 15368}
     )
     assert audit_governance(protected_branch(), [rule]) == 123
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source", "external/Other"),
+        ("source", "rumman52/shuddho"),
+        ("source", None),
+        ("source", ""),
+        ("source_type", "Organization"),
+        ("source_type", "Enterprise"),
+        ("source_type", None),
+        ("source_type", ""),
+    ],
+)
+def test_governance_audit_rejects_foreign_and_inherited_rulesets(field, value):
+    """Even complete review/check rules cannot establish another owner's policy."""
+    snapshot = approved_ruleset()
+    snapshot[field] = value
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        audit_governance(protected_branch(), [snapshot])
+
+
+@pytest.mark.parametrize("field", ["source", "source_type"])
+def test_governance_audit_rejects_missing_origin_metadata(field):
+    snapshot = approved_ruleset()
+    del snapshot[field]
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        audit_governance(protected_branch(), [snapshot])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("source", "elsewhere/Project"), ("source_type", "Organization")],
+)
+def test_foreign_redacted_bypass_does_not_misdiagnose_a_scoped_app_credential(field, value):
+    snapshot = approved_ruleset()
+    snapshot[field] = value
+    del snapshot["bypass_actors"]
+    # The native audit must not instruct an administrator to broaden access
+    # for a policy that is not owned by the inspected repository.
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        audit_governance(protected_branch(), [snapshot])
+
+
+def test_inspect_repository_binds_ruleset_source_to_requested_rest_path(monkeypatch):
+    from scripts import main_protection_audit as mod
+
+    expected = approved_ruleset()
+    expected["source"] = "owner/repo"
+
+    def fake_read(url, token):
+        assert token == "readback-token"
+        assert "/repos/owner/repo/" in url
+        if url.endswith("/branches/main"):
+            return protected_branch()
+        if url.endswith("/rulesets?includes_parents=true&per_page=100"):
+            return [{"id": 123, "target": "branch", "enforcement": "active"}]
+        if url.endswith("/rulesets/123"):
+            return expected
+        raise AssertionError(url)
+
+    monkeypatch.setattr(mod, "_get_json", fake_read)
+    assert inspect_repository("owner/repo", "readback-token") == 123
+    expected["source"] = "different/repo"
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        inspect_repository("owner/repo", "readback-token")
+
+
+
+def test_creation_template_has_no_server_origin_but_stays_valid_for_admin_creation():
+    """Creation-only validation reuses this helper before GitHub assigns source."""
+    from scripts.main_protection_audit import _active_main_ruleset
+
+    candidate = json.loads(Path("infra/github/main-ruleset.json").read_text(encoding="utf-8"))
+    assert "source" not in candidate
+    assert "source_type" not in candidate
+    assert _active_main_ruleset(candidate) is True
