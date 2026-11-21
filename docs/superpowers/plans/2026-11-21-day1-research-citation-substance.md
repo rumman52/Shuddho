@@ -12,19 +12,26 @@ In `score`'s `research_brief` case, the `citation_grounding` check validates `_n
 
 ## Task 1 — prove RED with cases that remain schema-valid
 
-- [ ] Add four parameterized negative tests to `tests/test_pilot_workflow_eval.py`, English and Bangla with two inputs: a short source fragment whose two existing words are separated by 20 ordinary spaces or 20 newline characters (both normalized to 8 characters). Append a *fourth* finding containing a non-fact extra claim and its source-id bound padded quote while retaining the original three fact-grounded findings. Assert `schema_valid=true`, `citation_grounding=false`, `passed=false`. The old scorer should fail only these assertions, not schema parsing.
-- [ ] Commit tests alone, run GitHub Actions on exact test-only SHA and record the four actual failures (or adjust test if a wrong failure happens) before production correction. Do not call an unobserved RED test a pass.
-- [ ] Positives: all 40 reference outputs, both languages and both workflows, still qualify *only* as source-authored calibration, `quality_qualified=false`, zero provider calls.
+- [x] Add four parameterized negative tests to `tests/test_pilot_workflow_eval.py`, English and Bangla with two inputs: a short source fragment whose two existing words are separated by 20 ordinary spaces or 20 newline characters (both normalized to 8 characters). Append a *fourth* finding containing a non-fact extra claim and its source-id bound padded quote while retaining the original three fact-grounded findings. Assert `schema_valid=true`, `citation_grounding=false`, `passed=false`. The old scorer should fail only these assertions, not schema parsing.
+- [x] Commit tests alone, run GitHub Actions on exact test-only SHA and record the four actual failures (or adjust test if a wrong failure happens) before production correction. Do not call an unobserved RED test a pass.
+- [x] Positives: all 40 reference outputs, both languages and both workflows, still qualify *only* as source-authored calibration, `quality_qualified=false`, zero provider calls.
 
 ## Task 2 — implement minimal GREEN
 
-- [ ] In `scripts/pilot_workflow_eval.py::score`, replace the nested `all` quote substring predicate with a condition checking `len(_norm(c.quote)) >= 20` before source substring check. Do not alter `ResearchCitation` production Pydantic rules.
+- [x] In `scripts/pilot_workflow_eval.py::score`, replace the nested `all` quote substring predicate with a condition checking `len(_norm(c.quote)) >= 20` before source substring check. Do not alter `ResearchCitation` production Pydantic rules.
 - [ ] Inspect exact corrected GitHub Actions head `test-and-build` (Python + contracts), full `coworker`, PG18, frontend, browser and ancestry. `governance-audit` skipped on PR is not native merge protection and `ci-merge-gate` may report failure without actual approved independent review. No local checkout command is claimed unless actually executed.
 
 ## Task 3 — evidence and handoff
 
-- [ ] Create `docs/coworker-roadmap/DAY1_PILOT_RESEARCH_CITATION_SUBSTANCE_2026-11-21.md` and prepend `PROGRESS.md` with RED/GREEN revision+run and scoped limits. Open a DRAFT PR from the dedicated branch; link Day 1 #727, D custody #665 and Linear MD-5.
-- [ ] Record external blocker: the real native protected-main rule has previously allowed merged PRs with `ci-merge-gate=FAIL`, PR governance SKIPPED, no submitted human reviews. Do not weaken the source checks; require C/admin action, an operated negative and positive merge test and actual independent review.
-- [ ] No paid inference, real customer data, D heldout, Supabase migration, Render provisioning, Vercel deploy, ProductOS demo changes, PostHog telemetry or pilot activation. Founder/C staging resources/restore and exact release signoff remain separately blocked.
+- [x] Create `docs/coworker-roadmap/DAY1_PILOT_RESEARCH_CITATION_SUBSTANCE_2026-11-21.md` and prepend `PROGRESS.md` with RED/GREEN revision+run and scoped limits. Open a DRAFT PR from the dedicated branch; link Day 1 #727, D custody #665 and Linear MD-5.
+- [x] Record external blocker: the real native protected-main rule has previously allowed merged PRs with `ci-merge-gate=FAIL`, PR governance SKIPPED, no submitted human reviews. Do not weaken the source checks; require C/admin action, an operated negative and positive merge test and actual independent review.
+- [x] No paid inference, real customer data, D heldout, Supabase migration, Render provisioning, Vercel deploy, ProductOS demo changes, PostHog telemetry or pilot activation. Founder/C staging resources/restore and exact release signoff remain separately blocked.
 
 **Done for this branch:** Source-only fix and a reviewable draft PR with observed RED and passing final-head focused/full test evidence. **Not done by this branch:** Independent D custody, actual staging recovery, native governance or release GO.
+
+### Observed TDD and implementation checkpoint — 21 November 2026
+
+- **Base:** `05e582d6a5e6174668b3287685966929d3b87460`; [draft #872](https://github.com/rumman52/Shuddho/pull/872).
+- **Test-only RED:** `564a8c2191c643cdfde885c7eb95a2cb43c718a1`; [Actions #44923376923](https://github.com/rumman52/Shuddho/actions/runs/44923376923) **4 expected failed / 3537 passed / 105 skipped / 6 warnings**. English/Bangla × ordinary spaces/newlines yielded `assert True is False` on `citation_grounding`; `schema_valid=true` was independently asserted before that statement, proving a scorer defect rather than a validation/schema issue.
+- **Fix commit:** `4ae1afcaacef7403f14669b3e7c6b84ae5308d03` adds normalized length requirement 20 before source-substring match. Retains every public interface and production schema.
+- **Evidence:** `docs/coworker-roadmap/DAY1_PILOT_RESEARCH_CITATION_SUBSTANCE_2026-11-21.md` and prepended `PROGRESS.md`. **Final-head GREEN remains pending** until GitHub job conclusions and actual log counts are inspected. A code-agent comment is not an independent human PR review; native branch protection still blocked.
