@@ -232,3 +232,69 @@ def test_coworker_is_unconditionally_required_even_if_checked_in_template_is_wea
     ]
     with pytest.raises(EvidenceError, match="mandatory first-party checks"):
         analyze(branch(), weakened_live, weakened_policy, expected_main_sha=SHA)
+
+
+@pytest.mark.parametrize(
+    "extra_rows",
+    [
+        [{"context": "extra-stage", "integration_id": 15368},
+         {"context": "extra-stage", "integration_id": 15368}],
+        [{"context": "extra-stage", "integration_id": 98765}],
+        [{"context": "extra-stage"}],
+        [{"context": "extra-stage", "integration_id": None}],
+        [{"context": "extra-stage", "integration_id": True}],
+        [{"context": "extra-stage", "integration_id": "15368"}],
+        [{"context": "", "integration_id": 15368}],
+        [{"context": "  ", "integration_id": 15368}],
+        [{"context": "extra-stage", "integration_id": 15368, "unknown": True}],
+        [None],
+        ["not-a-status-object"],
+    ],
+    ids=[
+        "duplicate-extra-first-party",
+        "extra-wrong-app",
+        "extra-missing-app",
+        "extra-null-app",
+        "extra-bool-app",
+        "extra-string-app",
+        "extra-empty-name",
+        "extra-blank-name",
+        "extra-unknown-key",
+        "extra-null-row",
+        "extra-string-row",
+    ],
+)
+def test_live_untrusted_or_ambiguous_extra_status_rows_are_blocked(extra_rows):
+    """Offline snapshots must not hide an extra native check that cannot be trusted."""
+    snapshot = live()
+    snapshot["rules"][-1]["parameters"]["required_status_checks"].extend(extra_rows)
+    report = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert report["status"] == "blocked_configuration"
+    assert "checks.unambiguous_first_party_rows" in report["drift"]
+    assert report["qualified"] is False
+
+
+def test_unexpected_keys_on_mandatory_native_status_row_are_detected():
+    snapshot = live()
+    snapshot["rules"][-1]["parameters"]["required_status_checks"][0]["unknown"] = "ignored-before"
+    report = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert "checks.unambiguous_first_party_rows" in report["drift"]
+
+
+def test_reviewed_policy_rejects_extra_unrecognized_status_row_keys():
+    altered = policy()
+    altered["rules"][-1]["parameters"]["required_status_checks"][0]["unreviewed"] = True
+    with pytest.raises(EvidenceError, match="reviewed policy"):
+        analyze(branch(), live(), altered, expected_main_sha=SHA)
+
+
+def test_one_unique_extra_first_party_native_check_remains_nonqualifying_candidate():
+    snapshot = live()
+    snapshot["rules"][-1]["parameters"]["required_status_checks"].append(
+        {"context": "additional-first-party", "integration_id": 15368}
+    )
+    report = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert report["status"] == "configuration_candidate"
+    assert report["drift"] == []
+    assert report["qualified"] is False
+    assert report["merge_enforcement_verified"] is False
