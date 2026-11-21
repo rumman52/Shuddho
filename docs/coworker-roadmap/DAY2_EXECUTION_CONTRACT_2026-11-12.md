@@ -322,6 +322,18 @@ The recovery gate is **not** satisfied by an arbitrary restart reference, a comp
 
 ## Dated Founder + C authorization evidence (D02.T05 / D02.G05)
 
+**Paid-worker creation is gated before the cost is incurred:** the manual PA-10
+`provision-pa10-staging-worker.yml` workflow now requires a private scoped
+Founder/C decision through the protected `pa10-staging` environment's
+`PA10_DAY2_FOUNDER_C_AUTHORIZATION_B64` secret. Its source-only validator
+must accept the exact SHA, approved Render workspace, reviewed staging API,
+prospective `shuddho-worker-staging` name, USD budget/time window, distinct
+decision references and rollback/restore targets **before** the first Render
+service create/update. No secret means the paid resource remains blocked.
+Workflow-dispatch `PROVISION` is not spending authority, and C/D must
+separately inspect original signed decisions, real billing and the deployed
+worker ID. See [preprovision approval](../DAY2_FOUNDER_C_AUTHORIZATION.md#gate-before-pa-10-paid-worker-provisioning-d02t05--g05).
+
 The four-page Part 02 prompt requires a **specific, dated Founder and C**
 decision before seeding synthetic data, applying staging migrations, deploying
 the persistent worker, restoring private material or incurring model/compute
