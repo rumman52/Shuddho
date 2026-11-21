@@ -60,3 +60,8 @@
 ## Current main ancestry update
 
 Originally developed and TDD-tested on main `d92e2ecd6f5c899e9acdc079b9f620870d613dfc`. After separately reviewed PRs #850, #851 and #852 merged, this branch was faithfully transplanted onto current main `7b8b47c5edfd6d152eebbd3345a1bd8c84b9f7a7`. Source and test files had no main-side overlap; PROGRESS.md preserves the newer main history below this PR's one top entry. All prior test-only RED and intermediate failed-GREEN SHAs remain cited as historical evidence. **This ancestry update requires fresh exact-final-head CI**, not reuse of previous runs.
+
+### GitHub detail fixture after main merge
+
+- Exact rebased head `9819cb88508da3f97dc2368e3ee61e892ba41dc7` [Actions #44911260802](https://github.com/rumman52/Shuddho/actions/runs/44911260802) **FAILED** main source/build: 3 / 3,198 passed / 105 skipped / 6 warnings. Remaining positive mocks in `tests/test_apply_main_ruleset.py::detail()` omitted native GET-assigned `source`/`source_type`, so the code correctly rejected them. No production check should be relaxed to accept missing provenance.
+- Fix **test fixture only** in `c2115f408facf9891728e6c4dd4dfe16621c0e76`: the candidate POST template remains without source fields, while the simulated native detail returned by GET now includes `source="rumman52/Shuddho"`, `source_type="Repository"`. Preserve negative unknown-response, bypass and anti-duplicate mutation tests. Final head CI pending after docs checkpoint.
