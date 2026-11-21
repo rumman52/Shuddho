@@ -7,6 +7,7 @@ it can never demonstrate PDF recovery, owner access or hosted D02.T09 PASS.
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 from scripts.staging_day2_archive_attestation import (
     ArchiveAttestationFailure,
@@ -102,4 +103,42 @@ def require_unchanged_source(
     if type(live_object_inventory) is not list or live_object_inventory:
         raise PreseedBaselineFailure(
             "Original private bucket is not empty before synthetic seeding."
+        )
+
+
+def read_original_attestation(path: Path, baseline_summary: dict) -> dict:
+    """Rebind an immutable earlier observation to the three original archives.
+
+    The attestation must have been written while the source still equaled the
+    archived 0070 schema and empty bucket. Later schema upgrades/rows are
+    expected, so the operator must *not* rerun live row equality at task time.
+    """
+    try:
+        receipt = _private_json(path, "Original pre-seeding attestation")
+        if (set(receipt) != {"schema_version", "status", "attested_at", "baseline"}
+                or type(receipt["schema_version"]) is not int
+                or receipt["schema_version"] != 1
+                or receipt["status"] != "preseed_verified"
+                or receipt["baseline"] != baseline_summary):
+            raise PreseedBaselineFailure(
+                "Original pre-seeding attestation does not match protected archive bytes."
+            )
+        timestamp = receipt["attested_at"]
+        if not isinstance(timestamp, str):
+            raise PreseedBaselineFailure("Original pre-seeding time is missing.")
+        observed_at = datetime.fromisoformat(timestamp)
+        if observed_at.tzinfo is None or observed_at > datetime.now(timezone.utc):
+            raise PreseedBaselineFailure("Original pre-seeding time is invalid or in the future.")
+    except (ArchiveAttestationFailure, OSError, ValueError, TypeError):
+        raise PreseedBaselineFailure("Original pre-seeding attestation is invalid.") from None
+    return {**baseline_summary, "attested_at":timestamp}
+
+
+def require_same_source_resources(summary: dict, current_fingerprints: dict) -> None:
+    """The DB/bucket identities must remain the same even after schema migration."""
+    if (not isinstance(current_fingerprints, dict)
+            or current_fingerprints.get("database") != summary["source_database_fingerprint"]
+            or current_fingerprints.get("storage") != summary["source_storage_fingerprint"]):
+        raise PreseedBaselineFailure(
+            "Original pre-seeding attestation belongs to different database/storage resources."
         )
