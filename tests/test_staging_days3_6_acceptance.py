@@ -366,11 +366,46 @@ def evidence():
             "id": f"{workflow}-{language}-{n}",
             "workflow": workflow, "language": language,
             "provider_request_id": f"development-model-{workflow}-{language}-{n}",
+            "first_run_id": f"dev-run-{workflow}-{language}-{n}",
+            "first_output_sha256": D3 if n % 2 == 0 else D4,
+            "scored_output_sha256": D3 if n % 2 == 0 else D4,
+            "first_output_size_bytes": 100 + n,
+            "first_started_at": "2026-11-18T05:11:00Z",
+            "first_finished_at": "2026-11-18T05:12:00Z",
+            "first_reviewed_at": "2026-11-18T05:20:00Z",
+            "first_output_receipt_ref": f"dev-original-output-{workflow}-{language}-{n}",
+            "first_provider_receipt_ref": f"dev-original-provider-{workflow}-{language}-{n}",
+            "score_receipt_ref": f"dev-first-scoring-{workflow}-{language}-{n}",
             "factual_check": True, "owner_isolation": True,
             "citation_check": True, "no_send": True,
-            "quality_score": 8, "evidence_ref": f"dev-case-{workflow}-{language}-{n}",
+            "quality_score": 5 if (workflow == "report_email" and language == "bn" and n == 0) else 8,
+            "evidence_ref": f"dev-case-{workflow}-{language}-{n}",
         } for workflow in sorted(gate.WORKFLOWS)
           for language in sorted(gate.LANGUAGES) for n in range(10)],
+        "repair_reruns": [{
+            "original_case_id": "report_email-bn-0",
+            "original_first_run_id": "dev-run-report_email-bn-0",
+            "original_provider_request_id": "development-model-report_email-bn-0",
+            "original_output_sha256": D3,
+            "original_output_readback_ref": "retained-original-report-email-bn-0",
+            "run_id": "repair-run-report_email-bn-0",
+            "provider_request_id": "repair-provider-report_email-bn-0",
+            "output_sha256": D5,
+            "scored_output_sha256": D5,
+            "output_size_bytes": 180,
+            "started_at": "2026-11-18T06:15:00Z",
+            "completed_at": "2026-11-18T06:20:00Z",
+            "reviewed_at": "2026-11-18T06:22:00Z",
+            "first_output_retained": True,
+            "failure_category": "missing_required_section",
+            "repair_description": "Added the missing section, leaving first output intact.",
+            "provider_receipt_ref": "repair-provider-readback",
+            "repaired_output_readback_ref": "repair-output-readback",
+            "review_receipt_ref": "repair-independent-scoring",
+            "factual_check": True, "owner_isolation": True,
+            "citation_check": True, "no_send": True,
+            "quality_score": 8,
+        }],
         "reconnect": {
             "run_id_before": "run-research-bn", "run_id_after": "run-research-bn",
             "worker_before_id": "worker-A", "worker_after_id": "worker-B",
@@ -1382,3 +1417,143 @@ def test_day3_accepted_answers_first_and_revocation_same_source_are_still_struct
     day = args[1]
     assert day["revocation"]["source_document_version_id"] == day["answers"][0]["selected_document_version_id"]
     assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+# D06.T10: the 40 cell scores must score ORIGINAL immutable outputs.
+# Repairing the worst result must be a separately attributable later run.
+@pytest.mark.parametrize(("field", "bad"), [
+    ("first_run_id", ""),
+    ("first_run_id", "run-research-bn"),
+    ("first_output_sha256", "invalid"),
+    ("first_output_size_bytes", 0),
+    ("first_output_size_bytes", True),
+    ("scored_output_sha256", D5),
+    ("first_started_at", "2026-11-18T05:30:00Z"),
+    ("first_finished_at", "2026-11-18T05:10:00Z"),
+    ("first_reviewed_at", "2026-11-18T05:11:00Z"),
+    ("first_reviewed_at", "2026-11-18T07:05:00Z"),
+    ("first_output_receipt_ref", ""),
+    ("first_provider_receipt_ref", ""),
+    ("score_receipt_ref", ""),
+])
+def test_day6_first_attempt_quality_must_bind_original_run_bytes_provider_and_score(field, bad):
+    args = evidence()
+    args[4]["development_cases"][0][field] = bad
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "first_run_id", "first_output_sha256", "first_output_size_bytes",
+    "scored_output_sha256", "first_started_at", "first_finished_at",
+    "first_reviewed_at", "first_output_receipt_ref",
+    "first_provider_receipt_ref", "score_receipt_ref",
+])
+def test_day6_original_first_attempt_receipt_is_required_not_optional(field):
+    args = evidence()
+    del args[4]["development_cases"][0][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+@pytest.mark.parametrize(("field", "bad"), [
+    ("original_case_id", "research-en-9"),
+    ("original_first_run_id", "another-first-run"),
+    ("original_provider_request_id", "another-first-provider"),
+    ("original_output_sha256", D4),
+    ("original_output_readback_ref", ""),
+    ("run_id", "dev-run-report_email-bn-0"),
+    ("run_id", "run-research-bn"),
+    ("provider_request_id", "development-model-report_email-bn-0"),
+    ("provider_request_id", "provider-research-bn"),
+    ("output_sha256", D3),
+    ("output_sha256", "bad-digest"),
+    ("scored_output_sha256", D3),
+    ("output_size_bytes", 0),
+    ("started_at", "2026-11-18T05:10:00Z"),
+    ("completed_at", "2026-11-18T06:14:00Z"),
+    ("reviewed_at", "2026-11-18T06:19:00Z"),
+    ("reviewed_at", "2026-11-18T07:05:00Z"),
+    ("first_output_retained", False),
+    ("failure_category", ""),
+    ("repair_description", ""),
+    ("provider_receipt_ref", ""),
+    ("repaired_output_readback_ref", ""),
+    ("review_receipt_ref", ""),
+    ("factual_check", False),
+    ("owner_isolation", False),
+    ("citation_check", False),
+    ("no_send", False),
+    ("quality_score", 5),
+    ("quality_score", 9),
+])
+def test_day6_repair_must_target_the_worst_first_attempt_without_overwriting_it(field, bad):
+    args = evidence()
+    args[4]["repair_reruns"][0][field] = bad
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+@pytest.mark.parametrize("field", [
+    "original_case_id", "original_first_run_id", "original_provider_request_id",
+    "original_output_sha256", "original_output_readback_ref", "run_id",
+    "provider_request_id", "output_sha256", "scored_output_sha256", "output_size_bytes",
+    "started_at", "completed_at", "reviewed_at", "first_output_retained",
+    "failure_category", "repair_description", "provider_receipt_ref",
+    "repaired_output_readback_ref", "review_receipt_ref",
+    "factual_check", "owner_isolation", "citation_check", "no_send", "quality_score",
+])
+def test_day6_repair_receipt_cannot_omit_original_or_second_output_provenance(field):
+    args = evidence()
+    del args[4]["repair_reruns"][0][field]
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+@pytest.mark.parametrize("mutation", [
+    "missing_rerun", "duplicate_repair", "wrong_cell", "duplicate_first_run",
+    "duplicate_first_provider", "no_first_failure", "repair_score_used_for_threshold",
+    "duplicate_repair_provider", "duplicate_repair_run", "no_repair_of_worst",
+])
+def test_day6_40_case_first_outputs_cannot_be_replaced_or_reruns_counted_as_first(mutation):
+    args = evidence()
+    day = args[4]
+    rows = day["development_cases"]
+    reruns = day["repair_reruns"]
+    if mutation == "missing_rerun":
+        del day["repair_reruns"]
+    elif mutation == "duplicate_repair":
+        reruns.append(deepcopy(reruns[0]))
+    elif mutation == "wrong_cell":
+        reruns[0]["original_case_id"] = rows[11]["id"]
+    elif mutation == "duplicate_first_run":
+        rows[1]["first_run_id"] = rows[0]["first_run_id"]
+    elif mutation == "duplicate_first_provider":
+        rows[1]["provider_request_id"] = rows[0]["provider_request_id"]
+    elif mutation == "no_first_failure":
+        rows[0]["quality_score"] = 8
+    elif mutation == "repair_score_used_for_threshold":
+        rows[1]["quality_score"] = 2
+    elif mutation == "duplicate_repair_provider":
+        reruns[0]["provider_request_id"] = rows[1]["provider_request_id"]
+    elif mutation == "duplicate_repair_run":
+        reruns[0]["run_id"] = rows[1]["first_run_id"]
+    else:
+        reruns[0]["original_case_id"] = rows[9]["id"]
+    with pytest.raises(gate.Days36EvidenceError, match="day6"):
+        validate(args)
+
+
+def test_day6_one_first_failure_and_later_repair_preserve_9_of_10_cell_quality():
+    args = evidence()
+    rows = args[4]["development_cases"]
+    assert rows[0]["quality_score"] == 5
+    assert args[4]["repair_reruns"][0]["quality_score"] == 8
+    assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_day6_repair_cannot_hide_a_second_failing_first_attempt():
+    args = evidence()
+    args[4]["development_cases"][1]["quality_score"] = 2
+    with pytest.raises(gate.Days36EvidenceError, match="quality"):
+        validate(args)

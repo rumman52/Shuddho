@@ -772,17 +772,40 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
     need(isinstance(development, list) and len(development) == 40,
          "day6 has not executed the 40-case development registry")
     from collections import Counter
-    observed, accepted, ids, model_requests = Counter(), Counter(), set(), set()
+    observed, accepted, ids = Counter(), Counter(), set()
+    # Preserve the 40 original model/run IDs separately from both the four
+    # golden cases and any subsequent repair. Reusing their IDs would permit
+    # the repaired artifact to impersonate the first scored output.
+    model_requests, all_runs = set(requests), set(runs)
+    first_attempts: dict[str, dict] = {}
+    day_started = when(day.get("started_at"), "day6.started_at")
     for case in development:
         row = obj(case, "day6.development_case")
         key = (row.get("workflow"), row.get("language"))
         need(key in keys, "day6 development case has an unapproved workflow/language")
         ident = text(row.get("id"), "day6.development_case.id")
         provider = text(row.get("provider_request_id"), "day6.development_case.provider_request_id")
-        need(ident not in ids and provider not in model_requests,
-             "day6 development case reused identity or model invocation")
+        original_run = text(row.get("first_run_id"), "day6.development_case.first_run_id")
+        need(ident not in ids and provider not in model_requests and original_run not in all_runs,
+             "day6 development case reused original case, model or run identity")
         ids.add(ident)
         model_requests.add(provider)
+        all_runs.add(original_run)
+        original_digest = sha(row.get("first_output_sha256"),
+                              "day6.development_case.first_output_sha256")
+        need(sha(row.get("scored_output_sha256"),
+                 "day6.development_case.scored_output_sha256") == original_digest,
+             "day6 development case scored a substituted/repaired output instead of the first output")
+        original_bytes = count(row.get("first_output_size_bytes"),
+                               "day6.development_case.first_output_size_bytes")
+        need(original_bytes > 0, "day6 development case has an empty first output")
+        for label in ("first_output_receipt_ref", "first_provider_receipt_ref", "score_receipt_ref"):
+            referenced(row.get(label), "day6.development_case." + label)
+        first_started = when(row.get("first_started_at"), "day6.development_case.first_started_at")
+        first_finished = when(row.get("first_finished_at"), "day6.development_case.first_finished_at")
+        first_reviewed = when(row.get("first_reviewed_at"), "day6.development_case.first_reviewed_at")
+        need(day_started <= first_started < first_finished <= first_reviewed <= completed,
+             "day6 original attempt and quality review are not in hosted chronological order")
         need(row.get("factual_check") is True and row.get("owner_isolation") is True
              and row.get("citation_check") is True and row.get("no_send") is True,
              "day6 development case failed a hard factual/security boundary")
@@ -791,8 +814,75 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
         referenced(row.get("evidence_ref"), "day6.development_case.evidence_ref")
         observed[key] += 1
         accepted[key] += int(score >= 7)
+        first_attempts[ident] = {
+            "score": score, "run_id": original_run, "provider_request_id": provider,
+            "output_sha256": original_digest, "reviewed_at": first_reviewed,
+        }
     need(all(observed[key] == 10 and accepted[key] >= 9 for key in keys),
          "day6 development quality is below 9/10 in a language/workflow cell")
+
+    # D06.T10 explicitly requires preserving first attempts and repairing
+    # the largest *demonstrated* failure. The 40-cell rate above is computed
+    # BEFORE inspecting any repair and is never allowed to use revised scores.
+    failed_first = {ident: value for ident, value in first_attempts.items()
+                    if value["score"] < 7}
+    need(bool(failed_first), "day6 has no demonstrated failing first attempt to repair")
+    worst_score = min(value["score"] for value in failed_first.values())
+    worst_case_ids = {ident for ident, value in failed_first.items()
+                      if value["score"] == worst_score}
+    repairs = day.get("repair_reruns")
+    need(isinstance(repairs, list) and bool(repairs),
+         "day6 requires separately witnessed repair reruns for the worst first attempt")
+    repaired_first_cases: set[str] = set()
+    for raw_repair in repairs:
+        repair = obj(raw_repair, "day6.repair_rerun")
+        original_id = text(repair.get("original_case_id"),
+                           "day6.repair_rerun.original_case_id")
+        need(original_id in failed_first and original_id not in repaired_first_cases,
+             "day6 repair must target a unique demonstrated failing first case")
+        repaired_first_cases.add(original_id)
+        original = first_attempts[original_id]
+        need(repair.get("original_first_run_id") == original["run_id"]
+             and repair.get("original_provider_request_id") == original["provider_request_id"]
+             and sha(repair.get("original_output_sha256"),
+                     "day6.repair_rerun.original_output_sha256") == original["output_sha256"],
+             "day6 repair did not preserve the original run/provider/first output digest")
+        referenced(repair.get("original_output_readback_ref"),
+                   "day6.repair_rerun.original_output_readback_ref")
+        need(repair.get("first_output_retained") is True,
+             "day6 repair overwrote or lost the original first-run output")
+        repaired_run = text(repair.get("run_id"), "day6.repair_rerun.run_id")
+        provider = text(repair.get("provider_request_id"), "day6.repair_rerun.provider_request_id")
+        need(repaired_run not in all_runs and provider not in model_requests,
+             "day6 repair reused a golden/original/another rerun identity")
+        all_runs.add(repaired_run)
+        model_requests.add(provider)
+        revised_digest = sha(repair.get("output_sha256"), "day6.repair_rerun.output_sha256")
+        need(revised_digest != original["output_sha256"]
+             and sha(repair.get("scored_output_sha256"),
+                     "day6.repair_rerun.scored_output_sha256") == revised_digest,
+             "day6 repair must score separate changed output bytes, not the first-run output")
+        revised_size = count(repair.get("output_size_bytes"),
+                             "day6.repair_rerun.output_size_bytes")
+        need(revised_size > 0, "day6 repair has no new output bytes")
+        start = when(repair.get("started_at"), "day6.repair_rerun.started_at")
+        finish = when(repair.get("completed_at"), "day6.repair_rerun.completed_at")
+        reviewed = when(repair.get("reviewed_at"), "day6.repair_rerun.reviewed_at")
+        need(day_started <= original["reviewed_at"] < start < finish <= reviewed <= completed,
+             "day6 repair was not executed and reviewed after the original failure")
+        referenced(repair.get("failure_category"), "day6.repair_rerun.failure_category")
+        referenced(repair.get("repair_description"), "day6.repair_rerun.repair_description")
+        for label in ("provider_receipt_ref", "repaired_output_readback_ref", "review_receipt_ref"):
+            referenced(repair.get(label), "day6.repair_rerun." + label)
+        need(all(repair.get(key) is True for key in (
+            "factual_check", "owner_isolation", "citation_check", "no_send"
+        )), "day6 repair violates factual, ownership, source, or unsent-email boundary")
+        revised_score = count(repair.get("quality_score"), "day6.repair_rerun.quality_score")
+        need(original["score"] < revised_score <= 8 and revised_score >= 7,
+             "day6 repaired output did not improve a failed first attempt to the quality threshold")
+    need(bool(worst_case_ids & repaired_first_cases),
+         "day6 did not repair the lowest-scoring original failure")
+
     reconnect = obj(day.get("reconnect"), "day6.reconnect")
     need(reconnect.get("run_id_before") in runs
          and reconnect.get("run_id_after") == reconnect.get("run_id_before")
