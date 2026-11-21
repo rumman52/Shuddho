@@ -7,9 +7,21 @@ after a valid native export must never become published task artifacts.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+from copy import deepcopy
+from html import escape
 
 import pytest
+
+# The repo's default lightweight Python job omits the optional Coworker
+# dependencies. Gate those tests before importing native Office libraries.
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("temporalio")
+
+from docx import Document
+from pypdf import PdfReader
+from weasyprint import HTML
 
 from test_coworker import account, container, new_task, FakeModel
 from services.coworker.errors import CoworkerError
@@ -217,3 +229,164 @@ def test_complete_rejects_provenance_snapshot_changed_after_valid_native_export(
     assert error.value.code == "artifact_invalid"
     assert len(storage_puts) == 4
     _assert_failed_without_published_artifacts(container, owner, task["id"])
+
+
+@pytest.mark.parametrize("tamper", ("missing_claim", "missing_section_reference", "missing_source_entry"))
+def test_day6_export_rejects_valid_docx_with_unapproved_report_content(
+    container, monkeypatch, tamper
+):
+    """A perfectly valid Office file must not silently replace the reviewed draft."""
+    owner, task = _new_report_task(container)
+
+    def renderer(package, sources, **options):
+        outputs = render_in_subprocess(package, sources, **options)
+        changed = []
+        for filename, content_type, body in outputs:
+            if filename == "report.docx":
+                document = Document(io.BytesIO(body))
+                matches = 0
+                for paragraph in document.paragraphs:
+                    value = paragraph.text.strip()
+                    if tamper == "missing_claim" and "The team completed 12 reviews." in value:
+                        paragraph.text = "The team skipped every review."
+                        matches += 1
+                    elif tamper == "missing_section_reference" and value == "[notes]":
+                        paragraph.text = "[unselected-source]"
+                        matches += 1
+                    elif (tamper == "missing_source_entry" and value.startswith("[notes]")
+                          and value != "[notes]"):
+                        paragraph.text = "[unselected-source] Unauthorized material"
+                        matches += 1
+                assert matches > 0, "The source fixture did not contain the material to corrupt"
+                data = io.BytesIO()
+                document.save(data)
+                body = data.getvalue()
+                assert Document(io.BytesIO(body)).paragraphs
+            changed.append((filename, content_type, body))
+        return changed
+
+    puts = _track_storage_puts(container, monkeypatch)
+    runner = DocumentRunner(container, FakeModel(), renderer=renderer)
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+    assert error.value.code == "export_invalid"
+    assert puts == []
+    _assert_failed_without_published_artifacts(container, owner, task["id"])
+
+
+@pytest.mark.parametrize("tamper", ("wrong_title", "wrong_claim", "wrong_references"))
+def test_day6_export_rejects_readable_but_unrelated_pdf(
+    container, monkeypatch, tamper
+):
+    """PDF parseability is insufficient when the approved source/fact differs."""
+    owner, task = _new_report_task(container)
+
+    def renderer(package, sources, **options):
+        outputs = render_in_subprocess(package, sources, **options)
+        report = package.report
+        heading = report.sections[0].heading
+        if tamper == "wrong_title":
+            title = "A different customer and report"
+            claim = report.summary
+            source_id = "notes"
+        elif tamper == "wrong_claim":
+            title = report.title
+            claim = "The team has not completed any reviews."
+            source_id = "notes"
+        else:
+            title = report.title
+            claim = report.summary
+            source_id = "foreign-source"
+        html = (
+            f"<h1>{escape(title)}</h1><p>{escape(claim)}</p>"
+            f"<h2>{escape(heading)}</h2><p>{escape(claim)}</p>"
+            f"<p>[{escape(source_id)}]</p><p>[{escape(source_id)}] Provided notes</p>"
+        )
+        pdf = HTML(string=html).write_pdf()
+        assert PdfReader(io.BytesIO(pdf)).pages[0].extract_text().strip()
+        return [
+            (filename, content_type, pdf if filename == "report.pdf" else body)
+            for filename, content_type, body in outputs
+        ]
+
+    puts = _track_storage_puts(container, monkeypatch)
+    runner = DocumentRunner(container, FakeModel(), renderer=renderer)
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+    assert error.value.code == "export_invalid"
+    assert puts == []
+    _assert_failed_without_published_artifacts(container, owner, task["id"])
+
+
+@pytest.mark.parametrize("tamper", ("changed_claim", "changed_reference"))
+def test_day6_complete_rejects_native_artifacts_when_reviewed_draft_changes_after_export(
+    container, monkeypatch, tamper
+):
+    """The final private-object readback must use the current persisted draft, not just a SHA."""
+    owner, task = _new_report_task(container)
+    puts = _track_storage_puts(container, monkeypatch)
+    original_step = container.repository.step
+    draft_reads = 0
+
+    def changed_reviewed_draft(task_id, phase):
+        nonlocal draft_reads
+        checkpoint = original_step(task_id, phase)
+        if phase != "draft" or checkpoint is None:
+            return checkpoint
+        draft_reads += 1
+        if draft_reads != 2:
+            return checkpoint
+        changed = deepcopy(checkpoint)
+        if tamper == "changed_claim":
+            changed["draft"]["report"]["summary"] = "No reviews were completed."
+            changed["draft"]["report"]["sections"][0]["paragraphs"][0] = "No reviews were completed."
+        else:
+            # Keep the same authorized source snapshot: only the reviewed
+            # section's intended citation changes after native export.
+            changed["draft"]["report"]["sections"][0]["source_ids"] = []
+        return changed
+
+    monkeypatch.setattr(container.repository, "step", changed_reviewed_draft)
+    runner = DocumentRunner(container, FakeModel())
+    with pytest.raises(CoworkerError) as error:
+        asyncio.run(runner.run_for_test(task["id"]))
+    assert draft_reads == 2
+    assert error.value.code == "artifact_invalid"
+    assert len(puts) == 4
+    _assert_failed_without_published_artifacts(container, owner, task["id"])
+
+
+def test_day6_research_native_docx_must_contain_exact_selected_finding_and_quote():
+    """A source-backed research DOCX cannot replace its finding or cited quote."""
+    from coworker_samples import work_draft
+    from services.coworker.exports import validate_day6_exports
+
+    draft = work_draft("research", "en")
+    sources = [{
+        "id": "web-1", "kind": "web", "label": "Original study",
+        "url": "https://example.org/study",
+        "retrieved_at": "2026-11-18T02:00:00Z",
+        "source_date": None, "sha256": "a" * 64,
+    }]
+    outputs = render_in_subprocess(draft, sources, skill_id="research")
+    validate_day6_exports("research", draft, outputs, expected_sources=sources)
+    for tamper in ("finding", "citation"):
+        changed = []
+        for filename, content_type, body in outputs:
+            if filename == "research-report.docx":
+                document = Document(io.BytesIO(body))
+                matches = 0
+                for paragraph in document.paragraphs:
+                    if tamper == "finding" and paragraph.text == draft.findings[0].text:
+                        paragraph.text = "An entirely different claim."
+                        matches += 1
+                    elif tamper == "citation" and draft.findings[0].citations[0].quote in paragraph.text:
+                        paragraph.text = "Evidence [1]: An invented quotation"
+                        matches += 1
+                assert matches > 0
+                data = io.BytesIO()
+                document.save(data)
+                body = data.getvalue()
+            changed.append((filename, content_type, body))
+        with pytest.raises(ValueError, match="DOCX"):
+            validate_day6_exports("research", draft, changed, expected_sources=sources)
