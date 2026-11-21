@@ -1047,6 +1047,12 @@ def test_day8_unsafe_candidate_rerun_cannot_make_cheapest_profile_eligible():
     assert bounded["human_accepted"] == 40  # fixed first-run denominator
     assert bounded["rerun_attempts"] == 1
     assert bounded["unsafe_attempts"] == 1
+    assert bounded["safety_assessed_attempts"] == 41
+    case_row = next(
+        case for case in report["per_task_comparison"]
+        if case["id"] == candidate["results"][0]["id"]
+    )
+    assert case_row["bounded_context_compact_observations"]["unsafe_rerun_attempts"] == 1
     assert bounded["safety_gate_passed"] is False
     assert bounded["quality_gate_passed"] is False
     assert report["selected_least_cost_qualified_profile"] == "baseline"
@@ -1085,6 +1091,24 @@ def test_day8_both_profiles_with_unsafe_reruns_cannot_freeze():
         for name in ("baseline", "bounded_context_compact_observations")
     )
     assert any("safety" in reason for reason in report["blockers"])
+
+
+def test_day8_missing_rerun_safety_assessment_cannot_be_treated_as_safe():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    unassessed = _day8_synthetic_rerun(candidate, cost=0)
+    del unassessed["safety_passed"]
+    candidate["reruns"].append(unassessed)
+    report = compare_day8_development(baseline, candidate, suite)
+
+    bounded = report["profile_summaries"]["bounded_context_compact_observations"]
+    assert bounded["rerun_attempts"] == 1
+    assert bounded["unsafe_attempts"] == 0  # unknown is not an observed unsafe output
+    assert bounded["safety_assessed_attempts"] == 40
+    assert bounded["safety_gate_passed"] is False
+    assert report["status"] == "BLOCKED"
+    assert report["freeze"] is None
+    assert any("attempt provenance" in reason or "missing run/output" in reason
+               for reason in report["blockers"])
 
 def test_day8_missing_rerun_cost_or_attempt_provenance_blocks_freeze():
     suite, baseline, candidate = _day8_complete_measurement_fixture()
