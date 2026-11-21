@@ -58,6 +58,9 @@ def evidence():
                "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
                "reviewers": ["human-D1", "human-D2"],
                "custody_receipt": {**proof(), "verified_at": "2026-11-11T23:59:00Z",
+                                   "custodian_id": "independent-D",
+                                   "developer_id": "developer-A",
+                                   "corpus_author_id": "corpus-author-B",
                                    "independent_d_controls_access": True,
                                    "developer_negative_read_denied": True},
                "cases": [{"id": f"{w}-{l}-{i}", "workflow": w, "language": l,
@@ -1044,3 +1047,36 @@ def test_day10_rejects_retrospective_custody_even_if_both_exports_match(
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize(("role", "mutation"), [
+    ("custodian_id", "DEVELOPER-A"),
+    ("custodian_id", "ｄｅｖｅｌｏｐｅｒ－Ａ"),
+    ("custodian_id", " independent-D "),
+    ("developer_id", ""),
+    ("corpus_author_id", None),
+])
+def test_day10_refuses_aliased_or_invalid_custody_role_even_if_copies_match(
+    monkeypatch, role, mutation
+):
+    rollout, artifacts = evidence()
+    assert day10.holdout_ok(artifacts["holdout"], RELEASE, REV, HASH)
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    artifacts["holdout"]["custody_receipt"][role] = mutation
+    # Equal copies alone are not proof that D differs from the developer
+    # or source author. This must fail the independent release holdout gate.
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(artifacts["holdout"])
+    assert not day10.holdout_ok(artifacts["holdout"], RELEASE, REV, HASH)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+def test_day10_refuses_unexported_custody_role_even_if_40_scores_match(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["holdout"]["custody_receipt"].pop("developer_id")
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(artifacts["holdout"])
+    assert not day10.holdout_ok(artifacts["holdout"], RELEASE, REV, HASH)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
