@@ -343,3 +343,64 @@ def test_repo_owned_ruleset_still_only_yields_nonqualifying_candidate():
     assert result["drift"] == []
     assert result["qualified"] is False
     assert result["independent_review_verified"] is False
+
+
+@pytest.mark.parametrize(
+    "include",
+    [
+        ["~DEFAULT_BRANCH", "refs/heads/dev"],
+        ["refs/heads/main", "refs/heads/release"],
+        ["~DEFAULT_BRANCH", "refs/heads/main"],
+        ["~DEFAULT_BRANCH", "~ALL"],
+        ["~DEFAULT_BRANCH", "~DEFAULT_BRANCH"],
+        ["refs/heads/main", 3],
+    ],
+    ids=[
+        "additional-branch", "main-and-release", "dual-aliases",
+        "all-branches", "duplicate-default", "nonstring-extra",
+    ],
+)
+def test_native_scope_must_be_one_exact_main_selector(include):
+    """An extra selector must not pass as exact main despite including main."""
+    snapshot = live()
+    snapshot["conditions"]["ref_name"]["include"] = include
+    result = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert result["status"] == "blocked_configuration"
+    assert "ruleset.main_scope" in result["drift"]
+    assert result["qualified"] is False
+
+
+@pytest.mark.parametrize("location", ["conditions", "ref_name"])
+def test_native_scope_rejects_unreviewed_condition_fields(location):
+    snapshot = live()
+    destination = (
+        snapshot["conditions"] if location == "conditions"
+        else snapshot["conditions"]["ref_name"]
+    )
+    destination["unreviewed_selector"] = {"include": ["refs/heads/main"]}
+    result = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert "ruleset.main_scope" in result["drift"]
+    assert result["status"] == "blocked_configuration"
+
+
+@pytest.mark.parametrize("location", ["conditions", "ref_name"])
+def test_reviewed_policy_rejects_unapproved_scope_fields(location):
+    altered = policy()
+    destination = (
+        altered["conditions"] if location == "conditions"
+        else altered["conditions"]["ref_name"]
+    )
+    destination["unknown_selector"] = ["refs/heads/other"]
+    with pytest.raises(EvidenceError, match="reviewed policy must target only main"):
+        analyze(branch(), live(), altered, expected_main_sha=SHA)
+
+
+@pytest.mark.parametrize("include", [["~DEFAULT_BRANCH"], ["refs/heads/main"]])
+def test_exact_single_main_scope_remains_nonqualifying_candidate(include):
+    snapshot = live()
+    snapshot["conditions"]["ref_name"]["include"] = include
+    result = analyze(branch(), snapshot, policy(), expected_main_sha=SHA)
+    assert result["status"] == "configuration_candidate"
+    assert result["drift"] == []
+    assert result["qualified"] is False
+    assert result["merge_enforcement_verified"] is False
