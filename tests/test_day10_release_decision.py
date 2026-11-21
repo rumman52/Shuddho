@@ -978,3 +978,25 @@ def test_day10_recovery_shape_rejects_noncustodial_operator_reference():
         artifacts["recovery"], RELEASE, REV, HASH,
         manifest_sha256=artifacts["day9_first_run"]["manifest_sha256"],
     )
+
+
+@pytest.mark.parametrize("old_observation", [
+    "2026-11-11T23:59:59Z",
+    "2026-11-12T05:59:59+06:00",  # same pre-freeze instant, different zone
+])
+def test_day10_rejects_recovery_operated_before_frozen_candidate_run(
+    monkeypatch, old_observation
+):
+    rollout, artifacts = evidence()
+    artifacts["recovery"]["scenarios"][0]["observed_at"] = old_observation
+    # This intentionally updates BOTH copies to defeat the earlier
+    # first-run JSON-equality check and test the missing chronology gate.
+    artifacts["day9_first_run"]["day10_recovery"] = deepcopy(artifacts["recovery"])
+    assert day10.recovery_ok(
+        artifacts["recovery"], RELEASE, REV, HASH,
+        manifest_sha256=artifacts["day9_first_run"]["manifest_sha256"],
+    )
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "twenty_operated_recovery_scenarios" in result["blockers"]
+    assert result["scorecard"]["recovery_passed"] is None
