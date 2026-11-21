@@ -51,13 +51,27 @@ def evidence():
               "turns": 5, "cancellation_checked": True, "owner_isolation_checked": True, "provider_model": "model-r"}
     first = {"release_id": RELEASE, "source_revision": REV,
              "rollout_manifest_sha256": HASH, "run_kind": "first_run",
+             "result_kind": "operator_submitted_first_run", "schema_version": 2,
              "run_id": "day9-first", "run_started_at": "2026-11-12T00:00:00Z",
-             "manifest_sha256": "f" * 64, "scores": {}}
+             "manifest_sha256": "f" * 64,
+             # These immutable D custody and corpus digest claims are emitted
+             # by the Day 9 evaluator and must be reconciled at Day 10.
+             "custody_receipt_sha256": "c" * 64,
+             "custody_access_log_sha256": "d" * 64,
+             "custody_exposure_history_sha256": "e" * 64,
+             "custody_frozen_inputs_sha256": "0" * 64,
+             "custody_frozen_answers_sha256": "1" * 64,
+             "custody_rubric_sha256": "2" * 64,
+             "corpus_sha256": "0" * 64,
+             "answer_key_sha256": "1" * 64,
+             "rubric_sha256": "2" * 64,
+             "scores": {}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
                "generation_identity_verified": True, "generation_identity_receipt_sha256": HASH,
                "reviewers": ["human-D1", "human-D2"],
                "custody_receipt": {**proof(), "verified_at": "2026-11-11T23:59:00Z",
+                                   "evidence_ref": "sha256:" + "c" * 64,
                                    "custodian_id": "independent-D",
                                    "developer_id": "developer-A",
                                    "corpus_author_id": "corpus-author-B",
@@ -1080,3 +1094,51 @@ def test_day10_refuses_unexported_custody_role_even_if_40_scores_match(monkeypat
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("result_kind", "regression_validation"),
+    ("result_kind", None),
+    ("schema_version", 1),
+    ("custody_receipt_sha256", "b" * 64),
+    ("custody_receipt_sha256", None),
+    ("custody_frozen_inputs_sha256", "b" * 64),
+    ("custody_frozen_answers_sha256", "b" * 64),
+    ("custody_rubric_sha256", "b" * 64),
+    ("custody_access_log_sha256", None),
+    ("custody_exposure_history_sha256", None),
+])
+def test_day10_rejects_undocumented_or_rebound_original_custody_digest(
+    monkeypatch, field, value
+):
+    rollout, artifacts = evidence()
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    # Neither the complete holdout export nor any first-attempt case changes.
+    # Only the alleged original Day 9 report's custody/identity lineage differs.
+    if value is None:
+        artifacts["day9_first_run"].pop(field)
+    else:
+        artifacts["day9_first_run"][field] = value
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
+    assert result["scorecard"]["heldout_human_accepted"] == 40
+
+
+@pytest.mark.parametrize("replacement", [
+    "https://evidence.example.test/substituted-custody",
+    "sha256:" + "a" * 64,
+])
+def test_day10_rejects_relabelled_custody_ref_even_if_both_holdout_copies_match(
+    monkeypatch, replacement
+):
+    rollout, artifacts = evidence()
+    artifacts["holdout"]["custody_receipt"]["evidence_ref"] = replacement
+    # An adversary who can change the exported copy AND the embedded one
+    # cannot rewrite Day 9's independent first-run custody SHA without a
+    # separately observable inconsistency.
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(artifacts["holdout"])
+    assert day10.holdout_ok(artifacts["holdout"], RELEASE, REV, HASH)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "preserved_day9_first_run" in result["blockers"]
