@@ -1013,12 +1013,13 @@ def comparison_evidence_recorded(value: object) -> bool:
 def read_blinding_key(path: Path) -> bytes:
     """External secret custody, separate from reviewer packets and the repo."""
     outside_repo(path)
-    if not path.is_file() or path.stat().st_size != 32:
+    key, file_mode = _read_evidence_bytes(path)
+    if len(key) != 32:
         raise EvidenceError("blind mapping requires a separate 32-byte D-controlled key")
-    mode = path.stat().st_mode & 0o777
+    mode = file_mode & 0o777
     if not mode & 0o400 or mode & 0o077:
         raise EvidenceError("blinding key must be private to D (0600 or 0400)")
-    return path.read_bytes()
+    return key
 
 
 def position_map(case_id: str, corpus_sha256: str, *, blinding_key: bytes) -> dict:
