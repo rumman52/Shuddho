@@ -522,6 +522,13 @@ def test_day3_direct_chat_allows_existing_owner_runs_with_zero_new_effects():
         "agent_runs_before": 3, "agent_runs_after": 3,
         "agent_outbox_before": 7, "agent_outbox_after": 7,
     })
+    # Preserve preexisting owner history in each operated reply readback.
+    # Changing only the aggregate receipt is now an inconsistent witness.
+    for item in [*args[1]["answers"], args[1]["revocation"]]:
+        item.update({
+            "agent_runs_before": 3, "agent_runs_after": 3,
+            "outbox_before": 7, "outbox_after": 7,
+        })
     # Direct chat has no NEW AgentRun or outbox effects; old work may exist.
     assert validate(args)["status"] == "evidence_internally_consistent_not_live_attested"
 
@@ -533,6 +540,13 @@ def test_day3_preexisting_counts_still_deny_new_chat_side_effects(field):
         "agent_runs_before": 3, "agent_runs_after": 3,
         "agent_outbox_before": 7, "agent_outbox_after": 7,
     })
+    # Preserve preexisting owner history in each operated reply readback.
+    # Changing only the aggregate receipt is now an inconsistent witness.
+    for item in [*args[1]["answers"], args[1]["revocation"]]:
+        item.update({
+            "agent_runs_before": 3, "agent_runs_after": 3,
+            "outbox_before": 7, "outbox_after": 7,
+        })
     args[1][field] += 1
     with pytest.raises(gate.Days36EvidenceError, match="day3"):
         validate(args)
