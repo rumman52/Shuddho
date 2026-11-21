@@ -20,6 +20,7 @@ from scripts.staging_preseed_baseline import (
     read_original_attestation, require_same_source_resources,
 )
 from scripts.staging_object_backup import ObjectArchiveError, _inventory as private_object_inventory
+from scripts.staging_restored_api_access import RestoredAPIReadbackFailure, attest_restored_api_access
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     passed,
@@ -390,7 +391,44 @@ def verify(
         ):
             raise BackupRestoreFailure("Synthetic probe object is absent from the full private archive/restore ledger.")
         integrity["probe_object_verified"] = True
+        integrity["probe_object_sha256"] = expected_sha
+        integrity["probe_object_bytes"] = expected_size
         integrity["preseed_baseline"] = original_summary
+
+        # Direct database/object reads are insufficient to prove user-facing
+        # isolated restore access. Require a distinct, approved HTTPS API with
+        # two actual managed synthetic tokens, and refuse a PASS if absent.
+        required_secrets = (
+            "SHUDDHO_STAGING_API_BASE_URL",
+            "SHUDDHO_STAGING_RESTORED_API_BASE_URL",
+            "SHUDDHO_STAGING_TOKEN_A",
+            "SHUDDHO_STAGING_TOKEN_B",
+        )
+        if any(not os.environ.get(key) for key in required_secrets):
+            raise BackupRestoreFailure(
+                "Restored API readback requires approved source/isolated HTTPS origins and two managed identity tokens."
+            )
+        with httpx.Client(
+            base_url=os.environ["SHUDDHO_STAGING_RESTORED_API_BASE_URL"],
+            timeout=20,
+            follow_redirects=False,
+            trust_env=False,
+        ) as restored_api:
+            integrity["restored_api_access"] = attest_restored_api_access(
+                restored_api,
+                os.environ["SHUDDHO_STAGING_TOKEN_A"],
+                os.environ["SHUDDHO_STAGING_TOKEN_B"],
+                source_origin=os.environ["SHUDDHO_STAGING_API_BASE_URL"],
+                restored_origin=os.environ["SHUDDHO_STAGING_RESTORED_API_BASE_URL"],
+                expected_owner_id=owner,
+                document_id=document_id,
+                task_id=task_id,
+                document_sha256=expected_sha,
+                document_size=expected_size,
+                source_revision=context["source_revision"],
+                expected_issuer=settings.auth_issuer,
+                expected_audience=settings.auth_audience,
+            )
 
         base = {}
         if base_evidence:
@@ -482,6 +520,7 @@ def main() -> None:
         BackupRestoreFailure,
         ArchiveAttestationFailure,
         PreseedBaselineFailure,
+        RestoredAPIReadbackFailure,
         StagingReleaseEvidenceError,
         httpx.HTTPError,
         OSError,
