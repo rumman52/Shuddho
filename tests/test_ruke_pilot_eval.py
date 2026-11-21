@@ -375,7 +375,7 @@ def test_custody_receipt_requires_distinct_people_both_read_tests_and_access_pro
     assert not custody_receipt_ok(dict(receipt, custodian_id="ｄｅｖｅｌｏｐｅｒ－Ａ"), value)
     assert not custody_receipt_ok(dict(receipt, custodian_id=" developer-A "), value)
     assert not custody_receipt_ok(dict(receipt, developer_id=""), value)
-    assert not custody_receipt_ok(dict(receipt, corpus_author_id="bad\\nidentity"), value)
+    assert not custody_receipt_ok(dict(receipt, corpus_author_id="bad\nidentity"), value)
     assert not custody_receipt_ok(dict(receipt, custodian_positive_read_test="denied"), value)
     assert not custody_receipt_ok(dict(receipt, exposure_history_reviewed=False), value)
     assert not custody_receipt_ok(dict(receipt, access_log_sha256="not-a-digest"), value)
