@@ -1,0 +1,43 @@
+# Day 1 exact main-branch ruleset scope — implementation plan
+
+> Superpowers: execute this task test-first. Changes remain source-only; no administrator mutation or release decision.
+
+**Goal:** Align offline and privileged live V-01 governance candidate checks with the existing administrator reconciliation requirement that the inspected repository-owned ruleset scope exactly targets `main`, not extra branches or ambiguous selector fields.
+
+**Source authority:** [Ruke AI Ten-Day Completion Plan](https://docs.google.com/document/d/1JvuAYTmP-0pp7VhOGdV4YnMYLvv0vffuRBqJ0P8Pd8E/edit) Day 1 paragraphs 141–152, [Day 1 issue #727](https://github.com/rumman52/Shuddho/issues/727), [CTO board #737](https://github.com/rumman52/Shuddho/issues/737), `infra/github/main-ruleset.json`, `scripts/reconcile_main_ruleset.py::_read_unique_existing`.
+
+**Exact base:** `main` `112e85fbe53e7ad983444414c2d6cb410b93ad96`. **Branch:** `fix/day1-exact-main-ruleset-scope-20261121`.
+
+## Existing discrepancy and safe design
+
+- `scripts/day1_ruleset_drift.py::analyze` currently accepts any `conditions.ref_name.include` array containing `~DEFAULT_BRANCH` or `refs/heads/main`, plus unknown selectors or duplicate values. `validate_reviewed_policy` accepts extra conditions properties. Thus a broader/unreviewed scope can become `configuration_candidate`.
+- `scripts/main_protection_audit.py::_targets_main` also accepts mixed include sets. This helper is reused by the creation-policy validator `scripts/apply_main_ruleset.py` and MUST remain unchanged: it expresses possible targeting, not exact readback ownership.
+- The operator `scripts/reconcile_main_ruleset.py::_read_unique_existing` already requires `set(conditions)=={"ref_name"}`, `include` exactly `["refs/heads/main"]` or `["~DEFAULT_BRANCH"]`, and `exclude==[]`. Make the offline/live audit consistent without narrowing the existing conservative discovery semantics.
+
+**Ruling:** In both audits, require `conditions` to be precisely `{"ref_name": {"include": [exact selector], "exclude": []}}`; reject unexpected keys in either nested object. Accept the default branch alias or literal main as exact single-entry arrays. An extra branch, duplicate selector, broad `~ALL` or extra condition key is not sufficient V-01 evidence. The rule still remains `qualified=false` without native operated controls.
+
+## Task 1 — RED
+
+**Files:** `tests/test_day1_ruleset_drift.py`, `tests/test_main_protection_audit.py`
+
+- [ ] Add offline negative cases for an extra branch selector, mixed `~DEFAULT_BRANCH`/literal, duplicate selector, unreviewed glob, unknown conditions or ref_name properties; test both reviewed policy tampering and live readback. Preserve positive candidate for each sole exact selector.
+- [ ] Add live native-audit negative cases for identical invalid scopes, plus redacted-bypass diagnostic: malformed/broader rule must not claim redaction is the *only* missing evidence. Preserve good exact main and alias candidates.
+- [ ] Push test-only commit and inspect real GitHub Actions RED logs; expected target failures should be incorrect `configuration_candidate` or missed `EvidenceError`, not environment/collection faults.
+
+## Task 2 — minimal GREEN
+
+**Files:** `scripts/day1_ruleset_drift.py`, `scripts/main_protection_audit.py`
+
+- [ ] Tighten `validate_reviewed_policy` to reject extra selector keys; add exact readback predicate to existing `ruleset.main_scope` drift code while leaving `ruleset.no_exclusions` unchanged.
+- [ ] Add private helper `_exact_main_scope` in live auditor, enforced **only in `audit_governance` candidate and redacted-bypass diagnostic**; preserve `_targets_main` and `_active_main_ruleset` for creation-template and conservative overlap use.
+- [ ] Run full GitHub Actions at final PR head; separately inspect `test-and-build`, Coworker, PostgreSQL-18, frontend, browser, ancestry, `ci-merge-gate` and PR-skipped `governance-audit`. Run `uv run --extra coworker pytest tests/test_day1_ruleset_drift.py tests/test_main_protection_audit.py tests/test_apply_main_ruleset.py tests/test_reconcile_main_ruleset.py -q -rs` locally if an authorized checkout exists. Never claim unrun local commands.
+
+## Task 3 — handoff
+
+**Files:** `docs/coworker-roadmap/DAY1_EXACT_MAIN_RULESET_SCOPE_2026-11-21.md`, `docs/coworker-roadmap/PROGRESS.md`, this plan.
+
+- [ ] Record exact RED/GREEN SHAs, CI links, scope, reviewer and external blockers in task contract and progress.
+- [ ] Open draft PR to `main` (never merge without independent human review); link to GitHub #727 and Linear MD-5.
+- [ ] Preserve source-only / NO-GO: no privileged App provisioning, native ruleset PUT, production promotion, paid Render worker, Supabase migration/restore without approval, PostHog user telemetry, private D custody, or exact-release Founder/Owner-C GO.
+
+**Verification standard:** Passing unit tests and a draft PR are *repository evidence* only; they do not demonstrate protected-main negative+positive merge controls, independent reviewer, recoverable staging, held-out evaluation, or pilot qualification.
