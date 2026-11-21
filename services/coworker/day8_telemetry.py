@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+import inspect
 import re
 
 EVENT_NAME = "rukh_agent_run_operational_v1"
@@ -167,12 +168,26 @@ def emit_operational_event(
     policy: EventPolicy,
     sink: Callable[[str, dict[str, str | int | None]], object] | None,
 ) -> bool:
-    """Nonblocking, fail-closed opt-in delivery. Never log raw payloads."""
-    if sink is None:
+    """Fail-closed synchronous handoff, never proof of remote delivery.
+
+    Approval and transport confirmation remain external operator gates. A
+    false sink acknowledgement or unawaited async result cannot qualify an
+    operational receipt; never log raw payloads or sink exceptions.
+    """
+    if sink is None or inspect.iscoroutinefunction(sink):
         return False
     try:
         event_name, properties = build_operational_event(raw, policy)
-        sink(event_name, properties)
+        acknowledgement = sink(event_name, properties)
+        if inspect.isawaitable(acknowledgement):
+            # An async callable wrapped by a sync function must not be
+            # treated as a completed send. Close bare coroutines to avoid
+            # leaked/unawaited coroutine warnings; do not run an event loop.
+            if inspect.iscoroutine(acknowledgement):
+                acknowledgement.close()
+            return False
+        if acknowledgement is False:
+            return False
     except Exception:  # noqa: BLE001 - external diagnostics must never affect the task
         return False
     return True
