@@ -2,6 +2,8 @@
 import copy
 import hashlib
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -404,3 +406,53 @@ def test_exact_single_main_scope_remains_nonqualifying_candidate(include):
     assert result["drift"] == []
     assert result["qualified"] is False
     assert result["merge_enforcement_verified"] is False
+
+
+@pytest.mark.parametrize("attacked_name", ["branch", "ruleset", "policy"])
+def test_input_replaced_by_symlink_at_open_is_rejected(
+    tmp_path, monkeypatch, capsys, attacked_name
+):
+    """A pre-open is_symlink/stat check cannot authorize a later swapped path."""
+    originals = {"branch": branch(), "ruleset": live(), "policy": policy()}
+    for name, body in originals.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps(body), encoding="utf-8")
+
+    attacked = tmp_path / f"{attacked_name}.json"
+    shadow = tmp_path / "shadow.json"
+    # The malicious replacement is itself syntactically valid, so acceptance
+    # of the swapped path would produce a misleading clean candidate receipt.
+    shadow.write_text(json.dumps(originals[attacked_name]), encoding="utf-8")
+    actual_read_bytes = Path.read_bytes
+    actual_os_open = os.open
+    swapped = False
+
+    def swap_to_symlink():
+        nonlocal swapped
+        if not swapped:
+            attacked.unlink()
+            attacked.symlink_to(shadow)
+            swapped = True
+
+    def raced_path_read_bytes(path):
+        if path == attacked:
+            swap_to_symlink()
+        return actual_read_bytes(path)
+
+    def raced_fd_open(file, flags, *args, **kwargs):
+        if os.fspath(file) == os.fspath(attacked):
+            swap_to_symlink()
+        return actual_os_open(file, flags, *args, **kwargs)
+
+    # Exercise either implementation's actual opening operation. The legacy
+    # version uses Path.read_bytes; a safe version uses one no-follow fd.
+    monkeypatch.setattr(Path, "read_bytes", raced_path_read_bytes)
+    monkeypatch.setattr(os, "open", raced_fd_open)
+    code = main([
+        "--branch-json", str(tmp_path / "branch.json"),
+        "--ruleset-json", str(tmp_path / "ruleset.json"),
+        "--policy-json", str(tmp_path / "policy.json"),
+        "--expected-main-sha", SHA,
+    ])
+    assert swapped is True
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "blocked_input"
