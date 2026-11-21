@@ -137,6 +137,21 @@ def test_verify_requires_non_empty_backup_and_restore_references(monkeypatch, tm
             None,
         )
 
+def test_prepare_requires_original_snapshot_before_opening_staging_or_seeding(monkeypatch, tmp_path):
+    settings = SimpleNamespace(source_revision="a" * 40)
+    rollout = tmp_path / "rollout.json"
+    rollout.write_text(json.dumps({"release_id": "baseline-required-release"}))
+    state_path = tmp_path / "state.json"
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
+    monkeypatch.setattr(
+        backup.Container, "create",
+        lambda _: pytest.fail("Must validate original-state backup before opening staging"),
+    )
+    with pytest.raises(backup.BackupRestoreFailure, match="original.*baseline"):
+        backup.prepare(settings, state_path, rollout)
+    assert not state_path.exists()
+
+
 def _install_prepare_fakes(monkeypatch, calls):
     class Sessions:
         kw = {"bind": SimpleNamespace(dispose=lambda: calls.append("dispose"))}
