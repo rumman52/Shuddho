@@ -319,6 +319,7 @@ def test_rejected_case_can_preserve_zero_reviewer_total_but_accepted_case_cannot
     preserved["accepted"] = 39
     cell = row["workflow"] + "/" + row["language"]
     preserved["by_cell"][cell]["accepted"] = 9
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(artifacts["holdout"])
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
     row["accepted"] = True
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "SOURCE_ONLY"
@@ -790,6 +791,7 @@ def test_day10_preserves_a_rejected_first_attempt_in_denominator(monkeypatch, st
     scores = artifacts["day9_first_run"]["scores"]
     scores["accepted"] = 39
     scores["by_cell"][holdout_case["workflow"] + "/" + holdout_case["language"]]["accepted"] = 9
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(artifacts["holdout"])
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
     assert result["scorecard"]["heldout_human_accepted"] == 39
@@ -852,6 +854,7 @@ def test_day10_accepts_genuinely_unanimous_votes_without_fake_third_adjudicator(
         "adjudicated_at": None,
     }
     artifacts["day9_first_run"]["scores"]["cases"][0] = deepcopy(case)
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(artifacts["holdout"])
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
 
 
