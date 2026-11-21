@@ -746,11 +746,25 @@ def check_day6(release: dict, data: object, frozen: datetime) -> datetime:
                 need(parsed.scheme == "https" and public_host
                      and parsed.username is None and parsed.password is None,
                      "day6 research source URL must be a public HTTPS source without credentials")
+                # Validate the numeric port before canonicalizing the source
+                # origin. urlsplit() leaves malformed and out-of-range ports
+                # unchecked until .port is accessed.
+                try:
+                    https_port = parsed.port
+                except ValueError:
+                    raise Days36EvidenceError(
+                        "day6 research source URL has an invalid HTTPS port"
+                    ) from None
+                need(https_port is None or https_port > 0,
+                     "day6 research source URL has an invalid HTTPS port")
                 source_hash = sha(citation.get("sha256"), "day6.source.sha256")
                 # Fragments point to sections of the same document, not
                 # independently retrieved evidence. Reuse across languages is
                 # allowed; each research output needs three different sources.
-                url_identity = (parsed.scheme, parsed.netloc.casefold(),
+                # HTTPS's omitted/default port and the DNS absolute-name
+                # trailing dot do not identify a second independent source.
+                # Preserve nondefault ports because they are distinct origins.
+                url_identity = (parsed.scheme, host, https_port or 443,
                                 parsed.path or "/", parsed.query)
                 need(source_id not in source_ids and url_identity not in source_urls
                      and source_hash not in source_hashes,
