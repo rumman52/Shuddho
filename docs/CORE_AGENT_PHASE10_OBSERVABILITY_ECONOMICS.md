@@ -319,3 +319,31 @@ Absent measurements leave the limit unverified and cannot yield an eligible
 freeze; no missing latency is interpreted as zero. These are checks on
 operator-supplied data, not independent authentication of provider run
 timestamps or a completed paid experiment.
+
+### Day 8 independent cross-arm acceptance custody — 21 November 2026 (PR #865)
+
+The Day 8 experiment requires 40 first executions in **each** profile,
+independently reviewed and retained. The two arms may share the frozen
+**task inputs and source dossier**, and may legitimately produce byte-identical
+outputs, but they cannot use the same accepted output artifact reference or
+the same specific human-review outcome reference to substantiate separate
+accepted generations. This requirement applies to **all accepted first runs
+and accepted reruns**, including records that are later excluded from the
+fixed 40-case quality denominator.
+
+The comparator already enforces per-arm uniqueness of accepted artifact and
+review references, and cross-arm uniqueness of run and provider-usage receipt
+identities. It now also rejects **cross-arm reuse of accepted artifact/review
+identities** with a generic validation error that does not echo receipt
+contents. Only the **references** are compared: an identical
+`output_sha256` is permitted when both profiles retain different verifiable
+artifact identities and distinct review outcomes. The synthetic test corpus
+now uses independent profile-scoped artifact and review references for all
+80 first-run rows; these are still fixtures, **not** real provider runs.
+
+This gate establishes internal consistency, not independent custody by
+itself. The operator must authenticate the referenced artifacts and reviewer
+receipts against immutable storage and the actual provider generations,
+including the source/version and evaluation policy bindings, before marking
+`receipts_independently_verified=true`. It does not authorize a Day 9
+freeze, PostHog transmission or staging/production promotion.
