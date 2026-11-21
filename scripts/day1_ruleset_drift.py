@@ -96,7 +96,14 @@ def validate_reviewed_policy(policy: object) -> dict:
         raise EvidenceError("reviewed policy must forbid bypass actors")
     conditions = p.get("conditions")
     refs = conditions.get("ref_name") if isinstance(conditions, dict) else None
-    if not isinstance(refs, dict) or refs.get("include") != ["refs/heads/main"] or refs.get("exclude") != []:
+    if (
+        not isinstance(conditions, dict)
+        or set(conditions) != {"ref_name"}
+        or not isinstance(refs, dict)
+        or set(refs) != {"include", "exclude"}
+        or refs.get("include") != ["refs/heads/main"]
+        or refs.get("exclude") != []
+    ):
         raise EvidenceError("reviewed policy must target only main without exclusions")
     for name in ("deletion", "non_fast_forward", "pull_request", "required_status_checks"):
         if _rule(p, name) is None:
@@ -170,7 +177,17 @@ def analyze(branch: object, live_ruleset: object, policy: object, *, expected_ma
     refs = conditions.get("ref_name") if isinstance(conditions, dict) else None
     includes = refs.get("include") if isinstance(refs, dict) else None
     excludes = refs.get("exclude") if isinstance(refs, dict) else None
-    require(isinstance(includes, list) and any(x in ("~DEFAULT_BRANCH", "refs/heads/main") for x in includes), "ruleset.main_scope")
+    # Inspect the complete selector shape. A main entry alongside another
+    # branch, duplicate/default alias or unrecognized constraint is not the
+    # exact repository-owned main scope reviewed by the administrator.
+    require(
+        isinstance(conditions, dict)
+        and set(conditions) == {"ref_name"}
+        and isinstance(refs, dict)
+        and set(refs) == {"include", "exclude"}
+        and includes in (["~DEFAULT_BRANCH"], ["refs/heads/main"]),
+        "ruleset.main_scope",
+    )
     require(excludes == [], "ruleset.no_exclusions")
     require(r.get("bypass_actors") == [], "ruleset.bypass_actors_verified_empty")
     rules = r.get("rules")
