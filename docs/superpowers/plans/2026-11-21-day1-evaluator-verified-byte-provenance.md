@@ -19,20 +19,26 @@ Choose one bounded implementation rather than a new evaluator or custody mechani
 
 ## Task 1 — TDD actual RED
 
-- [ ] Add deterministic regression cases in `tests/test_pilot_workflow_eval.py`: monkeypatch `Path.read_text` of one source and one case JSONL so *the second read* delivers additional, valid but unreviewed content. Require that `load_suite` can only load content matching the pinned digest, with no injected marker.
-- [ ] Direct symlink to an otherwise valid JSONL output must be refused by `read_outputs` even if the file is small.
-- [ ] Commit tests only, run exact test-only GitHub Actions, retain the three targeted failures and original suite pass/fail/skip. A failed CI run is RED, not readiness.
+- [x] Add deterministic regression cases in `tests/test_pilot_workflow_eval.py`: monkeypatch `Path.read_text` of one source and one case JSONL so *the second read* delivers additional, valid but unreviewed content. Require that `load_suite` can only load content matching the pinned digest, with no injected marker.
+- [x] Direct symlink to an otherwise valid JSONL output must be refused by `read_outputs` even if the file is small.
+- [x] Commit tests only, run exact test-only GitHub Actions, retain the three targeted failures and original suite pass/fail/skip. A failed CI run is RED, not readiness.
 
 ## Task 2 — GREEN minimum patch
 
-- [ ] Implement the single-read byte contract in `scripts/pilot_workflow_eval.py`, not the renderer or production artifact paths.
+- [x] Implement the single-read byte contract in `scripts/pilot_workflow_eval.py`, not the renderer or production artifact paths.
 - [ ] Run `uv run --locked --extra coworker pytest -q tests/test_pilot_workflow_eval.py` if a real checkout is available; otherwise rely on exact GitHub Actions and disclose local unavailability.
 - [ ] Read exact final-head `test-and-build`, frontend, PostgreSQL 18, browser, full Coworker, PR ancestry, governance and merge gate. Do not treat skipped governance / draft-approval check failure as native merge success.
 
 ## Task 3 — evidence and independent review
 
-- [ ] Create `docs/coworker-roadmap/DAY1_EVALUATOR_VERIFIED_BYTES_2026-11-21.md`, update historical `PROGRESS.md` with exact RED and GREEN SHA and run links.
-- [ ] Open a DRAFT PR; link Day 1 #727, independent custodian #665, CTO #737 and Linear MD-5. Require real independent reviewer and operator receipts before merge/pilot.
-- [ ] Preserve original review, cost, staging and custody requirements: approved GitHub App/native negative+positive merge test; Founder+C approved isolated DB+objects restore, API/worker/Temporal identity and bounded model/spend; independent D replacement, freeze and denial proof for 40 holdout cases and 20 real recoveries; separate Founder/C exact-release GO/NO-GO.
+- [x] Create `docs/coworker-roadmap/DAY1_EVALUATOR_VERIFIED_BYTES_2026-11-21.md`, update historical `PROGRESS.md` with exact RED and GREEN SHA and run links.
+- [x] Open a DRAFT PR; link Day 1 #727, independent custodian #665, CTO #737 and Linear MD-5. Require real independent reviewer and operator receipts before merge/pilot.
+- [x] Preserve original review, cost, staging and custody requirements: approved GitHub App/native negative+positive merge test; Founder+C approved isolated DB+objects restore, API/worker/Temporal identity and bounded model/spend; independent D replacement, freeze and denial proof for 40 holdout cases and 20 real recoveries; separate Founder/C exact-release GO/NO-GO.
 
 **Stop condition:** The branch can be SOURCE_ONLY repository-verified with exact-head passing CI, but the 100-row ten-day project is still NO-GO without external owner-controlled gates. A reviewed PR is not pilot enrollment.
+
+## Actual test-first execution checkpoint — 21 November 2026
+
+- Test-only RED final SHA `b93587ed3f987356e5285c1cfc1be5f505764647`; [Actions #44921905522](https://github.com/rumman52/Shuddho/actions/runs/44921905522) `test-and-build` 3 targeted FAILED / 3494 PASSED / 105 SKIPPED / 6 WARNINGS. The recorded failure messages respectively showed source hash mismatch, extra unreviewed case field accepted, and `DID NOT RAISE ValueError` for symlink submission. Previous cancelled PR event `fbeaf1f9c074617bafa968f38e7746636bad4f63` was not counted as RED.
+- Implementation commit `3bfc83d98364080024c6eedf6db9327e986c30ff` binds the scorer to one bounded nofollow regular inode read. Dedicated [task contract](../../coworker-roadmap/DAY1_EVALUATOR_VERIFIED_BYTES_2026-11-21.md) and `PROGRESS.md` evidence saved. [Draft PR #870](https://github.com/rumman52/Shuddho/pull/870).
+- Exact final-head GREEN must be inspected after documentation commits; PR-event governance audit SKIPPED and pending independent human review are operational blockers, not software test success.
