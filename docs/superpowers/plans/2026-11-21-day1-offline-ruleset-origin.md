@@ -35,16 +35,16 @@
 
 **Interface:** `analyze(branch, live_ruleset, policy, *, expected_main_sha, expected_ruleset_id=RULESET_ID) -> dict`.
 
-- [ ] Update the synthetic native ruleset fixture to include the explicit true repository source.
-- [ ] Add positive origin test and parameterized negative tests for missing, foreign and inherited origin.
-- [ ] Push a test-only commit and inspect the exact failing GitHub Actions test job. It must demonstrate `configuration_candidate` for these negative cases, not environment failures.
+- [x] Update the synthetic native ruleset fixture to include the explicit true repository source.
+- [x] Add positive origin test and parameterized negative tests for missing, foreign and inherited origin.
+- [x] Push a test-only commit and inspect the exact failing GitHub Actions test job. It must demonstrate `configuration_candidate` for these negative cases, not environment failures.
 
 ### Task 2: Minimal GREEN source patch
 
 **Files:**
 - Modify: `scripts/day1_ruleset_drift.py`
 
-- [ ] Add `require(r.get("source") == REPOSITORY and r.get("source_type") == "Repository", "ruleset.repository_origin")` with no other behavior changes.
+- [x] Add `require(r.get("source") == REPOSITORY and r.get("source_type") == "Repository", "ruleset.repository_origin")` with no other behavior changes.
 - [ ] Run focused test suite `uv run --locked --extra coworker pytest -q tests/test_day1_ruleset_drift.py tests/test_main_protection_audit.py tests/test_reconcile_main_ruleset.py`.
 - [ ] Inspect final exact-head GitHub workflow (test-and-build, coworker, frontend, browser, PostgreSQL 18, ancestry, merge gate and PR-skipped governance audit distinctly), never claim a running/skipped job passed.
 
@@ -54,8 +54,15 @@
 - Create: `docs/coworker-roadmap/DAY1_OFFLINE_RULESET_REPOSITORY_ORIGIN_2026-11-21.md`.
 - Modify: `docs/coworker-roadmap/PROGRESS.md`.
 
-- [ ] Record true base/head, RED/GREEN CI evidence and blockers; no synthetic admin merge controls.
-- [ ] Open a draft PR and add Linear MD-5 handoff.
-- [ ] Retain **SOURCE_ONLY / pilot NO-GO** pending administrator-owned live protected ruleset, authentic independent review, staging restore and API-worker parity, D's private holdout custody and distinct Founder/C release approvals.
+- [x] Record true base/head, RED/GREEN CI evidence and blockers; no synthetic admin merge controls.
+- [x] Open a draft PR and add Linear MD-5 handoff.
+- [x] Retain **SOURCE_ONLY / pilot NO-GO** pending administrator-owned live protected ruleset, authentic independent review, staging restore and API-worker parity, D's private holdout custody and distinct Founder/C release approvals.
 
 **Ruling:** GitHub's effective `rulesets?includes_parents=true` includes inherited organization rules. A repository branch may be protected by one such rule, but the project Day 1 acceptance and existing admin reconciler explicitly target a known repository-owned ruleset `27324410`. A snapshot missing `source` or `source_type` is inadequate evidence for that gate; reject it without making any live change.
+
+### Evidence checkpoint — 21 November 2026
+
+- **Base:** `b648d1ab2f83ea6b3abd79b660ccf96ce1322b14`.
+- **RED:** test-only `28d8fe4783f854bc722e1554f33c37a082a3ff6e`; [GitHub Actions #44889771927](https://github.com/rumman52/Shuddho/actions/runs/44889771927), `test-and-build` **10 expected FAIL / 3,080 PASS / 105 SKIP / 6 WARN**. Each negative shows `configuration_candidate` despite wrong or absent source. RED is not a pass.
+- **Minimal correction:** `f2c10625d688054b4e35271bfb66657125b01bc1`; one `ruleset.repository_origin` predicate. The exact final-head repository checks must be read back separately.
+- **Review target:** [draft PR #850](https://github.com/rumman52/Shuddho/pull/850). No human review is implied by creating a draft; no native rule change made.
