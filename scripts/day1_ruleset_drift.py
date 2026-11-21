@@ -159,6 +159,12 @@ def analyze(branch: object, live_ruleset: object, policy: object, *, expected_ma
     require(observed_sha == expected_main_sha, "branch.commit_sha")
     require(r.get("id") == expected_ruleset_id and type(r.get("id")) is int, "ruleset.identity")
     require(r.get("name") == reviewed["name"], "ruleset.name")
+    # An inherited organization ruleset can look otherwise identical. Day 1
+    # requires the captured existing rule to belong to this repository.
+    require(
+        r.get("source") == REPOSITORY and r.get("source_type") == "Repository",
+        "ruleset.repository_origin",
+    )
     require(r.get("target") == "branch" and r.get("enforcement") == "active", "ruleset.enforcement")
     conditions = r.get("conditions")
     refs = conditions.get("ref_name") if isinstance(conditions, dict) else None
