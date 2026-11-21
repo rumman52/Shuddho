@@ -125,6 +125,7 @@ def proofs():
         'probe_object_verified': True,
         'preseed_baseline': {
             'status': 'preseed_verified',
+            'attested_at': '2026-11-12T10:00:00+00:00',
             'source_schema_revision': '0070',
             'postgres_schema_sha256': 'd' * 64,
             'postgres_archive_sha256': 'e' * 64,
@@ -502,6 +503,8 @@ def test_day2_gate_requires_structural_schema_digest(invalid_digest):
     ("source_schema_revision", "0072_merge_0071_heads"),
     ("postgres_archive_sha256", ""),
     ("postgres_table_count", 83),
+    ("attested_at", "2099-01-01T00:00:00+00:00"),
+    ("attested_at", "unqualified"),
 ])
 def test_day2_original_state_baseline_is_mandatory_and_separate_from_task_restore(field, invalid):
     proof_set = list(proofs())
