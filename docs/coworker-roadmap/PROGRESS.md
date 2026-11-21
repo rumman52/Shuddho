@@ -12,6 +12,8 @@
 
 **Remaining external gates:** Owner C/GitHub administrator must supply approved App with adequate access, read back reviewed ruleset `27324410` and operate real denied/unreviewed and permitted/independently reviewed native merge cases. Founder/C need authorized durable staging backup + isolated restore, approved retention/budgets and exact paired API/worker/schema identity. D must retain independent custody of private 40-case holdout and 20 operated recoveries. Distinct Founder+C exact-release approval required. Source and CI cannot substitute for these receipts. [Linear MD-5](https://linear.app/md-rumman-ali/issue/MD-5/rukh-ai-day-one-close-ci-protected-main-staging-recovery-and-heldout).
 
+**Rebased source/build correction:** [Actions #44911260802](https://github.com/rumman52/Shuddho/actions/runs/44911260802) on `9819cb88508da3f97dc2368e3ee61e892ba41dc7` failed **3 tests / 3,198 passed / 105 skipped / 6 warnings**. The three `apply_main_ruleset` positive HTTP GET-detail mocks used `detail()` without server-owned `source`/`source_type`; the new source guard correctly rejected them. Commit `c2115f408facf9891728e6c4dd4dfe16621c0e76` adds exact `source=REPO`, `source_type=Repository` to mock *readbacks* only; creation `candidate()` and its POST-body comparison remain unchanged. No native rule operation occurred. Latest source/build remains **unverified until fresh final-head CI**; do not report intermediate failures as success.
+
 ---
 
 ## 21 November 2026 — Day 1 offline ruleset repository-owned readback ([draft PR #850](https://github.com/rumman52/Shuddho/pull/850))
