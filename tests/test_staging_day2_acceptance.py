@@ -563,3 +563,133 @@ def test_restored_api_access_cannot_be_omitted_from_final_day2_acceptance():
     del proof_set[3]["archive_integrity"]["restored_api_access"]
     with pytest.raises(gate.Day2AcceptanceFailure, match="restored_api_access"):
         check(*proof_set)
+
+
+def authorization_receipt():
+    """Synthetic operator decisions; NOT independent authorization evidence."""
+    return {
+        'schema_version': 1, 'status': 'operator_recorded',
+        'environment': 'staging', 'release_id': 'day2-001',
+        'source_revision': SHA, 'rollout_manifest_sha256': '3' * 64,
+        'provider_policy_sha256': 'e' * 64,
+        'build_reference': 'sha256:immutable-staging-api-worker-build',
+        'deployment_reference': 'render-staging-change-ticket-123',
+        'hosting': {
+            'provider': 'Render', 'workspace_reference': 'rumman-staging-team',
+            'api_service_reference': 'srv-staging-api',
+            'worker_service_reference': 'srv-staging-worker',
+        },
+        'budget': {
+            'currency': 'USD', 'max_spend_minor_units': 2500,
+            'maximum_duration_minutes': 180, 'max_provider_attempts': 3,
+        },
+        'isolated_restore': {
+            'database_fingerprint': '8' * 64,
+            'storage_fingerprint': 'b' * 64,
+            'api_origin_sha256': '2' * 64,
+        },
+        'rollback': {
+            'owner_reference': 'approved-operator-c-rollback',
+            'procedure_reference': 'controlled-staging-rollback-12',
+        },
+        'approvals': {
+            'founder': {
+                'decision': 'approved',
+                'approved_at': '2026-11-12T09:00:00+00:00',
+                'reference': 'dated-founder-decision-record-A',
+            },
+            'operator_c': {
+                'decision': 'approved',
+                'approved_at': '2026-11-12T09:05:00+00:00',
+                'reference': 'dated-operator-c-decision-record-B',
+            },
+        },
+        'valid_from': '2026-11-12T09:30:00+00:00',
+        'valid_until': '2026-11-12T12:00:00+00:00',
+    }
+
+
+def test_day2_acceptance_rejects_missing_founder_c_approval():
+    """Original Part 02 D02.T05/G05: no authorization means no consistency receipt."""
+    with pytest.raises(gate.Day2AcceptanceFailure, match='authorization|Founder|approval'):
+        gate.validate_evidence(*proofs(), expected_revision=SHA)
+
+
+def test_day2_acceptance_reconciles_protected_operator_approval_without_claiming_live_authority():
+    freeze, run, recovery, restored = proofs()
+    freeze['prepared_at'] = '2026-11-12T10:45:00+00:00'
+    freeze['release']['build_reference'] = authorization_receipt()['build_reference']
+    freeze['release']['deployment_reference'] = authorization_receipt()['deployment_reference']
+    freeze['release']['provider_policy_sha256'] = authorization_receipt()['provider_policy_sha256']
+    result = gate.validate_evidence(
+        freeze, run, recovery, restored, expected_revision=SHA,
+        authorization=authorization_receipt(),
+    )
+    assert result['status'] == 'evidence_consistent'
+    assert result['authorization_evidence']['status'] == 'operator_recorded_requires_independent_review'
+    assert len(result['authorization_evidence']['receipt_sha256']) == 64
+    assert 'founder_c_authorization' in result['required_live_checks']
+    assert 'dated-founder-decision-record-A' not in repr(result)
+    assert 'dated-operator-c-decision-record-B' not in repr(result)
+
+
+@pytest.mark.parametrize('path, bad', [
+    (('status',), 'passed'),
+    (('environment',), 'production'),
+    (('release_id',), 'another-release'),
+    (('source_revision',), SHA_OTHER),
+    (('rollout_manifest_sha256',), 'f' * 64),
+    (('provider_policy_sha256',), 'f' * 64),
+    (('build_reference',), 'unrelated-image'),
+    (('deployment_reference',), 'unrelated-deployment'),
+    (('hosting', 'worker_service_reference'), 'srv-staging-api'),
+    (('hosting', 'worker_service_reference'), ''),
+    (('budget', 'currency'), 'US'),
+    (('budget', 'max_spend_minor_units'), 0),
+    (('budget', 'max_spend_minor_units'), True),
+    (('budget', 'max_provider_attempts'), 0),
+    (('budget', 'maximum_duration_minutes'), 100),
+    (('isolated_restore', 'database_fingerprint'), '7' * 64),
+    (('isolated_restore', 'storage_fingerprint'), 'a' * 64),
+    (('isolated_restore', 'api_origin_sha256'), '1' * 64),
+    (('rollback', 'owner_reference'), ''),
+    (('approvals', 'founder', 'decision'), 'pending'),
+    (('approvals', 'founder', 'approved_at'), '2026-11-12T10:01:00+00:00'),
+    (('approvals', 'founder', 'reference'), ''),
+    (('approvals', 'founder', 'reference'), 'dated-operator-c-decision-record-B'),
+    (('approvals', 'operator_c', 'approved_at'), '2026-11-12T12:30:00+00:00'),
+    (('valid_from',), '2026-11-12T08:00:00+00:00'),
+    (('valid_until',), '2026-11-12T11:09:59+00:00'),
+])
+def test_day2_acceptance_rejects_invalid_or_mixed_founder_c_authorization(path, bad):
+    freeze, run, recovery, restored = proofs()
+    freeze['prepared_at'] = '2026-11-12T10:45:00+00:00'
+    freeze['release']['build_reference'] = authorization_receipt()['build_reference']
+    freeze['release']['deployment_reference'] = authorization_receipt()['deployment_reference']
+    freeze['release']['provider_policy_sha256'] = authorization_receipt()['provider_policy_sha256']
+    receipt = authorization_receipt()
+    entry = receipt
+    for key in path[:-1]:
+        entry = entry[key]
+    entry[path[-1]] = bad
+    with pytest.raises(gate.Day2AcceptanceFailure, match='authorization|Founder|approval'):
+        gate.validate_evidence(freeze, run, recovery, restored,
+                               expected_revision=SHA, authorization=receipt)
+
+
+def test_day2_acceptance_rejects_provider_attempts_exceeding_approved_cap():
+    freeze, run, recovery, restored = proofs()
+    freeze['prepared_at'] = '2026-11-12T10:45:00+00:00'
+    freeze['release'].update(
+        build_reference=authorization_receipt()['build_reference'],
+        deployment_reference=authorization_receipt()['deployment_reference'],
+        provider_policy_sha256=authorization_receipt()['provider_policy_sha256'],
+    )
+    receipt = authorization_receipt()
+    receipt['budget']['max_provider_attempts'] = 1
+    run['model_attempts'] = 2
+    recovery['model_attempts'] = 2
+    restored['model_attempts'] = 2
+    with pytest.raises(gate.Day2AcceptanceFailure, match='authorization|provider'):
+        gate.validate_evidence(freeze, run, recovery, restored,
+                               expected_revision=SHA, authorization=receipt)
