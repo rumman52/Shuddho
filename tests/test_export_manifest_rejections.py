@@ -12,11 +12,16 @@ import json
 from copy import deepcopy
 from html import escape
 
+import pytest
+
+# The repo's default lightweight Python job omits the optional Coworker
+# dependencies. Gate those tests before importing native Office libraries.
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("temporalio")
+
 from docx import Document
 from pypdf import PdfReader
 from weasyprint import HTML
-
-import pytest
 
 from test_coworker import account, container, new_task, FakeModel
 from services.coworker.errors import CoworkerError
