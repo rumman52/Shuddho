@@ -216,6 +216,7 @@ jobs:
           uv run --extra coworker pytest \
             tests/test_staging_day2_execution.py \
             tests/test_staging_day2_acceptance.py \
+            tests/test_staging_paid_worker_authorization.py \
             tests/test_staging_migration_alignment.py \
             tests/test_staging_backup_restore.py \
             tests/test_staging_restored_api_access.py \
@@ -226,6 +227,7 @@ jobs:
           for module in \
             tests.test_staging_day2_execution \
             tests.test_staging_day2_acceptance \
+            tests.test_staging_paid_worker_authorization \
             tests.test_staging_migration_alignment \
             tests.test_staging_backup_restore \
             tests.test_staging_restored_api_access \
