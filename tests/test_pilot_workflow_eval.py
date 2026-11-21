@@ -247,3 +247,61 @@ def test_oversized_integrity_metadata_rejected_before_reading(tmp_path, filename
     target.write_bytes(b'x' * (MAX_FILE_BYTES + 1))
     with pytest.raises(ValueError, match='byte bound'):
         load_suite(copied)
+
+def test_verified_dossier_text_is_the_exact_hashed_snapshot(tmp_path, monkeypatch):
+    """Changing the content at its second read must not corrupt source provenance."""
+    import hashlib
+
+    copied = tmp_path / 'fixtures'
+    shutil.copytree(FIXTURE_ROOT, copied)
+    manifest = json.loads((copied / 'suite_manifest.json').read_text(encoding='utf-8'))
+    source = manifest['sources'][0]
+    target = (copied / source['path']).resolve()
+    original_read_text = Path.read_text
+
+    def switched_read_text(path, *args, **kwargs):
+        text = original_read_text(path, *args, **kwargs)
+        if path == target:
+            return text + '\\nUNREVIEWED_PROVENANCE_MARKER\\n'
+        return text
+
+    monkeypatch.setattr(Path, 'read_text', switched_read_text)
+    suite = load_suite(copied)
+    actual = next(c['_source'] for c in suite['cases'] if c['source_id'] == source['id'])
+    assert hashlib.sha256(actual['text'].encode('utf-8')).hexdigest() == source['sha256']
+    assert 'UNREVIEWED_PROVENANCE_MARKER' not in actual['text']
+
+
+def test_verified_case_rows_are_the_exact_hashed_snapshot(tmp_path, monkeypatch):
+    """The evaluator cannot accept extra cases metadata after manifest hash verification."""
+    copied = tmp_path / 'fixtures'
+    shutil.copytree(FIXTURE_ROOT, copied)
+    manifest = json.loads((copied / 'suite_manifest.json').read_text(encoding='utf-8'))
+    target = (copied / manifest['files']['development']['path']).resolve()
+    original_read_text = Path.read_text
+
+    def switched_read_text(path, *args, **kwargs):
+        text = original_read_text(path, *args, **kwargs)
+        if path == target:
+            rows = text.splitlines()
+            first = json.loads(rows[0])
+            first['UNREVIEWED_CASE_MARKER'] = True
+            rows[0] = json.dumps(first, ensure_ascii=False)
+            return '\\n'.join(rows) + '\\n'
+        return text
+
+    monkeypatch.setattr(Path, 'read_text', switched_read_text)
+    suite = load_suite(copied)
+    assert not any('UNREVIEWED_CASE_MARKER' in c for c in suite['cases'])
+
+
+def test_evaluator_submission_does_not_follow_a_direct_symlink(tmp_path):
+    """A small, valid JSONL outside the submitted path is still an invalid input."""
+    from scripts.pilot_workflow_eval import read_outputs
+
+    target = tmp_path / 'private-substitution.jsonl'
+    target.write_text('{"case_id":"case-a","draft":{}}\\n', encoding='utf-8')
+    submitted = tmp_path / 'submitted.jsonl'
+    submitted.symlink_to(target)
+    with pytest.raises(ValueError, match='symlink|regular|no-follow'):
+        read_outputs(submitted)
