@@ -498,6 +498,12 @@ def _day8_fixture():
                     "workflow": workflow, "language": language,
                     "split": "development",
                 })
+    # A synthetic immutable source snapshot per case; no source text or
+    # provider token enters this unit-test fixture.
+    for case in cases:
+        case["_source"] = {
+            "sha256": hashlib.sha256(("frozen-source:" + case["id"]).encode()).hexdigest(),
+        }
     suite = {"manifest": {
         "suite_id": "pilot",
         "source_revision": "a" * 40,
@@ -539,6 +545,12 @@ def _day8_fixture():
                 "execution_kind": "first_run", "attempt_number": 1,
                 "id": case["id"], "workflow": case["workflow"],
                 "language": case["language"],
+                "case_input_sha256": hashlib.sha256(json.dumps(
+                    {key: value for key, value in case.items() if key != "_source"},
+                    sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")).hexdigest(),
+                "source_snapshot_sha256": case["_source"]["sha256"],
                 "passed": True, "human_accepted": True, "safety_passed": True,
                 "accepted_outcome_ref": "review:" + case["id"],
                 "verified_artifact_refs": ["artifact:" + case["id"]],
@@ -1152,3 +1164,59 @@ def test_day8_invalid_owner_cost_ceiling_cannot_freeze(invalid):
     assert report["status"] == "BLOCKED"
     assert report["freeze"] is None
     assert report["measured_cost_savings_microusd"] is None
+
+
+def test_day8_rejects_41_manifest_development_entries_with_one_duplicate_id():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    suite["cases"].append(dict(suite["cases"][0]))
+    with pytest.raises(ValueError, match="exactly 40 distinct frozen development cases"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+@pytest.mark.parametrize("field", ["case_input_sha256", "source_snapshot_sha256"])
+def test_day8_rejects_first_run_different_from_frozen_case_or_source(field):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["results"][0][field] = "0" * 64
+    with pytest.raises(ValueError, match="frozen .* digest mismatch"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+@pytest.mark.parametrize("field", ["case_input_sha256", "source_snapshot_sha256"])
+def test_day8_missing_first_run_case_source_binding_blocks_freeze(field):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    del candidate["results"][0][field]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert result["measured_cost_savings_microusd"] is None
+    assert any("case input/source" in reason for reason in result["blockers"])
+    assert result["profile_summaries"]["baseline"]["total_cost_microusd"] == 800
+
+
+@pytest.mark.parametrize("field", ["case_input_sha256", "source_snapshot_sha256"])
+def test_day8_rejects_rerun_with_wrong_frozen_case_source_binding(field):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    rerun = _day8_synthetic_rerun(candidate, cost=1)
+    rerun[field] = "0" * 64
+    candidate["reruns"].append(rerun)
+    with pytest.raises(ValueError, match="frozen .* digest mismatch"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+@pytest.mark.parametrize("field", ["case_input_sha256", "source_snapshot_sha256"])
+def test_day8_missing_rerun_case_source_binding_blocks_freeze(field):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    rerun = _day8_synthetic_rerun(candidate, cost=1)
+    del rerun[field]
+    candidate["reruns"].append(rerun)
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "BLOCKED"
+    assert result["freeze"] is None
+    assert any("case input/source" in reason for reason in result["blockers"])
+
+
+def test_day8_source_snapshot_is_not_accepted_without_suite_source_digest():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    del suite["cases"][0]["_source"]
+    with pytest.raises(ValueError, match="source snapshot digest"):
+        compare_day8_development(baseline, candidate, suite)
