@@ -29,7 +29,7 @@ This is a static fail-closed preflight, not proof of DNS, TLS, connected
 provider identity, correct storage ownership or live owner isolation. The
 operator must still inspect the actual hosted credentials and API/worker
 bindings privately before sending tokens or provisioning resources.
- Use the connection settings from that
+Use the connection settings from that
 project's Connect panel with the `shuddho_staging_runtime` login, project
 reference in the username and port 5432. Set `sslmode=verify-full` and
 `sslrootcert=infra/supabase-root-2021.pem` from the repository root. The
