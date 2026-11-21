@@ -596,3 +596,54 @@ def test_creation_template_has_no_server_origin_but_stays_valid_for_admin_creati
     assert "source" not in candidate
     assert "source_type" not in candidate
     assert _active_main_ruleset(candidate) is True
+
+
+@pytest.mark.parametrize(
+    "include",
+    [
+        ["refs/heads/main", "refs/heads/dev"],
+        ["~DEFAULT_BRANCH", "refs/heads/release"],
+        ["refs/heads/main", "~DEFAULT_BRANCH"],
+        ["~DEFAULT_BRANCH", "~ALL"],
+        ["refs/heads/main", "refs/heads/main"],
+        ["refs/heads/main", None],
+    ],
+    ids=[
+        "extra-dev", "extra-release", "mixed-alias", "extra-all",
+        "duplicate-main", "null-extra",
+    ],
+)
+def test_live_governance_rejects_broader_or_ambiguous_main_scope(include):
+    candidate = approved_ruleset()
+    candidate["conditions"]["ref_name"]["include"] = include
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        audit_governance(protected_branch(), [candidate])
+
+
+@pytest.mark.parametrize("location", ["conditions", "ref_name"])
+def test_live_governance_rejects_unreviewed_selector_fields(location):
+    candidate = approved_ruleset()
+    destination = (
+        candidate["conditions"] if location == "conditions"
+        else candidate["conditions"]["ref_name"]
+    )
+    destination["unreviewed_condition"] = "untrusted"
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        audit_governance(protected_branch(), [candidate])
+
+
+def test_broadened_scope_with_redacted_bypass_is_not_treated_as_valid_scope():
+    candidate = approved_ruleset()
+    candidate["conditions"]["ref_name"]["include"].append("refs/heads/dev")
+    del candidate["bypass_actors"]
+    # The independent ownership/scope failure must not masquerade as a
+    # credentials-only redacted-bypass remediation.
+    with pytest.raises(GovernanceAuditError, match="no enforceable main ruleset"):
+        audit_governance(protected_branch(), [candidate])
+
+
+@pytest.mark.parametrize("include", [["refs/heads/main"], ["~DEFAULT_BRANCH"]])
+def test_live_governance_accepts_only_one_exact_main_selector(include):
+    candidate = approved_ruleset()
+    candidate["conditions"]["ref_name"]["include"] = include
+    assert audit_governance(protected_branch(), [candidate]) == 123

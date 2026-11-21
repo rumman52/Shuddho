@@ -44,6 +44,26 @@ def _targets_main(rule: dict) -> bool:
     return not excludes
 
 
+def _exact_main_scope(rule: dict) -> bool:
+    """Require precisely one reviewed main selector for V-01 readback evidence.
+
+    Keep _targets_main permissive for creation-policy validation and detecting
+    possibly overlapping native rulesets; this is solely an audit evidence gate.
+    """
+    if not _targets_main(rule):
+        return False
+    conditions = rule.get("conditions")
+    if not isinstance(conditions, dict) or set(conditions) != {"ref_name"}:
+        return False
+    refs = conditions.get("ref_name")
+    return (
+        isinstance(refs, dict)
+        and set(refs) == {"include", "exclude"}
+        and refs.get("include") in (["refs/heads/main"], ["~DEFAULT_BRANCH"])
+        and refs.get("exclude") == []
+    )
+
+
 def _repository_owned_ruleset(rule: dict, repository: str) -> bool:
     """Only the inspected repository's own rule can establish V-01 ownership."""
     return (
@@ -147,6 +167,7 @@ def audit_governance(
         if (
             not _repository_owned_ruleset(item, repository)
             or not _active_main_ruleset(item)
+            or not _exact_main_scope(item)
             or not _has_required_rules(item)
         ):
             continue
@@ -158,7 +179,7 @@ def audit_governance(
     # missing evidence explicitly, without trusting absent data as no bypass.
     if any(
         _repository_owned_ruleset(item, repository)
-        and _targets_main(item)
+        and _exact_main_scope(item)
         and _has_required_rules(item)
         and isinstance(item, dict)
         and item.get("bypass_actors") is None
