@@ -220,6 +220,10 @@ def _install_original_baseline_fakes(monkeypatch, *, changed_source=False):
     }
     monkeypatch.setattr(backup, "attest_preseed_baseline", lambda *_: (summary, source))
     monkeypatch.setattr(
+        backup, "read_original_attestation",
+        lambda _path, _summary: {**summary, "attested_at": "2026-11-21T08:00:00+00:00"},
+    )
+    monkeypatch.setattr(
         backup, "restored_database_inventory",
         lambda _: {**source, "schema_sha256": "changed"} if changed_source else source,
     )
@@ -228,6 +232,7 @@ def _install_original_baseline_fakes(monkeypatch, *, changed_source=False):
         "original_postgres_verification": Path("fake-original-verification.json"),
         "original_postgres_archive": Path("fake-original.dump"),
         "original_object_archive": Path("fake-empty-baseline"),
+        "original_baseline_attestation": Path("fake-original-attestation.json"),
     }
 
 
@@ -338,20 +343,59 @@ def test_prepare_preflights_state_destination_before_staging_mutations(monkeypat
     assert not list(tmp_path.glob(".state.json.*.preflight"))
 
 
-def test_prepare_refuses_stale_original_snapshot_before_owner_api_or_object_write(monkeypatch, tmp_path):
+def test_original_attest_refuses_changed_source_before_receipt_or_owner_api(monkeypatch, tmp_path):
     settings = SimpleNamespace(source_revision="a" * 40)
-    rollout_path = tmp_path / "rollout.json"
-    rollout_path.write_text(json.dumps({"release_id": "baseline-test"}))
-    state_path = tmp_path / "state.json"
+    output = tmp_path / "original-attestation.json"
     calls = []
     _install_prepare_fakes(monkeypatch, calls)
     monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
     paths = _install_original_baseline_fakes(monkeypatch, changed_source=True)
+    paths.pop("original_baseline_attestation")
 
     with pytest.raises(backup.PreseedBaselineFailure, match="changed"):
-        backup.prepare(settings, state_path, rollout_path, **paths)
+        backup.attest_original(settings, output, **paths)
     assert calls == ["container_create", "dispose"]
-    assert not state_path.exists()
+    assert not output.exists()
+
+
+def test_original_attest_protects_receipt_and_proves_unmodified_live_baseline(monkeypatch, tmp_path):
+    settings = SimpleNamespace(source_revision="a" * 40)
+    output = tmp_path / "original-attestation.json"
+    calls = []
+    _install_prepare_fakes(monkeypatch, calls)
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
+    paths = _install_original_baseline_fakes(monkeypatch)
+    paths.pop("original_baseline_attestation")
+
+    result = backup.attest_original(settings, output, **paths)
+    assert result["status"] == "preseed_verified"
+    receipt = json.loads(output.read_text())
+    assert receipt["schema_version"] == 1
+    assert receipt["status"] == "preseed_verified"
+    assert receipt["baseline"]["object_count"] == 0
+    assert receipt["baseline"]["source_schema_revision"] == "0070"
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert calls == ["container_create", "dispose"]
+
+
+def test_later_prepare_accepts_migrated_rows_only_with_earlier_attestation(monkeypatch, tmp_path):
+    settings = SimpleNamespace(source_revision="a" * 40)
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps({"release_id": "post-migration-probe"}))
+    state = tmp_path / "prepared.json"
+    calls = []
+    _install_prepare_fakes(monkeypatch, calls)
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE", "true")
+    paths = _install_original_baseline_fakes(monkeypatch, changed_source=True)
+    monkeypatch.setattr(
+        backup, "restored_database_inventory",
+        lambda _: pytest.fail("Cannot require original 0070 rows after approved 0072 migration"),
+    )
+
+    result = backup.prepare(settings, state, rollout_path, **paths)
+    assert result["task_id"] == "task-id"
+    assert json.loads(state.read_text())["preseed_baseline"]["status"] == "preseed_verified"
+    assert "create_upload" in calls
 
 
 def test_verify_demands_original_baseline_before_reading_task_rows(monkeypatch, tmp_path, restore_state):
