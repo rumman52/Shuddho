@@ -329,7 +329,7 @@ cost. This was previously a written blocker but was **not** a mandatory input
 to the final Day 2 evidence reconciler. The read-only source gate now requires
 a **private, mode-0600** `founder-c-authorization.json` file with the
 exact schema described in
-[`DAY2_FOUNDER_C_AUTHORIZATION.md`](../../DAY2_FOUNDER_C_AUTHORIZATION.md).
+[`DAY2_FOUNDER_C_AUTHORIZATION.md`](../DAY2_FOUNDER_C_AUTHORIZATION.md).
 
 Both decisions must separately identify the approved nonproduction host and
 workspace, API and dedicated worker service identities, immutable reviewed
