@@ -305,6 +305,29 @@ def validate_evidence(
         r"[A-Za-z0-9_]{1,128}", integrity["source_schema_revision"]
     ):
         raise Day2AcceptanceFailure("Restored archive schema revision is missing.")
+    preseed = _object(integrity.get("preseed_baseline"), "archive_integrity.preseed_baseline")
+    if (preseed.get("status") != "preseed_verified"
+            or preseed.get("source_schema_revision") != "0070"
+            or preseed.get("object_count") != 0
+            or preseed.get("object_total_bytes") != 0):
+        raise Day2AcceptanceFailure(
+            "archive_integrity.preseed_baseline must prove the original 0070 zero-object state."
+        )
+    for field in (
+        "postgres_archive_sha256", "postgres_schema_sha256",
+        "object_manifest_sha256", "source_database_fingerprint",
+        "source_storage_fingerprint",
+    ):
+        _digest(preseed.get(field), "archive_integrity.preseed_baseline." + field)
+    if (_positive(preseed.get("postgres_table_count"),
+                  "archive_integrity.preseed_baseline.postgres_table_count") < 84
+            or _positive(preseed.get("postgres_row_count"),
+                         "archive_integrity.preseed_baseline.postgres_row_count") < 1
+            or preseed["source_database_fingerprint"] != integrity["source_database_fingerprint"]
+            or preseed["source_storage_fingerprint"] != integrity["source_storage_fingerprint"]):
+        raise Day2AcceptanceFailure(
+            "archive_integrity.preseed_baseline differs from the verified source resources."
+        )
     digest, restored_at = _stage(restore.get("backup_restore"), "restored.backup_restore",
                                  release_id=release_id, revision=expected_revision)
     if digest != rollout_digest:
