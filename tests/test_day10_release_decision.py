@@ -924,7 +924,7 @@ def test_day10_rejects_rewritten_attempt_finish_even_if_both_scores_match(monkey
     (lambda evidence: evidence["recovery"].update(manifest_sha256="0" * 64),
      "foreign-manifest"),
     (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
-        verified_at=STARTED
+        observed_at=NOW, verified_at=STARTED
     ), "verified-before-observed"),
     (lambda evidence: evidence["recovery"]["scenarios"][-1].update(
         evidence_ref="https://example.test/unbound-recovery"
@@ -938,6 +938,12 @@ def test_day10_recovery_cannot_relabel_unbound_or_unordered_receipts(
 ):
     rollout, artifacts = evidence()
     mutation(artifacts)
+    # Test the receipt validator independently of the original-report equality
+    # check, so each mutation exercises the actual Day 9 evidence contract.
+    assert not day10.recovery_ok(
+        artifacts["recovery"], RELEASE, REV, HASH,
+        manifest_sha256=artifacts["day9_first_run"]["manifest_sha256"],
+    ), why
     # Even when all 20 rows claim success, Day 10 must independently verify
     # the receipt contract that Day 9 actually emits.
     result = decision(monkeypatch, rollout, artifacts)
