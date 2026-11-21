@@ -146,3 +146,46 @@ def test_preseed_refuses_any_changed_live_source(mismatch, tmp_path):
         baseline.require_unchanged_source(
             summary, archived, actual_fp, actual_inventory, actual_objects,
         )
+
+
+def test_original_attestation_binds_pre_migration_snapshot_to_later_same_resources(tmp_path):
+    paths, _source, resources = fixture(tmp_path)
+    summary, _ = baseline.attest_preseed_baseline(*paths)
+    receipt = tmp_path / "original-attested.json"
+    receipt.write_text(json.dumps({
+        "schema_version": 1, "status": "preseed_verified",
+        "attested_at": "2026-11-21T08:00:00+00:00",
+        "baseline": summary,
+    }))
+    persisted = baseline.read_original_attestation(receipt, summary)
+    assert persisted["attested_at"] == "2026-11-21T08:00:00+00:00"
+    baseline.require_same_source_resources(persisted, resources)
+    with pytest.raises(baseline.PreseedBaselineFailure, match="different"):
+        baseline.require_same_source_resources(
+            persisted, {**resources, "database": sha(b"other-host")},
+        )
+
+
+@pytest.mark.parametrize("mutated", ["missing", "incorrect_baseline", "future_time", "no_timezone", "symlink"])
+def test_original_attestation_rejects_forged_or_unqualified_receipt(tmp_path, mutated):
+    paths, _source, _resources = fixture(tmp_path)
+    summary, _ = baseline.attest_preseed_baseline(*paths)
+    receipt = tmp_path / "original-attested.json"
+    data = {
+        "schema_version": 1, "status": "preseed_verified",
+        "attested_at": "2026-11-21T08:00:00+00:00", "baseline": summary,
+    }
+    if mutated == "incorrect_baseline":
+        data["baseline"] = {**summary, "postgres_archive_sha256": "0" * 64}
+    elif mutated == "future_time":
+        data["attested_at"] = "2099-01-01T00:00:00+00:00"
+    elif mutated == "no_timezone":
+        data["attested_at"] = "2026-11-21T08:00:00"
+    if mutated != "missing":
+        receipt.write_text(json.dumps(data))
+    if mutated == "symlink":
+        copy = tmp_path / "real.json"
+        receipt.rename(copy)
+        receipt.symlink_to(copy)
+    with pytest.raises(baseline.PreseedBaselineFailure):
+        baseline.read_original_attestation(receipt, summary)
