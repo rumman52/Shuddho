@@ -56,6 +56,28 @@ def test_day9_jsonl_reader_parses_exact_bytes_it_validated(tmp_path, monkeypatch
     assert read_jsonl(path) == [{"case_id": "frozen"}]
 
 
+
+def test_day9_manifest_digest_matches_exact_parsed_json_bytes(tmp_path):
+    from scripts.ruke_pilot_eval import _read_json_and_sha256
+    path = tmp_path / "manifest.json"
+    raw = b'{"release_id": "one","model": "test"}'
+    path.write_bytes(raw)
+    payload, digest = _read_json_and_sha256(path)
+    assert payload == {"release_id": "one", "model": "test"}
+    assert digest == hashlib.sha256(raw).hexdigest()
+
+
+def test_day9_candidate_digest_matches_exact_parsed_jsonl_bytes(tmp_path):
+    from scripts.ruke_pilot_eval import _read_jsonl_and_sha256
+    path = tmp_path / "candidate.jsonl"
+    raw = b'{"case_id":"one"}\n{"case_id":"two"}\n'
+    path.write_bytes(raw)
+    rows, digest = _read_jsonl_and_sha256(path)
+    assert rows == [{"case_id": "one"}, {"case_id": "two"}]
+    assert digest == hashlib.sha256(raw).hexdigest()
+
+
+
 def test_day9_holdout_parses_only_the_bytes_matching_frozen_digest(external_dir, monkeypatch):
     """Corrupting the second path-based parse cannot change a verified corpus."""
     rows = tasks()
