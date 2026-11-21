@@ -43,13 +43,13 @@ def test_day9_json_reader_parses_exact_bytes_it_validated(tmp_path, monkeypatch)
 def test_day9_jsonl_reader_parses_exact_bytes_it_validated(tmp_path, monkeypatch):
     """A second pathname read must not replace JSONL after the bounded read."""
     path = tmp_path / "candidate.jsonl"
-    path.write_text('{"case_id":"frozen"}\\n', encoding="utf-8")
+    path.write_text('{"case_id":"frozen"}\n', encoding="utf-8")
     original_read = Path.read_bytes
 
     def change_after_digest(self):
         data = original_read(self)
         if self == path:
-            path.write_text('{"case_id":"substituted"}\\n', encoding="utf-8")
+            path.write_text('{"case_id":"substituted"}\n', encoding="utf-8")
         return data
 
     monkeypatch.setattr(Path, "read_bytes", change_after_digest)
@@ -60,13 +60,13 @@ def test_day9_holdout_parses_only_the_bytes_matching_frozen_digest(external_dir,
     """Corrupting the second path-based parse cannot change a verified corpus."""
     rows = tasks()
     path = external_dir / "independent-heldout.jsonl"
-    original = "".join(json.dumps(row, sort_keys=True) + "\\n" for row in rows)
+    original = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
     path.write_text(original, encoding="utf-8")
     path.chmod(0o444)
     expected_digest = hashlib.sha256(original.encode("utf-8")).hexdigest()
     other = deepcopy(rows)
     other[0]["source_sha256"] = "e" * 64
-    substituted = "".join(json.dumps(row, sort_keys=True) + "\\n" for row in other)
+    substituted = "".join(json.dumps(row, sort_keys=True) + "\n" for row in other)
     original_read_text = Path.read_text
 
     def changed_on_second_read(self, *args, **kwargs):
