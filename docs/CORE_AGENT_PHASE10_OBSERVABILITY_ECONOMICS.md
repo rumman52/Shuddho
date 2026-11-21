@@ -168,6 +168,24 @@ meet the acceptance and all-task safety gates and the candidate retains every
 baseline-accepted task; an unsafe candidate is excluded with an explicit
 reason even if its token bill is lower. An otherwise eligible baseline may
 still be selected. Code cannot certify external provider usage or reviewer sign-off.
+
+**Day 8 all-attempt safety gate — 21 November 2026 (PR #855).**
+The fixed acceptance denominator remains exactly the 40 *first* executions
+per arm. Explicit later reruns are nevertheless paid, measured executions,
+not exemptions from safety review. The configuration safety gate must assess
+`safety_passed` for every recorded first run **and rerun**. A single
+`safety_passed=false` in either a first execution or a rerun makes that arm
+ineligible, even if its 40 first-run outputs are all accepted and it has
+the cheapest apparent unit cost. A missing or malformed rerun review stays
+unassessed and blocks a fully evidenced comparison; it must not default to
+safe. An independently eligible opposite arm may be chosen when its paired
+measurements and policy bindings remain complete, but qualified *savings*
+are withheld unless **both** arms pass safety. The restricted operator JSON
+records `safety_assessed_attempts`, `unsafe_attempts` per arm and
+`unsafe_rerun_attempts` per matched task to permit a reviewer to locate
+a safety failure in an otherwise successful 40-case cohort. These are
+synthetic validator tests, not proof of any real provider attempt or safety
+review.
 The access-controlled comparison JSON also keeps all 40 matched per-task input/output
 usage values, model/tool durations, retries, costs, artifact/review references,
 and conditional savings, alongside aggregate results; no per-task content enters

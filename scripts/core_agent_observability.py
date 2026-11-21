@@ -995,7 +995,15 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
                                            if (row["workflow"], row["language"]) == (workflow, language))]
                 cell_metrics[name] = cell_summary(cell, cell_attempts, provenance_complete)
         metrics_complete = provenance_complete and complete_metrics(all_rows)
-        safety_ok = all(r["safety_passed"] for r in records)
+        # Safety applies to every observed execution, including explicit
+        # failed/retried reruns whose costs are already in the denominator.
+        # A missing rerun review is unknown, never implicitly safe; a false
+        # review excludes that profile even if all first runs were accepted.
+        safety_assessed_attempts = sum(
+            type(r.get("safety_passed")) is bool for r in all_rows
+        )
+        unsafe_attempts = sum(r.get("safety_passed") is False for r in all_rows)
+        safety_ok = safety_assessed_attempts == len(all_rows) and unsafe_attempts == 0
         artifact_coverage = all(r["verified_artifact_refs"] for r in accepted)
         quality_ok = len(accepted) >= 36 and all(n >= 9 for n in by_cell.values()) and safety_ok and artifact_coverage
         latencies = [r["end_to_end_latency_ms"] for r in records
@@ -1026,6 +1034,8 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
         summaries[label] = {
             "cases": 40,
             "rerun_attempts": len(rerun_rows),
+            "safety_assessed_attempts": safety_assessed_attempts,
+            "unsafe_attempts": unsafe_attempts,
             "attempt_provenance_complete": provenance_complete,
             "case_source_bindings_complete": lineage_complete,
             "human_accepted": len(accepted),
@@ -1216,6 +1226,9 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
             case_reruns = reruns.get(case_id, [])
             economics = {field: item.get(field) for field in task_fields}
             economics["rerun_attempts"] = len(case_reruns)
+            economics["unsafe_rerun_attempts"] = sum(
+                attempt.get("safety_passed") is False for attempt in case_reruns
+            )
             economics["all_attempts_cost_microusd"] = (
                 sum(r["cost_microusd"] for r in [item, *case_reruns])
                 if provenance and complete_metrics([item, *case_reruns]) else None
