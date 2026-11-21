@@ -63,6 +63,28 @@ def _checks(params: dict, context: str) -> list:
     return [row for row in rows if isinstance(row, dict) and row.get("context") == context]
 
 
+def _live_status_rows_are_unambiguous(params: dict) -> bool:
+    """Every native status must have one unique, trusted first-party source."""
+    rows = params.get("required_status_checks")
+    if not isinstance(rows, list) or not rows:
+        return False
+    observed: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"context", "integration_id"}:
+            return False
+        context = row.get("context")
+        if (
+            not isinstance(context, str)
+            or not context.strip()
+            or context in observed
+            or type(row.get("integration_id")) is not int
+            or row["integration_id"] != ACTIONS_INTEGRATION_ID
+        ):
+            return False
+        observed.add(context)
+    return True
+
+
 def validate_reviewed_policy(policy: object) -> dict:
     """Never let an altered/weak policy generate an apparently clean report."""
     p = _object(policy, "reviewed policy")
@@ -101,6 +123,7 @@ def _reviewed_check_contexts(status: dict) -> tuple[str, ...]:
     for check in checks:
         if (
             not isinstance(check, dict)
+            or set(check) != {"context", "integration_id"}
             or not isinstance(check.get("context"), str)
             or not check["context"].strip()
             or type(check.get("integration_id")) is not int
@@ -161,6 +184,9 @@ def analyze(branch: object, live_ruleset: object, policy: object, *, expected_ma
     check_params = _parameters(r, "required_status_checks")
     require(check_params.get("strict_required_status_checks_policy") is True, "checks.strict_current_head")
     require(check_params.get("do_not_enforce_on_create") is False, "checks.enforce_on_create")
+    # Also validate every row, including non-mandatory statuses. Otherwise a
+    # malformed or untrusted extra row can hide behind three correct checks.
+    require(_live_status_rows_are_unambiguous(check_params), "checks.unambiguous_first_party_rows")
     # Track every check pinned by the current reviewed template, including
     # later additions such as Coworker (PR #754).
     for context in _reviewed_check_contexts(_parameters(reviewed, "required_status_checks")):
