@@ -44,9 +44,20 @@ def _targets_main(rule: dict) -> bool:
     return not excludes
 
 
+def _repository_owned_ruleset(rule: dict, repository: str) -> bool:
+    """Only the inspected repository's own rule can establish V-01 ownership."""
+    return (
+        isinstance(rule, dict)
+        and rule.get("source_type") == "Repository"
+        and rule.get("source") == repository
+    )
+
+
 def _active_main_ruleset(rule: dict) -> bool:
-    # GitHub deliberately redacts bypass_actors unless the caller has WRITE
-    # access to the ruleset. Missing is NOT equivalent to an empty bypass list.
+    # Preserve the policy-template validator used by apply_main_ruleset:
+    # creation templates have no server-assigned source/source_type fields.
+    # Live provenance is checked separately by audit_governance below.
+    # Missing bypass_actors is NOT equivalent to an empty bypass list.
     return _targets_main(rule) and rule.get("bypass_actors") == []
 
 
@@ -124,14 +135,20 @@ def _has_required_rules(rule: dict) -> bool:
     return any(valid_reviews(p) for p in reviews) and any(valid_checks(p) for p in checks)
 
 
-def audit_governance(branch: dict, rulesets: list[dict]) -> int:
+def audit_governance(
+    branch: dict, rulesets: list[dict], *, repository: str = "rumman52/Shuddho"
+) -> int:
     """Return matching active ruleset ID; no implication of tested enforcement."""
     if not isinstance(branch, dict) or branch.get("name") != "main" or branch.get("protected") is not True:
         raise GovernanceAuditError("main branch protection is not confirmed")
     if not isinstance(rulesets, list):
         raise GovernanceAuditError("ruleset listing is not available")
     for item in rulesets:
-        if not _active_main_ruleset(item) or not _has_required_rules(item):
+        if (
+            not _repository_owned_ruleset(item, repository)
+            or not _active_main_ruleset(item)
+            or not _has_required_rules(item)
+        ):
             continue
         ruleset_id = item.get("id")
         if type(ruleset_id) is int and ruleset_id > 0:
@@ -140,7 +157,8 @@ def audit_governance(branch: dict, rulesets: list[dict]) -> int:
     # GitHub omits bypass_actors without ruleset write access. Report the
     # missing evidence explicitly, without trusting absent data as no bypass.
     if any(
-        _targets_main(item)
+        _repository_owned_ruleset(item, repository)
+        and _targets_main(item)
         and _has_required_rules(item)
         and isinstance(item, dict)
         and item.get("bypass_actors") is None
@@ -211,7 +229,7 @@ def inspect_repository(repository: str, token: str, *, ruleset_token: str | None
         if type(rid) is not int or rid < 1:
             raise GovernanceAuditError("invalid active ruleset identifier")
         details.append(_get_json(root + f"/rulesets/{rid}", audit_token))
-    return audit_governance(branch, details)
+    return audit_governance(branch, details, repository=repository)
 
 
 def main() -> None:
