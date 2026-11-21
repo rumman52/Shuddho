@@ -14,6 +14,10 @@ from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_day2_archive_attestation import (
     ArchiveAttestationFailure, attest_archives,
 )
+from scripts.staging_preseed_baseline import (
+    PreseedBaselineFailure, attest_preseed_baseline, require_unchanged_source,
+)
+from scripts.staging_object_backup import ObjectArchiveError, _inventory as private_object_inventory
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     passed,
@@ -132,16 +136,41 @@ def _preflight_private_json_destination(path: Path) -> None:
             ) from None
 
 
-def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
+def prepare(
+    settings: Settings, state_path: Path, rollout_path: Path,
+    *, original_postgres_verification: Path | None = None,
+    original_postgres_archive: Path | None = None,
+    original_object_archive: Path | None = None,
+) -> dict:
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
     release_context = prepared_release_context(settings, rollout_path)
     _preflight_private_json_destination(state_path)
+    if any(path is None for path in (
+        original_postgres_verification, original_postgres_archive, original_object_archive,
+    )):
+        raise BackupRestoreFailure(
+            "Verified original PostgreSQL archive and zero-object baseline are mandatory before any synthetic write."
+        )
+    original_summary, original_inventory = attest_preseed_baseline(
+        original_postgres_verification, original_postgres_archive, original_object_archive,
+    )
     container = Container.create(settings)
     marker = uuid.uuid4().hex
     payload = ("shuddho-backup-restore-probe-" + marker).encode("utf-8")
     digest = hashlib.sha256(payload).hexdigest()
     try:
         source_fingerprints = environment_fingerprints(container)
+        try:
+            current_database = restored_database_inventory(container)
+            current_objects = private_object_inventory(container.storage)
+        except ObjectArchiveError:
+            raise BackupRestoreFailure(
+                "Original private object source inventory could not be read before seeding."
+            ) from None
+        require_unchanged_source(
+            original_summary, original_inventory, source_fingerprints,
+            current_database, current_objects,
+        )
         owner = resolve_owner()
         upload = container.repository.create_upload(
             owner,
@@ -177,6 +206,7 @@ def prepare(settings: Settings, state_path: Path, rollout_path: Path) -> dict:
             "sha256": digest,
             "byte_size": len(payload),
             "source_fingerprints": source_fingerprints,
+            "preseed_baseline": original_summary,
         }
         write_private_json(state_path, state)
         return {
@@ -201,6 +231,9 @@ def verify(
     postgres_archive: Path | None = None,
     object_archive: Path | None = None,
     object_restore_receipt: Path | None = None,
+    original_postgres_verification: Path | None = None,
+    original_postgres_archive: Path | None = None,
+    original_object_archive: Path | None = None,
 ) -> dict:
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
     if not backup_reference.strip() or not restore_reference.strip():
@@ -242,6 +275,21 @@ def verify(
         )):
             raise BackupRestoreFailure(
                 "Full PostgreSQL verification, dump, private object archive and restore receipt are mandatory."
+            )
+        if any(path is None for path in (
+            original_postgres_verification, original_postgres_archive, original_object_archive,
+        )):
+            raise BackupRestoreFailure(
+                "Verified original PostgreSQL dump and empty-object baseline are mandatory for restore."
+            )
+        original_summary, _ = attest_preseed_baseline(
+            original_postgres_verification, original_postgres_archive, original_object_archive,
+        )
+        if (state.get("preseed_baseline") != original_summary
+                or original_summary["source_database_fingerprint"] != source["database"]
+                or original_summary["source_storage_fingerprint"] != source["storage"]):
+            raise BackupRestoreFailure(
+                "Original staging baseline is missing or differs from the prepared source receipt."
             )
         integrity, source_inventory, restored_objects = attest_archives(
             state, target, postgres_verification, postgres_archive,
@@ -292,6 +340,7 @@ def verify(
         ):
             raise BackupRestoreFailure("Synthetic probe object is absent from the full private archive/restore ledger.")
         integrity["probe_object_verified"] = True
+        integrity["preseed_baseline"] = original_summary
 
         base = {}
         if base_evidence:
@@ -319,6 +368,10 @@ def main() -> None:
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--state", type=Path, required=True)
     prepare_parser.add_argument("--rollout", type=Path, required=True)
+    for argument in (prepare_parser,):
+        argument.add_argument("--original-postgres-verification", type=Path, required=True)
+        argument.add_argument("--original-postgres-archive", type=Path, required=True)
+        argument.add_argument("--original-object-archive-directory", type=Path, required=True)
 
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--state", type=Path, required=True)
@@ -328,6 +381,9 @@ def main() -> None:
     verify_parser.add_argument("--postgres-archive", type=Path, required=True)
     verify_parser.add_argument("--object-archive-directory", type=Path, required=True)
     verify_parser.add_argument("--object-restore-receipt", type=Path, required=True)
+    verify_parser.add_argument("--original-postgres-verification", type=Path, required=True)
+    verify_parser.add_argument("--original-postgres-archive", type=Path, required=True)
+    verify_parser.add_argument("--original-object-archive-directory", type=Path, required=True)
     verify_parser.add_argument("--rollout", type=Path, required=True)
     verify_parser.add_argument("--base-evidence", type=Path)
     verify_parser.add_argument("--output", type=Path, required=True)
@@ -336,7 +392,12 @@ def main() -> None:
     settings = Settings.from_env()
     try:
         if args.command == "prepare":
-            result = prepare(settings, args.state, args.rollout)
+            result = prepare(
+                settings, args.state, args.rollout,
+                original_postgres_verification=args.original_postgres_verification,
+                original_postgres_archive=args.original_postgres_archive,
+                original_object_archive=args.original_object_archive_directory,
+            )
             print(json.dumps({"status": "prepared", **result}, indent=2))
         else:
             result = verify(
@@ -351,11 +412,15 @@ def main() -> None:
                 postgres_archive=args.postgres_archive,
                 object_archive=args.object_archive_directory,
                 object_restore_receipt=args.object_restore_receipt,
+                original_postgres_verification=args.original_postgres_verification,
+                original_postgres_archive=args.original_postgres_archive,
+                original_object_archive=args.original_object_archive_directory,
             )
             print(json.dumps({"written": str(args.output), **result}, indent=2))
     except (
         BackupRestoreFailure,
         ArchiveAttestationFailure,
+        PreseedBaselineFailure,
         StagingReleaseEvidenceError,
         httpx.HTTPError,
         OSError,
