@@ -667,3 +667,89 @@ def test_paused_opportunity_collector_refuses_early_read_before_network(
     with pytest.raises(check.ScheduledProfileProbeFailure, match="full catch-up window"):
         check.collect_paused_opportunity(args)
     assert not args.output.exists()
+
+
+# Day 7 operator evidence includes owner/run/document identities. Exercise the
+# actual CLI, not a monkeypatched output helper, so the file mode and symlink
+# behavior cannot be bypassed by a different writer in main().
+def _run_day7_gate_cli(monkeypatch, tmp_path, output):
+    import json
+    import sys
+    from scripts import staging_day7_two_day_gate as gate
+
+    first, second, paused = valid_pair()
+    paths = [tmp_path / name for name in ("first.json", "second.json", "pause.json")]
+    for path, payload in zip(paths, (first, second, paused)):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "staging_day7_two_day_gate", "--first", str(paths[0]),
+        "--second", str(paths[1]), "--pause", str(paths[2]),
+        "--output", str(output),
+    ])
+    gate.main()
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file mode contract")
+def test_day7_cli_creates_private_operator_report_with_umask_022(monkeypatch, tmp_path):
+    import os
+    import stat
+    import json
+
+    output = tmp_path / "private-day7.json"
+    previous = os.umask(0o022)
+    try:
+        _run_day7_gate_cli(monkeypatch, tmp_path, output)
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert json.loads(output.read_text(encoding="utf-8"))["owner_id"] == "owner-1"
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file mode contract")
+def test_day7_cli_restricts_existing_world_readable_operator_report(monkeypatch, tmp_path):
+    import os
+    import stat
+
+    output = tmp_path / "private-day7.json"
+    output.write_text("old-private-operator-evidence", encoding="utf-8")
+    output.chmod(0o644)
+    previous = os.umask(0o022)
+    try:
+        _run_day7_gate_cli(monkeypatch, tmp_path, output)
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert "old-private-operator-evidence" not in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX symlink contract")
+def test_day7_cli_never_follows_output_symlink_into_another_file(monkeypatch, tmp_path):
+    import stat
+
+    target = tmp_path / "unrelated-private-target.json"
+    target.write_text("DO NOT OVERWRITE", encoding="utf-8")
+    output = tmp_path / "private-day7.json"
+    output.symlink_to(target)
+    _run_day7_gate_cli(monkeypatch, tmp_path, output)
+    assert target.read_text(encoding="utf-8") == "DO NOT OVERWRITE"
+    assert not output.is_symlink()
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file replacement contract")
+def test_day7_cli_failed_atomic_commit_preserves_previous_report(monkeypatch, tmp_path):
+    from scripts import staging_day7_two_day_gate as gate
+
+    output = tmp_path / "private-day7.json"
+    output.write_text("verified-original-report", encoding="utf-8")
+    output.chmod(0o600)
+    def deny_replace(*_args, **_kwargs):
+        raise OSError("simulated output replacement failure")
+    monkeypatch.setattr(gate.os, "replace", deny_replace, raising=False)
+    with pytest.raises(SystemExit) as exc:
+        _run_day7_gate_cli(monkeypatch, tmp_path, output)
+    assert exc.value.code == 1
+    assert output.read_text(encoding="utf-8") == "verified-original-report"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "first.json", "pause.json", "private-day7.json", "second.json",
+    ]
