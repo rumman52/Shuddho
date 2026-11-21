@@ -306,3 +306,25 @@ def test_evaluator_submission_does_not_follow_a_direct_symlink(tmp_path):
     submitted.symlink_to(target)
     with pytest.raises(ValueError, match='symlink|regular|no-follow'):
         read_outputs(submitted)
+
+
+@pytest.mark.parametrize('language', ('en', 'bn'))
+@pytest.mark.parametrize('separator', (' ' * 20, '\n' * 20), ids=('spaces', 'newlines'))
+def test_research_rejects_whitespace_padded_short_evidence(language, separator):
+    """Schema length is not evidence length after normalization of internal whitespace."""
+    case, draft = pair(language=language)
+    # The actual source has "Keep the". The padded quote satisfies the
+    # production schema's 20 raw characters but normalizes to just 8.
+    quote = 'Keep' + separator + 'the'
+    assert len(quote) >= 20
+    assert 'keep the' in case['_source']['text'].casefold()
+    draft['findings'].append({
+        'heading': 'Unverified additional finding' if language == 'en' else 'অযাচাইকৃত অতিরিক্ত তথ্য',
+        'text': 'A new unsupported claim is asserted.' if language == 'en'
+                else 'অযাচাইকৃত নতুন দাবি যোগ করা হয়েছে।',
+        'citations': [{'source_id': case['citation_id'], 'quote': quote}],
+    })
+    result = score(case, draft)
+    assert result['checks']['schema_valid'] is True
+    assert result['checks']['citation_grounding'] is False
+    assert result['passed'] is False

@@ -244,7 +244,8 @@ def score(case: dict, draft_value: dict) -> dict:
     if case['workflow'] == 'research_brief':
         substantive = '\n'.join(f.text for f in draft.findings)
         checks['citation_grounding'] = bool(draft.findings) and all(
-            c.source_id == case['citation_id'] and _norm(c.quote) in _norm(case['_source']['text'])
+            c.source_id == case['citation_id'] and len(_norm(c.quote)) >= 20
+            and _norm(c.quote) in _norm(case['_source']['text'])
             for finding in draft.findings for c in finding.citations
         )
         aligned = []
