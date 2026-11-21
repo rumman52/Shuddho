@@ -24,8 +24,11 @@ def candidate() -> dict:
 
 
 def detail() -> dict:
+    # Simulate the GitHub GET detail after creation, not the local POST body.
     value = candidate()
     value["id"] = 321
+    value["source"] = REPO
+    value["source_type"] = "Repository"
     return value
 
 
