@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_release_gate import load_rollout
+from scripts.ruke_pilot_eval import MAX_BYTES, immutable_write, read_json as read_bounded_json, strict_json_loads
 from scripts.cohort_release_ledger import (
     file_sha256,
     ledger_key,
@@ -44,7 +47,14 @@ def parse_time(value: str) -> datetime:
 
 
 def load_plan(path: Path) -> dict:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        # The expansion plan is an operator-controlled release artifact:
+        # reject ambiguity, links and oversized inputs before using it.
+        value = read_bounded_json(path)
+    except (OSError, ValueError, UnicodeError) as error:
+        raise CanaryProgressionError(
+            f"Cannot read canary plan: {type(error).__name__}"
+        ) from None
     if not isinstance(value, dict) or set(value) != PLAN_KEYS:
         raise CanaryProgressionError("Canary plan must contain the exact documented top-level keys.")
     if not isinstance(value["release_id"], str) or not value["release_id"].strip():
@@ -80,20 +90,57 @@ def load_plan(path: Path) -> dict:
 
 
 def load_history(directory: Path) -> list[dict]:
+    """Parse bounded, unambiguous reports within one no-follow directory inode."""
     rows: list[dict] = []
-    if not directory.is_dir():
-        raise CanaryProgressionError("Health history path must be a directory.")
-    for path in sorted(directory.glob("*.json")):
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise CanaryProgressionError(f"Could not read health history file {path.name}: {type(error).__name__}") from None
-        if not isinstance(value, dict):
-            raise CanaryProgressionError(f"Health history file {path.name} must contain a JSON object.")
-        snapshot = value.get("snapshot")
-        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("generated_at"), str):
-            raise CanaryProgressionError(f"Health history file {path.name} has no valid snapshot timestamp.")
-        rows.append(value)
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise CanaryProgressionError("Health history directory requires no-follow reads.")
+    dir_fd: int | None = None
+    try:
+        # Use dir_fd for enumeration AND opening members. A renamed directory
+        # cannot redirect the records to a different location between steps.
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
+        dir_fd = os.open(directory, flags)
+        if not stat.S_ISDIR(os.fstat(dir_fd).st_mode):
+            raise CanaryProgressionError("Health history path must be a directory.")
+        with os.scandir(dir_fd) as entries:
+            names = sorted(entry.name for entry in entries if entry.name.endswith(".json"))
+        for name in names:
+            try:
+                fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+                    dir_fd=dir_fd,
+                )
+                with os.fdopen(fd, "rb") as stream:
+                    metadata = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+                        raise ValueError("linked or oversized health receipt")
+                    content = stream.read(MAX_BYTES + 1)
+                if len(content) > MAX_BYTES:
+                    raise ValueError("oversized health receipt")
+                value = strict_json_loads(content.decode("utf-8"))
+            except (OSError, ValueError, UnicodeError) as error:
+                raise CanaryProgressionError(
+                    f"Could not read health history file {name}: {type(error).__name__}"
+                ) from None
+            if not isinstance(value, dict):
+                raise CanaryProgressionError(
+                    f"Health history file {name} must contain a JSON object."
+                )
+            snapshot = value.get("snapshot")
+            if not isinstance(snapshot, dict) or not isinstance(snapshot.get("generated_at"), str):
+                raise CanaryProgressionError(
+                    f"Health history file {name} has no valid snapshot timestamp."
+                )
+            rows.append(value)
+    except OSError:
+        raise CanaryProgressionError(
+            "Health history directory must be a real directory."
+        ) from None
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
+
     if not rows:
         raise CanaryProgressionError("Health history directory contains no JSON decisions.")
     rows.sort(key=lambda item: parse_time(item["snapshot"]["generated_at"]))
@@ -101,7 +148,6 @@ def load_history(directory: Path) -> list[dict]:
     if len(timestamps) != len(set(timestamps)):
         raise CanaryProgressionError("Health history contains duplicate snapshot timestamps.")
     return rows
-
 
 def _stage(plan: dict, name: str) -> tuple[int, dict]:
     for index, stage in enumerate(plan["stages"]):
@@ -407,7 +453,13 @@ def main() -> None:
     )
     encoded = json.dumps(result, indent=2)
     if args.output:
-        args.output.write_text(encoded + "\n", encoding="utf-8")
+        try:
+            # Preserve the first decision under a private, fsynced O_EXCL file.
+            immutable_write(args.output, result)
+        except FileExistsError:
+            raise SystemExit(
+                "Canary progression report already exists; choose an unused output path."
+            ) from None
     print(encoded)
     if result["decision"] == "STOP_ROLLOUT":
         raise SystemExit("Canary progression says STOP_ROLLOUT.")

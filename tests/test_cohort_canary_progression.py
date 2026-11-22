@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import os
+import stat
+import sys
 
 import pytest
 
+from scripts import cohort_canary_progression as canary
 from scripts.cohort_canary_progression import evaluate_progression, load_recovery_epoch
 from scripts.cohort_release_ledger import (
     append_event,
@@ -451,3 +455,123 @@ def test_schema_v12_recovery_epoch_rejects_different_rollout(monkeypatch, tmp_pa
             current_stage="canary-5",
             rollout_path=rollout_path,
         )
+
+
+# Part 05 / Day 10: source-only evidence-boundary regressions. All rows are synthetic.
+def _history_receipt():
+    return row(datetime(2026, 9, 22, 4, 0, tzinfo=timezone.utc))
+
+
+def test_canary_plan_rejects_duplicate_expansion_control(tmp_path):
+    """A duplicate threshold must not be silently resolved to its last value."""
+    path = tmp_path / "canary-plan.json"
+    payload = json.dumps(plan())
+    assert '"max_gap_minutes": 10' in payload
+    path.write_text(
+        payload.replace(
+            '"max_gap_minutes": 10',
+            '"max_gap_minutes": 999, "max_gap_minutes": 10',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(canary.CanaryProgressionError, match="plan"):
+        canary.load_plan(path)
+
+
+def test_canary_history_rejects_duplicate_health_decision(tmp_path):
+    """An earlier STOP may not be hidden behind a later CONTINUE JSON key."""
+    directory = tmp_path / "history"
+    directory.mkdir()
+    payload = json.dumps(_history_receipt())
+    assert '"decision": "CONTINUE_COHORT"' in payload
+    (directory / "one.json").write_text(
+        payload.replace(
+            '"decision": "CONTINUE_COHORT"',
+            '"decision": "STOP_ROLLOUT", "decision": "CONTINUE_COHORT"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(canary.CanaryProgressionError, match="history"):
+        canary.load_history(directory)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink checks")
+def test_canary_history_rejects_symlinked_receipt(tmp_path):
+    """An external linked report must not count as a trusted health window."""
+    directory = tmp_path / "history"
+    directory.mkdir()
+    target = tmp_path / "outside.json"
+    target.write_text(json.dumps(_history_receipt()), encoding="utf-8")
+    (directory / "one.json").symlink_to(target)
+    with pytest.raises(canary.CanaryProgressionError, match="history"):
+        canary.load_history(directory)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink checks")
+def test_canary_history_rejects_symlinked_directory(tmp_path):
+    """The history-directory boundary must not redirect to another location."""
+    actual = tmp_path / "outside"
+    actual.mkdir()
+    (actual / "one.json").write_text(json.dumps(_history_receipt()), encoding="utf-8")
+    linked = tmp_path / "linked-history"
+    linked.symlink_to(actual, target_is_directory=True)
+    with pytest.raises(canary.CanaryProgressionError, match="directory"):
+        canary.load_history(linked)
+
+
+def test_canary_history_rejects_oversized_health_receipt(tmp_path):
+    """An evidence report with unbounded padding must fail before parsing."""
+    directory = tmp_path / "history"
+    directory.mkdir()
+    (directory / "one.json").write_bytes(
+        json.dumps(_history_receipt()).encode("utf-8") + b" " * 4_000_100,
+    )
+    with pytest.raises(canary.CanaryProgressionError, match="history"):
+        canary.load_history(directory)
+
+
+def _set_canary_cli_inputs(tmp_path, monkeypatch, output):
+    directory = tmp_path / "health"
+    directory.mkdir()
+    now = datetime.now(timezone.utc)
+    for index, age_minutes in enumerate((12, 6, 1)):
+        receipt = row(now - timedelta(minutes=age_minutes))
+        (directory / f"{index}.json").write_text(json.dumps(receipt), encoding="utf-8")
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps(rollout()), encoding="utf-8")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan()), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "cohort_canary_progression",
+        "--history-dir", str(directory),
+        "--rollout", str(rollout_path),
+        "--plan", str(plan_path),
+        "--current-stage", "canary-5",
+        "--output", str(output),
+    ])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private receipt mode")
+def test_canary_first_decision_report_is_private_at_default_umask(tmp_path, monkeypatch):
+    """A release-specific canary result must not be readable by other users."""
+    output = tmp_path / "result.json"
+    _set_canary_cli_inputs(tmp_path, monkeypatch, output)
+    previous_umask = os.umask(0o022)
+    try:
+        canary.main()
+    finally:
+        os.umask(previous_umask)
+    assert json.loads(output.read_text(encoding="utf-8"))["decision"] == "ELIGIBLE_FOR_EXPANSION"
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+def test_canary_first_decision_report_cannot_be_overwritten(tmp_path, monkeypatch):
+    """An earlier result path must remain unchanged, even if it has old content."""
+    output = tmp_path / "decision.json"
+    _set_canary_cli_inputs(tmp_path, monkeypatch, output)
+    output.write_bytes(b"ORIGINAL_CANARY_DECISION\n")
+    with pytest.raises(SystemExit, match="already exists"):
+        canary.main()
+    assert output.read_bytes() == b"ORIGINAL_CANARY_DECISION\n"
