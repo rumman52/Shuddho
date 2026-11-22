@@ -6,7 +6,6 @@ receipt is not proof that a live operation occurred or that its author is D.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -21,7 +20,8 @@ if __package__ in {None, ""}:
 from scripts.cohort_release_gate import evaluate_release  # noqa: E402
 from scripts.ruke_pilot_eval import (  # noqa: E402
     BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, operated_trace_ok,
-    read_json as read_bounded_json, reviewer_identity,
+    _read_json_and_sha256 as read_bounded_json_with_sha,
+    immutable_write, reviewer_identity, sha256 as sha256_bounded,
 )
 from scripts.staging_release_freeze import (  # noqa: E402
     EXPECTED_ROLLBACK,
@@ -42,20 +42,26 @@ ATTEMPT_FIELDS = (
 )
 
 
-def read_json(path: Path | None) -> dict | None:
+def read_json_with_sha(path: Path | None) -> tuple[dict | None, str | None]:
+    """Bind the release-decision evidence and its receipt to one bounded read."""
     if path is None:
-        return None
+        return None, None
     try:
-        value = read_bounded_json(path)
+        value, digest = read_bounded_json_with_sha(path)
         if not isinstance(value, dict):
             raise ValueError("expected JSON object")
-        return value
+        return value, digest
     except (OSError, ValueError) as exc:
         raise ValueError(f"Cannot read {path.name}: {type(exc).__name__}") from None
 
 
+def read_json(path: Path | None) -> dict | None:
+    return read_json_with_sha(path)[0]
+
+
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Compatibility helper: reject linked/oversized evidence on read."""
+    return sha256_bounded(path)
 
 
 def timestamp(value: object) -> datetime | None:
@@ -805,19 +811,35 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--" + name.replace("_", "-"), type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    day9_digest = None
     try:
-        rollout = read_json(args.rollout)
-        artifacts = {name: read_json(getattr(args, name)) for name in ("api", "worker", "schema", "ci", *PROOFS,
-            "golden", "day9_first_run", "holdout", "recovery", "staging", "quality", "model", "artifact_quality", "approval")}
-        result = decide(rollout, sha256(args.rollout), revision=args.source_revision, artifacts=artifacts)
+        rollout, rollout_digest = read_json_with_sha(args.rollout)
+        artifacts = {}
+        for name in ("api", "worker", "schema", "ci", *PROOFS, "golden",
+                     "day9_first_run", "holdout", "recovery", "staging", "quality",
+                     "model", "artifact_quality", "approval"):
+            value, digest = read_json_with_sha(getattr(args, name))
+            artifacts[name] = value
+            if name == "day9_first_run":
+                day9_digest = digest
+        result = decide(rollout, rollout_digest, revision=args.source_revision, artifacts=artifacts)
     except (OSError, ValueError) as exc:
         result = {"decision": "SOURCE_ONLY", "canonical_decision": "NO-GO", "pilot_activated": False,
                   "blockers": [str(exc)]}
-    if args.day9_first_run and "scorecard" in result:
-        result["scorecard"]["day9_first_run_artifact_sha256"] = sha256(args.day9_first_run)
-    encoded = json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    if day9_digest is not None and "scorecard" in result:
+        result["scorecard"]["day9_first_run_artifact_sha256"] = day9_digest
+    encoded = json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n"
     if args.output:
-        args.output.write_text(encoded, encoding="utf-8")
+        try:
+            # A second decision needs a new lineage/path, never a rewrite.
+            immutable_write(args.output, result)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({
+                "decision": "SOURCE_ONLY", "canonical_decision": "NO-GO",
+                "pilot_activated": False,
+                "blockers": ["decision_artifact_write_failed:" + type(exc).__name__],
+            }), file=sys.stderr)
+            return 2
     print(encoded, end="")
     return 0 if result["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT" else 1
 
