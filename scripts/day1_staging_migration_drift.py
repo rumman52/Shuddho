@@ -10,6 +10,7 @@ import ast
 from datetime import datetime, timedelta, timezone
 import json
 import math
+import os
 from pathlib import Path
 import re
 import stat
@@ -173,11 +174,34 @@ def assess(readback: object, *, project_ref: str, source_revision: str,
 
 
 def read_readback(path: Path) -> object:
+    """Parse one bounded external regular inode without following a replaced link."""
     try:
-        mode = path.lstat().st_mode
-        if (not stat.S_ISREG(mode) or path.resolve().is_relative_to(ROOT)
-                or path.stat().st_size > MAX_READBACK_BYTES):
-            raise MigrationDriftError("Readback must be a bounded external regular file, not a link")
+        # Readbacks must come from an operator-controlled location, not this checkout.
+        if path.resolve().is_relative_to(ROOT):
+            raise MigrationDriftError("Readback must be an external regular file")
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:
+            raise MigrationDriftError("Secure no-follow readback is unavailable")
+        flags = os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        descriptor = os.open(path, flags)
+        try:
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or details.st_size > MAX_READBACK_BYTES:
+                raise MigrationDriftError("Readback must be a bounded external regular file, not a link")
+            # The original inode can grow after fstat. Never read beyond the cap + 1.
+            remaining = MAX_READBACK_BYTES + 1
+            chunks: list[bytes] = []
+            while remaining:
+                chunk = os.read(descriptor, min(8192, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        finally:
+            os.close(descriptor)
+        raw = b"".join(chunks)
+        if len(raw) > MAX_READBACK_BYTES:
+            raise MigrationDriftError("Readback exceeds byte bound")
 
         def unique(pairs):
             obj = {}
@@ -196,9 +220,9 @@ def read_readback(path: Path) -> object:
                 raise MigrationDriftError("Non-finite readback JSON number")
             return result
 
-        return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique,
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=unique,
                           parse_constant=no_constant, parse_float=finite_float)
-    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+    except (OSError, UnicodeError, ValueError, TypeError, RuntimeError) as exc:
         raise MigrationDriftError("Cannot read trustworthy bounded staging readback") from exc
 
 

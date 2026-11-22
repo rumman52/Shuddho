@@ -506,6 +506,17 @@ def verify(args: argparse.Namespace) -> dict:
                         "completion_notification_id": str(completed[0]["id"]),
                         "new_notification_count": len(notices),
                     }
+                # These are counts over the freshly read owner-scoped history,
+                # not claims of natural timer provenance. The second readback
+                # below also checks the completed run and immutable source pins.
+                daily_count_evidence = {}
+                if scenario == "daily_coworker":
+                    daily_count_evidence = {
+                        "new_occurrence_count": len(history),
+                        "new_run_count": len({
+                            str(item.get("run_id")) for item in history if item.get("run_id")
+                        }),
+                    }
                 pin_evidence = {}
                 if scenario == "daily_coworker":
                     run = json_object(
@@ -585,6 +596,7 @@ def verify(args: argparse.Namespace) -> dict:
                     "occurrence_id": occurrence_id,
                     "due_at": occurrence.get("due_at"),
                     "run_id": run_id,
+                    **daily_count_evidence,
                     **pin_evidence,
                     "run_state": "completed",
                     "run_updated_at": occurrence.get("run_updated_at"),

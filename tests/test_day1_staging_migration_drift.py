@@ -1,6 +1,7 @@
 """Offline Day 1 source/readback tests; never imply migration or staging succeeded."""
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -128,6 +129,57 @@ def test_readback_reader_rejects_symlinks_oversize_and_ambiguous_json():
         good.write_bytes(b" " * 32769)
         with pytest.raises(MigrationDriftError):
             read_readback(good)
+
+
+def test_external_readback_rejects_symlink_swap_at_open(monkeypatch):
+    """A pathname passing lstat must not be reopened through an attacker symlink."""
+    with TemporaryDirectory(prefix="shuddho-day1-race-") as directory:
+        folder = Path(directory)
+        submitted = folder / "submitted.json"
+        replacement = folder / "replacement.json"
+        submitted.write_text(json.dumps(receipt()), encoding="utf-8")
+        replacement.write_text(json.dumps(receipt("0072_merge_0071_heads")), encoding="utf-8")
+
+        real_open = os.open
+        swapped = False
+
+        def swap_at_open(path, flags, *args, **kwargs):
+            nonlocal swapped
+            if Path(path) == submitted and not swapped:
+                swapped = True
+                submitted.unlink()
+                submitted.symlink_to(replacement)
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", swap_at_open)
+        with pytest.raises(MigrationDriftError, match="readback|regular|link"):
+            read_readback(submitted)
+        assert swapped
+
+
+def test_external_readback_rejects_growth_after_inode_size_check(monkeypatch):
+    """An inode growing after fstat must not bypass the hard input-byte bound."""
+    from scripts.day1_staging_migration_drift import MAX_READBACK_BYTES
+
+    with TemporaryDirectory(prefix="shuddho-day1-grow-") as directory:
+        target = Path(directory) / "submitted.json"
+        original = json.dumps(receipt()).encode("utf-8")
+        target.write_bytes(original)
+        real_read = os.read
+        grew = False
+
+        def grow_before_read(fd, size):
+            nonlocal grew
+            if not grew:
+                grew = True
+                target.write_bytes(original + b" " * (MAX_READBACK_BYTES + 1))
+            return real_read(fd, size)
+
+        monkeypatch.setattr(os, "read", grow_before_read)
+        with pytest.raises(MigrationDriftError, match="readback|size|bounded"):
+            read_readback(target)
+        assert grew
+
 
 def test_real_migration_graph_has_both_parents_of_unified_head():
     graph = migration_graph()

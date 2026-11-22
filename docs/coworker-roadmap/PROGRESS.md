@@ -6,6 +6,14 @@
 
 ---
 
+## 22 November 2026 — Day 1 atomic staging readback input ([draft PR #882](https://github.com/rumman52/Shuddho/pull/882))
+
+**SOURCE_ONLY / controlled pilot NO-GO.** The Part 01 Foundation `D01.T06 / D01.G03` staging readback used `lstat/resolve/stat` then reopened `Path.read_text`. It could accept a switched symlink's different evidence or an oversized file grown after the pre-read size check. Two tests committed first at `551325923d3e173f1fde85fb16c4dd9909e4dd40` reproduced both cases in [CI #45014367909](https://github.com/rumman52/Shuddho/actions/runs/45014367909): **2 expected FAIL / 3,574 PASS / 105 SKIP / 6 WARN**. Base main `92cdc1a4952239a4a676b754ebc3d1ca044c9cbd`. The fix reads the external regular file via one `O_NOFOLLOW` descriptor, `fstat`, and bounded `os.read`, preserving duplicate/non-finite JSON checks, the 32 KiB ceiling and all nonqualification flags. Corrected exact-head suite/review **pending verification**; [task contract](DAY1_STAGING_READBACK_ATOMIC_2026-11-22.md).
+
+Read-only: Supabase staging PG17.11 Alembic `0070` behind source `0072_merge_0071_heads`; Render staging API autoDeploy off with no dedicated worker in connected workspace; native ruleset 27324410 still has zero required approvals/status checks. Founder+C approved isolated restore/worker/budget, D access isolation, protected GitHub App, independent human review and Founder+C release signoff remain absent. No hosted schema/service, secrets, inference, paid resources, telemetry, production or pilot mutation. Historical v4 task/exit counts remain dated; D01.T06 and D01.G03 remain **ACTIVE / not PASS** pending operated evidence.
+
+---
+
 ## 22 November 2026 — Day 9 evidence single-read integrity ([draft PR #876](https://github.com/rumman52/Shuddho/pull/876))
 
 **SOURCE_ONLY / controlled pilot NO-GO.** Against base `main=4b055bcaab83151cca1478ab52ee121f5b2f74f7`, reviewed `scripts/ruke_pilot_eval.py` exposed a file substitution window between the checked SHA/mode and a second pathname read of JSON, JSONL or the independent heldout. Three synthetic regressions were committed first (`e230ca0d3fd8cbeed708288155db6735f84cfd5b`), followed by three more tests for same-buffer manifest/candidate hashes and the D-only blind key. A descriptor-scoped, bounded no-follow reader now supplies bytes to parsing, digest computation, heldout validation and protected key readback. The frozen heldout SHA and exported release report hashes now cover the **same bytes parsed**. Exact final-head CI and independent review must be inspected before claiming repository verification. [Task contract](DAY9_EVIDENCE_BYTE_READ_INTEGRITY_2026-11-22.md).

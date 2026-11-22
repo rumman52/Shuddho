@@ -129,6 +129,14 @@ def verify_two_day(
                 and item.get("run_profile") == "briefing"
                 and item.get("run_state") == "completed",
                 f"Day {index} is not a passed daily briefing profile probe.")
+        for count_field, description in (
+            ("new_occurrence_count", "one new occurrence"),
+            ("new_run_count", "one new run"),
+        ):
+            require(
+                type(item.get(count_field)) is int and item[count_field] == 1,
+                f"Day {index} must prove {description} for the scheduled date.",
+            )
         require(type(item.get("new_notification_count")) is int
                 and item.get("new_notification_count") == 1
                 and all(item.get(k) for k in ("occurrence_id", "run_id",
