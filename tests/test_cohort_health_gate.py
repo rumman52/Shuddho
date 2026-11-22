@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import timedelta
+import json
+import os
+import stat
+import sys
 
 import pytest
 
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for cohort health tests")
 
+from scripts import cohort_health_gate as health
 from scripts.cohort_health_gate import collect_snapshot, evaluate, percentile95, rate
 from services.coworker.auth import Principal
 from services.coworker.config import Settings
@@ -357,3 +362,101 @@ def test_reviewed_skill_rollback_cli_requires_backend_database_env(monkeypatch):
     monkeypatch.delenv("SHUDDHO_COWORKER_DATABASE_URL", raising=False)
     with pytest.raises(SystemExit, match="SHUDDHO_COWORKER_DATABASE_URL"):
         main()
+
+
+# Part 05 Day 10: synthetic trust-boundary regressions (never live pilot evidence).
+def test_cohort_health_rejects_shadowed_task_failure_threshold(tmp_path):
+    """A later permissive limit cannot hide an earlier stricter STOP threshold."""
+    path = tmp_path / "thresholds.json"
+    content = json.dumps(thresholds())
+    assert '"max_task_failure_rate": 0.2' in content
+    path.write_text(
+        content.replace(
+            '"max_task_failure_rate": 0.2',
+            '"max_task_failure_rate": 0.0, "max_task_failure_rate": 1.0',
+            1,
+        ), encoding="utf-8",
+    )
+    with pytest.raises(health.CohortHealthError):
+        health.load_thresholds(path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX no-follow contract")
+def test_cohort_health_rejects_symlinked_thresholds(tmp_path):
+    target = tmp_path / "outside.json"
+    target.write_text(json.dumps(thresholds()), encoding="utf-8")
+    link = tmp_path / "current-thresholds.json"
+    link.symlink_to(target)
+    with pytest.raises(health.CohortHealthError):
+        health.load_thresholds(link)
+
+
+def test_cohort_health_rejects_oversized_thresholds(tmp_path):
+    path = tmp_path / "thresholds.json"
+    path.write_bytes(json.dumps(thresholds()).encode() + b" " * 4_000_100)
+    with pytest.raises(health.CohortHealthError):
+        health.load_thresholds(path)
+
+
+def _configure_health_cli(tmp_path, monkeypatch, *, snapshot_output=None, output=None):
+    threshold_path = tmp_path / "thresholds.json"
+    threshold_path.write_text(json.dumps(thresholds()), encoding="utf-8")
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps(rollout()), encoding="utf-8")
+    monkeypatch.setattr(health.Settings, "from_env", lambda: object())
+    monkeypatch.setattr(
+        health, "collect_snapshot",
+        lambda settings, *, window_minutes: snapshot(),
+    )
+    argv = ["cohort_health_gate", "--rollout", str(rollout_path),
+            "--thresholds", str(threshold_path)]
+    if snapshot_output is not None:
+        argv.extend(["--snapshot-output", str(snapshot_output)])
+    if output is not None:
+        argv.extend(["--output", str(output)])
+    monkeypatch.setattr(sys, "argv", argv)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private report mode")
+def test_cohort_health_creates_first_snapshot_and_decision_privately(tmp_path, monkeypatch):
+    """Health snapshots and allow/stop decisions must remain private evidence."""
+    snap = tmp_path / "snapshot.json"
+    decision = tmp_path / "decision.json"
+    _configure_health_cli(tmp_path, monkeypatch, snapshot_output=snap, output=decision)
+    previous_umask = os.umask(0o022)
+    try:
+        health.main()
+    finally:
+        os.umask(previous_umask)
+    assert json.loads(decision.read_text(encoding="utf-8"))["decision"] == "CONTINUE_COHORT"
+    assert json.loads(snap.read_text(encoding="utf-8"))["cohort_members_configured"] == 10
+    assert stat.S_IMODE(snap.stat().st_mode) == 0o600
+    assert stat.S_IMODE(decision.stat().st_mode) == 0o600
+
+
+def test_cohort_health_never_overwrites_first_decision(tmp_path, monkeypatch):
+    decision = tmp_path / "decision.json"
+    decision.write_bytes(b"ORIGINAL_DECISION\\n")
+    _configure_health_cli(tmp_path, monkeypatch, output=decision)
+    with pytest.raises(SystemExit, match="already exists"):
+        health.main()
+    assert decision.read_bytes() == b"ORIGINAL_DECISION\\n"
+
+
+def test_cohort_health_never_overwrites_first_snapshot(tmp_path, monkeypatch):
+    snap = tmp_path / "snapshot.json"
+    decision = tmp_path / "decision.json"
+    snap.write_bytes(b"ORIGINAL_SNAPSHOT\\n")
+    _configure_health_cli(tmp_path, monkeypatch, snapshot_output=snap, output=decision)
+    with pytest.raises(SystemExit, match="already exists"):
+        health.main()
+    assert snap.read_bytes() == b"ORIGINAL_SNAPSHOT\\n"
+    assert not decision.exists()
+
+
+def test_cohort_health_rejects_same_path_for_snapshot_and_decision(tmp_path, monkeypatch):
+    path = tmp_path / "health.json"
+    _configure_health_cli(tmp_path, monkeypatch, snapshot_output=path, output=path)
+    with pytest.raises(SystemExit, match="distinct"):
+        health.main()
+    assert not path.exists()
