@@ -79,6 +79,7 @@ def attest_restored_api_access(
     *,
     source_origin: str,
     restored_origin: str,
+    approved_restored_origin_sha256: str,
     expected_owner_id: str,
     document_id: str,
     task_id: str,
@@ -96,6 +97,18 @@ def attest_restored_api_access(
     """
     _guard()
     source, restored = _origins(client, source_origin, restored_origin)
+    # This is a last-line fail-closed check for standalone probe invocations.
+    # The backup/restore operator must first compare this digest to the
+    # protected Founder/C approval and the actual DB/object target identities.
+    if (
+        not isinstance(approved_restored_origin_sha256, str)
+        or _SHA.fullmatch(approved_restored_origin_sha256) is None
+        or hashlib.sha256(restored.encode("utf-8")).hexdigest()
+        != approved_restored_origin_sha256
+    ):
+        raise RestoredAPIReadbackFailure(
+            "Restored API HTTPS origin does not match the approved isolated target before bearer transmission."
+        )
     try:
         doc_id, run_id = str(uuid.UUID(document_id)), str(uuid.UUID(task_id))
     except (ValueError, AttributeError, TypeError):
