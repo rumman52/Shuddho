@@ -39,6 +39,17 @@ responses before reading the frozen runtime manifest. Local JWT claim decoding
 is **not** signature validation: the hosted API must verify both signatures,
 issuer, audience and expiry, and operator D must check the real identity and
 private artifact evidence. Neither this code nor CI proves live staging PASS.
+
+The Day 2 Temporal recovery (`scripts/staging_temporal_recovery.py`) and
+backup/restore (`scripts/staging_backup_restore.py`) operators use the shared
+`verified_staging_owner` preflight before admitting a synthetic owner. The
+preflight pins the actual Render staging origin, checks locally that the bearer
+claims belong to the approved managed Supabase issuer/audience and remain
+unexpired, and verifies that the API's authenticated `/api/v1/me` owner hash and
+workspace match that token. **No bearer is sent on failed local validation.**
+This is not a self-issued JWT signature verifier or a substitute for reviewer D
+confirming hosted provider histories, isolated recovery, and two-owner denial.
+
 Use the connection settings from that
 project's Connect panel with the `shuddho_staging_runtime` login, project
 reference in the username and port 5432. Set `sslmode=verify-full` and
