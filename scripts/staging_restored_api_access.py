@@ -15,8 +15,10 @@ import httpx
 
 from scripts.staging_api_exercise import ExerciseFailure, require_https_base
 from scripts.staging_day2_execution import (
-    Day2Failure, _managed_identity_claims, bearer, require_distinct_owners,
+    Day2Failure, EXPECTED_STAGING_API_ORIGIN,
+    _managed_identity_claims, bearer, require_distinct_owners,
 )
+from scripts.staging_prerequisite_preflight import EXPECTED_AUTH_AUDIENCE, EXPECTED_AUTH_ISSUER
 
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -43,6 +45,10 @@ def _origins(client: httpx.Client, source_origin: str, restored_origin: str) -> 
         restored = require_https_base(restored_origin)
     except (ExerciseFailure, ValueError):
         raise RestoredAPIReadbackFailure("Restored and source API origins must be clean public HTTPS.") from None
+    if source != EXPECTED_STAGING_API_ORIGIN:
+        raise RestoredAPIReadbackFailure(
+            "Source API must be the reviewed Render staging origin."
+        )
     if source == restored or str(client.base_url).rstrip("/") != restored:
         raise RestoredAPIReadbackFailure(
             "Restored API origin must differ from source and match the configured HTTP client."
@@ -79,6 +85,7 @@ def attest_restored_api_access(
     *,
     source_origin: str,
     restored_origin: str,
+    approved_restored_origin_sha256: str,
     expected_owner_id: str,
     document_id: str,
     task_id: str,
@@ -95,7 +102,23 @@ def attest_restored_api_access(
     issued, with no redirects; all outputs are redacted booleans/digests.
     """
     _guard()
+    if expected_issuer != EXPECTED_AUTH_ISSUER or expected_audience != EXPECTED_AUTH_AUDIENCE:
+        raise RestoredAPIReadbackFailure(
+            "Restored owner identity must use the reviewed managed Supabase issuer and audience."
+        )
     source, restored = _origins(client, source_origin, restored_origin)
+    # This is a last-line fail-closed check for standalone probe invocations.
+    # The backup/restore operator must first compare this digest to the
+    # protected Founder/C approval and the actual DB/object target identities.
+    if (
+        not isinstance(approved_restored_origin_sha256, str)
+        or _SHA.fullmatch(approved_restored_origin_sha256) is None
+        or hashlib.sha256(restored.encode("utf-8")).hexdigest()
+        != approved_restored_origin_sha256
+    ):
+        raise RestoredAPIReadbackFailure(
+            "Restored API HTTPS origin does not match the approved isolated target before bearer transmission."
+        )
     try:
         doc_id, run_id = str(uuid.UUID(document_id)), str(uuid.UUID(task_id))
     except (ValueError, AttributeError, TypeError):

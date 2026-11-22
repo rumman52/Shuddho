@@ -15,7 +15,10 @@ from scripts.staging_api_exercise import (
     ExerciseFailure, env_secret, require_https_base, verified_staging_owner,
 )
 from scripts.staging_day2_archive_attestation import (
-    ArchiveAttestationFailure, attest_archives,
+    ArchiveAttestationFailure, _private_json, attest_archives,
+)
+from scripts.staging_day2_authorization import (
+    AuthorizationEvidenceFailure, preflight_restored_destination, read_private_authorization,
 )
 from scripts.staging_preseed_baseline import (
     PreseedBaselineFailure, attest_preseed_baseline, require_unchanged_source,
@@ -264,6 +267,7 @@ def verify(
     evidence_path: Path,
     base_evidence: Path | None,
     *,
+    authorization_path: Path | None = None,
     postgres_verification: Path | None = None,
     postgres_archive: Path | None = None,
     object_archive: Path | None = None,
@@ -276,9 +280,11 @@ def verify(
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
     if not backup_reference.strip() or not restore_reference.strip():
         raise BackupRestoreFailure("Both backup and restore evidence references are required.")
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise BackupRestoreFailure("Backup/restore state file must be a JSON object.")
+    # Validate local inputs and a writable private output *before* opening the
+    # restored database, storage, or sending the managed owner tokens.
+    _preflight_private_json_destination(evidence_path)
+    state = _private_json(state_path, "Prepared backup/restore state")
+    base_fields = _private_json(base_evidence, "Prior staging evidence") if base_evidence else {}
     required = {"release_context", "owner_id", "document_id", "version_id", "task_id", "sha256", "byte_size", "source_fingerprints"}
     if not required.issubset(state):
         raise BackupRestoreFailure("Backup/restore state file is incomplete.")
@@ -412,6 +418,28 @@ def verify(
             raise BackupRestoreFailure(
                 "Isolated restored API must not be the live source API origin."
             )
+        if authorization_path is None:
+            raise BackupRestoreFailure(
+                "Protected Founder/C restored API destination authorization is required before any bearer request."
+            )
+        try:
+            # A different public HTTPS URL is not authorization to receive
+            # either managed owner token. Verify the private approved origin
+            # hash and both distinct DB/S3 targets BEFORE opening HTTP.
+            approved_api_sha = preflight_restored_destination(
+                read_private_authorization(authorization_path),
+                source_revision=context["source_revision"],
+                release_id=context["release_id"],
+                rollout_manifest_sha256=context["rollout_manifest_sha256"],
+                source_api_origin=source_api_origin,
+                restored_api_origin=restored_api_origin,
+                target_database_fingerprint=target["database"],
+                target_storage_fingerprint=target["storage"],
+            )
+        except AuthorizationEvidenceFailure:
+            raise BackupRestoreFailure(
+                "Restored API destination does not match the protected Founder/C decision."
+            ) from None
         with httpx.Client(
             base_url=restored_api_origin,
             timeout=20,
@@ -424,6 +452,7 @@ def verify(
                 os.environ["SHUDDHO_STAGING_TOKEN_B"],
                 source_origin=source_api_origin,
                 restored_origin=restored_api_origin,
+                approved_restored_origin_sha256=approved_api_sha,
                 expected_owner_id=owner,
                 document_id=document_id,
                 task_id=task_id,
@@ -434,12 +463,7 @@ def verify(
                 expected_audience=settings.auth_audience,
             )
 
-        base = {}
-        if base_evidence:
-            value = json.loads(base_evidence.read_text(encoding="utf-8"))
-            if not isinstance(value, dict):
-                raise BackupRestoreFailure("Base staging evidence must be a JSON object.")
-            base.update(value)
+        base = dict(base_fields)
         backup_ref = backup_reference.strip()[:200]
         restore_ref = restore_reference.strip()[:200]
         base["archive_integrity"] = integrity
@@ -467,6 +491,10 @@ def main() -> None:
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--backup-reference", required=True)
     verify_parser.add_argument("--restore-reference", required=True)
+    verify_parser.add_argument(
+        "--authorization", type=Path, required=True,
+        help="Protected 0600 Founder/C decision for the exact isolated DB/S3/API targets.",
+    )
     verify_parser.add_argument("--postgres-verification", type=Path, required=True)
     verify_parser.add_argument("--postgres-archive", type=Path, required=True)
     verify_parser.add_argument("--object-archive-directory", type=Path, required=True)
@@ -514,6 +542,7 @@ def main() -> None:
                 postgres_archive=args.postgres_archive,
                 object_archive=args.object_archive_directory,
                 object_restore_receipt=args.object_restore_receipt,
+                authorization_path=args.authorization,
                 original_postgres_verification=args.original_postgres_verification,
                 original_postgres_archive=args.original_postgres_archive,
                 original_object_archive=args.original_object_archive_directory,

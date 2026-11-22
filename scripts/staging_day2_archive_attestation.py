@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import os
 import re
+import stat
 from pathlib import Path
 
 from scripts.staging_object_backup import ObjectArchiveError, _manifest
@@ -39,13 +42,63 @@ def _object(value: object, label: str) -> dict:
     return value
 
 
+MAX_PRIVATE_JSON_BYTES = 2_000_000
+
+
 def _private_json(path: Path, label: str) -> dict:
-    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 2_000_000:
-        raise ArchiveAttestationFailure(f"{label} is missing, linked or oversized.")
+    """Read one bounded regular inode once; never reopen a prechecked pathname."""
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ArchiveAttestationFailure(f"{label} requires secure no-follow file reads.")
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        return _object(json.loads(path.read_text(encoding="utf-8")), label)
-    except (OSError, ValueError, UnicodeError) as error:
+        descriptor = os.open(path, flags)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= MAX_PRIVATE_JSON_BYTES:
+                raise ArchiveAttestationFailure(f"{label} is missing, non-regular or oversized.")
+            # Files can grow after fstat. Read no more than the hard cap + 1.
+            remaining = MAX_PRIVATE_JSON_BYTES + 1
+            pieces: list[bytes] = []
+            while remaining:
+                piece = os.read(descriptor, min(65536, remaining))
+                if not piece:
+                    break
+                pieces.append(piece)
+                remaining -= len(piece)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        raise ArchiveAttestationFailure(f"{label} is missing, linked or unreadable.") from None
+    raw = b"".join(pieces)
+    if not 0 < len(raw) <= MAX_PRIVATE_JSON_BYTES:
+        raise ArchiveAttestationFailure(f"{label} is empty or exceeds its byte limit.")
+
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict:
+        out = {}
+        for key, value in pairs:
+            if key in out:
+                raise ArchiveAttestationFailure(f"{label} contains duplicate JSON keys.")
+            out[key] = value
+        return out
+
+    def reject_constant(_value: str) -> None:
+        raise ArchiveAttestationFailure(f"{label} contains non-finite JSON.")
+
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ArchiveAttestationFailure(f"{label} contains non-finite JSON.")
+        return number
+
+    try:
+        parsed = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=unique_fields,
+            parse_constant=reject_constant, parse_float=finite_float,
+        )
+    except (UnicodeError, ValueError, TypeError, OverflowError):
         raise ArchiveAttestationFailure(f"{label} is not readable JSON.") from None
+    return _object(parsed, label)
 
 
 def _file_sha(path: Path) -> str:
