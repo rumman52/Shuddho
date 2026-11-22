@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +17,7 @@ import pytest
 pytest.importorskip("sqlalchemy", reason="Install the coworker extra for pilot access tests")
 pytest.importorskip("jwt", reason="Install the coworker extra for pilot access tests")
 
+from scripts import day10_release_decision as day10
 from scripts import pilot_admission_verify as pilot
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 
@@ -343,3 +346,37 @@ def test_post_admission_readback_retains_exact_authority_and_derived_ui_split():
     assert pilot.api_runtime_capabilities_match_rollout(
         observed["capabilities"], rollout["capabilities"],
     )
+
+
+def test_admission_rollout_sha_is_bound_to_original_parsed_bytes(tmp_path, monkeypatch):
+    """Replacing the rollout path after parse must not change the verified digest."""
+    rollout_path, decision_path, evidence = ready_files(tmp_path, monkeypatch)
+    read_original = day10.read_bounded_json_with_sha
+
+    def swap_after_verified_read(path):
+        parsed, digest = read_original(path)
+        if path == rollout_path:
+            rollout_path.write_text(
+                '{"release_id":"substituted","cohort":{"max_users":5}}',
+                encoding="utf-8",
+            )
+        return parsed, digest
+
+    monkeypatch.setattr(day10, "read_bounded_json_with_sha", swap_after_verified_read)
+    rollout, digest = pilot.require_release_decision(rollout_path, decision_path, REV)
+    assert rollout["release_id"] == "pilot-synthetic"
+    assert digest == evidence["rollout_manifest_sha256"]
+    assert json.loads(rollout_path.read_text(encoding="utf-8"))["release_id"] == "substituted"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes required")
+def test_access_receipt_written_private_with_ordinary_umask(tmp_path):
+    """Sensitive owner and admission references must not become world readable."""
+    output = tmp_path / "first-access-receipt.json"
+    previous_umask = os.umask(0o022)
+    try:
+        pilot.immutable_report(output, {"status": "failed", "private_observation": "synthetic"})
+    finally:
+        os.umask(previous_umask)
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert json.loads(output.read_text(encoding="utf-8"))["status"] == "failed"
