@@ -281,3 +281,110 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
                        match="owner-approved documents"):
         probe.verify(args)
     assert not args.output.exists()
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX mode contract")
+def test_scheduled_profile_prepare_state_is_private_with_umask_022(
+    monkeypatch, tmp_path,
+):
+    """Real prepare() must not expose owner, automation or document scope."""
+    import argparse
+    import os
+    import stat
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    snapshot = {
+        "owner_id": "owner-synthetic",
+        "automation": {
+            "revision": 1, "timezone": "Asia/Dhaka",
+            "schedule": {"kind": "daily", "hour": 8, "minute": 0, "weekdays": []},
+            "run_profile": "briefing", "output_language": "en",
+            "quiet_hours": {"start": "22:00", "end": "07:00"},
+            "overlap_policy": "skip", "catchup_window_seconds": 3600,
+            "expires_at": "2030-01-01T00:00:00+00:00",
+            "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+        },
+        "daily_scope": {
+            "goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
+            "authorized_document_ids": ["private-doc-1"],
+        },
+        "history": [], "notifications": [],
+    }
+    monkeypatch.setattr(probe, "require_guard", lambda: None)
+    monkeypatch.setattr(probe, "clean_origin", lambda origin: origin)
+    monkeypatch.setattr(probe, "env", lambda name: {
+        "SHUDDHO_STAGING_API_BASE_URL": "https://stage.example.test",
+        "SHUDDHO_STAGING_TOKEN_A": "synthetic-token",
+        "SHUDDHO_STAGING_SYNTHETIC_ACCOUNT_LABEL": "synthetic-label",
+    }[name])
+    monkeypatch.setattr(probe.httpx, "Client", lambda **_kwargs: Client())
+    monkeypatch.setattr(probe, "release_identity", lambda *_args: {"release_id": "release-1"})
+    monkeypatch.setattr(probe, "load_owned", lambda *_args: snapshot)
+    state_path = tmp_path / "schedule-state.json"
+    args = argparse.Namespace(
+        scenario="daily_coworker", automation_id="automation-1",
+        rollout=tmp_path / "rollout.json",
+        provider_policy_plan=tmp_path / "provider.json", state=state_path,
+    )
+    old_mask = os.umask(0o022)
+    try:
+        result = probe.prepare(args)
+    finally:
+        os.umask(old_mask)
+    assert result["owner_id"] == "owner-synthetic"
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    assert "private-doc-1" in state_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX mode contract")
+def test_scheduled_profile_private_writer_replaces_world_readable_file(tmp_path):
+    import stat
+
+    output = tmp_path / "verified-evidence.json"
+    output.write_text("old-sensitive-evidence", encoding="utf-8")
+    output.chmod(0o644)
+    probe.write_private_evidence(output, {"owner_id": "new-synthetic-owner"})
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert output.read_text(encoding="utf-8").find("new-synthetic-owner") >= 0
+    assert "old-sensitive-evidence" not in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX symlink contract")
+def test_scheduled_profile_private_writer_cannot_follow_preexisting_symlink(tmp_path):
+    import stat
+
+    target = tmp_path / "other-private-file.json"
+    target.write_text("DO NOT ALTER", encoding="utf-8")
+    output = tmp_path / "scheduled-evidence.json"
+    output.symlink_to(target)
+    probe.write_private_evidence(output, {"run_id": "synthetic-run-1"})
+    assert target.read_text(encoding="utf-8") == "DO NOT ALTER"
+    assert not output.is_symlink()
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX atomicity contract")
+def test_scheduled_profile_private_writer_failed_replace_keeps_original(
+    monkeypatch, tmp_path,
+):
+    import os
+
+    output = tmp_path / "schedule-state.json"
+    output.write_text("verified-original", encoding="utf-8")
+    output.chmod(0o600)
+
+    def deny_replace(*_args, **_kwargs):
+        raise OSError("synthetic-private-path-token")
+
+    monkeypatch.setattr(os, "replace", deny_replace)
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="private operator evidence") as exc:
+        probe.write_private_evidence(output, {"owner_id": "synthetic-owner"})
+    assert "synthetic-private-path-token" not in str(exc.value)
+    assert output.read_text(encoding="utf-8") == "verified-original"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["schedule-state.json"]
