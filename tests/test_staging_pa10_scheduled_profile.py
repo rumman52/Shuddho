@@ -388,3 +388,116 @@ def test_scheduled_profile_private_writer_failed_replace_keeps_original(
     assert "synthetic-private-path-token" not in str(exc.value)
     assert output.read_text(encoding="utf-8") == "verified-original"
     assert sorted(path.name for path in tmp_path.iterdir()) == ["schedule-state.json"]
+
+
+@pytest.mark.parametrize(("case", "should_pass"), [
+    ("new_unmatched_same_automation", False),
+    ("new_notice_other_automation", True),
+    ("old_notice_in_prepared_baseline", True),
+])
+def test_daily_verify_counts_all_new_notices_for_selected_automation(
+    monkeypatch, tmp_path, case, should_pass,
+):
+    """An orphan/duplicate owner notice must not disappear behind occurrence filtering."""
+    from argparse import Namespace
+    import json
+
+    release = {"release_id": "synthetic-release"}
+    existing = {
+        "id": "old-notice", "automation_id": "automation-1",
+        "occurrence_id": "old-occ", "kind": "automation_completed",
+    }
+    extra = {
+        "id": "extra-notice",
+        "automation_id": (
+            "automation-other" if case == "new_notice_other_automation" else "automation-1"
+        ),
+        "occurrence_id": "unexpected-occurrence",
+        "kind": "automation_completed",
+    }
+    state = {
+        "schema_version": 1, "scenario": "daily_coworker",
+        "release": release, "owner_id": "owner-1", "automation_id": "automation-1",
+        "automation_revision": 1, "timezone": "Asia/Dhaka",
+        "schedule": {"kind": "daily", "hour": 8, "minute": 0, "weekdays": []},
+        "run_profile": "briefing", "output_language": "en",
+        "quiet_hours": {"start": "22:00", "end": "07:00"},
+        "overlap_policy": "skip", "catchup_window_seconds": 3600,
+        "expires_at": "2030-01-01T00:00:00+00:00",
+        "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+        "synthetic_account_label": "synthetic-owner",
+        "prepared_at": "2026-11-12T01:30:00+00:00",
+        "baseline_occurrence_ids": [],
+        "baseline_notification_ids": (
+            ["old-notice"] if case == "old_notice_in_prepared_baseline" else []
+        ),
+        "goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
+        "authorized_document_ids": ["doc-1"],
+    }
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    current = {
+        "owner_id": "owner-1",
+        "automation": {
+            "revision": 1,
+            "expires_at": "2030-01-01T00:00:00+00:00",
+            "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+        },
+        "daily_scope": {
+            "goal_id": "goal-1", "goal_revision": 1,
+            "project_id": "project-1", "authorized_document_ids": ["doc-1"],
+        },
+        "history": [{
+            "occurrence_id": "occ-1", "trigger_type": "schedule",
+            "occurrence_state": "accepted", "run_state": "completed",
+            "run_id": "run-1", "due_at": "2026-11-12T02:00:00+00:00",
+        }],
+        "notifications": [
+            {"id": "completed-1", "automation_id": "automation-1",
+             "occurrence_id": "occ-1", "kind": "automation_completed"},
+            existing if case == "old_notice_in_prepared_baseline" else extra,
+        ],
+    }
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, path, **_kwargs):
+            assert path == "/api/v1/agent-runs/run-1"
+            return _ScopeResponse({
+                "id": "run-1", "state": "completed",
+                "document_ids": ["doc-1"], "input_version_ids": ["v1"],
+            })
+
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://stage.example.test")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "synthetic-token")
+    monkeypatch.setattr(probe.httpx, "Client", lambda **_kwargs: Client())
+    monkeypatch.setattr(probe, "release_identity", lambda *_args: release)
+    monkeypatch.setattr(probe, "load_owned", lambda *_args: current)
+    clock = iter((0, 0, 2))
+    monkeypatch.setattr(probe.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(probe.time, "sleep", lambda *_args: None)
+    args = Namespace(
+        state=state_path, rollout=tmp_path / "rollout.json",
+        provider_policy_plan=tmp_path / "provider.json",
+        output=tmp_path / "verified.json", prior_evidence=None,
+        operator_case_reference="CASE-7", timeout=1, poll_interval=1,
+    )
+    if should_pass:
+        report = probe.verify(args)
+        assert report["status"] == "passed"
+        assert report["new_notification_count"] == 1
+        assert args.output.exists()
+    else:
+        with pytest.raises(
+            probe.ScheduledProfileProbeFailure,
+            match="unexpected new notification|one new notification",
+        ):
+            probe.verify(args)
+        assert not args.output.exists()
