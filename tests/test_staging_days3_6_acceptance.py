@@ -1637,9 +1637,10 @@ def _swap_at_receipt_open(monkeypatch, target, substitute):
 
     def replace_once(path):
         if str(path) == str(target) and not swapped:
+            # Mark before writing the replacement; Path.write_bytes also uses io.open.
+            swapped.append(True)
             target.unlink()
             substitute(target)
-            swapped.append(True)
 
     def patch_io_open(file, *args, **kwargs):
         replace_once(file)
