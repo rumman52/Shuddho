@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -183,3 +184,60 @@ def test_preseed_zero_object_baseline_is_never_private_task_restore_proof(tmp_pa
     )
     with pytest.raises(attest.ArchiveAttestationFailure, match="baseline"):
         _check(state, target, (paths[0], paths[1], baseline, receipt))
+
+# These tests guard the common private-receipt reader used by both source
+# pre-seeding and the archive/isolated-restore qualification gate.
+def test_private_receipt_reader_rejects_symlink_substitution_at_open(tmp_path, monkeypatch):
+    submitted = tmp_path / "submitted.json"
+    target = tmp_path / "other.json"
+    submitted.write_text('{"status":"reviewed"}', encoding="utf-8")
+    target.write_text('{"status":"substituted"}', encoding="utf-8")
+    actual_open = os.open
+    swapped = False
+
+    def swap_at_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if Path(path) == submitted and not swapped:
+            swapped = True
+            submitted.unlink()
+            submitted.symlink_to(target)
+        return actual_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_at_open)
+    with pytest.raises(attest.ArchiveAttestationFailure):
+        attest._private_json(submitted, "Private archive evidence")
+    assert swapped
+
+
+def test_private_receipt_reader_rejects_same_inode_growth_after_size_check(tmp_path, monkeypatch):
+    receipt = tmp_path / "receipt.json"
+    original = b'{"status":"verified"}'
+    receipt.write_bytes(original)
+    actual_read = os.read
+    grew = False
+
+    def expand_before_read(fd, size):
+        nonlocal grew
+        if not grew:
+            grew = True
+            receipt.write_bytes(original + b" " * 2_000_001)
+        return actual_read(fd, size)
+
+    monkeypatch.setattr(os, "read", expand_before_read)
+    with pytest.raises(attest.ArchiveAttestationFailure):
+        attest._private_json(receipt, "Private archive evidence")
+    assert grew
+
+
+@pytest.mark.parametrize("payload", [
+    '{"status":"wrong","status":"verified"}',
+    '{"status":"verified","nested":{"owner":"a","owner":"b"}}',
+    '{"status":"verified","distance":NaN}',
+    '{"status":"verified","distance":1e999}',
+])
+def test_private_receipt_reader_rejects_ambiguous_or_nonfinite_json(tmp_path, payload):
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(payload, encoding="utf-8")
+    with pytest.raises(attest.ArchiveAttestationFailure):
+        attest._private_json(receipt, "Private archive evidence")
+
