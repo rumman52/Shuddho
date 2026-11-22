@@ -392,6 +392,52 @@ def test_day6_research_native_docx_must_contain_exact_selected_finding_and_quote
             validate_day6_exports("research", draft, changed, expected_sources=sources)
 
 
+@pytest.mark.parametrize("language", ("en", "bn"))
+@pytest.mark.parametrize("tamper", (
+    "alter_finding", "alter_evidence_quote", "append_unsupported_claim",
+    "remove_evidence_label", "duplicate_report",
+))
+def test_day6_research_text_must_match_reviewed_evidence_and_sources(language, tamper):
+    """D06.T02/T07: a readable text export cannot silently invent or drop evidence."""
+    from coworker_samples import work_draft
+    from services.coworker.exports import validate_day6_exports
+
+    draft = work_draft("research", language)
+    sources = [{
+        "id": "web-1", "kind": "web", "label": "Original study",
+        "url": "https://example.org/study",
+        "retrieved_at": "2026-11-18T02:00:00Z",
+        "source_date": None, "sha256": "a" * 64,
+    }]
+    outputs = render_in_subprocess(draft, sources, skill_id="research")
+    validate_day6_exports("research", draft, outputs, expected_sources=sources)
+    changed = []
+    for filename, content_type, body in outputs:
+        if filename == "research-report.txt":
+            original = body.decode("utf-8")
+            assert draft.title in original
+            assert draft.findings[0].heading in original
+            if tamper == "alter_finding":
+                altered = original.replace(draft.findings[0].text,
+                                           "Invented result with no source", 1)
+            elif tamper == "alter_evidence_quote":
+                altered = original.replace(draft.findings[0].citations[0].quote,
+                                           "Falsified quotation", 1)
+            elif tamper == "append_unsupported_claim":
+                altered = original + "\n\nThe source proves an unrelated claim."
+            elif tamper == "remove_evidence_label":
+                altered = original.replace(draft.labels.evidence, "Unverified claim", 1)
+            else:
+                altered = original + "\n\n" + original
+            assert altered != original, "Test fixture must actually change the text"
+            assert draft.title in altered
+            assert draft.findings[0].heading in altered
+            body = altered.encode("utf-8")
+        changed.append((filename, content_type, body))
+    with pytest.raises(ValueError, match="Research text differs from the reviewed"):
+        validate_day6_exports("research", draft, changed, expected_sources=sources)
+
+
 @pytest.mark.parametrize("tamper", (
     "false_delivery_receipt", "injected_recipient_and_sent_header",
     "extra_sent_confirmation", "duplicate_body",

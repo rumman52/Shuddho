@@ -103,6 +103,14 @@ def content_blocks(draft, sources=None):
     return title, [block for block in blocks if block.text]
 
 
+def serialize_work_text(title: str, blocks: list[Block]) -> str:
+    """Canonical text for native export and trusted post-export verification."""
+    return title + "\n\n" + "\n\n".join(
+        ("• " if block.kind == "bullet" else "☐ " if block.kind == "check" else "") + block.text
+        for block in blocks
+    )
+
+
 def render_work_artifacts(skill_id, draft, sources):
     # Validate the requested service again inside the renderer process. Filenames,
     # markup and object destinations are never accepted from model output.
@@ -110,8 +118,7 @@ def render_work_artifacts(skill_id, draft, sources):
     title, blocks = content_blocks(draft, sources)
     docx, pdf = render_document(title, blocks, draft.output_language)
     stem = SKILLS[skill_id].filename
-    text = title + "\n\n" + "\n\n".join(
-        ("• " if block.kind == "bullet" else "☐ " if block.kind == "check" else "") + block.text for block in blocks)
+    text = serialize_work_text(title, blocks)
     manifest = {"skill_id": skill_id, "output_language": draft.output_language,
                 "sources": sources, "missing_information": draft.missing_information,
                 "delivery_status": "needs_input" if draft.missing_information else "draft_ready"}
