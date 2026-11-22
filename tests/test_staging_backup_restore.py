@@ -634,8 +634,11 @@ def test_isolated_restore_never_publishes_pass_without_authenticated_api_readbac
     }.items():
         monkeypatch.setenv(key, value)
 
+    opened_clients = []
+
     class MockClient:
         def __init__(self, **kwargs):
+            opened_clients.append(True)
             assert kwargs["follow_redirects"] is False
             assert kwargs["trust_env"] is False
             assert kwargs["base_url"] == "https://restored.example.test"
@@ -669,6 +672,30 @@ def test_isolated_restore_never_publishes_pass_without_authenticated_api_readbac
         assert kwargs["target_storage_fingerprint"] == backup.stable_hash("isolated-bucket")
         assert kwargs["source_revision"] == settings.source_revision
         return approved_sha
+
+    monkeypatch.setattr(backup, "preflight_restored_destination", check_private_target)
+
+    # A fully restored database and valid managed tokens never justify
+    # connecting to a public HTTPS API if the protected decision is missing.
+    with pytest.raises(backup.BackupRestoreFailure, match="authorization is required"):
+        backup.verify(
+            settings, state_path, "backup-123", "restore-456",
+            rollout_path, evidence, None, **file_paths,
+        )
+    assert not opened_clients and not calls and not evidence.exists()
+
+    def refuse_approval(_receipt, **_kwargs):
+        raise backup.AuthorizationEvidenceFailure("Synthetic approval is wrong.")
+
+    monkeypatch.setattr(backup, "preflight_restored_destination", refuse_approval)
+    with pytest.raises(backup.BackupRestoreFailure, match="does not match"):
+        backup.verify(
+            settings, state_path, "backup-123", "restore-456",
+            rollout_path, evidence, None,
+            authorization_path=tmp_path / "synthetic-decision.json",
+            **file_paths,
+        )
+    assert not opened_clients and not calls and not evidence.exists()
 
     monkeypatch.setattr(backup, "preflight_restored_destination", check_private_target)
     backup.verify(
