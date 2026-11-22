@@ -329,7 +329,8 @@ def test_worker_replacement_proves_new_identity_and_heartbeat_during_run():
     "same_instance", "wrong_revision", "stale", "registered_before_work",
     "registered_before_restart",
     "registered_after_completion", "no_heartbeat_advance", "late_platform_event",
-    "wrong_previous_identity",
+    "wrong_previous_identity", "pre_restart_heartbeat_stale",
+    "pre_restart_heartbeat_after_restart", "old_worker_registered_after_run_started",
 ])
 def test_worker_replacement_rejects_forged_or_nonactive_restart(broken):
     base, before, after = _worker_evidence()
@@ -351,6 +352,14 @@ def test_worker_replacement_rejects_forged_or_nonactive_restart(broken):
         after["started_at"] = (base + timedelta(minutes=8)).isoformat()
     elif broken == "wrong_previous_identity":
         before["source_revision"] = "b" * 40
+    elif broken == "pre_restart_heartbeat_stale":
+        # The old poller could have died BEFORE the active child task began.
+        before["heartbeat_at"] = (base - timedelta(seconds=30)).isoformat()
+    elif broken == "pre_restart_heartbeat_after_restart":
+        before["heartbeat_at"] = (base + timedelta(seconds=9)).isoformat()
+    elif broken == "old_worker_registered_after_run_started":
+        before["started_at"] = (base + timedelta(seconds=3)).isoformat()
+        before["heartbeat_at"] = (base + timedelta(seconds=4)).isoformat()
     with pytest.raises(recovery.RecoveryFailure, match="worker|restart|Worker"):
         _replace(before, after, base)
 
@@ -381,3 +390,15 @@ def test_parse_utc_rejects_missing_or_wrong_type_without_unhandled_exception():
     for malformed in (None, 1, False, [], {}):
         with pytest.raises(recovery.RecoveryFailure, match="timezone"):
             recovery.parse_utc(malformed)
+
+
+def test_old_worker_heartbeat_at_exact_registry_freshness_boundary_is_accepted():
+    from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+
+    base, before, after = _worker_evidence()
+    before["heartbeat_at"] = (
+        base + timedelta(seconds=8 - WORKER_HEARTBEAT_TTL_SECONDS)
+    ).isoformat()
+    # A strict greater-than check rejects stale, while a TTL-equal heartbeat
+    # remains fresh exactly as in repository.worker_inventory.
+    assert _replace(before, after, base)["worker_before_id"] == "old-worker"
