@@ -669,3 +669,81 @@ def test_isolated_restore_never_publishes_pass_without_authenticated_api_readbac
     assert saved["archive_integrity"]["restored_api_access"]["status"] == "verified"
     assert saved["archive_integrity"]["probe_object_sha256"] == expected_sha
     assert saved["archive_integrity"]["probe_object_bytes"] == len(bytes_to_restore)
+
+
+@pytest.mark.parametrize("mutation", ["direct_symlink", "duplicate_nested_fingerprint"])
+def test_verify_rejects_unsafe_prepared_state_before_target_access(
+    monkeypatch, tmp_path, restore_state, mutation,
+):
+    settings, rollout_path, state = restore_state
+    state_path = tmp_path / "state.json"
+    if mutation == "direct_symlink":
+        target = tmp_path / "real-prepared.json"
+        target.write_text(json.dumps(state), encoding="utf-8")
+        state_path.symlink_to(target)
+    else:
+        raw = json.dumps(state)
+        raw = raw.replace(
+            '"source_fingerprints": {',
+            '"source_fingerprints": {"database":"f' + "f" * 63 + '",',
+        )
+        state_path.write_text(raw, encoding="utf-8")
+
+    monkeypatch.setattr(
+        backup.Container, "create",
+        lambda _: pytest.fail("Untrusted prepared receipt reached restored target"),
+    )
+    with pytest.raises(backup.ArchiveAttestationFailure):
+        backup.verify(
+            settings, state_path, "backup-a", "restore-b",
+            rollout_path, tmp_path / "output.json", None,
+        )
+    assert not (tmp_path / "output.json").exists()
+
+
+@pytest.mark.parametrize("mutation", ["direct_symlink", "duplicate_key"])
+def test_verify_rejects_unsafe_base_evidence_before_target_access(
+    monkeypatch, tmp_path, restore_state, mutation,
+):
+    settings, rollout_path, state = restore_state
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    base_evidence = tmp_path / "base.json"
+    if mutation == "direct_symlink":
+        actual = tmp_path / "other.json"
+        actual.write_text('{"source":"approved"}', encoding="utf-8")
+        base_evidence.symlink_to(actual)
+    else:
+        base_evidence.write_text('{"status":"pass","status":"failed"}', encoding="utf-8")
+
+    monkeypatch.setattr(
+        backup.Container, "create",
+        lambda _: pytest.fail("Untrusted prior release evidence reached restored target"),
+    )
+    with pytest.raises(backup.ArchiveAttestationFailure):
+        backup.verify(
+            settings, state_path, "backup-a", "restore-b",
+            rollout_path, tmp_path / "output.json", base_evidence,
+        )
+    assert not (tmp_path / "output.json").exists()
+
+
+def test_verify_refuses_existing_output_before_touching_restored_target(
+    monkeypatch, tmp_path, restore_state,
+):
+    settings, rollout_path, state = restore_state
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    output = tmp_path / "output.json"
+    output.write_text('{"previous":"immutable"}', encoding="utf-8")
+    monkeypatch.setattr(
+        backup.Container, "create",
+        lambda _: pytest.fail("Existing private receipt must block restored target access"),
+    )
+    with pytest.raises(backup.StagingReleaseEvidenceError, match="Refusing to overwrite"):
+        backup.verify(
+            settings, state_path, "backup-a", "restore-b",
+            rollout_path, output, None,
+        )
+    assert output.read_text(encoding="utf-8") == '{"previous":"immutable"}'
+
