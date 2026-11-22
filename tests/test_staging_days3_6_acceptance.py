@@ -1601,3 +1601,120 @@ def test_day6_repair_cannot_hide_a_second_failing_first_attempt():
     args[4]["development_cases"][1]["quality_score"] = 2
     with pytest.raises(gate.Days36EvidenceError, match="quality"):
         validate(args)
+
+
+
+def _staging_cli_receipts(tmp_path, monkeypatch):
+    """Make full internally consistent inputs, not an assertion of hosted acceptance."""
+    import json
+    import sys
+
+    names = ("freeze", "day3", "day4", "day5", "day6", "review")
+    paths = {}
+    for name, receipt in zip(names, evidence()):
+        path = tmp_path / (name + ".json")
+        path.write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+        paths[name] = path
+    output = tmp_path / "verified.json"
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_DAYS36_VERIFICATION", "true")
+    command = ["days36-acceptance"]
+    for name in names:
+        command.extend(("--" + name, str(paths[name])))
+    command.extend(("--expected-revision", SHA, "--output", str(output)))
+    monkeypatch.setattr(sys, "argv", command)
+    return paths, output
+
+
+def _swap_at_receipt_open(monkeypatch, target, substitute):
+    """Simulate replacement *after* old path checks but *at* the consuming open."""
+    import io
+    import os
+
+    original_io_open = io.open
+    original_os_open = os.open
+    swapped = []
+
+    def replace_once(path):
+        if str(path) == str(target) and not swapped:
+            # Mark before writing the replacement; Path.write_bytes also uses io.open.
+            swapped.append(True)
+            target.unlink()
+            substitute(target)
+
+    def patch_io_open(file, *args, **kwargs):
+        replace_once(file)
+        return original_io_open(file, *args, **kwargs)
+
+    def patch_os_open(file, flags, *args, **kwargs):
+        replace_once(file)
+        return original_os_open(file, flags, *args, **kwargs)
+
+    # Path.read_text uses io.open; a secure descriptor reader uses os.open.
+    # Trigger the same attacker mutation at the vulnerable open in either path.
+    monkeypatch.setattr(io, "open", patch_io_open)
+    monkeypatch.setattr(os, "open", patch_os_open)
+    return swapped
+
+
+def test_days36_cli_accepts_original_regular_receipts_without_hosted_attestation(
+    tmp_path, monkeypatch
+):
+    import json
+
+    _, output = _staging_cli_receipts(tmp_path, monkeypatch)
+    gate.main()
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["status"] == "evidence_internally_consistent_not_live_attested"
+
+
+def test_days36_cli_rejects_receipt_swapped_to_symlink_at_open(tmp_path, monkeypatch):
+    """A validated path may be replaced before its contents are actually consumed."""
+    paths, output = _staging_cli_receipts(tmp_path, monkeypatch)
+    original = paths["day3"]
+    substitute = tmp_path / "alternate-receipt.json"
+    substitute.write_bytes(original.read_bytes())
+    changed = _swap_at_receipt_open(monkeypatch, original, lambda path: path.symlink_to(substitute))
+
+    with pytest.raises(SystemExit) as exc:
+        gate.main()
+    assert exc.value.code == 1
+    assert changed, "The adversarial replacement did not reach the read boundary"
+    assert original.is_symlink()
+    assert not output.exists()
+
+
+def test_days36_cli_rejects_receipt_grown_past_cap_at_open(tmp_path, monkeypatch):
+    """A file can grow after stat; only descriptor-bounded bytes may be parsed."""
+    paths, output = _staging_cli_receipts(tmp_path, monkeypatch)
+    target = paths["day4"]
+    original = target.read_bytes()
+    oversize = original + b" " * (gate.MAX_EVIDENCE_BYTES + 1 - len(original))
+    assert len(oversize) == gate.MAX_EVIDENCE_BYTES + 1
+    changed = _swap_at_receipt_open(monkeypatch, target, lambda path: path.write_bytes(oversize))
+
+    with pytest.raises(SystemExit) as exc:
+        gate.main()
+    assert exc.value.code == 1
+    assert changed, "The size replacement did not reach the read boundary"
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("mutation", ("duplicate_release_id", "nan", "overflow_number"))
+def test_days36_cli_rejects_ambiguous_or_nonfinite_receipt_json(tmp_path, monkeypatch, mutation):
+    """Evidence must be uniquely keyed strict JSON, not Python's relaxed parser."""
+    paths, output = _staging_cli_receipts(tmp_path, monkeypatch)
+    target = paths["freeze"]
+    raw = target.read_text(encoding="utf-8")
+    if mutation == "duplicate_release_id":
+        raw = '{"release_id": "unreviewed-shadow",' + raw[1:]
+    elif mutation == "nan":
+        raw = raw[:-1] + ', "untrusted_extra": NaN}'
+    else:
+        raw = raw[:-1] + ', "untrusted_extra": 1e999}'
+    target.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        gate.main()
+    assert exc.value.code == 1
+    assert not output.exists()
