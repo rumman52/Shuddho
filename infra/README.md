@@ -31,7 +31,8 @@ operator must still inspect the actual hosted credentials and API/worker
 bindings privately before sending tokens or provisioning resources.
 
 The Day 2 private-PDF operator (`scripts/staging_day2_execution.py`) independently
-checks those exact approved Auth/S3 destinations and locally validates **both**
+requires the reviewed `https://shuddho-api-staging.onrender.com` API origin,
+those exact approved Auth/S3 destinations, and locally validates **both**
 managed synthetic owner JWT claim sets *before its first API request or database
 connection*. It then binds both JWT subjects to the authenticated `/api/v1/me`
 responses before reading the frozen runtime manifest. Local JWT claim decoding
