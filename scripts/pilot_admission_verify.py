@@ -19,8 +19,8 @@ import stat
 import httpx
 
 from scripts.cohort_release_gate import validate_rollout
-from scripts.day10_release_decision import read_json
-from scripts.ruke_pilot_eval import sha256 as file_sha256, strict_json_loads
+from scripts.day10_release_decision import read_json, read_json_with_sha
+from scripts.ruke_pilot_eval import immutable_write, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_release_freeze import api_runtime_capabilities_match_rollout
 from scripts.staging_cohort_admission import (
@@ -42,14 +42,14 @@ def require_release_decision(rollout_path: Path, decision_path: Path, revision: 
     """Check the exact released digest and canonical GO, without claiming human authentication."""
     if not SHA40.fullmatch(revision):
         raise PilotVerificationFailure("Expected an exact 40-character source revision.")
-    rollout = read_json(rollout_path)
+    # Bind the admitted rollout and its decision SHA to one descriptor read.
+    rollout, digest = read_json_with_sha(rollout_path)
     decision = read_json(decision_path)
     if not isinstance(rollout, dict) or not isinstance(decision, dict):
         raise PilotVerificationFailure("Expected rollout and decision JSON objects.")
     rollout_failures = validate_rollout(rollout, max_cohort_users=10)
     if rollout_failures:
         raise PilotVerificationFailure("Release rollout has failed canonical rollout checks.")
-    digest = file_sha256(rollout_path)
     cohort = rollout.get("cohort")
     limit = cohort.get("max_users") if isinstance(cohort, dict) else None
     if type(limit) is not int or not 5 <= limit <= 10:
@@ -187,10 +187,9 @@ def verify_live_runtime(client: httpx.Client, token: str, rollout: dict, revisio
 
 def immutable_report(path: Path, result: dict) -> None:
     """Never overwrite even a failed or previous pilot access verification."""
-    encoded = json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
     try:
-        with path.open("x", encoding="utf-8") as handle:
-            handle.write(encoded)
+        # Exclusive create, fsync and 0600 regardless of the operator's umask.
+        immutable_write(path, result)
     except FileExistsError:
         raise PilotVerificationFailure("Report already exists; use a new first-run-safe path.") from None
 
