@@ -117,19 +117,20 @@ def test_backup_and_temporal_recovery_use_the_same_pinned_owner_lookup(monkeypat
     from scripts import staging_backup_restore as backup
     from scripts import staging_temporal_recovery as temporal
 
+    token = _token()
     monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", STAGING_API)
-    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", _token())
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", token)
     calls = []
 
-    def verified(token, *, origin):
-        calls.append((token, origin))
+    def verified(candidate, *, origin):
+        calls.append((candidate, origin))
         return _account()
 
     monkeypatch.setattr(backup, "verified_staging_owner", verified)
     monkeypatch.setattr(temporal, "verified_staging_owner", verified)
     assert backup.resolve_owner() == _account()
     assert temporal.staging_owner() == _account()
-    assert calls == [(_token(), STAGING_API), (_token(), STAGING_API)]
+    assert calls == [(token, STAGING_API), (token, STAGING_API)]
 
 
 def test_backup_and_recovery_refuse_unverified_owner_before_data_mutation(monkeypatch):
