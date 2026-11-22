@@ -100,22 +100,51 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
             if document_paragraphs != expected_paragraphs:
                 raise ValueError("DOCX content differs from the reviewed report, references or evidence gaps")
         else:
-            # Research DOCX links can live in w:hyperlink nodes, which some
-            # python-docx versions exclude from paragraph.text. Check the
-            # explicit findings and quotations using the reliable paragraphs
-            # while the source-manifest remains the exact authorized snapshot.
+            # A valid, readable DOCX can still add unsupported claims, change
+            # retrieval dates or redirect a trusted-looking bibliography link.
+            # Rebuild the exact native block sequence from the reviewed draft
+            # and authorized source snapshot. Read XML text nodes so source
+            # hyperlinks remain visible across python-docx versions.
+            from docx.opc.constants import RELATIONSHIP_TYPE as RT
+            from .work_exports import content_blocks
+
+            research_title, research_blocks = content_blocks(draft, expected_sources)
+            expected_paragraphs = [research_title] + [
+                ("☐ " if block.kind == "check" else "") + block.text
+                for block in research_blocks
+            ]
+            actual_paragraphs = [
+                "".join(node.text or "" for node in paragraph._p.iter(qn("w:t"))).strip()
+                for paragraph in document.paragraphs
+            ]
+            if actual_paragraphs != expected_paragraphs:
+                raise ValueError(
+                    "DOCX research content differs from reviewed findings, citations or source metadata"
+                )
+
+            # Visible source labels alone do not prove that clickable links
+            # resolve to authorized origins. Check every source-bearing
+            # hyperlink's actual relationship target, and reject extra links.
+            expected_links = [None] + [block.url for block in research_blocks]
+            for paragraph, expected_url in zip(document.paragraphs, expected_links):
+                links = list(paragraph._p.iter(qn("w:hyperlink")))
+                if expected_url is None:
+                    if links:
+                        raise ValueError("DOCX contains an unreviewed hyperlink")
+                    continue
+                if len(links) != 1:
+                    raise ValueError("DOCX source hyperlink is missing or duplicated")
+                relationship = document.part.rels.get(links[0].get(qn("r:id")))
+                if (relationship is None or relationship.reltype != RT.HYPERLINK
+                        or not relationship.is_external
+                        or relationship.target_ref != expected_url):
+                    raise ValueError("DOCX source hyperlink is not the reviewed URL")
+
             for finding in draft.findings:
-                if finding.text not in document_paragraphs:
-                    raise ValueError("DOCX is missing a reviewed research finding")
                 pdf_claims.extend([finding.heading, finding.text])
                 for citation in finding.citations:
-                    if not any(citation.quote in paragraph for paragraph in document_paragraphs):
-                        raise ValueError("DOCX is missing a selected research quotation")
                     pdf_claims.append(citation.quote)
-            for gap in draft.missing_information:
-                if gap not in document_paragraphs:
-                    raise ValueError("DOCX is missing an evidence gap")
-                pdf_claims.append(gap)
+            pdf_claims.extend(draft.missing_information)
 
         reader = PdfReader(io.BytesIO(rows[pdf_name]))
         if reader.is_encrypted or not reader.pages:

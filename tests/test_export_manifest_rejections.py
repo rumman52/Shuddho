@@ -394,6 +394,68 @@ def test_day6_research_native_docx_must_contain_exact_selected_finding_and_quote
 
 @pytest.mark.parametrize("language", ("en", "bn"))
 @pytest.mark.parametrize("tamper", (
+    "append_unsupported_claim", "duplicate_finding", "rewrite_retrieval_date",
+    "redirect_source_hyperlink",
+))
+def test_day6_research_docx_requires_exact_reviewed_blocks_and_authorized_links(
+    language, tamper
+):
+    """D06.T02/T05/T07: readable Office exports must preserve all evidence and actual links."""
+    from xml.etree import ElementTree as ET
+    from zipfile import ZipFile
+    from coworker_samples import work_draft
+    from services.coworker.exports import validate_day6_exports
+
+    draft = work_draft("research", language)
+    sources = [{
+        "id": "web-1", "kind": "web", "label": "Original study",
+        "url": "https://example.org/study",
+        "retrieved_at": "2026-11-18T02:00:00Z",
+        "source_date": None, "sha256": "a" * 64,
+    }]
+    outputs = render_in_subprocess(draft, sources, skill_id="research")
+    validate_day6_exports("research", draft, outputs, expected_sources=sources)
+    changed = []
+    for filename, content_type, body in outputs:
+        if filename == "research-report.docx":
+            if tamper == "redirect_source_hyperlink":
+                altered = io.BytesIO()
+                changed_links = 0
+                with ZipFile(io.BytesIO(body)) as original, ZipFile(altered, "w") as result:
+                    for entry in original.infolist():
+                        content = original.read(entry.filename)
+                        if entry.filename == "word/_rels/document.xml.rels":
+                            root = ET.fromstring(content)
+                            for relation in root:
+                                if relation.attrib.get("Type", "").endswith("/hyperlink"):
+                                    relation.set("Target", "https://unapproved.example/collect")
+                                    changed_links += 1
+                                    break
+                            content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                        result.writestr(entry, content)
+                assert changed_links == 1, "Fixture needs a true native source hyperlink"
+                body = altered.getvalue()
+            else:
+                document = Document(io.BytesIO(body))
+                if tamper == "append_unsupported_claim":
+                    document.add_paragraph("An invented assertion not approved by the reviewer.")
+                elif tamper == "duplicate_finding":
+                    document.add_paragraph(draft.findings[0].text)
+                else:
+                    metadata = [p for p in document.paragraphs if draft.labels.retrieved in p.text]
+                    assert len(metadata) == 1, "Fixture needs the source retrieval date"
+                    metadata[0].text = metadata[0].text.replace("2026-11-18", "2024-01-01")
+                result = io.BytesIO()
+                document.save(result)
+                body = result.getvalue()
+            assert Document(io.BytesIO(body)).paragraphs
+        changed.append((filename, content_type, body))
+    with pytest.raises(ValueError, match="DOCX"):
+        validate_day6_exports("research", draft, changed, expected_sources=sources)
+
+
+@pytest.mark.parametrize("language", ("en", "bn"))
+@pytest.mark.parametrize("tamper", (
     "alter_finding", "alter_evidence_quote", "append_unsupported_claim",
     "remove_evidence_label", "duplicate_report",
 ))
