@@ -285,7 +285,7 @@ def test_postgres_dump_hash_rejects_mutation_during_stream(
                 with archive.open("ab") as handle:
                     handle.write(b" extra")
             else:
-                archive.write_bytes(b"PGDMP updated!contents")
+                archive.write_bytes(b"PGDMP updated!!contents")
                 assert archive.stat().st_size == len(original)
         return real_read(fd, size)
 
