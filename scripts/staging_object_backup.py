@@ -10,7 +10,9 @@ import argparse
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import math
 import os
+import stat
 from pathlib import Path
 import re
 import uuid
@@ -23,6 +25,7 @@ SCHEMA_VERSION = 1
 MAX_OBJECT_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
 MAX_OBJECTS = 10_000
+MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -130,21 +133,84 @@ def _private_bytes(path: Path, data: bytes) -> None:
             output.flush()
             os.fsync(output.fileno())
     except OSError:
-        raise ObjectArchiveError("Could not create an exclusive private archive object file.") from None
+        raise ObjectArchiveError("Could not cdef _read_private_bytes(
+    path: Path, size: int | None, *, dir_fd: int | None = None,
+    limit: int | None = None,
+) -> bytes:
+    """Read exactly one regular inode under its already-open archive directory.
 
-
-def _read_private_bytes(path: Path, size: int) -> bytes:
-    if path.is_symlink() or not path.is_file():
-        raise ObjectArchiveError("Archived object is missing or symlinked.")
-    if path.stat().st_size != size:
-        raise ObjectArchiveError("Archived object byte size differs from its manifest.")
+    The supplied size is the signed manifest's byte count for object files.
+    Manifests use a separate hard cap; neither read follows a symlink.
+    """
+    maximum = size if limit is None else limit
+    if type(maximum) is not int or maximum < 0 or (size is not None and (type(size) is not int or size < 0)):
+        raise ObjectArchiveError("Archived object byte size is invalid.")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ObjectArchiveError("Secure no-follow private archive reads are unavailable.")
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = None
     try:
-        with path.open("rb") as handle:
-            result = handle.read(size + 1)
+        # A dir_fd keeps the leaf bound to the same verified parent even if a
+        # concurrent process replaces the pathname of that parent.
+        leaf = path.name if dir_fd is not None else path
+        descriptor = os.open(leaf, flags, dir_fd=dir_fd)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > maximum:
+            raise ObjectArchiveError("Archived object exceeds the regular-file size limit.")
+        if size is not None and before.st_size != size:
+            raise ObjectArchiveError("Archived object byte size differs from its manifest.")
+        remaining = maximum + 1
+        parts: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            parts.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(parts)
+        after = os.fstat(descriptor)
+        if (before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+                or before.st_ctime_ns != after.st_ctime_ns):
+            raise ObjectArchiveError("Archived object changed during readback.")
+        if len(raw) != before.st_size or len(raw) > maximum:
+            raise ObjectArchiveError("Archived object byte size changed during readback.")
+        if size is not None and len(raw) != size:
+            raise ObjectArchiveError("Archived object byte size differs from its manifest.")
+        return raw
     except OSError:
-        raise ObjectArchiveError("Archived object could not be read.") from None
-    if len(result) != size:
-        raise ObjectArchiveError("Archived object byte size differs from its manifest.")
+        raise ObjectArchiveError("Archived object could not be read safely.") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _strict_manifest_json(raw: bytes) -> dict:
+    """Reject JSON ambiguity before any object bytes or target writes."""
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ObjectArchiveError("Source object manifest contains duplicate JSON keys.")
+            result[key] = value
+        return result
+
+    def reject_constant(_value: str):
+        raise ObjectArchiveError("Source object manifest has a nonfinite JSON number.")
+
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ObjectArchiveError("Source object manifest has a nonfinite JSON number.")
+        return number
+
+    try:
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=unique_fields,
+                          parse_constant=reject_constant, parse_float=finite_float)
+    except (UnicodeError, ValueError, TypeError, OverflowError):
+        raise ObjectArchiveError("Source object manifest cannot be parsed.") from None
+ject byte size differs from its manifest.")
     return result
 
 
@@ -198,37 +264,54 @@ def archive_store(store, source_fingerprint: str, directory: Path, *, allow_empt
 
 
 def _manifest(directory: Path) -> tuple[dict, list[tuple[dict, bytes]], str]:
-    path = directory / "manifest.json"
-    if path.is_symlink() or not path.is_file():
-        raise ObjectArchiveError("Source object manifest is missing or symlinked.")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory_flag is None:
+        raise ObjectArchiveError("Secure no-follow private archive directories are unavailable.")
+    flags = os.O_RDONLY | nofollow | directory_flag | getattr(os, "O_CLOEXEC", 0)
     try:
-        raw = path.read_bytes()
-        manifest = json.loads(raw)
-    except (OSError, ValueError, UnicodeError):
-        raise ObjectArchiveError("Source object manifest cannot be parsed.") from None
-    if (not isinstance(manifest, dict)
-            or set(manifest) != {
-                "schema_version", "status", "source_storage_fingerprint",
-                "object_count", "total_bytes", "objects",
-            }
-            or type(manifest["schema_version"]) is not int
-            or manifest["schema_version"] != SCHEMA_VERSION
-            or manifest["status"] not in ("archived", "baseline_archived")):
-        raise ObjectArchiveError("Source object manifest has an invalid schema.")
-    _fingerprint(manifest["source_storage_fingerprint"], "Source storage")
-    rows = manifest["objects"]
-    if (not isinstance(rows, list) or not 0 <= len(rows) <= MAX_OBJECTS
-            or type(manifest["object_count"]) is not int
-            or manifest["object_count"] != len(rows)
-            or type(manifest["total_bytes"]) is not int
-            or not 0 <= manifest["total_bytes"] <= MAX_TOTAL_BYTES):
-        raise ObjectArchiveError("Source object manifest has invalid object totals.")
-    if (manifest["status"] == "baseline_archived") != (len(rows) == 0):
-        raise ObjectArchiveError("Source object baseline status conflicts with the object count.")
+        root_fd = os.open(directory, flags)
+    except OSError:
+        raise ObjectArchiveError("Source archive directory is missing or symlinked.") from None
+    try:
+        raw = _read_private_bytes(
+            Path("manifest.json"), None, dir_fd=root_fd, limit=MAX_MANIFEST_BYTES,
+        )
+        manifest = _strict_manifest_json(raw)
+        if (not isinstance(manifest, dict)
+                or set(manifest) != {
+                    "schema_version", "status", "source_storage_fingerprint",
+                    "object_count", "total_bytes", "objects",
+                }
+                or type(manifest["schema_version"]) is not int
+                or manifest["schema_version"] != SCHEMA_VERSION
+                or manifest["status"] not in ("archived", "baseline_archived")):
+            raise ObjectArchiveError("Source object manifest has an invalid schema.")
+        _fingerprint(manifest["source_storage_fingerprint"], "Source storage")
+        rows = manifest["objects"]
+        if (not isinstance(rows, list) or not 0 <= len(rows) <= MAX_OBJECTS
+                or type(manifest["object_count"]) is not int
+                or manifest["object_count"] != len(rows)
+                or type(manifest["total_bytes"]) is not int
+                or not 0 <= manifest["total_bytes"] <= MAX_TOTAL_BYTES):
+            raise ObjectArchiveError("Source object manifest has invalid object totals.")
+        if (manifest["status"] == "baseline_archived") != (len(rows) == 0):
+            raise ObjectArchiveError("Source object baseline status conflicts with the object count.")
+        try:
+            objects_fd = os.open("objects", flags, dir_fd=root_fd)
+        except OSError:
+            raise ObjectArchiveError("Archived objects directory is missing or symlinked.") from None
+        try:
+            return _verify_archive_objects(manifest, rows, raw, objects_fd)
+        finally:
+            os.close(objects_fd)
+    finally:
+        os.close(root_fd)
 
-    objects_root = directory / "objects"
-    if objects_root.is_symlink() or not objects_root.is_dir():
-        raise ObjectArchiveError("Archived objects directory is missing or symlinked.")
+
+def _verify_archive_objects(
+    manifest: dict, rows: list[dict], raw: bytes, objects_fd: int,
+) -> tuple[dict, list[tuple[dict, bytes]], str]:
     verified = []
     seen = set()
     size_total = 0
@@ -259,7 +342,7 @@ def _manifest(directory: Path) -> tuple[dict, list[tuple[dict, bytes]], str]:
             raise ObjectArchiveError("Source object manifest has an unqualified timestamp.")
         if size_total + size > MAX_TOTAL_BYTES:
             raise ObjectArchiveError("Source object manifest total exceeds the allowed archive size.")
-        payload = _read_private_bytes(objects_root / row["file"], size)
+        payload = _read_private_bytes(Path(row["file"]), size, dir_fd=objects_fd)
         if _sha(payload) != checksum:
             raise ObjectArchiveError("Archived object SHA-256 digest does not match the manifest.")
         seen.add(key)
