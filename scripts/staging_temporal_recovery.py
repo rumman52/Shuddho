@@ -15,7 +15,7 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from scripts.staging_api_exercise import env_secret, require_https_base
+from scripts.staging_api_exercise import ExerciseFailure, env_secret, verified_staging_owner
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     passed,
@@ -81,27 +81,16 @@ def require_runtime(settings: Settings) -> None:
 
 
 def staging_owner() -> str:
-    base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
-    token = env_secret("SHUDDHO_STAGING_TOKEN_A")
+    """Authenticate the reviewed managed owner before starting an AgentRun."""
     try:
-        response = httpx.get(
-            base_url + "/api/v1/me",
-            headers={"Authorization": "Bearer " + token},
-            timeout=20,
-            follow_redirects=False,
+        return verified_staging_owner(
+            env_secret("SHUDDHO_STAGING_TOKEN_A"),
+            origin=env_secret("SHUDDHO_STAGING_API_BASE_URL"),
         )
-    except httpx.HTTPError as error:
-        raise RecoveryFailure(f"Staging /me request failed: {type(error).__name__}") from None
-    if response.status_code != 200:
-        raise RecoveryFailure(f"Staging /me returned HTTP {response.status_code}.")
-    try:
-        value = response.json()
-    except ValueError:
-        raise RecoveryFailure("Staging /me did not return JSON.") from None
-    owner = value.get("account_id") if isinstance(value, dict) else None
-    if not isinstance(owner, str) or not owner:
-        raise RecoveryFailure("Staging /me did not return an account id.")
-    return owner
+    except ExerciseFailure:
+        raise RecoveryFailure(
+            "Managed staging owner cannot be verified for Temporal recovery."
+        ) from None
 
 
 def synthetic_plan() -> list[AgentPlanStep]:

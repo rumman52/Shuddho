@@ -66,6 +66,69 @@ def auth(token: str) -> dict[str, str]:
     return {"Authorization": "Bearer " + token}
 
 
+def verified_staging_owner(
+    token: str, *, origin: str, minimum_validity_seconds: int = 300,
+) -> str:
+    """Bind a synthetic managed owner before recovery/restore can mutate data.
+
+    This local JWT claim check prevents accidental off-project bearer
+    transmission. It is NOT signature verification: the pinned hosted API
+    must verify the JWT signature and claims before returning /me.
+    """
+    from scripts.staging_day2_execution import (
+        Day2Failure, EXPECTED_STAGING_API_ORIGIN, _managed_identity_claims,
+    )
+    from scripts.staging_prerequisite_preflight import (
+        EXPECTED_AUTH_AUDIENCE, EXPECTED_AUTH_ISSUER,
+    )
+
+    try:
+        checked_origin = require_https_base(origin)
+    except ExerciseFailure:
+        raise ExerciseFailure("Staging owner API origin is not an approved HTTPS origin.") from None
+    if checked_origin != EXPECTED_STAGING_API_ORIGIN:
+        raise ExerciseFailure("Staging owner API origin does not match the reviewed Render service.")
+
+    # Verify locally before making ANY credentialed network request.
+    try:
+        _, derived_account = _managed_identity_claims(
+            token,
+            expected_issuer=EXPECTED_AUTH_ISSUER,
+            expected_audience=EXPECTED_AUTH_AUDIENCE,
+            minimum_validity_seconds=minimum_validity_seconds,
+        )
+    except Day2Failure:
+        raise ExerciseFailure("Staging synthetic owner JWT claims are invalid.") from None
+
+    try:
+        response = httpx.get(
+            checked_origin + "/api/v1/me",
+            headers=auth(token),
+            timeout=20,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError:
+        raise ExerciseFailure("Approved staging owner /me request failed.") from None
+    if response.status_code != 200:
+        raise ExerciseFailure(
+            f"Approved staging owner /me returned HTTP {response.status_code}."
+        )
+    try:
+        identity = response.json()
+    except ValueError:
+        raise ExerciseFailure("Approved staging owner /me returned invalid JSON.") from None
+    if (
+        not isinstance(identity, dict)
+        or identity.get("account_id") != derived_account
+        or not isinstance(identity.get("workspace_id"), str)
+        or not identity["workspace_id"].strip()
+    ):
+        raise ExerciseFailure(
+            "Staging owner JWT subject did not bind to the authenticated API account and workspace."
+        )
+    return derived_account
+
+
 def expect(response: httpx.Response, status: int, label: str) -> httpx.Response:
     if response.status_code != status:
         raise ExerciseFailure(f"{label} returned HTTP {response.status_code}; expected {status}.")

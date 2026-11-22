@@ -6,6 +6,14 @@
 
 ---
 
+## 22 November 2026 — Day 1 same-byte rollout release context ([draft PR #884](https://github.com/rumman52/Shuddho/pull/884))
+
+**SOURCE_ONLY / pilot NO-GO.** Part 01 `D01.T05 / G03` release-identity code parsed a rollout manifest and separately reopened it to hash; intervening writes could associate a different release_id with an unrelated checksum. Python's default JSON decode accepted duplicate keys/nonfinite values, and source lacked no-follow and bounds. Seven test-first regressions at `8c062a373d515bea1b3e2b05aaf44b4bcfbe1357` reproduced the flaws on [CI #45019552298](https://github.com/rumman52/Shuddho/actions/runs/45019552298): **7 expected FAIL / 3,612 PASS / 105 SKIP / 6 WARN**. Base main `b5b7805c37a1a9c2bb3d319bafcec85df8f77e99`. Corrected `scripts/staging_release_evidence.py` now parses and hashes one bounded `O_NOFOLLOW` descriptor's bytes, rejecting ambiguous JSON. Exact corrected-head suite/review **pending verification**; [task contract](DAY1_ROLLOUT_CONTEXT_VERIFIED_BYTES_2026-11-22.md).
+
+Actual operator gates unchanged: Supabase staging source/schema drift (`0070` vs `0072_merge_0071_heads`), Render staging/API-worker pairing, protected GitHub App identity/native one-review+strict-check rules and both negative/positive controls, Founder+C approved resources/restore and release signoff, D-blinded holdout custody and actual recovery scenarios all missing. No staging, production, secrets, paid infrastructure, telemetry, external send, heldout test, or pilot mutation. `D01.T05/G03` remain **ACTIVE / not PASS**; historical v4 18/100 tasks and 5/54 exits are not recomputed without new private receipts.
+
+---
+
 ## 22 November 2026 — Day 10 parsed-byte decision receipts and write-once output ([draft PR #881](https://github.com/rumman52/Shuddho/pull/881))
 
 **IMPLEMENTED SOURCE PATCH / repository and controlled pilot UNVERIFIED.** Starting on main `92cdc1a4952239a4a676b754ebc3d1ca044c9cbd` (merged Day 9 PR #876), the canonical `scripts/day10_release_decision.py` still parsed rollout and Day 9 first-run evidence from a bounded descriptor before hashing a separate later pathname read. It also rewrote any existing release decision with `Path.write_text`. A changed pathname could change the reported SHA without changing the decision inputs; a rerun could destroy the first decision. Four synthetic regression tests first committed `7b7d1337b2e9ceb16e017b1179be124dcd40c33a`; their CI was superseded so no observed RED is claimed. Fix reuses Day 9 same-buffer JSON+SHA and exclusive 0600 `immutable_write`; collision now fails closed, and first-run reporting requires a new path. No runtime schema, API, worker, feature flag or provider change. [Scoped task contract](DAY10_DECISION_IMMUTABLE_EVIDENCE_2026-11-22.md).

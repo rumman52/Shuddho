@@ -9,8 +9,10 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import math
 import os
 import re
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -31,6 +33,65 @@ BOUND = (
     "provider", "model_id", "owner_a_ref", "owner_b_ref",
 )
 MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
+
+
+def read_evidence_input(path: Path) -> object:
+    """Read and parse exactly one bounded regular receipt inode, without path reopening.
+
+    This is only a local consistency check: the original receipt still requires
+    independent authentication against its browser, provider and DB producer.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    need(nofollow is not None, "Secure no-follow receipt input reading is unavailable")
+    flags = (os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0)
+             | getattr(os, "O_NONBLOCK", 0))
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        raise Days36EvidenceError("Evidence input must be a readable non-symlink regular file") from None
+    try:
+        opened = os.fstat(descriptor)
+        need(stat.S_ISREG(opened.st_mode) and 0 < opened.st_size <= MAX_EVIDENCE_BYTES,
+             "Evidence input must be a nonempty bounded regular file")
+        # The opened inode may grow after fstat. Never read more than cap+1.
+        remaining = MAX_EVIDENCE_BYTES + 1
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    except OSError:
+        raise Days36EvidenceError("Evidence input could not be read securely") from None
+    finally:
+        os.close(descriptor)
+    raw = b"".join(chunks)
+    need(0 < len(raw) <= MAX_EVIDENCE_BYTES,
+         "Evidence input is empty or exceeds the byte limit")
+
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            need(key not in result, "Evidence JSON has duplicate fields")
+            result[key] = value
+        return result
+
+    def reject_nonfinite(value):
+        raise Days36EvidenceError("Evidence JSON contains a non-finite number")
+
+    def finite_number(value):
+        parsed = float(value)
+        need(math.isfinite(parsed), "Evidence JSON contains a non-finite number")
+        return parsed
+
+    try:
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=unique_keys,
+                          parse_constant=reject_nonfinite, parse_float=finite_number)
+    except Days36EvidenceError:
+        raise
+    except (UnicodeError, ValueError, OverflowError):
+        raise Days36EvidenceError("Evidence input contains invalid strict UTF-8 JSON") from None
 
 
 def need(ok: bool, message: str) -> None:
@@ -1048,12 +1109,10 @@ def main() -> None:
              "Days 3–6 staging verification guard is required")
         need(args.output.parent.is_dir() and not args.output.exists() and not args.output.is_symlink(),
              "A new private output path is required")
-        inputs = []
-        for path in (args.freeze, args.day3, args.day4, args.day5, args.day6, args.review):
-            need(path.is_file() and not path.is_symlink()
-                 and 0 < path.stat().st_size <= MAX_EVIDENCE_BYTES,
-                 "Evidence input is absent, symbolic, empty or too large")
-            inputs.append(json.loads(path.read_text(encoding="utf-8")))
+        inputs = [
+            read_evidence_input(path)
+            for path in (args.freeze, args.day3, args.day4, args.day5, args.day6, args.review)
+        ]
         decision = validate(*inputs, expected_revision=args.expected_revision)
         from scripts.staging_release_evidence import write_private_json
         write_private_json(args.output, decision)

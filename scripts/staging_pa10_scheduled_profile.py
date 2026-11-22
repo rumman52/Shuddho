@@ -121,6 +121,25 @@ def load_json(path: Path, label: str) -> dict:
     return value
 
 
+def write_private_evidence(path: Path, evidence: dict) -> None:
+    """Persist source/owner/run operator evidence atomically with mode 0600.
+
+    Import the already-tested Day 7 gate writer lazily to avoid a module-load
+    cycle: the gate imports load_json from this scheduled-profile module.
+    Never expose private filesystem paths or payloads in operator errors.
+    """
+    if __package__:
+        from .staging_day7_two_day_gate import write_private_report
+    else:
+        from staging_day7_two_day_gate import write_private_report
+    try:
+        write_private_report(path, evidence)
+    except OSError as error:
+        raise ScheduledProfileProbeFailure(
+            f"Could not commit private operator evidence: {type(error).__name__}."
+        ) from None
+
+
 def auth(token: str) -> dict[str, str]:
     return {"Authorization": "Bearer " + token}
 
@@ -381,7 +400,7 @@ def prepare(args: argparse.Namespace) -> dict:
         ),
         "prepared_at": utcnow_iso(),
     }
-    args.state.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    write_private_evidence(args.state, state)
     return state
 
 
@@ -609,10 +628,7 @@ def verify(args: argparse.Namespace) -> dict:
                     raise ScheduledProfileProbeFailure(
                         "A durable operator case/reference is required."
                     )
-                args.output.write_text(
-                    json.dumps(evidence, indent=2) + "\n",
-                    encoding="utf-8",
-                )
+                write_private_evidence(args.output, evidence)
                 return evidence
             except ScheduledProfileProbeFailure as error:
                 last_error = error
@@ -772,7 +788,7 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             verify_two_day(first, second, evidence, require_paused_opportunity=False)
         except GateFailure as error:
             raise ScheduledProfileProbeFailure(f"Post-pause evidence rejected: {error}") from None
-    args.output.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    write_private_evidence(args.output, evidence)
     return evidence
 
 
