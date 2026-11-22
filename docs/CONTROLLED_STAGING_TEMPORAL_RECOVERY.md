@@ -61,6 +61,17 @@ Record:
 
 The verifier rejects a restart timestamp that occurred before Agent execution actually started.
 
+The pre-restart worker identity and heartbeat are captured by `prepare`.
+That heartbeat must still be fresh **at the actual platform restart**, using
+the same 15-second `WORKER_HEARTBEAT_TTL_SECONDS` as the persisted
+`worker_inventory`, and it must not be future-dated. The old worker must
+have registered before the Agent child execution began. A delayed operator
+restart **must not** reuse a stale prepare snapshot to claim active-worker
+interruption. If the old-worker heartbeat has aged beyond this boundary,
+the exercise fails closed; re-run a fresh approved synthetic recovery
+exercise rather than edit timestamps or backdate the restart event.
+Independent reviewer D still checks the actual host/Temporal event history.
+
 ## Phase 3 — verify
 
 After the run completes:
