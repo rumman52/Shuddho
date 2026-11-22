@@ -288,7 +288,7 @@ def recovery_epoch_files(tmp_path):
     )
 
 
-def build_recovery_ledger(tmp_path, monkeypatch):
+def build_recovery_ledger(tmp_path, monkeypatch, *, mutate_recovery=None):
     monkeypatch.setenv("SHUDDHO_RELEASE_LEDGER_HMAC_KEY", KEY.decode())
     (
         rollout_path,
@@ -300,6 +300,8 @@ def build_recovery_ledger(tmp_path, monkeypatch):
         recovery_status,
         recovery_verification,
     ) = recovery_epoch_files(tmp_path)
+    if mutate_recovery is not None:
+        mutate_recovery(recovery_verification)
     ledger = tmp_path / "ledger.jsonl"
     append_event(
         ledger=ledger,
@@ -575,3 +577,93 @@ def test_canary_first_decision_report_cannot_be_overwritten(tmp_path, monkeypatc
     with pytest.raises(SystemExit, match="already exists"):
         canary.main()
     assert output.read_bytes() == b"ORIGINAL_CANARY_DECISION\n"
+
+
+# Part 05 / Day 10: synthetic canary recovery trust boundary regressions.
+# Successful HMAC validation does not authorize ambiguous or mutable input bytes.
+def _corrupt_verified_at(path):
+    original = path.read_text(encoding="utf-8")
+    assert '"verified_at": "2026-09-22T05:00:00+00:00"' in original
+    path.write_text(
+        original.replace(
+            '"verified_at": "2026-09-22T05:00:00+00:00"',
+            '"verified_at": "2026-09-22T04:00:00+00:00", '
+            '"verified_at": "2026-09-22T05:00:00+00:00"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_signed_recovery_epoch_rejects_ambiguous_verified_at(monkeypatch, tmp_path):
+    """Last-key-wins JSON must never create an approved recovery epoch."""
+    ledger, receipt = build_recovery_ledger(
+        tmp_path, monkeypatch, mutate_recovery=_corrupt_verified_at,
+    )
+    with pytest.raises(canary.CanaryProgressionError, match="recovery verification"):
+        load_recovery_epoch(
+            receipt, ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+        )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX no-follow receipt boundary")
+def test_signed_recovery_epoch_rejects_symlinked_verification(monkeypatch, tmp_path):
+    ledger, receipt = build_recovery_ledger(tmp_path, monkeypatch)
+    target = tmp_path / "elsewhere.json"
+    receipt.rename(target)
+    receipt.symlink_to(target)
+    with pytest.raises(canary.CanaryProgressionError, match="recovery verification"):
+        load_recovery_epoch(
+            receipt, ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+        )
+
+
+def test_signed_recovery_epoch_rejects_oversized_verification(monkeypatch, tmp_path):
+    """Signing a too-large file must not make it an acceptable control receipt."""
+    def pad_receipt(path):
+        with path.open("ab") as stream:
+            stream.write(b" " * 4_000_100)
+
+    ledger, receipt = build_recovery_ledger(
+        tmp_path, monkeypatch, mutate_recovery=pad_receipt,
+    )
+    with pytest.raises(canary.CanaryProgressionError, match="recovery verification"):
+        load_recovery_epoch(
+            receipt, ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+        )
+
+
+def test_recovery_epoch_digest_is_bound_to_the_same_parsed_bytes(monkeypatch, tmp_path):
+    """A pathname swap after parsing cannot validate different signed bytes."""
+    ledger, receipt = build_recovery_ledger(tmp_path, monkeypatch)
+    signed_bytes = receipt.read_bytes()
+    assert b"2026-09-22T05:00:00+00:00" in signed_bytes
+    receipt.write_bytes(
+        signed_bytes.replace(
+            b"2026-09-22T05:00:00+00:00",
+            b"2026-09-22T05:30:00+00:00",
+            1,
+        )
+    )
+    real_sha = canary.file_sha256
+
+    def swap_on_second_read(path):
+        if path == receipt:
+            # The release ledger still attests the originally signed bytes.
+            receipt.write_bytes(signed_bytes)
+        return real_sha(path)
+
+    monkeypatch.setattr(canary, "file_sha256", swap_on_second_read)
+    with pytest.raises(canary.CanaryProgressionError, match="does not bind"):
+        load_recovery_epoch(
+            receipt, ledger,
+            release_id="coworker-cohort-001",
+            current_stage="canary-5",
+        )
+    assert receipt.read_bytes() == signed_bytes
