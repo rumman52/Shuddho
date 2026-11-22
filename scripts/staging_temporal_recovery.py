@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import stat
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -66,6 +67,50 @@ def _preflight_private_state(path: Path) -> None:
         write_private_json(probe, {"preflight": True})
     finally:
         probe.unlink(missing_ok=True)
+
+
+
+def read_private_recovery_receipt(path: Path) -> dict:
+    """Read only a protected, regular, single-owner receipt, without following symlinks.
+
+    Operator evidence may contain resource identities. Do not silently read
+    a public, replaced, malformed or duplicate-key checkpoint file.
+    """
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise RecoveryFailure("Protected recovery receipt contains duplicate JSON fields.")
+            result[key] = value
+        return result
+
+    descriptor = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode)
+                or info.st_size > 1024 * 1024
+                or (os.name == "posix" and (
+                    stat.S_IMODE(info.st_mode) & 0o077
+                    or info.st_uid != os.getuid()
+                ))):
+            raise RecoveryFailure("Protected recovery receipt must be an owned private regular file.")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = None
+            receipt = json.load(
+                handle, object_pairs_hook=unique_fields,
+                parse_constant=lambda _value: (_ for _ in ()).throw(
+                    RecoveryFailure("Protected recovery receipt has non-finite JSON values.")
+                ),
+            )
+        if not isinstance(receipt, dict):
+            raise RecoveryFailure("Protected recovery receipt must contain a JSON object.")
+        return receipt
+    except (OSError, UnicodeError, ValueError):
+        raise RecoveryFailure("Protected recovery receipt cannot be safely opened or decoded.") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def require_exercise_guard() -> None:
@@ -376,9 +421,7 @@ def capture_active_checkpoint(
     require_exercise_guard()
     require_runtime(settings)
     _preflight_private_state(checkpoint_path)
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise RecoveryFailure("Pre-restart checkpoint state must be a JSON object.")
+    state = read_private_recovery_receipt(state_path)
     validate_prepared_release_context(state.get("release_context"), settings, rollout_path)
     run_id, owner = state.get("run_id"), state.get("owner_id")
     if (not isinstance(run_id, str) or not isinstance(owner, str)
@@ -512,9 +555,7 @@ async def verify(
     require_runtime(settings)
     if not restart_reference.strip():
         raise RecoveryFailure("A non-empty worker restart evidence reference is required.")
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise RecoveryFailure("Recovery state file must be a JSON object.")
+    state = read_private_recovery_receipt(state_path)
     context = validate_prepared_release_context(
         state.get("release_context"),
         settings,
@@ -553,7 +594,7 @@ async def verify(
         if checkpoint_path is not None:
             # Refreshing a stale prepare snapshot is allowed ONLY via a
             # separate read-only observation made during a live child task.
-            checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            checkpoint = read_private_recovery_receipt(checkpoint_path)
             before = worker_from_active_checkpoint(
                 state, checkpoint, facts,
                 restart_at=restart_at, revision=settings.source_revision,
