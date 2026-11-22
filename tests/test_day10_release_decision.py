@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
@@ -1213,3 +1216,80 @@ def test_day10_approvals_require_postqualification_dates_across_timezones(monkey
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "STAGING_ONLY"
     assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+
+
+def test_day10_cli_uses_exact_rollout_bytes_for_decision_digest(tmp_path, monkeypatch):
+    """A second pathname read must not replace the verified rollout digest."""
+    raw = b'{"release_id":"frozen-release"}'
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_bytes(raw)
+    original_read_bytes = Path.read_bytes
+    captured = {}
+
+    def substituted_second_read(path):
+        return b'{"release_id":"other-release"}' if path == rollout_path else original_read_bytes(path)
+
+    def capture_decision(rollout, rollout_hash, *, revision, artifacts):
+        captured.update(rollout=rollout, digest=rollout_hash)
+        return {"decision": "SOURCE_ONLY", "scorecard": {}, "pilot_activated": False}
+
+    monkeypatch.setattr(Path, "read_bytes", substituted_second_read)
+    monkeypatch.setattr(day10, "decide", capture_decision)
+    assert day10.main(["--rollout", str(rollout_path), "--source-revision", REV]) == 1
+    assert captured["rollout"] == {"release_id": "frozen-release"}
+    assert captured["digest"] == hashlib.sha256(raw).hexdigest()
+
+
+def test_day10_cli_scores_exact_first_run_artifact_bytes(tmp_path, monkeypatch, capsys):
+    """The decision must report the SHA of the same Day 9 JSON it actually used."""
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text('{"release_id":"synthetic"}', encoding="utf-8")
+    first_path = tmp_path / "first-run.json"
+    original = b'{"run_id":"frozen-first-attempt"}'
+    first_path.write_bytes(original)
+    original_read_bytes = Path.read_bytes
+
+    def substituted_second_read(path):
+        return b'{"run_id":"different-attempt"}' if path == first_path else original_read_bytes(path)
+
+    def capture_decision(rollout, rollout_hash, *, revision, artifacts):
+        assert artifacts["day9_first_run"] == {"run_id": "frozen-first-attempt"}
+        return {"decision": "SOURCE_ONLY", "scorecard": {}, "pilot_activated": False}
+
+    monkeypatch.setattr(Path, "read_bytes", substituted_second_read)
+    monkeypatch.setattr(day10, "decide", capture_decision)
+    assert day10.main(["--rollout", str(rollout_path), "--source-revision", REV,
+                       "--day9-first-run", str(first_path)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["scorecard"]["day9_first_run_artifact_sha256"] == hashlib.sha256(original).hexdigest()
+
+
+def test_day10_cli_never_replaces_existing_decision(tmp_path, monkeypatch):
+    """First-run decisions are append-by-new-path, never an in-place rewrite."""
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text('{"release_id":"synthetic"}', encoding="utf-8")
+    output_path = tmp_path / "original-decision.json"
+    original = b'{"decision":"NO-GO","first_run":true}\n'
+    output_path.write_bytes(original)
+    monkeypatch.setattr(
+        day10, "decide",
+        lambda *args, **kwargs: {"decision": "SOURCE_ONLY", "pilot_activated": False},
+    )
+    assert day10.main(["--rollout", str(rollout_path), "--source-revision", REV,
+                       "--output", str(output_path)]) == 2
+    assert output_path.read_bytes() == original
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private-file mode")
+def test_day10_cli_writes_new_decision_private_and_exclusive(tmp_path, monkeypatch):
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text('{"release_id":"synthetic"}', encoding="utf-8")
+    output_path = tmp_path / "first-decision.json"
+    monkeypatch.setattr(
+        day10, "decide",
+        lambda *args, **kwargs: {"decision": "SOURCE_ONLY", "pilot_activated": False},
+    )
+    assert day10.main(["--rollout", str(rollout_path), "--source-revision", REV,
+                       "--output", str(output_path)]) == 1
+    assert json.loads(output_path.read_text(encoding="utf-8"))["decision"] == "SOURCE_ONLY"
+    assert output_path.stat().st_mode & 0o777 == 0o600
