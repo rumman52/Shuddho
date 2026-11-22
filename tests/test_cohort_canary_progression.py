@@ -644,13 +644,12 @@ def test_recovery_epoch_digest_is_bound_to_the_same_parsed_bytes(monkeypatch, tm
     ledger, receipt = build_recovery_ledger(tmp_path, monkeypatch)
     signed_bytes = receipt.read_bytes()
     assert b"2026-09-22T05:00:00+00:00" in signed_bytes
-    receipt.write_bytes(
-        signed_bytes.replace(
-            b"2026-09-22T05:00:00+00:00",
-            b"2026-09-22T05:30:00+00:00",
-            1,
-        )
+    tampered_bytes = signed_bytes.replace(
+        b"2026-09-22T05:00:00+00:00",
+        b"2026-09-22T05:30:00+00:00",
+        1,
     )
+    receipt.write_bytes(tampered_bytes)
     real_sha = canary.file_sha256
 
     def swap_on_second_read(path):
@@ -666,4 +665,6 @@ def test_recovery_epoch_digest_is_bound_to_the_same_parsed_bytes(monkeypatch, tm
             release_id="coworker-cohort-001",
             current_stage="canary-5",
         )
-    assert receipt.read_bytes() == signed_bytes
+    # A safe single-read rejection never invokes the deprecated later SHA hook
+    # and therefore leaves the untrusted, post-signing bytes unchanged.
+    assert receipt.read_bytes() == tampered_bytes
