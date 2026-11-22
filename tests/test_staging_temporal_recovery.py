@@ -541,3 +541,32 @@ def test_recovery_checkpoint_cannot_be_reused_or_backdated(broken):
             restart_at=base + timedelta(seconds=8),
             revision="a" * 40, task_queue="test-staging-queue",
         )
+
+
+def test_recovery_evidence_reader_accepts_only_private_unique_json(tmp_path):
+    state = tmp_path / "private-state.json"
+    state.write_text('{"release_context":{"release_id":"synthetic"}}', encoding="utf-8")
+    state.chmod(0o600)
+    assert recovery.read_private_recovery_receipt(state)["release_context"]["release_id"] == "synthetic"
+
+    state.chmod(0o644)
+    with pytest.raises(recovery.RecoveryFailure, match="private"):
+        recovery.read_private_recovery_receipt(state)
+    state.chmod(0o600)
+
+    alias = tmp_path / "unsafe-alias.json"
+    alias.symlink_to(state)
+    with pytest.raises(recovery.RecoveryFailure, match="cannot be safely"):
+        recovery.read_private_recovery_receipt(alias)
+
+    state.write_text('{"run_id":"a","run_id":"b"}', encoding="utf-8")
+    with pytest.raises(recovery.RecoveryFailure, match="duplicate"):
+        recovery.read_private_recovery_receipt(state)
+
+    state.write_text('{"event":NaN}', encoding="utf-8")
+    with pytest.raises(recovery.RecoveryFailure, match="non-finite"):
+        recovery.read_private_recovery_receipt(state)
+
+    state.write_text('["not an object"]', encoding="utf-8")
+    with pytest.raises(recovery.RecoveryFailure, match="JSON object"):
+        recovery.read_private_recovery_receipt(state)
