@@ -23,9 +23,14 @@ from urllib.parse import urlparse
 import httpx
 
 from scripts.staging_release_evidence import write_private_json
+from scripts.staging_prerequisite_preflight import EXPECTED_AUTH_ISSUER, EXPECTED_S3_ENDPOINT
 from scripts.staging_release_freeze import canonical_sha256, clean_origin, valid_sha
 from services.coworker.config import Settings
 
+
+# API origin read back from the actual Rumman Render staging service on 22 Nov 2026.
+# A different custom domain requires a new independently reviewed release decision.
+EXPECTED_STAGING_API_ORIGIN = "https://shuddho-api-staging.onrender.com"
 
 NEW_RUNTIME_CAPABILITIES = frozenset({
     "conversations", "projects", "fly_github", "conversation_replies",
@@ -46,6 +51,22 @@ def require_guard() -> None:
         raise Day2Failure(
             "Day 2 exercise requires both explicit staging and synthetic-account guards."
         )
+
+
+def require_approved_staging_destinations(
+    *, api_origin: str, auth_issuer: str, storage_endpoint: str
+) -> None:
+    """Reject off-project credential destinations before connecting to any service.
+
+    This is a static approval check. It cannot replace TLS, DNS, runtime
+    identity, private bucket readback, or independent hosted verification.
+    """
+    if api_origin != EXPECTED_STAGING_API_ORIGIN:
+        raise Day2Failure("Day 2 API origin must match the reviewed Rumman Render staging service.")
+    if auth_issuer != EXPECTED_AUTH_ISSUER:
+        raise Day2Failure("Day 2 Auth issuer must match the approved Supabase staging project.")
+    if storage_endpoint != EXPECTED_S3_ENDPOINT:
+        raise Day2Failure("Day 2 private storage endpoint must match the approved Supabase staging S3 resource.")
 
 
 def check_release(freeze: object) -> dict:
@@ -162,15 +183,15 @@ def _managed_identity_claims(
     return subject, account_id
 
 
-def require_distinct_owners(
-    client: httpx.Client,
+def _prevalidate_managed_owners(
     token_a: str,
     token_b: str,
     *,
     expected_issuer: str,
     expected_audience: str,
     minimum_validity_seconds: int,
-) -> dict:
+) -> tuple[str, str]:
+    """Check both owner tokens locally before sending either bearer over HTTP."""
     if not token_a or not token_b or token_a == token_b:
         raise Day2Failure("Two distinct synthetic access tokens are required.")
     subject_a, expected_account_a = _managed_identity_claims(
@@ -183,6 +204,24 @@ def require_distinct_owners(
     )
     if subject_a == subject_b:
         raise Day2Failure("Two distinct managed synthetic subjects are required.")
+    return expected_account_a, expected_account_b
+
+
+def require_distinct_owners(
+    client: httpx.Client,
+    token_a: str,
+    token_b: str,
+    *,
+    expected_issuer: str,
+    expected_audience: str,
+    minimum_validity_seconds: int,
+) -> dict:
+    # No API calls until BOTH owner tokens have passed local claim checks.
+    expected_account_a, expected_account_b = _prevalidate_managed_owners(
+        token_a, token_b, expected_issuer=expected_issuer,
+        expected_audience=expected_audience,
+        minimum_validity_seconds=minimum_validity_seconds,
+    )
     me_a = obj(checked(client.get("/api/v1/me", headers=bearer(token_a)), 200, "owner A identity"), "owner A identity")
     me_b = obj(checked(client.get("/api/v1/me", headers=bearer(token_b)), 200, "owner B identity"), "owner B identity")
     if (
@@ -419,13 +458,16 @@ def run_probe(
         if not is_pdf or expected_source_anchor not in _extract_pdf_text(source, "Selected source PDF"):
             raise Day2Failure("Selected synthetic PDF does not contain the expected source marker.")
 
-    attest_runtime(client, token_a, freeze)
+    # /me validates the approved JWTs and binds their subjects to the API.
+    # Validate BOTH local tokens first: runtime-manifest must not get an
+    # unchecked Authorization header even for a read-only request.
     identity_claims = require_distinct_owners(
         client, token_a, token_b,
         expected_issuer=expected_auth_issuer,
         expected_audience=expected_auth_audience,
         minimum_validity_seconds=timeout_seconds + 30,
     )
+    attest_runtime(client, token_a, freeze)
     a, b = bearer(token_a), bearer(token_b)
 
     # Fail closed before creating documents or tasks if the reverse-direction
@@ -766,12 +808,20 @@ def main() -> None:
             or not settings.chat_provider_configured
         ):
             raise Day2Failure("Operator runtime does not match staging source, private S3 or configured model.")
+        # Pin all three credential destinations before any outbound request.
+        origin = clean_origin(os.getenv("SHUDDHO_STAGING_API_BASE_URL", ""))
+        require_approved_staging_destinations(
+            api_origin=origin,
+            auth_issuer=settings.auth_issuer,
+            storage_endpoint=settings.storage_endpoint or "",
+        )
         token_a = os.getenv("SHUDDHO_STAGING_TOKEN_A", "")
         token_b = os.getenv("SHUDDHO_STAGING_TOKEN_B", "")
-        require_distinct = bool(token_a and token_b and token_a != token_b)
-        if not require_distinct:
-            raise Day2Failure("Two distinct approved synthetic staging tokens are required.")
-        origin = clean_origin(os.getenv("SHUDDHO_STAGING_API_BASE_URL", ""))
+        _prevalidate_managed_owners(
+            token_a, token_b, expected_issuer=settings.auth_issuer,
+            expected_audience=settings.auth_audience,
+            minimum_validity_seconds=args.timeout + 30,
+        )
         # Operator-only dependency: lightweight contract tests have no Auth/Temporal extras.
         from services.coworker.container import Container
 

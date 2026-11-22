@@ -29,6 +29,16 @@ This is a static fail-closed preflight, not proof of DNS, TLS, connected
 provider identity, correct storage ownership or live owner isolation. The
 operator must still inspect the actual hosted credentials and API/worker
 bindings privately before sending tokens or provisioning resources.
+
+The Day 2 private-PDF operator (`scripts/staging_day2_execution.py`) independently
+requires the reviewed `https://shuddho-api-staging.onrender.com` API origin,
+those exact approved Auth/S3 destinations, and locally validates **both**
+managed synthetic owner JWT claim sets *before its first API request or database
+connection*. It then binds both JWT subjects to the authenticated `/api/v1/me`
+responses before reading the frozen runtime manifest. Local JWT claim decoding
+is **not** signature validation: the hosted API must verify both signatures,
+issuer, audience and expiry, and operator D must check the real identity and
+private artifact evidence. Neither this code nor CI proves live staging PASS.
 Use the connection settings from that
 project's Connect panel with the `shuddho_staging_runtime` login, project
 reference in the username and port 5432. Set `sslmode=verify-full` and
