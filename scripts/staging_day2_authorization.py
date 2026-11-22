@@ -285,3 +285,121 @@ def reconcile_authorization(
         "max_provider_attempts": max_calls,
         "required_independent_verification": True,
     }
+
+
+def preflight_restored_destination(
+    authorization: object,
+    *,
+    source_revision: str,
+    release_id: str,
+    rollout_manifest_sha256: str,
+    source_api_origin: str,
+    restored_api_origin: str,
+    target_database_fingerprint: str,
+    target_storage_fingerprint: str,
+    now: datetime | None = None,
+) -> str:
+    """Check the *recorded* Founder/C destination before any owner bearer is sent.
+
+    Unlike final release reconciliation, this is a pretransmission boundary.
+    The protected approval's exact isolated API SHA, database and storage
+    fingerprints are checked against the intended operator destination.
+    An operator-written JSON is NOT independent proof of actual consent;
+    reviewer D must still verify original Founder/C decisions and providers.
+    """
+    from scripts.staging_api_exercise import ExerciseFailure, require_https_base
+    from scripts.staging_day2_execution import EXPECTED_STAGING_API_ORIGIN
+
+    receipt = _object(authorization, _ROOT_FIELDS, "receipt")
+    if (
+        type(receipt.get("schema_version")) is not int
+        or receipt["schema_version"] != 1
+        or receipt.get("status") != "operator_recorded"
+        or receipt.get("environment") != "staging"
+    ):
+        raise AuthorizationEvidenceFailure("Restored API requires a protected staging-only operator-recorded decision.")
+    if (
+        _reference(receipt.get("release_id"), "release_id") != release_id
+        or _reference(receipt.get("source_revision"), "source_revision") != source_revision
+        or _REVISION.fullmatch(source_revision) is None
+        or _digest(receipt.get("rollout_manifest_sha256"), "rollout_manifest_sha256")
+        != _digest(rollout_manifest_sha256, "current rollout_manifest_sha256")
+    ):
+        raise AuthorizationEvidenceFailure("Restored API approval does not match the current frozen release.")
+    for key in ("provider_policy_sha256",):
+        _digest(receipt.get(key), key)
+    for key in ("build_reference", "deployment_reference"):
+        _reference(receipt.get(key), key)
+    hosting = _object(receipt.get("hosting"), _HOSTING_FIELDS, "hosting")
+    for key, value in hosting.items():
+        _reference(value, "hosting." + key)
+    if (
+        hosting["provider"] != "Render"
+        or hosting["workspace_reference"] != "tea-d6ok4okhg0os73erkdv0"
+        or hosting["api_service_reference"] != "srv-dav98otg1s2s73cod4gg"
+        or hosting["worker_service_reference"] == hosting["api_service_reference"]
+        or "production" in hosting["worker_service_reference"].lower()
+    ):
+        raise AuthorizationEvidenceFailure("Restored API authorization is not for the reviewed Render staging services.")
+    try:
+        source = require_https_base(source_api_origin)
+        restored = require_https_base(restored_api_origin)
+    except ExerciseFailure:
+        raise AuthorizationEvidenceFailure("Restored API requires exact clean public HTTPS origins.") from None
+    if source != EXPECTED_STAGING_API_ORIGIN or source == restored:
+        raise AuthorizationEvidenceFailure("Source API origin is not the reviewed staging API or restore is not isolated.")
+
+    targets = _object(receipt.get("isolated_restore"), {
+        "database_fingerprint", "storage_fingerprint", "api_origin_sha256",
+    }, "isolated_restore")
+    approved_api_sha = _digest(targets["api_origin_sha256"], "isolated_restore.api_origin_sha256")
+    if (
+        _digest(targets["database_fingerprint"], "isolated_restore.database_fingerprint")
+        != _digest(target_database_fingerprint, "target_database_fingerprint")
+        or _digest(targets["storage_fingerprint"], "isolated_restore.storage_fingerprint")
+        != _digest(target_storage_fingerprint, "target_storage_fingerprint")
+        or approved_api_sha != hashlib.sha256(restored.encode("utf-8")).hexdigest()
+    ):
+        raise AuthorizationEvidenceFailure("Isolated API, PostgreSQL or object-storage target is not approved.")
+
+    budget = _object(receipt.get("budget"), {
+        "currency", "max_spend_minor_units", "maximum_duration_minutes", "max_provider_attempts",
+    }, "budget")
+    if not isinstance(budget["currency"], str) or _CURRENCY.fullmatch(budget["currency"]) is None:
+        raise AuthorizationEvidenceFailure("Restored API approval budget currency is invalid.")
+    _bounded_int(budget["max_spend_minor_units"], "max_spend_minor_units", 1_000_000_000)
+    max_duration = _bounded_int(budget["maximum_duration_minutes"], "maximum_duration_minutes", 10_080)
+    _bounded_int(budget["max_provider_attempts"], "max_provider_attempts", 100_000)
+
+    rollback = _object(receipt.get("rollback"), {
+        "owner_reference", "procedure_reference",
+    }, "rollback")
+    for key, value in rollback.items():
+        _reference(value, "rollback." + key)
+
+    approvals = _object(receipt.get("approvals"), {"founder", "operator_c"}, "approvals")
+    signatures = []
+    approval_times = []
+    for key in ("founder", "operator_c"):
+        decision = _object(approvals[key], {
+            "decision", "approved_at", "reference",
+        }, "approvals." + key)
+        if decision["decision"] != "approved":
+            raise AuthorizationEvidenceFailure("Restored API requires both Founder and C dated decisions.")
+        signatures.append(_reference(decision["reference"], "approvals." + key + ".reference"))
+        approval_times.append(_time(decision["approved_at"], "approvals." + key + ".approved_at"))
+    if signatures[0] == signatures[1]:
+        raise AuthorizationEvidenceFailure("Founder and C decisions must have distinct original references.")
+    start, end = _time(receipt.get("valid_from"), "valid_from"), _time(receipt.get("valid_until"), "valid_until")
+    checked_at = now or datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        raise AuthorizationEvidenceFailure("Restore approval preflight clock must include a timezone.")
+    checked_at = checked_at.astimezone(timezone.utc)
+    if (
+        not all(t <= start for t in approval_times)
+        or not start <= checked_at <= end
+        or not 0 < (end - start).total_seconds() <= max_duration * 60
+    ):
+        raise AuthorizationEvidenceFailure("Restored API is outside the dated Founder/C authorization window.")
+
+    return approved_api_sha
