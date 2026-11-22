@@ -27,6 +27,7 @@ from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.models import AgentOutbox, AgentRun, AgentStep, Artifact, Outbox, Task
+from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 from services.coworker.workflow import AgentWorkflowV2
 
 REQUIRED_FLAGS = (
@@ -223,6 +224,16 @@ def validate_worker_replacement(
     before_heartbeat = parse_utc(before.get("heartbeat_at", ""))
     if before_heartbeat < before_started or before_started >= restart_at:
         raise RecoveryFailure("Pre-restart worker was not registered before the restart event.")
+    # The prepare receipt snapshots the OLD worker. A later platform event
+    # cannot treat that snapshot as proof of an active poller when its last
+    # heartbeat is older than the SAME registry TTL used for live-worker
+    # inventory. A future-dated heartbeat also cannot prove interruption.
+    if (before_started > active_start
+            or before_heartbeat > restart_at
+            or (restart_at - before_heartbeat).total_seconds() > WORKER_HEARTBEAT_TTL_SECONDS):
+        raise RecoveryFailure(
+            "Pre-restart worker heartbeat was stale, future-dated or registered after active work began."
+        )
 
     after = require_active_worker(current, revision=revision, task_queue=task_queue)
     if after["id"] == previous_id:
