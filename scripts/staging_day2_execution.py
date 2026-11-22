@@ -28,6 +28,10 @@ from scripts.staging_release_freeze import canonical_sha256, clean_origin, valid
 from services.coworker.config import Settings
 
 
+# API origin read back from the actual Rumman Render staging service on 22 Nov 2026.
+# A different custom domain requires a new independently reviewed release decision.
+EXPECTED_STAGING_API_ORIGIN = "https://shuddho-api-staging.onrender.com"
+
 NEW_RUNTIME_CAPABILITIES = frozenset({
     "conversations", "projects", "fly_github", "conversation_replies",
     "agent_browser_read", "reviewed_research",
@@ -49,12 +53,16 @@ def require_guard() -> None:
         )
 
 
-def require_approved_staging_destinations(*, auth_issuer: str, storage_endpoint: str) -> None:
+def require_approved_staging_destinations(
+    *, api_origin: str, auth_issuer: str, storage_endpoint: str
+) -> None:
     """Reject off-project credential destinations before connecting to any service.
 
     This is a static approval check. It cannot replace TLS, DNS, runtime
     identity, private bucket readback, or independent hosted verification.
     """
+    if api_origin != EXPECTED_STAGING_API_ORIGIN:
+        raise Day2Failure("Day 2 API origin must match the reviewed Rumman Render staging service.")
     if auth_issuer != EXPECTED_AUTH_ISSUER:
         raise Day2Failure("Day 2 Auth issuer must match the approved Supabase staging project.")
     if storage_endpoint != EXPECTED_S3_ENDPOINT:
@@ -800,9 +808,10 @@ def main() -> None:
             or not settings.chat_provider_configured
         ):
             raise Day2Failure("Operator runtime does not match staging source, private S3 or configured model.")
-        # Pin credential destinations and reject both bad JWTs before the
-        # first external request or database connection.
+        # Pin all three credential destinations before any outbound request.
+        origin = clean_origin(os.getenv("SHUDDHO_STAGING_API_BASE_URL", ""))
         require_approved_staging_destinations(
+            api_origin=origin,
             auth_issuer=settings.auth_issuer,
             storage_endpoint=settings.storage_endpoint or "",
         )
@@ -813,7 +822,6 @@ def main() -> None:
             expected_audience=settings.auth_audience,
             minimum_validity_seconds=args.timeout + 30,
         )
-        origin = clean_origin(os.getenv("SHUDDHO_STAGING_API_BASE_URL", ""))
         # Operator-only dependency: lightweight contract tests have no Auth/Temporal extras.
         from services.coworker.container import Container
 
