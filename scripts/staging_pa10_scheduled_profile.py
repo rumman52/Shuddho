@@ -498,11 +498,25 @@ def verify(args: argparse.Namespace) -> dict:
                     raise ScheduledProfileProbeFailure(
                         "Scheduled-profile occurrence is missing its occurrence/run identity."
                     )
-                notices = [
+                # Count every *new* notice from this automation before
+                # narrowing to the expected occurrence. Otherwise a notice
+                # linked to an unexpected/duplicate occurrence is silently
+                # hidden and the daily "one owner delivery" probe can pass.
+                new_automation_notices = [
                     item for item in current["notifications"]
                     if str(item.get("id") or "") not in old_notices
                     and str(item.get("automation_id") or "") == str(state["automation_id"])
-                    and str(item.get("occurrence_id") or "") == occurrence_id
+                ]
+                if scenario == "daily_coworker" and (
+                    len(new_automation_notices) != 1
+                    or str(new_automation_notices[0].get("occurrence_id") or "") != occurrence_id
+                ):
+                    raise ScheduledProfileProbeFailure(
+                        "Daily briefing has an unexpected new notification for the automation."
+                    )
+                notices = [
+                    item for item in new_automation_notices
+                    if str(item.get("occurrence_id") or "") == occurrence_id
                 ]
                 notification_evidence = {}
                 if state.get("run_profile") == "briefing":
