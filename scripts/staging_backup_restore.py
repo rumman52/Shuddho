@@ -11,7 +11,9 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 
-from scripts.staging_api_exercise import ExerciseFailure, env_secret, require_https_base
+from scripts.staging_api_exercise import (
+    ExerciseFailure, env_secret, require_https_base, verified_staging_owner,
+)
 from scripts.staging_day2_archive_attestation import (
     ArchiveAttestationFailure, attest_archives,
 )
@@ -46,27 +48,16 @@ def require_guard(name: str) -> None:
 
 
 def resolve_owner() -> str:
-    base_url = require_https_base(env_secret("SHUDDHO_STAGING_API_BASE_URL"))
-    token = env_secret("SHUDDHO_STAGING_TOKEN_A")
+    """Require the pinned live API to bind the managed owner before restore writes."""
     try:
-        response = httpx.get(
-            base_url + "/api/v1/me",
-            headers={"Authorization": "Bearer " + token},
-            timeout=20,
-            follow_redirects=False,
+        return verified_staging_owner(
+            env_secret("SHUDDHO_STAGING_TOKEN_A"),
+            origin=env_secret("SHUDDHO_STAGING_API_BASE_URL"),
         )
-    except httpx.HTTPError as error:
-        raise BackupRestoreFailure(f"Staging /me request failed: {type(error).__name__}") from None
-    if response.status_code != 200:
-        raise BackupRestoreFailure(f"Staging /me returned HTTP {response.status_code}.")
-    try:
-        value = response.json()
-    except ValueError:
-        raise BackupRestoreFailure("Staging /me did not return JSON.") from None
-    owner = value.get("account_id") if isinstance(value, dict) else None
-    if not isinstance(owner, str) or not owner:
-        raise BackupRestoreFailure("Staging /me did not return an account id.")
-    return owner
+    except ExerciseFailure:
+        raise BackupRestoreFailure(
+            "Managed staging owner cannot be verified for backup/restore."
+        ) from None
 
 
 def stable_hash(value: str) -> str:
