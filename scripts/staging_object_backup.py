@@ -133,7 +133,10 @@ def _private_bytes(path: Path, data: bytes) -> None:
             output.flush()
             os.fsync(output.fileno())
     except OSError:
-        raise ObjectArchiveError("Could not cdef _read_private_bytes(
+        raise ObjectArchiveError("Could not create an exclusive private archive object file.") from None
+
+
+def _read_private_bytes(
     path: Path, size: int | None, *, dir_fd: int | None = None,
     limit: int | None = None,
 ) -> bytes:
@@ -210,9 +213,6 @@ def _strict_manifest_json(raw: bytes) -> dict:
                           parse_constant=reject_constant, parse_float=finite_float)
     except (UnicodeError, ValueError, TypeError, OverflowError):
         raise ObjectArchiveError("Source object manifest cannot be parsed.") from None
-ject byte size differs from its manifest.")
-    return result
-
 
 def archive_store(store, source_fingerprint: str, directory: Path, *, allow_empty_baseline: bool = False) -> dict:
     """Take a source inventory and copy every private object's exact bytes."""
