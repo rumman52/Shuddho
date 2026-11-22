@@ -17,6 +17,7 @@ from scripts.staging_day2_authorization import (
     AuthorizationEvidenceFailure, read_private_authorization,
     reconcile_authorization,
 )
+from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 
 
 class Day2AcceptanceFailure(RuntimeError):
@@ -265,8 +266,12 @@ def validate_evidence(
         raise Day2AcceptanceFailure("Recovery did not replace a worker during the same active Agent run.")
     before_heartbeat = _time(effect.get("worker_before_heartbeat_at"), "recovery_outbox.worker_before_heartbeat_at")
     after_heartbeat = _time(effect.get("worker_after_heartbeat_at"), "recovery_outbox.worker_after_heartbeat_at")
-    if before_heartbeat > restarted or after_heartbeat <= replacement_started:
-        raise Day2AcceptanceFailure("Worker heartbeat chronology does not corroborate replacement.")
+    if (before_heartbeat > restarted
+            or (restarted - before_heartbeat).total_seconds() > WORKER_HEARTBEAT_TTL_SECONDS
+            or after_heartbeat <= replacement_started):
+        raise Day2AcceptanceFailure(
+            "Worker heartbeat chronology or pre-restart freshness does not corroborate replacement."
+        )
     if effect.get("agent_outbox_delivered") is not True:
         raise Day2AcceptanceFailure("The parent AgentRun outbox delivery was not attested.")
     children = effect.get("completed_children")
