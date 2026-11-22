@@ -15,7 +15,7 @@ from scripts.staging_api_exercise import (
     ExerciseFailure, env_secret, require_https_base, verified_staging_owner,
 )
 from scripts.staging_day2_archive_attestation import (
-    ArchiveAttestationFailure, attest_archives,
+    ArchiveAttestationFailure, _private_json, attest_archives,
 )
 from scripts.staging_preseed_baseline import (
     PreseedBaselineFailure, attest_preseed_baseline, require_unchanged_source,
@@ -276,9 +276,11 @@ def verify(
     require_guard("SHUDDHO_STAGING_ALLOW_BACKUP_RESTORE_EXERCISE")
     if not backup_reference.strip() or not restore_reference.strip():
         raise BackupRestoreFailure("Both backup and restore evidence references are required.")
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise BackupRestoreFailure("Backup/restore state file must be a JSON object.")
+    # Validate local inputs and a writable private output *before* opening the
+    # restored database, storage, or sending the managed owner tokens.
+    _preflight_private_json_destination(evidence_path)
+    state = _private_json(state_path, "Prepared backup/restore state")
+    base_fields = _private_json(base_evidence, "Prior staging evidence") if base_evidence else {}
     required = {"release_context", "owner_id", "document_id", "version_id", "task_id", "sha256", "byte_size", "source_fingerprints"}
     if not required.issubset(state):
         raise BackupRestoreFailure("Backup/restore state file is incomplete.")
@@ -434,12 +436,7 @@ def verify(
                 expected_audience=settings.auth_audience,
             )
 
-        base = {}
-        if base_evidence:
-            value = json.loads(base_evidence.read_text(encoding="utf-8"))
-            if not isinstance(value, dict):
-                raise BackupRestoreFailure("Base staging evidence must be a JSON object.")
-            base.update(value)
+        base = dict(base_fields)
         backup_ref = backup_reference.strip()[:200]
         restore_ref = restore_reference.strip()[:200]
         base["archive_integrity"] = integrity
