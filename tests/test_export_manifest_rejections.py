@@ -393,6 +393,74 @@ def test_day6_research_native_docx_must_contain_exact_selected_finding_and_quote
 
 
 @pytest.mark.parametrize("language", ("en", "bn"))
+@pytest.mark.parametrize("skill_id", ("research", "report_email"))
+@pytest.mark.parametrize("hidden_external", ("orphan_hyperlink", "attached_template"))
+def test_day6_native_docx_rejects_hidden_external_relationships(
+    language, skill_id, hidden_external
+):
+    """D06.T05/07: Word must have no remote relationships beyond reviewed source links."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from coworker_samples import work_draft
+    from test_coworker import draft as report_draft
+    from services.coworker.exports import validate_day6_exports
+
+    if skill_id == "research":
+        package = work_draft("research", language)
+        sources = [{
+            "id": "web-1", "kind": "web", "label": "Original study",
+            "url": "https://example.org/study",
+            "retrieved_at": "2026-11-18T02:00:00Z",
+            "source_date": None, "sha256": "a" * 64,
+        }]
+        filename = "research-report.docx"
+    else:
+        package = report_draft(language)
+        sources = [{"id": "notes", "label": "Provided notes"}]
+        filename = "report.docx"
+
+    outputs = render_in_subprocess(package, sources, skill_id=skill_id)
+    validate_day6_exports(skill_id, package, outputs, expected_sources=sources)
+    altered = []
+    for name, content_type, body in outputs:
+        if name == filename:
+            document = Document(io.BytesIO(body))
+            original_paragraphs = [p.text for p in document.paragraphs]
+            if hidden_external == "orphan_hyperlink":
+                # An extra DOCX relationship is invisible in document paragraphs.
+                document.part.relate_to(
+                    "https://unapproved.example/collect?from=report",
+                    RT.HYPERLINK, is_external=True,
+                )
+            else:
+                # A real attached-template reference is stored under
+                # settings.xml and is not covered by document.xml hyperlinks.
+                remote = document.part._settings_part.relate_to(
+                    "https://unapproved.example/template.dotx",
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate",
+                    is_external=True,
+                )
+                node = OxmlElement("w:attachedTemplate")
+                node.set(qn("r:id"), remote)
+                document.settings.element.append(node)
+            changed = io.BytesIO()
+            document.save(changed)
+            body = changed.getvalue()
+            reopened = Document(io.BytesIO(body))
+            assert [p.text for p in reopened.paragraphs] == original_paragraphs
+            assert any(
+                rel.is_external and rel.target_ref.startswith("https://unapproved.example/")
+                for part in reopened.part.package.parts
+                for rel in part.rels.values()
+            ), "Fixture must contain a real, parseable, hidden external relationship"
+        altered.append((name, content_type, body))
+
+    with pytest.raises(ValueError, match="DOCX"):
+        validate_day6_exports(skill_id, package, altered, expected_sources=sources)
+
+
+@pytest.mark.parametrize("language", ("en", "bn"))
 @pytest.mark.parametrize("tamper", (
     "append_unsupported_claim", "duplicate_finding", "rewrite_retrieval_date",
     "redirect_source_hyperlink",
