@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import stat
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -33,13 +35,70 @@ def require_revision(value: object) -> str:
     return value
 
 
-def release_context(settings, rollout_path: Path) -> dict:
+MAX_ROLLOUT_MANIFEST_BYTES = 1_048_576
+
+
+def _read_rollout_manifest(path: Path) -> tuple[object, str]:
+    """Parse and hash the same bounded regular file bytes; never reopen the path."""
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise StagingReleaseEvidenceError("Secure no-follow rollout reading is unavailable")
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        rollout = json.loads(rollout_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        descriptor = os.open(path, flags)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_ROLLOUT_MANIFEST_BYTES:
+                raise StagingReleaseEvidenceError("Rollout manifest must be a bounded regular file")
+            remaining = MAX_ROLLOUT_MANIFEST_BYTES + 1
+            parts: list[bytes] = []
+            while remaining:
+                part = os.read(descriptor, min(65536, remaining))
+                if not part:
+                    break
+                parts.append(part)
+                remaining -= len(part)
+        finally:
+            os.close(descriptor)
+    except OSError as error:
         raise StagingReleaseEvidenceError(
             f"Could not read rollout manifest: {type(error).__name__}"
         ) from None
+    raw = b"".join(parts)
+    if len(raw) > MAX_ROLLOUT_MANIFEST_BYTES:
+        raise StagingReleaseEvidenceError("Rollout manifest exceeds byte bound")
+
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict:
+        out = {}
+        for key, value in pairs:
+            if key in out:
+                raise StagingReleaseEvidenceError("Duplicate rollout manifest JSON field")
+            out[key] = value
+        return out
+
+    def reject_constant(_value: str) -> None:
+        raise StagingReleaseEvidenceError("Rollout manifest has non-finite JSON value")
+
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise StagingReleaseEvidenceError("Rollout manifest has non-finite JSON number")
+        return number
+
+    try:
+        rollout = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=unique_fields,
+            parse_constant=reject_constant, parse_float=finite_float,
+        )
+    except (UnicodeError, ValueError, TypeError) as error:
+        raise StagingReleaseEvidenceError(
+            f"Invalid rollout manifest: {type(error).__name__}"
+        ) from None
+    return rollout, hashlib.sha256(raw).hexdigest()
+
+
+def release_context(settings, rollout_path: Path) -> dict:
+    rollout, rollout_digest = _read_rollout_manifest(rollout_path)
     if not isinstance(rollout, dict):
         raise StagingReleaseEvidenceError("Rollout manifest must contain a JSON object.")
     release_id = rollout.get("release_id")
@@ -49,7 +108,7 @@ def release_context(settings, rollout_path: Path) -> dict:
     return {
         "release_id": release_id.strip(),
         "source_revision": source_revision,
-        "rollout_manifest_sha256": sha256_file(rollout_path),
+        "rollout_manifest_sha256": rollout_digest,
     }
 
 

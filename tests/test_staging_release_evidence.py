@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -47,6 +48,62 @@ def test_release_context_binds_rollout_and_deployed_revision(tmp_path):
     assert record["exercise_started_at"] == "2026-09-30T11:30:00+00:00"
     assert record["verified_at"] == "2026-09-30T12:00:00+00:00"
     assert record["source_revision"] == "a" * 40
+
+
+
+def test_release_context_digest_is_of_exact_parsed_rollout_bytes(tmp_path, monkeypatch):
+    """A manifest rewritten just before the former second read must not relabel its digest."""
+    rollout = tmp_path / "rollout.json"
+    original = json.dumps({"release_id": "first-reviewed-release"}).encode("utf-8")
+    changed = json.dumps({"release_id": "second-unreviewed-release"}).encode("utf-8")
+    rollout.write_bytes(original)
+
+    real_open = type(rollout).open
+    switched = False
+
+    def change_at_later_open(self, mode="r", *args, **kwargs):
+        nonlocal switched
+        if self == rollout and mode == "rb":
+            switched = True
+            rollout.write_bytes(changed)
+        return real_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(type(rollout), "open", change_at_later_open)
+    context = release_context(SimpleNamespace(source_revision="a" * 40), rollout)
+    assert context["release_id"] == "first-reviewed-release"
+    assert context["rollout_manifest_sha256"] == hashlib.sha256(original).hexdigest()
+
+
+def test_release_context_rejects_rollout_symlink(tmp_path):
+    actual = tmp_path / "actual.json"
+    actual.write_text(json.dumps({"release_id": "release"}), encoding="utf-8")
+    rollout = tmp_path / "rollout.json"
+    rollout.symlink_to(actual)
+    with pytest.raises(StagingReleaseEvidenceError, match="rollout|manifest|regular|link"):
+        release_context(SimpleNamespace(source_revision="a" * 40), rollout)
+
+
+def test_release_context_rejects_oversized_rollout(tmp_path):
+    rollout = tmp_path / "rollout.json"
+    rollout.write_text(
+        json.dumps({"release_id": "release", "padding": "x" * 2_100_000}),
+        encoding="utf-8",
+    )
+    with pytest.raises(StagingReleaseEvidenceError, match="rollout|manifest|size|bound"):
+        release_context(SimpleNamespace(source_revision="a" * 40), rollout)
+
+
+@pytest.mark.parametrize("raw", [
+    '{"release_id":"first","release_id":"second"}',
+    '{"release_id":"valid","metadata":{"first":1,"first":2}}',
+    '{"release_id":"valid","unrelated":NaN}',
+    '{"release_id":"valid","unrelated":1e999}',
+])
+def test_release_context_rejects_ambiguous_or_nonfinite_rollout(tmp_path, raw):
+    rollout = tmp_path / "rollout.json"
+    rollout.write_text(raw, encoding="utf-8")
+    with pytest.raises(StagingReleaseEvidenceError, match="rollout|manifest|duplicate|finite"):
+        release_context(SimpleNamespace(source_revision="a" * 40), rollout)
 
 
 def test_release_context_rejects_missing_revision(tmp_path):
