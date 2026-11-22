@@ -28,7 +28,9 @@ def evidence(day: int, version: str) -> dict:
         "verified_at": f"2026-11-{day:02d}T02:07:00+00:00",
         "occurrence_id": f"occ-{day}", "due_at": due, "run_id": f"run-{day}",
         "run_state": "completed",
-        "completion_notification_id": f"completed-{day}", "new_notification_count": 1,
+        "completion_notification_id": f"completed-{day}",
+        "new_occurrence_count": 1, "new_run_count": 1,
+        "new_notification_count": 1,
         "input_version_ids": [version], "document_ids": ["doc-1"],
         "authorized_document_ids": ["doc-1"], "goal_id": "goal-1", "goal_revision": 1,
         "project_id": "project-1",
@@ -793,3 +795,30 @@ def test_day7_cli_failed_atomic_commit_preserves_previous_report(monkeypatch, tm
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         "first.json", "pause.json", "private-day7.json", "second.json",
     ]
+
+
+@pytest.mark.parametrize("day_index", [0, 1])
+@pytest.mark.parametrize(("field", "bad_value"), [
+    ("new_occurrence_count", None),
+    ("new_occurrence_count", 0),
+    ("new_occurrence_count", 2),
+    ("new_occurrence_count", True),
+    ("new_occurrence_count", "1"),
+    ("new_run_count", None),
+    ("new_run_count", 0),
+    ("new_run_count", 2),
+    ("new_run_count", True),
+    ("new_run_count", "1"),
+])
+def test_day7_gate_refuses_missing_or_invalid_daily_occurrence_and_run_counts(
+    day_index, field, bad_value,
+):
+    """One receipt ID cannot conceal zero or duplicate admitted work."""
+    first, second, paused = valid_pair()
+    day = (first, second)[day_index]
+    if bad_value is None:
+        day.pop(field)
+    else:
+        day[field] = bad_value
+    with pytest.raises(GateFailure, match="one new occurrence|one new run"):
+        verify_two_day(first, second, paused)
