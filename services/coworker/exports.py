@@ -149,8 +149,22 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
         if skill_id == "report_email":
             if text_content != expected_email_text:
                 raise ValueError("Email draft bytes differ from the reviewed unsent subject and body")
-        elif title not in text_content or any(heading not in text_content for heading in headings):
-            raise ValueError("Research text is missing its title or expected headings")
+        else:
+            # Research text is a first-class downloadable artifact. Checking
+            # only title/headings would permit substituted findings, invented
+            # evidence quotations, removed source metadata or appended claims
+            # while its PDF/DOCX and manifest remained unchanged. Recreate the
+            # canonical block sequence from the reviewed draft and authorized
+            # source snapshot instead of trusting the renderer's text bytes.
+            from .work_exports import content_blocks, serialize_work_text
+
+            research_title, research_blocks = content_blocks(draft, expected_sources)
+            if research_title != title or text_content != serialize_work_text(
+                research_title, research_blocks
+            ):
+                raise ValueError(
+                    "Research text differs from the reviewed findings, citations, or sources"
+                )
 
         manifest = json.loads(rows["source-manifest.json"].decode("utf-8"))
         if not isinstance(manifest, dict) or not isinstance(manifest.get("sources"), list):
