@@ -17,6 +17,9 @@ from scripts.staging_api_exercise import (
 from scripts.staging_day2_archive_attestation import (
     ArchiveAttestationFailure, _private_json, attest_archives,
 )
+from scripts.staging_day2_authorization import (
+    AuthorizationEvidenceFailure, preflight_restored_destination, read_private_authorization,
+)
 from scripts.staging_preseed_baseline import (
     PreseedBaselineFailure, attest_preseed_baseline, require_unchanged_source,
     read_original_attestation, require_same_source_resources,
@@ -264,6 +267,7 @@ def verify(
     evidence_path: Path,
     base_evidence: Path | None,
     *,
+    authorization_path: Path | None = None,
     postgres_verification: Path | None = None,
     postgres_archive: Path | None = None,
     object_archive: Path | None = None,
@@ -414,6 +418,28 @@ def verify(
             raise BackupRestoreFailure(
                 "Isolated restored API must not be the live source API origin."
             )
+        if authorization_path is None:
+            raise BackupRestoreFailure(
+                "Protected Founder/C restored API destination authorization is required before any bearer request."
+            )
+        try:
+            # A different public HTTPS URL is not authorization to receive
+            # either managed owner token. Verify the private approved origin
+            # hash and both distinct DB/S3 targets BEFORE opening HTTP.
+            approved_api_sha = preflight_restored_destination(
+                read_private_authorization(authorization_path),
+                source_revision=context["source_revision"],
+                release_id=context["release_id"],
+                rollout_manifest_sha256=context["rollout_manifest_sha256"],
+                source_api_origin=source_api_origin,
+                restored_api_origin=restored_api_origin,
+                target_database_fingerprint=target["database"],
+                target_storage_fingerprint=target["storage"],
+            )
+        except AuthorizationEvidenceFailure:
+            raise BackupRestoreFailure(
+                "Restored API destination does not match the protected Founder/C decision."
+            ) from None
         with httpx.Client(
             base_url=restored_api_origin,
             timeout=20,
@@ -426,6 +452,7 @@ def verify(
                 os.environ["SHUDDHO_STAGING_TOKEN_B"],
                 source_origin=source_api_origin,
                 restored_origin=restored_api_origin,
+                approved_restored_origin_sha256=approved_api_sha,
                 expected_owner_id=owner,
                 document_id=document_id,
                 task_id=task_id,
@@ -464,6 +491,10 @@ def main() -> None:
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--backup-reference", required=True)
     verify_parser.add_argument("--restore-reference", required=True)
+    verify_parser.add_argument(
+        "--authorization", type=Path, required=True,
+        help="Protected 0600 Founder/C decision for the exact isolated DB/S3/API targets.",
+    )
     verify_parser.add_argument("--postgres-verification", type=Path, required=True)
     verify_parser.add_argument("--postgres-archive", type=Path, required=True)
     verify_parser.add_argument("--object-archive-directory", type=Path, required=True)
@@ -511,6 +542,7 @@ def main() -> None:
                 postgres_archive=args.postgres_archive,
                 object_archive=args.object_archive_directory,
                 object_restore_receipt=args.object_restore_receipt,
+                authorization_path=args.authorization,
                 original_postgres_verification=args.original_postgres_verification,
                 original_postgres_archive=args.original_postgres_archive,
                 original_object_archive=args.original_object_archive_directory,

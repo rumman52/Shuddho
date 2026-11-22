@@ -141,21 +141,34 @@ environment binding and same-reviewed-SHA runtime. Retain deployment identity
 and nonsecret health/source readback in the private evidence directory.
 
 Require managed, distinct synthetic A/B JWTs accepted by this restored API,
-with enough validity for the readback. The source and isolated origins must
-be different clean public HTTPS origins. No bearer tokens or presigned URLs
+with enough validity for the readback. The source origin must be the
+reviewed `https://shuddho-api-staging.onrender.com` Render service, and the
+separate clean public HTTPS restored origin must hash to the EXACT destination
+recorded in the private, dated Founder+C authorization. The same protected
+decision must bind the isolated PostgreSQL and object-storage fingerprints,
+reviewed release and valid approval window. Supply that existing private,
+mode-0600 JSON file with `--authorization` before any owner bearer is used.
+See [Founder/C authorization](DAY2_FOUNDER_C_AUTHORIZATION.md).
+An operator-written decision file is not independently authenticated approval:
+reviewer D must check the original decisions. With no actual approval, do not
+run the hosted restore or invent a file. No bearer tokens or presigned URLs
 may be passed on the command line or written into a receipt.
 
 ```bash
 export SHUDDHO_STAGING_ALLOW_RESTORED_API_READBACK=true
 export SHUDDHO_STAGING_SYNTHETIC_ACCOUNT=true
-export SHUDDHO_STAGING_API_BASE_URL=https://source-staging.example.com
+export SHUDDHO_STAGING_API_BASE_URL=https://shuddho-api-staging.onrender.com
 export SHUDDHO_STAGING_RESTORED_API_BASE_URL=https://isolated-restore.example.com
 export SHUDDHO_STAGING_TOKEN_A="<approved-restore-owner-A-JWT>"
 export SHUDDHO_STAGING_TOKEN_B="<approved-restore-owner-B-JWT>"
 ```
 
 The verifier performs the PostgreSQL schema/row and private object byte
-comparison **first**, then issues **read-only GETs** through the isolated API:
+comparison **first**; it then checks the protected approval against the
+actual isolated resource fingerprints and API-origin SHA-256 BEFORE it
+creates the restored-API HTTP client. Without a matching decision it does
+not send owner A/B JWTs. After the pretransmission guard, it issues
+**read-only GETs** through the isolated API:
 staging runtime manifest at the reviewed SHA; both authenticated `/me`
 identities with distinct subjects/workspaces; A's source document contents
 matching the archived byte size and SHA-256; B's document content denied with
@@ -177,6 +190,7 @@ uv run --extra coworker python scripts/staging_backup_restore.py verify \
   --state /secure/path/backup-restore-state.json \
   --backup-reference postgres-snapshot-123/object-backup-456 \
   --restore-reference isolated-restore-run-789 \
+  --authorization /secure/day2/founder-c-authorization.json \
   --rollout /secure/release/cohort-rollout.json \
   --postgres-verification /secure/private-backups/source-db/verification.json \
   --postgres-archive /secure/private-backups/source-db/coworker.dump \

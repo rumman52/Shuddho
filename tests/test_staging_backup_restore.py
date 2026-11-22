@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 from pathlib import Path
@@ -626,15 +627,18 @@ def test_isolated_restore_never_publishes_pass_without_authenticated_api_readbac
         return
 
     for key, value in {
-        "SHUDDHO_STAGING_API_BASE_URL": "https://source.example.test",
+        "SHUDDHO_STAGING_API_BASE_URL": "https://shuddho-api-staging.onrender.com",
         "SHUDDHO_STAGING_RESTORED_API_BASE_URL": "https://restored.example.test",
         "SHUDDHO_STAGING_TOKEN_A": "private-A-token",
         "SHUDDHO_STAGING_TOKEN_B": "private-B-token",
     }.items():
         monkeypatch.setenv(key, value)
 
+    opened_clients = []
+
     class MockClient:
         def __init__(self, **kwargs):
+            opened_clients.append(True)
             assert kwargs["follow_redirects"] is False
             assert kwargs["trust_env"] is False
             assert kwargs["base_url"] == "https://restored.example.test"
@@ -657,11 +661,51 @@ def test_isolated_restore_never_publishes_pass_without_authenticated_api_readbac
 
     monkeypatch.setattr(backup.httpx, "Client", MockClient)
     monkeypatch.setattr(backup, "attest_restored_api_access", fake_access)
+    monkeypatch.setattr(backup, "read_private_authorization", lambda _: {"schema_version": 1})
+    approved_sha = hashlib.sha256(b"https://restored.example.test").hexdigest()
+
+    def check_private_target(receipt, **kwargs):
+        assert receipt == {"schema_version": 1}
+        assert kwargs["source_api_origin"] == "https://shuddho-api-staging.onrender.com"
+        assert kwargs["restored_api_origin"] == "https://restored.example.test"
+        assert kwargs["target_database_fingerprint"] == backup.stable_hash("isolated-db")
+        assert kwargs["target_storage_fingerprint"] == backup.stable_hash("isolated-bucket")
+        assert kwargs["source_revision"] == settings.source_revision
+        return approved_sha
+
+    monkeypatch.setattr(backup, "preflight_restored_destination", check_private_target)
+
+    # A fully restored database and valid managed tokens never justify
+    # connecting to a public HTTPS API if the protected decision is missing.
+    with pytest.raises(backup.BackupRestoreFailure, match="authorization is required"):
+        backup.verify(
+            settings, state_path, "backup-123", "restore-456",
+            rollout_path, evidence, None, **file_paths,
+        )
+    assert not opened_clients and not calls and not evidence.exists()
+
+    def refuse_approval(_receipt, **_kwargs):
+        raise backup.AuthorizationEvidenceFailure("Synthetic approval is wrong.")
+
+    monkeypatch.setattr(backup, "preflight_restored_destination", refuse_approval)
+    with pytest.raises(backup.BackupRestoreFailure, match="does not match"):
+        backup.verify(
+            settings, state_path, "backup-123", "restore-456",
+            rollout_path, evidence, None,
+            authorization_path=tmp_path / "synthetic-decision.json",
+            **file_paths,
+        )
+    assert not opened_clients and not calls and not evidence.exists()
+
+    monkeypatch.setattr(backup, "preflight_restored_destination", check_private_target)
     backup.verify(
         settings, state_path, "backup-123", "restore-456",
-        rollout_path, evidence, None, **file_paths,
+        rollout_path, evidence, None,
+        authorization_path=tmp_path / "synthetic-decision.json",
+        **file_paths,
     )
     assert len(calls) == 1
+    assert calls[0][2]["approved_restored_origin_sha256"] == approved_sha
     assert calls[0][2]["expected_owner_id"] == state["owner_id"]
     assert calls[0][2]["source_revision"] == settings.source_revision
     saved = json.loads(evidence.read_text())
