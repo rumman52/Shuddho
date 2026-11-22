@@ -80,6 +80,7 @@ def _probe(monkeypatch, **overrides):
         return access.attest_restored_api_access(
             client, A, B,
             source_origin=SOURCE_API, restored_origin=RESTORE_API,
+            approved_restored_origin_sha256=hashlib.sha256(RESTORE_API.encode()).hexdigest(),
             expected_owner_id=OWNER_A, document_id=DOC, task_id=TASK,
             document_sha256=hashlib.sha256(DATA).hexdigest(), document_size=len(DATA),
             source_revision=SHA, expected_issuer=ISSUER,
@@ -124,6 +125,7 @@ def test_restored_api_rejects_missing_explicit_guards_before_first_request(monke
         with pytest.raises(access.RestoredAPIReadbackFailure, match="guard"):
             access.attest_restored_api_access(
                 client, A, B, source_origin=SOURCE_API, restored_origin=RESTORE_API,
+            approved_restored_origin_sha256=hashlib.sha256(RESTORE_API.encode()).hexdigest(),
                 expected_owner_id=OWNER_A, document_id=DOC, task_id=TASK,
                 document_sha256=hashlib.sha256(DATA).hexdigest(), document_size=len(DATA),
                 source_revision=SHA, expected_issuer=ISSUER, expected_audience=AUDIENCE,
@@ -148,6 +150,7 @@ def test_restored_api_requires_distinct_public_https_origin(monkeypatch, restore
         with pytest.raises(access.RestoredAPIReadbackFailure):
             access.attest_restored_api_access(
                 client, A, B, source_origin=source_origin, restored_origin=restored_origin,
+                approved_restored_origin_sha256=hashlib.sha256(restored_origin.encode()).hexdigest(),
                 expected_owner_id=OWNER_A, document_id=DOC, task_id=TASK,
                 document_sha256=hashlib.sha256(DATA).hexdigest(), document_size=len(DATA),
                 source_revision=SHA, expected_issuer=ISSUER, expected_audience=AUDIENCE,
@@ -179,6 +182,7 @@ def test_wrong_restored_owner_tokens_fail_before_any_credentialed_request(
             access.attest_restored_api_access(
                 client, wrong_a, wrong_b,
                 source_origin=SOURCE_API, restored_origin=RESTORE_API,
+            approved_restored_origin_sha256=hashlib.sha256(RESTORE_API.encode()).hexdigest(),
                 expected_owner_id=OWNER_A, document_id=DOC, task_id=TASK,
                 document_sha256=hashlib.sha256(DATA).hexdigest(),
                 document_size=len(DATA), source_revision=SHA,
