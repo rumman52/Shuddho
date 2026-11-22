@@ -743,19 +743,22 @@ def test_day2_live_operator_destinations_are_pinned_to_approved_supabase():
     )
 
     day2.require_approved_staging_destinations(
+        api_origin="https://shuddho-api-staging.onrender.com",
         auth_issuer=EXPECTED_AUTH_ISSUER,
         storage_endpoint=EXPECTED_S3_ENDPOINT,
     )
 
 
-@pytest.mark.parametrize(("auth_issuer", "storage_endpoint", "message"), [
-    ("https://unapproved.supabase.co/auth/v1", None, "issuer"),
-    ("https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1/", None, "issuer"),
-    (None, "https://unapproved.storage.supabase.co/storage/v1/s3", "storage"),
-    (None, "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3/", "storage"),
+@pytest.mark.parametrize(("api_origin", "auth_issuer", "storage_endpoint", "message"), [
+    ("https://unapproved.example.test", None, None, "API origin"),
+    ("https://shuddho-api-staging.onrender.com:444", None, None, "API origin"),
+    (None, "https://unapproved.supabase.co/auth/v1", None, "issuer"),
+    (None, "https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1/", None, "issuer"),
+    (None, None, "https://unapproved.storage.supabase.co/storage/v1/s3", "storage"),
+    (None, None, "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3/", "storage"),
 ])
 def test_day2_operator_rejects_unapproved_credential_destinations(
-    auth_issuer, storage_endpoint, message,
+    api_origin, auth_issuer, storage_endpoint, message,
 ):
     from scripts.staging_prerequisite_preflight import (
         EXPECTED_AUTH_ISSUER, EXPECTED_S3_ENDPOINT,
@@ -763,6 +766,7 @@ def test_day2_operator_rejects_unapproved_credential_destinations(
 
     with pytest.raises(day2.Day2Failure, match=message):
         day2.require_approved_staging_destinations(
+            api_origin=api_origin if api_origin is not None else "https://shuddho-api-staging.onrender.com",
             auth_issuer=auth_issuer if auth_issuer is not None else EXPECTED_AUTH_ISSUER,
             storage_endpoint=storage_endpoint if storage_endpoint is not None else EXPECTED_S3_ENDPOINT,
         )
