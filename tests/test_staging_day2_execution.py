@@ -707,3 +707,62 @@ def test_day2_source_marker_is_validated_before_any_api_request(source_body, anc
                 expected_source_anchor=anchor,
             )
     assert api.calls == []
+
+
+@pytest.mark.parametrize(("token_a", "token_b", "message"), [
+    (make_test_token("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                     issuer="https://wrong.example.test/auth/v1"), TOKEN_B, "issuer"),
+    (TOKEN_A, make_test_token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                              audience="unapproved"), "audience"),
+    (TOKEN_A, make_test_token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                              expires_at=int(time.time()) + 5), "expired"),
+    (TOKEN_A, make_test_token(""), "subject"),
+    (TOKEN_A, TOKEN_A, "distinct"),
+])
+def test_invalid_either_owner_token_never_reaches_network(token_a, token_b, message):
+    """Validate both synthetic bearer claims before the first authenticated request."""
+    def forbid_network(_request):
+        pytest.fail("An unverified synthetic bearer reached the staging API.")
+
+    with httpx.Client(
+        transport=httpx.MockTransport(forbid_network), base_url="https://stage.example.test"
+    ) as client:
+        with pytest.raises(day2.Day2Failure, match=message):
+            day2.run_probe(
+                client, token_a, token_b, frozen(), SOURCE,
+                expected_auth_issuer=AUTH_ISSUER,
+                expected_auth_audience=AUTH_AUDIENCE,
+                owner_b_artifact_id=OWNER_B_ARTIFACT_ID,
+                timeout_seconds=5,
+            )
+
+
+def test_day2_live_operator_destinations_are_pinned_to_approved_supabase():
+    from scripts.staging_prerequisite_preflight import (
+        EXPECTED_AUTH_ISSUER, EXPECTED_S3_ENDPOINT,
+    )
+
+    day2.require_approved_staging_destinations(
+        auth_issuer=EXPECTED_AUTH_ISSUER,
+        storage_endpoint=EXPECTED_S3_ENDPOINT,
+    )
+
+
+@pytest.mark.parametrize(("auth_issuer", "storage_endpoint", "message"), [
+    ("https://unapproved.supabase.co/auth/v1", None, "issuer"),
+    ("https://bsmbvjenpvcyfjzwtuax.supabase.co/auth/v1/", None, "issuer"),
+    (None, "https://unapproved.storage.supabase.co/storage/v1/s3", "storage"),
+    (None, "https://bsmbvjenpvcyfjzwtuax.storage.supabase.co/storage/v1/s3/", "storage"),
+])
+def test_day2_operator_rejects_unapproved_credential_destinations(
+    auth_issuer, storage_endpoint, message,
+):
+    from scripts.staging_prerequisite_preflight import (
+        EXPECTED_AUTH_ISSUER, EXPECTED_S3_ENDPOINT,
+    )
+
+    with pytest.raises(day2.Day2Failure, match=message):
+        day2.require_approved_staging_destinations(
+            auth_issuer=auth_issuer if auth_issuer is not None else EXPECTED_AUTH_ISSUER,
+            storage_endpoint=storage_endpoint if storage_endpoint is not None else EXPECTED_S3_ENDPOINT,
+        )
