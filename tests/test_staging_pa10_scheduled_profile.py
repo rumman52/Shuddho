@@ -237,6 +237,7 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
         "automation_revision": 1, "timezone": "Asia/Dhaka",
         "schedule": {"kind": "daily", "hour": 8, "minute": 0},
         "run_profile": "briefing", "output_language": "en", "quiet_hours": None,
+        "overlap_policy": "skip", "catchup_window_seconds": 3600,
         "expires_at": "2030-01-01T00:00:00+00:00",
         "schedule_applied_revision": 1, "schedule_applied_enabled": True,
         "synthetic_account_label": "test-synthetic", "prepared_at": "2026-11-12T01:30:00Z",
@@ -250,6 +251,10 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
         "owner_id": "owner-1", "automation": {
             "revision": 1, "expires_at": "2030-01-01T00:00:00+00:00",
             "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+            "timezone": state["timezone"], "schedule": state["schedule"],
+            "run_profile": state["run_profile"], "output_language": state["output_language"],
+            "quiet_hours": state["quiet_hours"], "overlap_policy": state["overlap_policy"],
+            "catchup_window_seconds": state["catchup_window_seconds"],
         },
         "daily_scope": {"goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
                         "authorized_document_ids": ["doc-1"]},
@@ -442,6 +447,10 @@ def test_daily_verify_counts_all_new_notices_for_selected_automation(
             "revision": 1,
             "expires_at": "2030-01-01T00:00:00+00:00",
             "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+            "timezone": state["timezone"], "schedule": state["schedule"],
+            "run_profile": state["run_profile"], "output_language": state["output_language"],
+            "quiet_hours": state["quiet_hours"], "overlap_policy": state["overlap_policy"],
+            "catchup_window_seconds": state["catchup_window_seconds"],
         },
         "daily_scope": {
             "goal_id": "goal-1", "goal_revision": 1,
@@ -501,3 +510,138 @@ def test_daily_verify_counts_all_new_notices_for_selected_automation(
         ):
             probe.verify(args)
         assert not args.output.exists()
+
+
+PREPARED_DAILY_PROFILE = {
+    "timezone": "Asia/Dhaka",
+    "schedule": {"kind": "daily", "hour": 8, "minute": 0, "weekdays": []},
+    "run_profile": "briefing",
+    "output_language": "en",
+    "quiet_hours": {"start": "22:00", "end": "07:00"},
+    "overlap_policy": "skip",
+    "catchup_window_seconds": 3600,
+}
+
+
+def test_daily_prepared_profile_accepts_identical_owner_authorized_runtime_readback():
+    from copy import deepcopy
+
+    state = deepcopy(PREPARED_DAILY_PROFILE)
+    automation = deepcopy(PREPARED_DAILY_PROFILE)
+    probe.require_prepared_daily_profile(state, automation)
+
+
+@pytest.mark.parametrize(("field", "unexpected"), [
+    ("timezone", "UTC"),
+    ("schedule", {"kind": "daily", "hour": 9, "minute": 0, "weekdays": []}),
+    ("run_profile", "deadline"),
+    ("output_language", "bn"),
+    ("quiet_hours", {"start": "23:00", "end": "07:00"}),
+    ("overlap_policy", "allow"),
+    ("catchup_window_seconds", 7200),
+])
+def test_daily_prepared_profile_rejects_unrevisioned_policy_drift(
+    field, unexpected,
+):
+    from copy import deepcopy
+
+    state = deepcopy(PREPARED_DAILY_PROFILE)
+    automation = deepcopy(PREPARED_DAILY_PROFILE)
+    automation[field] = unexpected
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
+        probe.require_prepared_daily_profile(state, automation)
+
+
+@pytest.mark.parametrize("missing", [
+    "timezone", "schedule", "run_profile", "output_language",
+    "quiet_hours", "overlap_policy", "catchup_window_seconds",
+])
+def test_daily_prepared_profile_rejects_incomplete_runtime_or_evidence_scope(missing):
+    from copy import deepcopy
+
+    state = deepcopy(PREPARED_DAILY_PROFILE)
+    automation = deepcopy(PREPARED_DAILY_PROFILE)
+    automation.pop(missing)
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
+        probe.require_prepared_daily_profile(state, automation)
+
+
+def test_day7_verify_invokes_prepared_profile_readback_gate(monkeypatch, tmp_path):
+    """A changed timezone must block an otherwise valid owner/run/notice receipt."""
+    from argparse import Namespace
+    from copy import deepcopy
+    import json
+
+    release = {"release_id": "synthetic-release"}
+    state = {
+        "schema_version": 1, "scenario": "daily_coworker",
+        "release": release, "owner_id": "owner-1",
+        "automation_id": "automation-1", "automation_revision": 1,
+        **deepcopy(PREPARED_DAILY_PROFILE),
+        "expires_at": "2030-01-01T00:00:00+00:00",
+        "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+        "synthetic_account_label": "synthetic-owner",
+        "prepared_at": "2026-11-12T01:30:00+00:00",
+        "baseline_occurrence_ids": [], "baseline_notification_ids": [],
+        "goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
+        "authorized_document_ids": ["doc-1"],
+    }
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    current = {
+        "owner_id": "owner-1",
+        "automation": {
+            **deepcopy(PREPARED_DAILY_PROFILE),
+            "timezone": "UTC",  # runtime drift, but revision stays unchanged
+            "revision": 1,
+            "expires_at": "2030-01-01T00:00:00+00:00",
+            "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+        },
+        "daily_scope": {
+            "goal_id": "goal-1", "goal_revision": 1,
+            "project_id": "project-1", "authorized_document_ids": ["doc-1"],
+        },
+        "history": [{
+            "occurrence_id": "occ-1", "trigger_type": "schedule",
+            "occurrence_state": "accepted", "run_state": "completed",
+            "run_id": "run-1", "due_at": "2026-11-12T02:00:00+00:00",
+        }],
+        "notifications": [{
+            "id": "completed-1", "automation_id": "automation-1",
+            "occurrence_id": "occ-1", "kind": "automation_completed",
+        }],
+    }
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, path, **_kwargs):
+            assert path == "/api/v1/agent-runs/run-1"
+            return _ScopeResponse({
+                "id": "run-1", "state": "completed",
+                "document_ids": ["doc-1"], "input_version_ids": ["v1"],
+            })
+
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://stage.example.test")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "synthetic-token")
+    monkeypatch.setattr(probe.httpx, "Client", lambda **_kwargs: Client())
+    monkeypatch.setattr(probe, "release_identity", lambda *_args: release)
+    monkeypatch.setattr(probe, "load_owned", lambda *_args: current)
+    clock = iter((0, 0, 2))
+    monkeypatch.setattr(probe.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(probe.time, "sleep", lambda *_args: None)
+    args = Namespace(
+        state=state_path, rollout=tmp_path / "rollout.json",
+        provider_policy_plan=tmp_path / "provider.json",
+        output=tmp_path / "verified.json", prior_evidence=None,
+        operator_case_reference="CASE-7", timeout=1, poll_interval=1,
+    )
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
+        probe.verify(args)
+    assert not args.output.exists()
