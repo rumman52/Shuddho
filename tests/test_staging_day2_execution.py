@@ -917,7 +917,38 @@ def test_model_provenance_sql_driver_error_redacts_private_endpoint():
     )
     with pytest.raises(day2.Day2Failure, match="could not be independently verified") as raised:
         day2.persisted_model_provenance(
-            container, TASK_ID, expected_model="deepseek-flash",
+            container, TASK_ID, expected_owner_id="synthetic-owner",
+            expected_model="deepseek-flash",
             expected_attempts=2, expected_accounted_tokens=72,
         )
     assert "secret-postgres" not in str(raised.value)
+
+
+def test_model_provenance_rejects_db_task_owned_by_another_managed_identity():
+    from types import SimpleNamespace
+
+    pytest.importorskip("sqlalchemy")
+    pytest.importorskip("services.coworker.models")
+
+    class ScopedSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def scalar(self, _query):
+            return SimpleNamespace(owner_id="unrelated-owner")
+
+        def scalars(self, _query):
+            pytest.fail("Wrong owner's model ledger must never be read")
+
+    container = SimpleNamespace(
+        repository=SimpleNamespace(sessions=lambda: ScopedSession())
+    )
+    with pytest.raises(day2.Day2Failure, match="managed owner A"):
+        day2.persisted_model_provenance(
+            container, TASK_ID, expected_owner_id="verified-owner-a",
+            expected_model="deepseek-flash",
+            expected_attempts=1, expected_accounted_tokens=60,
+        )
