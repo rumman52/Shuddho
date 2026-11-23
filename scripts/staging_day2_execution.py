@@ -794,6 +794,7 @@ def persisted_model_provenance(
     container: Container,
     task_id: str,
     *,
+    expected_owner_id: str,
     expected_model: str,
     expected_attempts: int,
     expected_accounted_tokens: int,
@@ -808,6 +809,10 @@ def persisted_model_provenance(
             task = db.scalar(select(Task).where(Task.id == task_id))
             if task is None:
                 raise Day2Failure("Completed model task is missing from the staging database.")
+            if task.owner_id != expected_owner_id:
+                raise Day2Failure(
+                    "Model ledger task owner does not match the verified managed owner A."
+                )
             rows = list(db.scalars(
                 select(ModelAttempt).where(ModelAttempt.task_id == task_id)
             ).all())
@@ -942,7 +947,7 @@ def main() -> None:
         )
         token_a = os.getenv("SHUDDHO_STAGING_TOKEN_A", "")
         token_b = os.getenv("SHUDDHO_STAGING_TOKEN_B", "")
-        _prevalidate_managed_owners(
+        owner_a_account_id, _owner_b_account_id = _prevalidate_managed_owners(
             token_a, token_b, expected_issuer=settings.auth_issuer,
             expected_audience=settings.auth_audience,
             minimum_validity_seconds=args.timeout + 30,
@@ -967,6 +972,7 @@ def main() -> None:
         asyncio.run(temporal_completed(settings, result["workflow_id"]))
         result["model_evidence"] = persisted_model_provenance(
             container, result["task_id"],
+            expected_owner_id=owner_a_account_id,
             expected_model=settings.deepseek_model,
             expected_attempts=result["model_attempts"],
             expected_accounted_tokens=result["accounted_tokens"],
