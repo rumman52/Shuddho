@@ -394,6 +394,79 @@ def test_day6_research_native_docx_must_contain_exact_selected_finding_and_quote
 
 @pytest.mark.parametrize("language", ("en", "bn"))
 @pytest.mark.parametrize("skill_id", ("research", "report_email"))
+@pytest.mark.parametrize("extra", ("body_table", "body_content_control", "header", "footer"))
+def test_day6_docx_rejects_unreviewed_text_outside_direct_body_paragraphs(
+    language, skill_id, extra
+):
+    """D06.T05/T07: secondary Word text must not bypass reviewed draft evidence."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from coworker_samples import work_draft
+    from test_coworker import draft as report_draft
+    from services.coworker.exports import validate_day6_exports
+
+    if skill_id == "research":
+        package = work_draft("research", language)
+        sources = [{
+            "id": "web-1", "kind": "web", "label": "Original study",
+            "url": "https://example.org/study",
+            "retrieved_at": "2026-11-18T02:00:00Z",
+            "source_date": None, "sha256": "a" * 64,
+        }]
+        filename = "research-report.docx"
+    else:
+        package = report_draft(language)
+        sources = [{"id": "notes", "label": "Provided notes"}]
+        filename = "report.docx"
+
+    outputs = render_in_subprocess(package, sources, skill_id=skill_id)
+    validate_day6_exports(skill_id, package, outputs, expected_sources=sources)
+    altered = []
+    injected = "UNREVIEWED ASSERTION: The deadline has changed without evidence."
+    for name, content_type, body in outputs:
+        if name == filename:
+            document = Document(io.BytesIO(body))
+            original_paragraphs = [p.text for p in document.paragraphs]
+            if extra == "body_table":
+                document.add_table(rows=1, cols=1).cell(0, 0).text = injected
+            elif extra == "body_content_control":
+                # A block-level OOXML content control is a valid Word body
+                # element but excluded from Document.paragraphs.
+                sdt = OxmlElement("w:sdt")
+                sdt_content = OxmlElement("w:sdtContent")
+                paragraph = OxmlElement("w:p")
+                run = OxmlElement("w:r")
+                node = OxmlElement("w:t")
+                node.text = injected
+                run.append(node)
+                paragraph.append(run)
+                sdt_content.append(paragraph)
+                sdt.append(sdt_content)
+                document.element.body.insert(0, sdt)
+            elif extra == "header":
+                document.sections[0].header.paragraphs[0].text = injected
+            else:
+                document.sections[0].footer.paragraphs[0].text = injected
+            revised = io.BytesIO()
+            document.save(revised)
+            body = revised.getvalue()
+            reopened = Document(io.BytesIO(body))
+            assert [p.text for p in reopened.paragraphs] == original_paragraphs
+            # The injected assertion is genuinely present in the valid,
+            # reopenable Word file but invisible to the existing paragraph
+            # content check. Do not rely on a corrupted ZIP for this test.
+            assert injected in b"".join(
+                part.blob for part in reopened.part.package.parts
+                if part.partname.endswith(".xml")
+            ).decode("utf-8", errors="ignore")
+        altered.append((name, content_type, body))
+
+    with pytest.raises(ValueError, match="DOCX"):
+        validate_day6_exports(skill_id, package, altered, expected_sources=sources)
+
+
+@pytest.mark.parametrize("language", ("en", "bn"))
+@pytest.mark.parametrize("skill_id", ("research", "report_email"))
 @pytest.mark.parametrize("hidden_external", ("orphan_hyperlink", "attached_template"))
 def test_day6_native_docx_rejects_hidden_external_relationships(
     language, skill_id, hidden_external
