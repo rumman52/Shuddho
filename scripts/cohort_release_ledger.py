@@ -5,11 +5,13 @@ import hashlib
 import hmac
 import json
 import os
+import stat
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.release_contract import normalize_capabilities, required_activation_requirements
+from scripts.ruke_pilot_eval import MAX_BYTES, strict_json_loads
 
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
@@ -44,6 +46,7 @@ RESTAURANT_RESERVATIONS_SCHEMA_VERSION = 30
 SHOPPING_CHECKOUT_SCHEMA_VERSION = 31
 TRAVEL_BOOKING_SCHEMA_VERSION = 32
 AGENT_BROWSER_READ_SCHEMA_VERSION = 34
+MAX_LEDGER_BYTES = 64 * 1024 * 1024  # generous total history cap, separate from per-row cap
 ZERO_HASH = "0" * 64
 EVENT_DECISIONS = {
     "hold": "HOLD",
@@ -521,23 +524,59 @@ def sign_entry(core: dict, key: bytes) -> tuple[str, str]:
 
 
 def read_entries(path: Path) -> list[dict]:
-    if not path.exists():
+    """Read an unambiguous, bounded JSONL history from one unlinked regular inode.
+
+    A valid HMAC over the parsed canonical entry does not attest raw duplicate
+    keys. Reject ambiguous bytes before the signed release chain is evaluated.
+    """
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ReleaseLedgerError("Ledger requires no-follow evidence reads.")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+    except FileNotFoundError:
+        # A release without a ledger begins with an empty history.
         return []
+    except OSError:
+        raise ReleaseLedgerError("Ledger path must be an unlinked regular file.") from None
+
     rows: list[dict] = []
     try:
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            value = json.loads(line)
-            if not isinstance(value, dict):
-                raise ReleaseLedgerError(f"Ledger line {line_number} is not a JSON object.")
-            rows.append(value)
-    except json.JSONDecodeError as error:
+        with os.fdopen(fd, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_LEDGER_BYTES:
+                raise ReleaseLedgerError("Ledger must be a bounded regular file.")
+            total_bytes = 0
+            line_number = 0
+            while True:
+                # A malformed unbroken line cannot allocate arbitrary memory.
+                content = stream.readline(MAX_BYTES + 1)
+                if not content:
+                    break
+                line_number += 1
+                total_bytes += len(content)
+                if len(content) > MAX_BYTES or total_bytes > MAX_LEDGER_BYTES:
+                    raise ReleaseLedgerError(
+                        f"Ledger line {line_number} exceeds the bounded evidence limit."
+                    )
+                if not content.strip():
+                    continue
+                try:
+                    value = strict_json_loads(content.decode("utf-8"))
+                except (ValueError, UnicodeError) as error:
+                    raise ReleaseLedgerError(
+                        f"Ledger line {line_number} contains invalid or ambiguous JSON: "
+                        f"{type(error).__name__}."
+                    ) from None
+                if not isinstance(value, dict):
+                    raise ReleaseLedgerError(
+                        f"Ledger line {line_number} is not a JSON object."
+                    )
+                rows.append(value)
+    except OSError as error:
         raise ReleaseLedgerError(
-            f"Ledger contains invalid JSON at line {error.lineno}."
+            f"Ledger could not be read: {type(error).__name__}."
         ) from None
     return rows
-
 
 def verify_entries(entries: list[dict], key: bytes) -> dict:
     previous = ZERO_HASH
