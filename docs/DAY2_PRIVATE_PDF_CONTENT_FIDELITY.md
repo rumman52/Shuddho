@@ -46,7 +46,24 @@ The runner checks the selected source PDF **before API writes**, asks the real
 - the downloaded `report.pdf` bytes agree with private API metadata and its
   signed object-store download SHA-256 and length;
 - the PDF is genuinely readable, unencrypted, 1–40 pages, with extractable text,
-  and its page text contains the same marker.
+  and its page text contains the same marker;
+- after Temporal task completion, **read-only SQL** against the *same task* finds
+  exactly the API-reported number of `cw_model_attempts`, with the same charged
+  token aggregate and no unsettled reservations; one successful attempt must
+  match the model configured for the currently reviewed `DeepSeekDraftModel`;
+- the persisted `cw_steps` `draft` record must report the same provider
+  (`deepseek`), model, successful token counts, prompt SHA-256, validation
+  result and completion latency as the settled model attempt. Positive
+  provider-returned input, output and total tokens are mandatory: a merely
+  *reserved* model budget cannot qualify as an actual model call.
+
+The operator emits a redacted `model_evidence` receipt only after this
+reconciliation, and `staging_day2_acceptance.py` requires that receipt to
+match the task, usage totals and the exact carried-forward recovery/restore
+evidence. The current Coworker `report_email` draft executor is DeepSeek-only;
+setting a separate Chat API provider to Gemma does **not** silently authorize
+the different Coworker draft model. The controlled operator exits before API
+writes unless the DeepSeek draft configuration is valid.
 
 Failure blocks the Day 2 receipt. The marker itself, source text, tokens and
 signed download URLs are **not** included in the operator receipt. The
@@ -58,8 +75,9 @@ an **unverified**, never acceptance-eligible receipt.
 **Limitations:** Exact marker inclusion is an objective content-binding check.
 It does not establish that the rest of the report is factually correct, written
 in natural English, safe for distribution, or was genuinely produced by the
-configured provider; an independent reviewer must inspect the private source,
-the model/provider history, and the downloaded PDF. Neither synthetic API tests
+configured provider solely from local SQL evidence; an independent reviewer must
+authenticate the actual external model/provider request history against the
+private source, the persisted SQL model ledger, and the downloaded PDF. Neither synthetic API tests
 nor the receipt reconciler substitute for hosted proof, owner isolation, live
 Temporal worker interruption, or a database-plus-object isolated restore.
 
