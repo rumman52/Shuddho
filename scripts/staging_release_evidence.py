@@ -58,6 +58,7 @@ def _read_rollout_manifest(path: Path) -> tuple[object, str]:
                     break
                 parts.append(part)
                 remaining -= len(part)
+            final_metadata = os.fstat(descriptor)
         finally:
             os.close(descriptor)
     except OSError as error:
@@ -67,6 +68,19 @@ def _read_rollout_manifest(path: Path) -> tuple[object, str]:
     raw = b"".join(parts)
     if len(raw) > MAX_ROLLOUT_MANIFEST_BYTES:
         raise StagingReleaseEvidenceError("Rollout manifest exceeds byte bound")
+    # One no-follow descriptor prevents a path-swap. This fence also rejects
+    # concurrent in-place rewrites, truncation and growth, including a change
+    # after the final EOF read but before the descriptor is closed. The hash
+    # below must describe one complete, stable regular-file snapshot.
+    if (
+        not stat.S_ISREG(final_metadata.st_mode)
+        or (metadata.st_dev, metadata.st_ino) != (final_metadata.st_dev, final_metadata.st_ino)
+        or metadata.st_size != final_metadata.st_size
+        or len(raw) != metadata.st_size
+        or metadata.st_mtime_ns != final_metadata.st_mtime_ns
+        or metadata.st_ctime_ns != final_metadata.st_ctime_ns
+    ):
+        raise StagingReleaseEvidenceError("Rollout manifest changed during bounded read")
 
     def unique_fields(pairs: list[tuple[str, object]]) -> dict:
         out = {}
