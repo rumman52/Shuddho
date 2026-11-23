@@ -28,6 +28,14 @@ def proofs():
         'task_id': 'task-a', 'workflow_id': 'shuddho-task-task-a',
         'artifact_id': 'artifact-a', 'artifact_sha256': '2' * 64, 'artifact_bytes': 220,
         'model_attempts': 1, 'accounted_tokens': 62,
+        'model_evidence': {
+            'status': 'verified', 'task_id': 'task-a',
+            'provider': 'deepseek', 'model': 'deepseek-flash',
+            'ledger_attempt_count': 1, 'ledger_accounted_tokens': 62,
+            'completed_attempt': 1, 'completed_input_tokens': 41,
+            'completed_output_tokens': 21, 'completed_total_tokens': 62,
+            'prompt_sha256': 'f' * 64, 'generation_validator': 'passed',
+        },
         'owner_isolation': {
             'schema_version': 1,
             'status': 'passed',
@@ -781,3 +789,35 @@ def test_day2_final_authorization_rejects_missing_host_plan_or_region(field):
             freeze, run, recovery, restored,
             expected_revision=SHA, authorization=receipt,
         )
+
+
+@pytest.mark.parametrize("field, invalid", [
+    ("status", "unchecked"),
+    ("task_id", "another-task"),
+    ("provider", "unreviewed-provider"),
+    ("model", ""),
+    ("model", "x" * 121),
+    ("ledger_attempt_count", 2),
+    ("ledger_accounted_tokens", 61),
+    ("completed_attempt", 2),
+    ("completed_input_tokens", 0),
+    ("completed_output_tokens", True),
+    ("completed_total_tokens", 50),
+    ("completed_total_tokens", 70),
+    ("prompt_sha256", "malformed"),
+    ("generation_validator", "failed"),
+])
+def test_day2_acceptance_rejects_uncorroborated_model_provider_receipt(field, invalid):
+    proof_set = list(proofs())
+    proof_set[1]["model_evidence"][field] = invalid
+    proof_set[2]["model_evidence"][field] = invalid
+    proof_set[3]["model_evidence"][field] = invalid
+    with pytest.raises(gate.Day2AcceptanceFailure, match="model|Model|provider|token"):
+        check(*proof_set)
+
+
+def test_day2_acceptance_requires_model_receipt_carried_unchanged_into_restore():
+    proof_set = list(proofs())
+    proof_set[3]["model_evidence"]["model"] = "different-model"
+    with pytest.raises(gate.Day2AcceptanceFailure, match="model_evidence"):
+        check(*proof_set)
