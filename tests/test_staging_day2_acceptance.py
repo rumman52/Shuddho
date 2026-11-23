@@ -707,9 +707,13 @@ def test_day2_acceptance_rejects_provider_attempts_exceeding_approved_cap():
     )
     receipt = authorization_receipt()
     receipt['budget']['max_provider_attempts'] = 1
-    run['model_attempts'] = 2
-    recovery['model_attempts'] = 2
-    restored['model_attempts'] = 2
+    # Keep the synthetic model SQL receipt internally consistent so this
+    # test reaches the SEPARATE Founder/C provider-attempt budget boundary.
+    # A mismatched model ledger is rejected earlier by design.
+    for proof in (run, recovery, restored):
+        proof['model_attempts'] = 2
+        proof['model_evidence']['ledger_attempt_count'] = 2
+        proof['model_evidence']['completed_attempt'] = 2
     with pytest.raises(gate.Day2AcceptanceFailure, match='authorization|provider'):
         gate.validate_evidence(freeze, run, recovery, restored,
                                expected_revision=SHA, authorization=receipt)
