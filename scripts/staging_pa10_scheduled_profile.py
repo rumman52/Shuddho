@@ -282,6 +282,34 @@ def require_daily_run_scope(document_ids: object, scope: dict) -> None:
         )
 
 
+DAILY_PREPARED_PROFILE_FIELDS = (
+    "timezone", "schedule", "run_profile", "output_language",
+    "quiet_hours", "overlap_policy", "catchup_window_seconds",
+)
+
+
+def require_prepared_daily_profile(prepared: dict, automation: dict) -> None:
+    """Bind the live scheduled profile to the exact owner-approved snapshot.
+
+    An applied revision alone does not prove the actual daily time, locale,
+    quiet hours or delivery policy still matches the reviewed preparation.
+    Missing fields fail closed; none are inferred from a prepared receipt.
+    """
+    if (
+        not isinstance(prepared, dict)
+        or not isinstance(automation, dict)
+        or any(
+            field not in prepared
+            or field not in automation
+            or prepared[field] != automation[field]
+            for field in DAILY_PREPARED_PROFILE_FIELDS
+        )
+    ):
+        raise ScheduledProfileProbeFailure(
+            "Daily briefing schedule or delivery policy drifted from the prepared owner-approved profile."
+        )
+
+
 def load_owned(
     client: httpx.Client,
     token: str,
@@ -459,6 +487,8 @@ def verify(args: argparse.Namespace) -> dict:
                         raise ScheduledProfileProbeFailure(
                             "Owner-approved goal or selected document scope changed since preparation."
                         )
+                if scenario == "daily_coworker":
+                    require_prepared_daily_profile(state, current["automation"])
                 if int(current["automation"]["revision"]) != int(state["automation_revision"]):
                     raise ScheduledProfileProbeFailure(
                         "Automation revision changed during the scenario."
