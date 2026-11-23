@@ -300,8 +300,6 @@ def build_recovery_ledger(tmp_path, monkeypatch, *, mutate_recovery=None):
         recovery_status,
         recovery_verification,
     ) = recovery_epoch_files(tmp_path)
-    if mutate_recovery is not None:
-        mutate_recovery(recovery_verification)
     ledger = tmp_path / "ledger.jsonl"
     append_event(
         ledger=ledger,
@@ -347,6 +345,11 @@ def build_recovery_ledger(tmp_path, monkeypatch, *, mutate_recovery=None):
         recovery_verification=recovery_verification,
         created_at="2026-09-22T05:00:00+00:00",
     )
+    # Sign an authentic receipt before mutating the fixture. The strict release
+    # signer must refuse malformed input; the canary verifier separately
+    # refuses evidence corrupted after the ledger has authenticated its bytes.
+    if mutate_recovery is not None:
+        mutate_recovery(recovery_verification)
     return ledger, recovery_verification
 
 
