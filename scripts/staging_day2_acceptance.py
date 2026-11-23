@@ -32,7 +32,7 @@ _BASE_FIELDS = (
     "task_id", "workflow_id", "artifact_id", "artifact_sha256",
     "artifact_bytes", "model_attempts", "accounted_tokens",
     "owner_isolation", "artifact_retrieval", "content_anchor_verification",
-    "worker", "document_outbox",
+    "worker", "document_outbox", "model_evidence",
 )
 _RECOVERY = ("temporal", "parallel_restart", "fan_in")
 _CHECKS = [
@@ -194,6 +194,36 @@ def validate_evidence(
         _digest(run.get(key), "execution." + key)
     for key in ("artifact_bytes", "model_attempts", "accounted_tokens"):
         _positive(run.get(key), "execution." + key)
+    # The provider's identity and positive billed usage must be corroborated
+    # by the persisted task, settled cw_model_attempts and draft Step metadata.
+    # A positive API usage aggregate alone could be a charged reservation.
+    model = _object(run.get("model_evidence"), "execution.model_evidence")
+    if (model.get("status") != "verified"
+            or model.get("task_id") != run["task_id"]
+            or model.get("provider") != "deepseek"
+            or model.get("generation_validator") != "passed"):
+        raise Day2AcceptanceFailure(
+            "Private report has no verified persisted DeepSeek model provenance."
+        )
+    model_name = _nonempty(model.get("model"), "model_evidence.model")
+    if len(model_name) > 120:
+        raise Day2AcceptanceFailure("Model identity exceeds the persisted model ledger bound.")
+    _digest(model.get("prompt_sha256"), "model_evidence.prompt_sha256")
+    if (model.get("ledger_attempt_count") != run["model_attempts"]
+            or model.get("ledger_accounted_tokens") != run["accounted_tokens"]):
+        raise Day2AcceptanceFailure(
+            "Model SQL attempt or token totals do not match the private report."
+        )
+    completed_attempt = _positive(model.get("completed_attempt"), "model_evidence.completed_attempt")
+    input_tokens = _positive(model.get("completed_input_tokens"), "model_evidence.completed_input_tokens")
+    output_tokens = _positive(model.get("completed_output_tokens"), "model_evidence.completed_output_tokens")
+    total_tokens = _positive(model.get("completed_total_tokens"), "model_evidence.completed_total_tokens")
+    if (completed_attempt > run["model_attempts"]
+            or total_tokens < input_tokens + output_tokens
+            or total_tokens > run["accounted_tokens"]):
+        raise Day2AcceptanceFailure(
+            "Completed provider attempt does not have consistent positive usage."
+        )
     document_outbox = _object(run.get("document_outbox"), "execution.document_outbox")
     if (document_outbox.get("task_id") != run["task_id"]
             or type(document_outbox.get("effect_count")) is not int
