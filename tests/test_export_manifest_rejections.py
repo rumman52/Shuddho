@@ -394,6 +394,88 @@ def test_day6_research_native_docx_must_contain_exact_selected_finding_and_quote
 
 @pytest.mark.parametrize("language", ("en", "bn"))
 @pytest.mark.parametrize("skill_id", ("research", "report_email"))
+@pytest.mark.parametrize("pdf_action", (
+    "foreign_uri", "javascript_link", "document_open_action", "page_open_action",
+))
+def test_day6_pdf_rejects_unreviewed_links_and_active_actions(
+    language, skill_id, pdf_action
+):
+    """D06.T05/T07: text-accurate PDFs cannot carry hidden unreviewed authority."""
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, TextStringObject
+    from coworker_samples import work_draft
+    from test_coworker import draft as report_draft
+    from services.coworker.exports import validate_day6_exports
+
+    if skill_id == "research":
+        package = work_draft("research", language)
+        sources = [{
+            "id": "web-1", "kind": "web", "label": "Original study",
+            "url": "https://example.org/study",
+            "retrieved_at": "2026-11-18T02:00:00Z",
+            "source_date": None, "sha256": "a" * 64,
+        }]
+        filename = "research-report.pdf"
+    else:
+        package = report_draft(language)
+        sources = [{"id": "notes", "label": "Provided notes"}]
+        filename = "report.pdf"
+
+    outputs = render_in_subprocess(package, sources, skill_id=skill_id)
+    validate_day6_exports(skill_id, package, outputs, expected_sources=sources)
+    changed = []
+    for name, content_type, body in outputs:
+        if name == filename:
+            original = PdfReader(io.BytesIO(body))
+            original_text = [page.extract_text() for page in original.pages]
+            writer = PdfWriter(clone_from=io.BytesIO(body))
+            page = writer.pages[0]
+            action = DictionaryObject({
+                NameObject("/S"): NameObject("/URI" if pdf_action == "foreign_uri" else "/JavaScript"),
+            })
+            if pdf_action == "foreign_uri":
+                action[NameObject("/URI")] = TextStringObject("https://unapproved.example/collect")
+            else:
+                action[NameObject("/JS")] = TextStringObject("app.alert('unreviewed action')")
+            if pdf_action in {"foreign_uri", "javascript_link"}:
+                annotations = page.get("/Annots")
+                if annotations is None:
+                    annotations = ArrayObject()
+                    page[NameObject("/Annots")] = annotations
+                else:
+                    annotations = annotations.get_object()
+                annotation = DictionaryObject({
+                    NameObject("/Type"): NameObject("/Annot"),
+                    NameObject("/Subtype"): NameObject("/Link"),
+                    NameObject("/Rect"): ArrayObject(
+                        [FloatObject(20), FloatObject(20), FloatObject(140), FloatObject(45)]),
+                    NameObject("/A"): action,
+                })
+                annotations.append(writer._add_object(annotation))
+            elif pdf_action == "document_open_action":
+                writer._root_object[NameObject("/OpenAction")] = action
+            else:
+                page[NameObject("/AA")] = DictionaryObject({NameObject("/O"): action})
+
+            changed_pdf = io.BytesIO()
+            writer.write(changed_pdf)
+            body = changed_pdf.getvalue()
+            reopened = PdfReader(io.BytesIO(body))
+            assert [p.extract_text() for p in reopened.pages] == original_text
+            if pdf_action in {"foreign_uri", "javascript_link"}:
+                assert reopened.pages[0].get("/Annots"), "PDF fixture must have a real link annotation"
+            elif pdf_action == "document_open_action":
+                assert reopened.trailer["/Root"].get("/OpenAction"), "PDF fixture must contain a real open action"
+            else:
+                assert reopened.pages[0].get("/AA"), "PDF fixture must contain a page-level action"
+        changed.append((name, content_type, body))
+
+    with pytest.raises(ValueError, match="PDF"):
+        validate_day6_exports(skill_id, package, changed, expected_sources=sources)
+
+
+@pytest.mark.parametrize("language", ("en", "bn"))
+@pytest.mark.parametrize("skill_id", ("research", "report_email"))
 @pytest.mark.parametrize("extra", ("body_table", "body_content_control", "header", "footer"))
 def test_day6_docx_rejects_unreviewed_text_outside_direct_body_paragraphs(
     language, skill_id, extra
