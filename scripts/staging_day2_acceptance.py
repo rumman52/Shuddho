@@ -209,8 +209,10 @@ def validate_evidence(
     if len(model_name) > 120:
         raise Day2AcceptanceFailure("Model identity exceeds the persisted model ledger bound.")
     _digest(model.get("prompt_sha256"), "model_evidence.prompt_sha256")
-    if (model.get("ledger_attempt_count") != run["model_attempts"]
-            or model.get("ledger_accounted_tokens") != run["accounted_tokens"]):
+    if (type(model.get("ledger_attempt_count")) is not int
+            or type(model.get("ledger_accounted_tokens")) is not int
+            or model["ledger_attempt_count"] != run["model_attempts"]
+            or model["ledger_accounted_tokens"] != run["accounted_tokens"]):
         raise Day2AcceptanceFailure(
             "Model SQL attempt or token totals do not match the private report."
         )
