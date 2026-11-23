@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.cohort_release_gate import load_rollout
-from scripts.ruke_pilot_eval import MAX_BYTES, immutable_write, read_json as read_bounded_json, strict_json_loads
+from scripts.ruke_pilot_eval import (
+    MAX_BYTES,
+    _read_json_and_sha256 as read_bounded_json_with_sha,
+    immutable_write,
+    read_json as read_bounded_json,
+    strict_json_loads,
+)
 from scripts.cohort_release_ledger import (
     file_sha256,
     ledger_key,
@@ -331,8 +337,10 @@ def load_recovery_epoch(
     rollout_path: Path | None = None,
 ) -> datetime:
     try:
-        recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        # A path may change between reads: interpret and attest the exact
+        # same bounded regular inode, rejecting links and ambiguous JSON.
+        recovery, recovery_hash = read_bounded_json_with_sha(recovery_path)
+    except (OSError, ValueError, UnicodeError) as error:
         raise CanaryProgressionError(
             f"Could not read recovery verification: {type(error).__name__}"
         ) from None
@@ -402,7 +410,7 @@ def load_recovery_epoch(
             "Ledger recovery has no earlier stop_rollout event for this stage."
         )
     artifacts = entry.get("artifact_sha256")
-    if not isinstance(artifacts, dict) or artifacts.get("recovery_verification") != file_sha256(recovery_path):
+    if not isinstance(artifacts, dict) or artifacts.get("recovery_verification") != recovery_hash:
         raise CanaryProgressionError(
             "Release ledger does not bind this recovery-verification artifact."
         )
