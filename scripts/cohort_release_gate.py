@@ -30,6 +30,7 @@ from scripts.coworker_quality_evidence import (
     validate_live_quality_evidence,
 )
 from scripts.staging_gate import evaluate_required as evaluate_staging, load_evidence
+from scripts.ruke_pilot_eval import read_json as read_bounded_json
 from services.coworker.action_registry import registered_transaction_operations
 
 BASE_MONITORING = {
@@ -57,7 +58,9 @@ def text_ref(value) -> bool:
 
 
 def load_rollout(path: Path) -> dict:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    # Part 05: honor exact rollout bytes; duplicate capability/cap keys,
+    # symlinked manifests, non-finite JSON and oversized inputs fail closed.
+    value = read_bounded_json(path)
     if not isinstance(value, dict):
         raise ValueError("Rollout manifest must be a JSON object")
     return value

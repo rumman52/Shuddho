@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import func, select
 
 from scripts.cohort_release_gate import load_rollout
+from scripts.ruke_pilot_eval import immutable_write, read_json as read_bounded_json
 from services.coworker.config import Settings
 from services.coworker.database import session_factory
 from services.coworker.models import (
@@ -72,7 +74,13 @@ def age_seconds(now: datetime, created_at: datetime) -> int:
 
 
 def load_thresholds(path: Path) -> dict:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        # Health STOP bounds are release controls, not permissive local JSON.
+        value = read_bounded_json(path)
+    except (OSError, ValueError, UnicodeError) as error:
+        raise CohortHealthError(
+            f"Could not read cohort health thresholds: {type(error).__name__}"
+        ) from None
     if not isinstance(value, dict) or set(value) != THRESHOLD_KEYS:
         raise CohortHealthError("Health thresholds must contain the exact documented key set.")
     integer_keys = {
@@ -307,6 +315,14 @@ def main() -> None:
     parser.add_argument("--snapshot-output", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if (args.snapshot_output is not None and args.output is not None
+            and os.path.abspath(args.snapshot_output) == os.path.abspath(args.output)):
+        raise SystemExit("Snapshot and decision output paths must be distinct.")
+    for destination in (args.snapshot_output, args.output):
+        if destination is not None and os.path.lexists(destination):
+            raise SystemExit(
+                "Cohort health evidence path already exists; choose unused report paths."
+            )
 
     settings = Settings.from_env()
     rollout = load_rollout(args.rollout)
@@ -315,10 +331,16 @@ def main() -> None:
     result = evaluate(snapshot, rollout, thresholds)
 
     if args.snapshot_output:
-        args.snapshot_output.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+        try:
+            immutable_write(args.snapshot_output, snapshot)
+        except FileExistsError:
+            raise SystemExit("Health snapshot already exists; preserve first evidence.") from None
     encoded = json.dumps(result, indent=2)
     if args.output:
-        args.output.write_text(encoded + "\n", encoding="utf-8")
+        try:
+            immutable_write(args.output, result)
+        except FileExistsError:
+            raise SystemExit("Health decision already exists; preserve first evidence.") from None
     print(encoded)
     if result["decision"] != "CONTINUE_COHORT":
         raise SystemExit("Cohort health gate says STOP_ROLLOUT.")
