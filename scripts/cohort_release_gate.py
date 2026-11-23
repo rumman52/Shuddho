@@ -30,7 +30,10 @@ from scripts.coworker_quality_evidence import (
     validate_live_quality_evidence,
 )
 from scripts.staging_gate import evaluate_required as evaluate_staging, load_evidence
-from scripts.ruke_pilot_eval import read_json as read_bounded_json
+from scripts.ruke_pilot_eval import (
+    _read_json_and_sha256 as read_bounded_json_with_sha,
+    immutable_write,
+)
 from services.coworker.action_registry import registered_transaction_operations
 
 BASE_MONITORING = {
@@ -57,13 +60,17 @@ def text_ref(value) -> bool:
     return isinstance(value, str) and bool(value.strip()) and len(value) <= 500
 
 
-def load_rollout(path: Path) -> dict:
-    # Part 05: honor exact rollout bytes; duplicate capability/cap keys,
-    # symlinked manifests, non-finite JSON and oversized inputs fail closed.
-    value = read_bounded_json(path)
+def load_rollout_with_sha(path: Path) -> tuple[dict, str]:
+    """Parse and hash one bounded, unlinked rollout inode as one evidence unit."""
+    value, digest = read_bounded_json_with_sha(path)
     if not isinstance(value, dict):
         raise ValueError("Rollout manifest must be a JSON object")
-    return value
+    return value, digest
+
+
+def load_rollout(path: Path) -> dict:
+    # Preserve the established dict-only reader for existing callers.
+    return load_rollout_with_sha(path)[0]
 
 
 def declared_action_providers(rollout: dict) -> set[str]:
@@ -436,7 +443,7 @@ def main() -> None:
     if args.max_cohort_users < 1:
         raise SystemExit("--max-cohort-users must be positive")
 
-    rollout = load_rollout(args.rollout)
+    rollout, rollout_sha256 = load_rollout_with_sha(args.rollout)
     artifact_enabled = (
         isinstance(rollout.get("capabilities"), dict)
         and rollout["capabilities"].get("artifact_services") is True
@@ -460,11 +467,17 @@ def main() -> None:
             if args.artifact_quality_eval is not None
             else None
         ),
-        rollout_sha256=file_sha256(args.rollout),
+        rollout_sha256=rollout_sha256,
     )
     encoded = json.dumps(result, indent=2)
     if args.output:
-        args.output.write_text(encoded + "\n", encoding="utf-8")
+        try:
+            # First decisions are private and immutable; never erase prior evidence.
+            immutable_write(args.output, result)
+        except FileExistsError:
+            raise SystemExit(
+                "Release decision report already exists; choose an unused output path."
+            ) from None
     print(encoded)
     if result["decision"] != "GO_CONTROLLED_COHORT":
         missing = result["staging"]["missing"] + result["rollout_failures"]

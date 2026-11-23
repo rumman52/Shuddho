@@ -838,3 +838,142 @@ def test_rollout_reader_preserves_valid_cap_and_disabled_flags(tmp_path):
     parsed = load_rollout(path)
     assert parsed["cohort"]["max_users"] == 25
     assert parsed["capabilities"]["memory"] is False
+
+# Part 05 / Day 10 — behavior-first synthetic canonical release receipt boundaries.
+# These tests do not supply authenticated D custody or operated pilot evidence.
+def test_release_rollout_loader_keeps_valid_manifest_shape(tmp_path):
+    import json
+    from scripts import cohort_release_gate as gate
+
+    original = {"release_id": "cohort-001", "capabilities": {"coworker": True}}
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(original), encoding="utf-8")
+    assert gate.load_rollout(path) == original
+
+
+def test_release_rollout_rejects_duplicate_nested_capability(tmp_path):
+    from scripts import cohort_release_gate as gate
+
+    path = tmp_path / "manifest.json"
+    path.write_text(
+        '{"release_id":"cohort-001",'
+        '"capabilities":{"coworker":false,"coworker":true}}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        gate.load_rollout(path)
+
+
+def test_release_rollout_rejects_nonfinite_control(tmp_path):
+    from scripts import cohort_release_gate as gate
+
+    path = tmp_path / "manifest.json"
+    path.write_text('{"release_id":"cohort-001","cohort":{"max_users":NaN}}', encoding="utf-8")
+    with pytest.raises(ValueError, match="non-finite"):
+        gate.load_rollout(path)
+
+
+def test_release_rollout_rejects_linked_manifest(tmp_path):
+    import os
+    from scripts import cohort_release_gate as gate
+
+    if os.name != "posix":
+        pytest.skip("requires POSIX no-follow file descriptors")
+    target = tmp_path / "elsewhere.json"
+    target.write_text('{"release_id":"cohort-001"}', encoding="utf-8")
+    path = tmp_path / "manifest.json"
+    path.symlink_to(target)
+    with pytest.raises(ValueError, match="evidence file|linked|rollout"):
+        gate.load_rollout(path)
+
+
+def test_release_rollout_rejects_oversized_manifest(tmp_path):
+    from scripts import cohort_release_gate as gate
+
+    path = tmp_path / "manifest.json"
+    path.write_bytes(b'{"release_id":"cohort-001"}' + b" " * 4_000_100)
+    with pytest.raises(ValueError, match="oversized|evidence file|rollout"):
+        gate.load_rollout(path)
+
+
+def _setup_release_cli(monkeypatch, tmp_path, output=None):
+    import json
+    import sys
+    from scripts import cohort_release_gate as gate
+
+    rollout_path = tmp_path / "rollout.json"
+    original = {"release_id": "before", "capabilities": {}}
+    rollout_path.write_text(json.dumps(original), encoding="utf-8")
+    args = [
+        "cohort_release_gate",
+        "--rollout", str(rollout_path),
+        "--evidence", str(tmp_path / "evidence.json"),
+        "--quality-eval", str(tmp_path / "quality.json"),
+        "--model-eval", str(tmp_path / "model.json"),
+    ]
+    if output is not None:
+        args.extend(["--output", str(output)])
+    monkeypatch.setattr(sys, "argv", args)
+    monkeypatch.setattr(gate, "load_evidence", lambda _: {})
+    monkeypatch.setattr(
+        gate,
+        "evaluate_release",
+        lambda evidence, rollout, **kwargs: {"decision": "GO_CONTROLLED_COHORT"},
+    )
+    return rollout_path, original
+
+
+def test_release_cli_digest_matches_exact_bytes_used_for_decision(monkeypatch, tmp_path):
+    """Changing the pathname after parsing must not change the attested SHA."""
+    import hashlib
+    import json
+    from scripts import cohort_release_gate as gate
+
+    path, original = _setup_release_cli(monkeypatch, tmp_path)
+    before = path.read_bytes()
+    captured = {}
+
+    def substitute_after_rollout_read(_):
+        path.write_text(
+            json.dumps({"release_id": "after", "capabilities": {}}),
+            encoding="utf-8",
+        )
+        return {}
+
+    def collect(evidence, rollout, **kwargs):
+        captured.update({"rollout": rollout, **kwargs})
+        return {"decision": "GO_CONTROLLED_COHORT"}
+
+    monkeypatch.setattr(gate, "load_evidence", substitute_after_rollout_read)
+    monkeypatch.setattr(gate, "evaluate_release", collect)
+    gate.main()
+    assert captured["rollout"] == original
+    assert captured["rollout_sha256"] == hashlib.sha256(before).hexdigest()
+
+
+def test_release_first_decision_report_is_private(monkeypatch, tmp_path):
+    import os
+    import stat
+    from scripts import cohort_release_gate as gate
+
+    if os.name != "posix":
+        pytest.skip("requires POSIX output mode")
+    output = tmp_path / "decision.json"
+    _setup_release_cli(monkeypatch, tmp_path, output=output)
+    before = os.umask(0o022)
+    try:
+        gate.main()
+    finally:
+        os.umask(before)
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+
+
+def test_release_first_decision_report_is_write_once(monkeypatch, tmp_path):
+    from scripts import cohort_release_gate as gate
+
+    output = tmp_path / "decision.json"
+    output.write_bytes(b"ORIGINAL_FIRST_DECISION\\n")
+    _setup_release_cli(monkeypatch, tmp_path, output=output)
+    with pytest.raises(SystemExit, match="already exists|unused output"):
+        gate.main()
+    assert output.read_bytes() == b"ORIGINAL_FIRST_DECISION\\n"
