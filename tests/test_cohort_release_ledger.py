@@ -3655,3 +3655,80 @@ def test_signed_ledger_reader_maps_nonregular_input_to_domain_error(tmp_path):
 
 def test_signed_ledger_reader_preserves_missing_ledger_as_empty_history(tmp_path):
     assert read_entries(tmp_path / "not-yet-created.jsonl") == []
+
+
+# Part 05 / Day 10: event-creation evidence must be unambiguous before signing.
+# These synthetic tests do not constitute operated staging or pilot authorization.
+def test_release_event_append_rejects_shadowed_expansion_decision(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    files = artifacts(tmp_path, decision="ELIGIBLE_FOR_EXPANSION")
+    decision = files[2]
+    before = decision.read_text(encoding="utf-8")
+    assert '"decision": "ELIGIBLE_FOR_EXPANSION"' in before
+    decision.write_text(
+        before.replace(
+            '"decision": "ELIGIBLE_FOR_EXPANSION"',
+            '"decision": "STOP_ROLLOUT", "decision": "ELIGIBLE_FOR_EXPANSION"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReleaseLedgerError, match="progression decision"):
+        append(ledger, files, event_type="stage_approved")
+    assert not ledger.exists()
+
+
+def test_release_event_append_rejects_linked_rollout_manifest(tmp_path):
+    import os
+
+    if os.name != "posix":
+        pytest.skip("requires POSIX no-follow evidence boundary")
+    ledger = tmp_path / "ledger.jsonl"
+    files = artifacts(tmp_path)
+    original = tmp_path / "outside-rollout.json"
+    files[0].rename(original)
+    files[0].symlink_to(original)
+    with pytest.raises(ReleaseLedgerError, match="rollout manifest"):
+        append(ledger, files)
+    assert not ledger.exists()
+
+
+def test_release_event_append_rejects_oversized_canary_plan(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    files = artifacts(tmp_path)
+    plan = files[1]
+    plan.write_bytes(plan.read_bytes() + b" " * 4_000_100)
+    with pytest.raises(ReleaseLedgerError, match="canary plan"):
+        append(ledger, files)
+    assert not ledger.exists()
+
+
+def test_release_event_append_rejects_nonfinite_cohort_member_cap(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    files = artifacts(tmp_path)
+    rollout = files[0]
+    payload = rollout.read_text(encoding="utf-8")
+    assert '"max_users": 25' in payload
+    rollout.write_text(
+        payload.replace('"max_users": 25', '"max_users": NaN', 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReleaseLedgerError, match="rollout manifest"):
+        append(ledger, files)
+    assert not ledger.exists()
+
+
+def test_release_event_append_rejects_directory_operator_status_as_domain_error(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    files = list(artifacts(tmp_path))
+    files[3] = tmp_path  # Existing directory, not a JSON operator receipt
+    with pytest.raises(ReleaseLedgerError, match="operator status"):
+        append(ledger, files)
+    assert not ledger.exists()
+
+
+def test_release_event_append_keeps_valid_signed_history_compatible(tmp_path):
+    ledger = tmp_path / "ledger.jsonl"
+    entry = append(ledger, artifacts(tmp_path))
+    assert entry["event_type"] == "hold"
+    assert verify_entries(read_entries(ledger), KEY)["head_entry_hash"] == entry["entry_hash"]
