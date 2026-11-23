@@ -326,6 +326,8 @@ def test_day7_preflight_does_not_invent_post_pause_observation_offset():
     "policy_timezone", "policy_schedule", "policy_run_profile",
     "policy_output_language", "policy_quiet_hours", "policy_overlap_policy",
     "policy_catchup_window_seconds",
+    "after_pause_run_profile", "after_pause_output_language",
+    "after_pause_quiet_hours",
 ])
 def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path, unexpected):
     import argparse
@@ -393,10 +395,20 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
             self.payload = payload
 
         def json(self):
-            return self.payload if self.payload is not None else {
+            if self.payload is not None:
+                return self.payload
+            policy = deepcopy(live_profile)
+            if unexpected and unexpected.startswith("after_pause_"):
+                field = unexpected.removeprefix("after_pause_")
+                policy[field] = {
+                    "run_profile": "deadline",
+                    "output_language": "bn",
+                    "quiet_hours": {"start": "23:00", "end": "07:00"},
+                }[field]
+            return {
                 "id": "automation-1", "state": "paused", "revision": 2,
                 "schedule_applied_revision": 2, "schedule_applied_enabled": False,
-                "schedule_error_code": None,
+                "schedule_error_code": None, **policy,
             }
 
     class Client:
@@ -443,6 +455,14 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
             probe.pause_two_day(args)
         assert client.posts == []  # policy drift must block before pause mutation
         assert not args.output.exists()
+        return
+    if unexpected and unexpected.startswith("after_pause_"):
+        with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
+            probe.pause_two_day(args)
+        assert client.posts == [(
+            "/api/v1/automations/automation-1/pause", {"expected_revision": 1},
+        )]
+        assert not args.output.exists()  # never certify drifted applied-pause
         return
     if unexpected:
         with pytest.raises(probe.ScheduledProfileProbeFailure, match="Pause baseline"):
