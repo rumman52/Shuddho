@@ -102,16 +102,46 @@ def _private_json(path: Path, label: str) -> dict:
 
 
 def _file_sha(path: Path) -> str:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size < 1:
-        raise ArchiveAttestationFailure("PostgreSQL dump is missing or linked.")
-    digest = hashlib.sha256()
+    """Hash a stable PostgreSQL archive inode without trusting a prechecked path.
+
+    Dumps can be large, so digest in chunks. A changed inode during hashing
+    cannot attest to one immutable source archive; reject it rather than
+    returning a checksum from a mixed or substituted read.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ArchiveAttestationFailure("Secure no-follow PostgreSQL archive reads are unavailable.")
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = None
     try:
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
+        descriptor = os.open(path, flags)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size < 1:
+            raise ArchiveAttestationFailure("PostgreSQL dump must be a nonempty regular file.")
+
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > before.st_size:
+                raise ArchiveAttestationFailure("PostgreSQL dump changed while hashing.")
+            digest.update(chunk)
+
+        after = os.fstat(descriptor)
+        if (total != before.st_size
+                or before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+                or before.st_ctime_ns != after.st_ctime_ns):
+            raise ArchiveAttestationFailure("PostgreSQL dump changed while hashing.")
+        return digest.hexdigest()
     except OSError:
-        raise ArchiveAttestationFailure("PostgreSQL dump could not be read.") from None
-    return digest.hexdigest()
+        raise ArchiveAttestationFailure("PostgreSQL dump could not be opened or read safely.") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _inventory(value: object) -> dict:

@@ -439,6 +439,7 @@ def test_day2_acceptance_rejects_report_fidelity_field_swapped_after_execution()
     ("agent_outbox_delivered", False),
     ("agent_outbox_delivered", None),
     ("worker_before_heartbeat_at", "2026-11-12T11:03:01+00:00"),
+    ("worker_before_heartbeat_at", "2026-11-12T11:02:44+00:00"),
     ("worker_after_heartbeat_at", "2026-11-12T11:03:05+00:00"),
     ("completed_children", []),
     ("completed_children", None),

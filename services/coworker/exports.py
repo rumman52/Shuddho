@@ -83,6 +83,9 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
         # produces a deterministic paragraph sequence: verify it in full,
         # including duplicates, rather than accepting substring matches.
         pdf_claims = [title]
+        # External OOXML relationships are reviewable authority, not merely
+        # decoration. Only exact approved research source hyperlinks are allowed.
+        reviewed_external_relationship_ids: set[str] = set()
         if skill_id == "report_email":
             expected_paragraphs = [draft.report.title, draft.report.summary]
             pdf_claims.append(draft.report.summary)
@@ -139,12 +142,29 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
                         or not relationship.is_external
                         or relationship.target_ref != expected_url):
                     raise ValueError("DOCX source hyperlink is not the reviewed URL")
+                reviewed_external_relationship_ids.add(relationship.rId)
 
             for finding in draft.findings:
                 pdf_claims.extend([finding.heading, finding.text])
                 for citation in finding.citations:
                     pdf_claims.append(citation.quote)
             pdf_claims.extend(draft.missing_information)
+
+        # DOCX also carries package-level and per-part relationships outside
+        # visible paragraphs. A readable, otherwise correct Word file could
+        # contain an orphan external hyperlink or a remote attached template
+        # in word/settings.xml, neither of which the paragraph check sees.
+        # The renderer creates no other external dependencies. Fail closed
+        # before publishing and on the final private-object readback.
+        if any(rel.is_external for rel in document.part.package.rels.values()):
+            raise ValueError("DOCX has an unreviewed package-level external relationship")
+        for part in document.part.package.parts:
+            for rel in part.rels.values():
+                if rel.is_external and (
+                    part.partname != document.part.partname
+                    or rel.rId not in reviewed_external_relationship_ids
+                ):
+                    raise ValueError("DOCX has an unreviewed external relationship")
 
         reader = PdfReader(io.BytesIO(rows[pdf_name]))
         if reader.is_encrypted or not reader.pages:

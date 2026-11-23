@@ -329,7 +329,8 @@ def test_worker_replacement_proves_new_identity_and_heartbeat_during_run():
     "same_instance", "wrong_revision", "stale", "registered_before_work",
     "registered_before_restart",
     "registered_after_completion", "no_heartbeat_advance", "late_platform_event",
-    "wrong_previous_identity",
+    "wrong_previous_identity", "pre_restart_heartbeat_stale",
+    "pre_restart_heartbeat_after_restart", "old_worker_registered_after_run_started",
 ])
 def test_worker_replacement_rejects_forged_or_nonactive_restart(broken):
     base, before, after = _worker_evidence()
@@ -351,6 +352,14 @@ def test_worker_replacement_rejects_forged_or_nonactive_restart(broken):
         after["started_at"] = (base + timedelta(minutes=8)).isoformat()
     elif broken == "wrong_previous_identity":
         before["source_revision"] = "b" * 40
+    elif broken == "pre_restart_heartbeat_stale":
+        # The old poller could have died BEFORE the active child task began.
+        before["heartbeat_at"] = (base - timedelta(seconds=30)).isoformat()
+    elif broken == "pre_restart_heartbeat_after_restart":
+        before["heartbeat_at"] = (base + timedelta(seconds=9)).isoformat()
+    elif broken == "old_worker_registered_after_run_started":
+        before["started_at"] = (base + timedelta(seconds=3)).isoformat()
+        before["heartbeat_at"] = (base + timedelta(seconds=4)).isoformat()
     with pytest.raises(recovery.RecoveryFailure, match="worker|restart|Worker"):
         _replace(before, after, base)
 
@@ -381,3 +390,183 @@ def test_parse_utc_rejects_missing_or_wrong_type_without_unhandled_exception():
     for malformed in (None, 1, False, [], {}):
         with pytest.raises(recovery.RecoveryFailure, match="timezone"):
             recovery.parse_utc(malformed)
+
+
+def test_old_worker_heartbeat_at_exact_registry_freshness_boundary_is_accepted():
+    from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+
+    base, before, after = _worker_evidence()
+    before["heartbeat_at"] = (
+        base + timedelta(seconds=8 - WORKER_HEARTBEAT_TTL_SECONDS)
+    ).isoformat()
+    # A strict greater-than check rejects stale, while a TTL-equal heartbeat
+    # remains fresh exactly as in repository.worker_inventory.
+    assert _replace(before, after, base)["worker_before_id"] == "old-worker"
+
+
+def _active_checkpoint_fixture():
+    # The original prepare heartbeat is intentionally old: a genuine
+    # long-running child must not have to complete inside 15 seconds.
+    base, original, after = _worker_evidence()
+    original["heartbeat_at"] = (base - timedelta(minutes=1)).isoformat()
+    state = {
+        "run_id": "run-checkpoint", "owner_id": "synthetic-owner",
+        "workflow_id": "shuddho-agent-run-checkpoint",
+        "release_context": {"release_id": "frozen-run", "source_revision": "a" * 40},
+        "worker_before": original,
+    }
+    run = SimpleNamespace(
+        id="run-checkpoint", owner_id="synthetic-owner", state="running",
+    )
+    step = SimpleNamespace(
+        id="step-1", ordinal=1, run_id=run.id, owner_id=run.owner_id,
+        state="running", started_at=base + timedelta(seconds=2), finished_at=None,
+    )
+    child = SimpleNamespace(
+        id="task-1", agent_run_id=run.id, agent_step_id=step.id,
+        owner_id=run.owner_id, state="running",
+    )
+    current = dict(
+        original, state="running", heartbeat_fresh=True,
+        heartbeat_at=(base + timedelta(seconds=5)).isoformat(),
+    )
+    facts = {
+        "completed_children": [{
+            "ordinal": 1, "task_id": child.id,
+            "started_at": step.started_at.isoformat(),
+            "finished_at": (base + timedelta(seconds=25)).isoformat(),
+        }],
+    }
+    return base, state, run, step, child, current, facts, after
+
+
+def test_just_in_time_checkpoint_allows_real_long_running_child_with_fresh_worker():
+    base, state, run, step, child, current, facts, after = _active_checkpoint_fixture()
+    captured_at = base + timedelta(seconds=7)
+    receipt = recovery.attest_active_worker_checkpoint(
+        state, run, [step], [child], [current],
+        revision="a" * 40, task_queue="test-staging-queue",
+        captured_at=captured_at,
+    )
+    assert receipt["status"] == "active_child_observed"
+    assert receipt["worker_before"]["id"] == state["worker_before"]["id"]
+    assert receipt["active_child_task_id"] == child.id
+
+    # The stale prepare snapshot CANNOT be promoted to a PASS.
+    with pytest.raises(recovery.RecoveryFailure, match="stale"):
+        _replace(state["worker_before"], after, base)
+    refreshed = recovery.worker_from_active_checkpoint(
+        state, receipt, facts,
+        restart_at=base + timedelta(seconds=8),
+        revision="a" * 40, task_queue="test-staging-queue",
+    )
+    assert _replace(refreshed, after, base)["worker_before_heartbeat_at"] == current["heartbeat_at"]
+
+
+@pytest.mark.parametrize("broken", [
+    "not_active_run", "no_running_step", "no_started_step", "completed_step",
+    "queued_child", "wrong_child_link", "wrong_worker", "stale_worker",
+    "future_heartbeat", "late_old_registration", "duplicate_worker",
+])
+def test_live_checkpoint_rejects_missing_active_child_or_old_polling_evidence(broken):
+    base, state, run, step, child, current, facts, after = _active_checkpoint_fixture()
+    captured_at = base + timedelta(seconds=7)
+    inventories = [current]
+    if broken == "not_active_run":
+        run.state = "completed"
+    elif broken == "no_running_step":
+        step.state = "completed"
+    elif broken == "no_started_step":
+        step.started_at = None
+    elif broken == "completed_step":
+        step.finished_at = base + timedelta(seconds=6)
+    elif broken == "queued_child":
+        child.state = "queued"
+    elif broken == "wrong_child_link":
+        child.agent_step_id = "not-the-original-step"
+    elif broken == "wrong_worker":
+        current["id"] = "an-unrelated-worker"
+    elif broken == "stale_worker":
+        current["heartbeat_at"] = (base - timedelta(seconds=20)).isoformat()
+    elif broken == "future_heartbeat":
+        current["heartbeat_at"] = (base + timedelta(seconds=9)).isoformat()
+    elif broken == "late_old_registration":
+        current["started_at"] = (base + timedelta(seconds=4)).isoformat()
+    elif broken == "duplicate_worker":
+        inventories.append(dict(current, id="unexpected-concurrent-poller"))
+    with pytest.raises(recovery.RecoveryFailure):
+        recovery.attest_active_worker_checkpoint(
+            state, run, [step], [child], inventories,
+            revision="a" * 40, task_queue="test-staging-queue",
+            captured_at=captured_at,
+        )
+
+
+@pytest.mark.parametrize("broken", [
+    "other_run", "wrong_release", "wrong_worker", "stale_checkpoint",
+    "stale_heartbeat", "checkpoint_after_restart", "wrong_child",
+    "wrong_ordinal", "after_child_finished", "non_timezone_checkpoint",
+])
+def test_recovery_checkpoint_cannot_be_reused_or_backdated(broken):
+    base, state, run, step, child, current, facts, after = _active_checkpoint_fixture()
+    receipt = recovery.attest_active_worker_checkpoint(
+        state, run, [step], [child], [current],
+        revision="a" * 40, task_queue="test-staging-queue",
+        captured_at=base + timedelta(seconds=7),
+    )
+    if broken == "other_run":
+        receipt["run_id"] = "another-run"
+    elif broken == "wrong_release":
+        receipt["release_context"] = {"release_id": "another-release"}
+    elif broken == "wrong_worker":
+        receipt["worker_before"]["id"] = "different-worker"
+    elif broken == "stale_checkpoint":
+        receipt["captured_at"] = (base - timedelta(minutes=1)).isoformat()
+        receipt["worker_before"]["heartbeat_at"] = (base - timedelta(minutes=1)).isoformat()
+    elif broken == "stale_heartbeat":
+        receipt["worker_before"]["heartbeat_at"] = (base - timedelta(minutes=1)).isoformat()
+    elif broken == "checkpoint_after_restart":
+        receipt["captured_at"] = (base + timedelta(seconds=9)).isoformat()
+    elif broken == "wrong_child":
+        receipt["active_child_task_id"] = "unrelated-child"
+    elif broken == "wrong_ordinal":
+        receipt["active_ordinal"] = True
+    elif broken == "after_child_finished":
+        facts["completed_children"][0]["finished_at"] = (base + timedelta(seconds=6)).isoformat()
+    elif broken == "non_timezone_checkpoint":
+        receipt["captured_at"] = "2026-11-13T00:00:07"
+    with pytest.raises(recovery.RecoveryFailure):
+        recovery.worker_from_active_checkpoint(
+            state, receipt, facts,
+            restart_at=base + timedelta(seconds=8),
+            revision="a" * 40, task_queue="test-staging-queue",
+        )
+
+
+def test_recovery_evidence_reader_accepts_only_private_unique_json(tmp_path):
+    state = tmp_path / "private-state.json"
+    state.write_text('{"release_context":{"release_id":"synthetic"}}', encoding="utf-8")
+    state.chmod(0o600)
+    assert recovery.read_private_recovery_receipt(state)["release_context"]["release_id"] == "synthetic"
+
+    state.chmod(0o644)
+    with pytest.raises(recovery.RecoveryFailure, match="private"):
+        recovery.read_private_recovery_receipt(state)
+    state.chmod(0o600)
+
+    alias = tmp_path / "unsafe-alias.json"
+    alias.symlink_to(state)
+    with pytest.raises(recovery.RecoveryFailure, match="cannot be safely"):
+        recovery.read_private_recovery_receipt(alias)
+
+    state.write_text('{"run_id":"a","run_id":"b"}', encoding="utf-8")
+    with pytest.raises(recovery.RecoveryFailure, match="duplicate"):
+        recovery.read_private_recovery_receipt(state)
+
+    state.write_text('{"event":NaN}', encoding="utf-8")
+    with pytest.raises(recovery.RecoveryFailure, match="non-finite"):
+        recovery.read_private_recovery_receipt(state)
+
+    state.write_text('["not an object"]', encoding="utf-8")
+    with pytest.raises(recovery.RecoveryFailure, match="JSON object"):
+        recovery.read_private_recovery_receipt(state)

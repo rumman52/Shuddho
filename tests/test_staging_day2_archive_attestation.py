@@ -241,3 +241,73 @@ def test_private_receipt_reader_rejects_ambiguous_or_nonfinite_json(tmp_path, pa
     with pytest.raises(attest.ArchiveAttestationFailure):
         attest._private_json(receipt, "Private archive evidence")
 
+
+
+# The PostgreSQL binary dump (unlike bounded JSON receipts) can be large.
+# Its identity must be bound to a regular, stable inode, not prechecked path.
+def test_postgres_dump_hash_refuses_symlink_swap_at_descriptor_open(tmp_path, monkeypatch):
+    submitted = tmp_path / "source.dump"
+    replacement = tmp_path / "replacement.dump"
+    submitted.write_bytes(b"PGDMP original verified contents")
+    replacement.write_bytes(b"PGDMP unrelated contents")
+    original_open = os.open
+    swapped = False
+
+    def change_path_at_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if Path(path) == submitted and not swapped:
+            swapped = True
+            submitted.unlink()
+            submitted.symlink_to(replacement)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", change_path_at_open)
+    with pytest.raises(attest.ArchiveAttestationFailure):
+        attest._file_sha(submitted)
+    assert swapped
+
+
+@pytest.mark.parametrize("mutation", ["append", "overwrite_same_length"])
+def test_postgres_dump_hash_rejects_mutation_during_stream(
+    tmp_path, monkeypatch, mutation,
+):
+    archive = tmp_path / "source.dump"
+    original = b"PGDMP original contents"
+    archive.write_bytes(original)
+    real_read = os.read
+    mutated = False
+
+    def change_bytes_at_first_read(fd, size):
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            if mutation == "append":
+                with archive.open("ab") as handle:
+                    handle.write(b" extra")
+            else:
+                archive.write_bytes(b"PGDMP updated!!contents")
+                assert archive.stat().st_size == len(original)
+        return real_read(fd, size)
+
+    monkeypatch.setattr(os, "read", change_bytes_at_first_read)
+    with pytest.raises(attest.ArchiveAttestationFailure, match="changed"):
+        attest._file_sha(archive)
+    assert mutated
+
+
+def test_postgres_dump_hash_does_not_reopen_prechecked_path(tmp_path, monkeypatch):
+    archive = tmp_path / "source.dump"
+    unrelated = tmp_path / "other.dump"
+    original = b"PGDMP identity-bound bytes"
+    archive.write_bytes(original)
+    unrelated.write_bytes(b"PGDMP unrelated bytes")
+    actual_path_open = Path.open
+
+    def swap_before_legacy_read(path, mode="r", *args, **kwargs):
+        if path == archive and mode == "rb":
+            archive.unlink()
+            archive.symlink_to(unrelated)
+        return actual_path_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", swap_before_legacy_read)
+    assert attest._file_sha(archive) == _sha(original)
