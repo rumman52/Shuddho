@@ -209,6 +209,26 @@ jobs:
           libreoffice-impress libreoffice-calc poppler-utils
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      # The lightweight Python suite skips SQLAlchemy-dependent cohort health tests.
+      # Require the actual health STOP/CONTINUE and rollout-reader regressions with
+      # coworker dependencies, and fail if either module was silently skipped.
+      - name: Qualify Day 10 cohort health and rollout evidence without skips
+        run: |
+          uv run --extra coworker pytest \
+            tests/test_cohort_health_gate.py \
+            tests/test_cohort_release_gate.py \
+            -q -rs --junitxml=/tmp/day10-cohort-health-evidence.xml
+          for module in tests.test_cohort_health_gate tests.test_cohort_release_gate; do
+            uv run --extra coworker python -m scripts.mandatory_test_gate \
+              /tmp/day10-cohort-health-evidence.xml --required-module "$module"
+          done
+      - name: Preserve Day 10 cohort health source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day10-cohort-health-source-regressions
+          path: /tmp/day10-cohort-health-evidence.xml
+          if-no-files-found: warn
       # Default Python tests omit the coworker PDF dependency. Require the
       # exact Day 2 acceptance contracts to run with pypdf and zero skips.
       - name: Qualify Day 2 private PDF fidelity and recovery contracts without skips

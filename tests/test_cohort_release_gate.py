@@ -1,6 +1,9 @@
+import json
+import os
+
 import pytest
 
-from scripts.cohort_release_gate import evaluate_release, validate_rollout
+from scripts.cohort_release_gate import evaluate_release, load_rollout, validate_rollout
 
 
 BASE_GATES = {
@@ -786,6 +789,55 @@ def test_artifact_services_require_structured_rollout_bound_evidence():
     no_artifacts = rollout(artifacts=False)
     assert evaluate_release(evidence(), no_artifacts)["decision"] == "GO_CONTROLLED_COHORT"
 
+
+# Source-only Day 10 rollout reader guardrails; no cohort admission or GO evidence.
+def test_rollout_reader_rejects_shadowed_cohort_cap(tmp_path):
+    """A duplicate max_users field must not silently expand an admitted population."""
+    path = tmp_path / "rollout.json"
+    payload = json.dumps(rollout())
+    assert '"max_users": 25' in payload
+    path.write_text(
+        payload.replace('"max_users": 25', '"max_users": 5, "max_users": 25', 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        load_rollout(path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX no-follow contract")
+def test_rollout_reader_rejects_symlinked_manifest(tmp_path):
+    target = tmp_path / "outside.json"
+    target.write_text(json.dumps(rollout()), encoding="utf-8")
+    linked = tmp_path / "rollout.json"
+    linked.symlink_to(target)
+    with pytest.raises(ValueError):
+        load_rollout(linked)
+
+
+def test_rollout_reader_rejects_oversized_manifest(tmp_path):
+    path = tmp_path / "rollout.json"
+    path.write_bytes(json.dumps(rollout()).encode() + b" " * 4_000_100)
+    with pytest.raises(ValueError):
+        load_rollout(path)
+
+
+def test_rollout_reader_rejects_nonfinite_member_cap(tmp_path):
+    path = tmp_path / "rollout.json"
+    path.write_text(
+        json.dumps(rollout()).replace('"max_users": 25', '"max_users": NaN', 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        load_rollout(path)
+
+
+def test_rollout_reader_preserves_valid_cap_and_disabled_flags(tmp_path):
+    """No silent default or coercion of an explicitly false release capability."""
+    path = tmp_path / "rollout.json"
+    path.write_text(json.dumps(rollout()), encoding="utf-8")
+    parsed = load_rollout(path)
+    assert parsed["cohort"]["max_users"] == 25
+    assert parsed["capabilities"]["memory"] is False
 
 # Part 05 / Day 10 — behavior-first synthetic canonical release receipt boundaries.
 # These tests do not supply authenticated D custody or operated pilot evidence.
