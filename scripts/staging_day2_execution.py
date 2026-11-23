@@ -16,7 +16,7 @@ import re
 import stat
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -26,6 +26,7 @@ from scripts.staging_release_evidence import write_private_json
 from scripts.staging_prerequisite_preflight import EXPECTED_AUTH_ISSUER, EXPECTED_S3_ENDPOINT
 from scripts.staging_release_freeze import canonical_sha256, clean_origin, valid_sha
 from services.coworker.config import Settings
+from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 
 
 # API origin read back from the actual Rumman Render staging service on 22 Nov 2026.
@@ -830,6 +831,53 @@ def persisted_model_provenance(
         raise Day2Failure("Model provider ledger could not be independently verified.") from None
 
 
+def _worker_utc_time(raw: object, label: str) -> datetime:
+    """Parse a real timezone-aware instant; textual ordering is not chronology."""
+    if not isinstance(raw, str) or not raw:
+        raise Day2Failure(f"Worker {label} must be a timezone-aware ISO timestamp.")
+    try:
+        instant = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            raise ValueError("naive datetime")
+        return instant.astimezone(timezone.utc)
+    except (ValueError, OverflowError, TypeError):
+        raise Day2Failure(f"Worker {label} must be a timezone-aware ISO timestamp.") from None
+
+
+def _checked_worker_observation(
+    worker: object,
+    *,
+    revision: str,
+    task_queue: str,
+    require_fresh: bool,
+) -> tuple[datetime, datetime]:
+    """Require a coherent authenticated-worker registry observation.
+
+    An inventory heartbeat_fresh boolean is advisory: the operator also
+    compares the actual datetime against the SAME TTL used by the repository.
+    The earlier prepared snapshot may age while the real PDF model runs, so
+    only the new observation must be fresh at the time it is read.
+    """
+    if (
+        not isinstance(worker, dict)
+        or not isinstance(worker.get("id"), str)
+        or not worker["id"].strip()
+        or worker.get("source_revision") != revision
+        or worker.get("task_queue") != task_queue
+        or worker.get("state") != "running"
+        or worker.get("heartbeat_fresh") is not True
+    ):
+        raise Day2Failure("Worker inventory identity, queue, source SHA or live status is invalid.")
+    started_at = _worker_utc_time(worker.get("started_at"), "registration")
+    heartbeat_at = _worker_utc_time(worker.get("heartbeat_at"), "heartbeat")
+    observed_at = datetime.now(timezone.utc)
+    if not started_at <= heartbeat_at <= observed_at:
+        raise Day2Failure("Worker registration/heartbeat chronology is invalid or future-dated.")
+    if require_fresh and (observed_at - heartbeat_at).total_seconds() > WORKER_HEARTBEAT_TTL_SECONDS:
+        raise Day2Failure("Worker heartbeat is stale at its actual observation time.")
+    return started_at, heartbeat_at
+
+
 def active_worker(container: Container, revision: str) -> dict:
     workers = container.repository.worker_inventory(task_queue=container.settings.task_queue)
     active = [w for w in workers if (
@@ -844,21 +892,31 @@ def active_worker(container: Container, revision: str) -> dict:
         and w.get("source_revision") != revision for w in workers
     ):
         raise Day2Failure("A live worker with a different source SHA is polling the task queue.")
+    _checked_worker_observation(
+        active[0], revision=revision,
+        task_queue=container.settings.task_queue, require_fresh=True,
+    )
     return active[0]
 
 
 def heartbeat_advanced(container: Container, before: dict, revision: str) -> dict:
-    deadline = time.monotonic() + 15
+    task_queue = container.settings.task_queue
+    before_started_at, before_heartbeat_at = _checked_worker_observation(
+        before, revision=revision, task_queue=task_queue, require_fresh=False,
+    )
+    deadline = time.monotonic() + WORKER_HEARTBEAT_TTL_SECONDS
     while True:
-        workers = container.repository.worker_inventory(task_queue=container.settings.task_queue)
-        current = next((w for w in workers if w.get("id") == before.get("id")), None)
-        if (
-            current and current.get("source_revision") == revision
-            and current.get("state") == "running" and current.get("heartbeat_fresh") is True
-            and isinstance(current.get("heartbeat_at"), str)
-            and current["heartbeat_at"] > str(before.get("heartbeat_at") or "")
-        ):
-            return current
+        workers = container.repository.worker_inventory(task_queue=task_queue)
+        current = next((w for w in workers if w.get("id") == before["id"]), None)
+        if current:
+            started_at, heartbeat_at = _checked_worker_observation(
+                current, revision=revision, task_queue=task_queue,
+                require_fresh=True,
+            )
+            if started_at != before_started_at:
+                raise Day2Failure("Worker registration changed under the original worker identity.")
+            if heartbeat_at > before_heartbeat_at:
+                return current
         if time.monotonic() >= deadline:
             raise Day2Failure("Matching worker did not advance its durable heartbeat.")
         time.sleep(1)
