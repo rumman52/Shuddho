@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
@@ -414,3 +415,149 @@ def test_fake_s3_archive_retains_mime_metadata_and_restores_exact_private_bytes(
     assert item["bytes"] == b"%PDF-1.4\nPRIVATE\n%%EOF"
     assert item["content_type"] == "application/pdf"
     assert item["metadata"]["sha256"] == manifest["objects"][0]["sha256"]
+
+
+
+# The archive is untrusted local evidence. Neither prechecking a path nor
+# matching its final SHA protects provenance if it is later reopened.
+@pytest.mark.parametrize("where", ["top", "nested"])
+def test_private_manifest_rejects_duplicate_keys_before_restore(tmp_path, where):
+    archive, _manifest, _ = _archive(tmp_path)
+    path = archive / "manifest.json"
+    raw = path.read_text(encoding="utf-8")
+    if where == "top":
+        raw = raw.replace('"status": "archived"', '"status": "unverified", "status": "archived"', 1)
+    else:
+        raw = raw.replace('"sha256": ', '"sha256": "' + ("0" * 64) + '", "sha256": ', 1)
+    path.write_text(raw, encoding="utf-8")
+    target = SpyTarget(tmp_path / "target")
+    with pytest.raises(backup.ObjectArchiveError, match="duplicate"):
+        backup.restore_store(target, DST, archive, tmp_path / "receipt.json")
+    assert target.puts == [] and not (tmp_path / "receipt.json").exists()
+
+
+def test_private_manifest_rejects_oversize_before_parsing(tmp_path, monkeypatch):
+    archive, _, _ = _archive(tmp_path)
+    monkeypatch.setattr(backup, "MAX_MANIFEST_BYTES", 128, raising=False)
+    target = SpyTarget(tmp_path / "target")
+    with pytest.raises(backup.ObjectArchiveError, match="size|limit|large"):
+        backup.restore_store(target, DST, archive, tmp_path / "receipt.json")
+    assert target.puts == []
+
+
+def test_private_manifest_rejects_symlink_substitution_at_descriptor_open(tmp_path, monkeypatch):
+    archive, _, _ = _archive(tmp_path)
+    path = archive / "manifest.json"
+    alternative = tmp_path / "outside.json"
+    alternative.write_bytes(path.read_bytes())
+    real_open = os.open
+    swapped = False
+
+    def switch_at_open(candidate, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and (str(candidate) == "manifest.json" or Path(candidate) == path):
+            swapped = True
+            path.unlink()
+            path.symlink_to(alternative)
+        return real_open(candidate, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", switch_at_open)
+    with pytest.raises(backup.ObjectArchiveError):
+        backup._manifest(archive)
+    assert swapped
+
+
+def test_private_manifest_rejects_growth_after_descriptor_stat(tmp_path, monkeypatch):
+    archive, _, _ = _archive(tmp_path)
+    path = archive / "manifest.json"
+    inode = path.stat().st_ino
+    real_read = os.read
+    modified = False
+
+    def change_after_stat(fd, size):
+        nonlocal modified
+        if not modified and os.fstat(fd).st_ino == inode:
+            modified = True
+            with path.open("ab") as handle:
+                handle.write(b" " * 512)
+        return real_read(fd, size)
+
+    monkeypatch.setattr(os, "read", change_after_stat)
+    with pytest.raises(backup.ObjectArchiveError, match="changed|size"):
+        backup._manifest(archive)
+    assert modified
+
+
+def test_private_object_blob_rejects_symlink_swap_at_open(tmp_path, monkeypatch):
+    archive, manifest, _ = _archive(tmp_path)
+    path = archive / "objects" / manifest["objects"][0]["file"]
+    substitute = tmp_path / "outside-object.bin"
+    substitute.write_bytes(path.read_bytes())
+    real_open = os.open
+    swapped = False
+
+    def switch_blob_at_open(candidate, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and (str(candidate) == path.name or Path(candidate) == path):
+            swapped = True
+            path.unlink()
+            path.symlink_to(substitute)
+        return real_open(candidate, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", switch_blob_at_open)
+    target = SpyTarget(tmp_path / "target")
+    with pytest.raises(backup.ObjectArchiveError):
+        backup.restore_store(target, DST, archive, tmp_path / "receipt.json")
+    assert swapped
+    assert target.puts == []
+
+
+def test_private_objects_directory_rejects_symlink_swap_at_open(tmp_path, monkeypatch):
+    archive, _, _ = _archive(tmp_path)
+    directory = archive / "objects"
+    moved = archive / "objects-original"
+    real_open = os.open
+    swapped = False
+
+    def switch_dir_at_open(candidate, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and (str(candidate) == "objects" or Path(candidate) == directory):
+            swapped = True
+            directory.rename(moved)
+            directory.symlink_to(moved, target_is_directory=True)
+        return real_open(candidate, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", switch_dir_at_open)
+    target = SpyTarget(tmp_path / "target")
+    with pytest.raises(backup.ObjectArchiveError):
+        backup.restore_store(target, DST, archive, tmp_path / "receipt.json")
+    assert swapped
+    assert target.puts == []
+
+
+@pytest.mark.parametrize("mutation", ["append", "same_length"])
+def test_private_object_blob_rejects_mutation_during_read(tmp_path, monkeypatch, mutation):
+    archive, manifest, _ = _archive(tmp_path)
+    path = archive / "objects" / manifest["objects"][0]["file"]
+    inode = path.stat().st_ino
+    real_read = os.read
+    modified = False
+
+    def mutate_before_read(fd, size):
+        nonlocal modified
+        if not modified and os.fstat(fd).st_ino == inode:
+            modified = True
+            original = path.read_bytes()
+            if mutation == "append":
+                with path.open("ab") as handle:
+                    handle.write(b"+")
+            else:
+                path.write_bytes(original[:-1] + (b"z" if original[-1:] != b"z" else b"x"))
+        return real_read(fd, size)
+
+    monkeypatch.setattr(os, "read", mutate_before_read)
+    target = SpyTarget(tmp_path / "target")
+    with pytest.raises(backup.ObjectArchiveError, match="changed|size"):
+        backup.restore_store(target, DST, archive, tmp_path / "receipt.json")
+    assert modified
+    assert target.puts == []
