@@ -3641,8 +3641,8 @@ def test_signed_ledger_reader_rejects_linked_ledger_path(tmp_path):
 def test_signed_ledger_reader_rejects_oversized_signed_row(tmp_path):
     ledger = tmp_path / "release-ledger.jsonl"
     append(ledger, artifacts(tmp_path))
-    original = ledger.read_bytes().rstrip(b"\\n")
-    ledger.write_bytes(original + b" " * 4_000_100 + b"\\n")
+    original = ledger.read_bytes().rstrip(b"\n")
+    ledger.write_bytes(original + b" " * 4_000_100 + b"\n")
     # Trailing whitespace is legal JSON, but cannot bypass an evidence cap.
     with pytest.raises(ReleaseLedgerError, match="oversized|bounded|limit|Ledger"):
         read_entries(ledger)
