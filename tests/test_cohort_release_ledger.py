@@ -3588,3 +3588,70 @@ def test_schema_v15_linkedin_agent_proposals_rejects_missing_base_attestations(t
             operator_status=files[3],
             agent_linkedin_proposals_activation=files[4],
         )
+
+
+# Part 05 / Day 10 — source-only signed-ledger reader trust boundaries.
+# The HMAC key signs the canonical parsed entry, not duplicate or linked JSONL bytes.
+def test_signed_ledger_reader_rejects_duplicate_event_type(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    append(ledger, artifacts(tmp_path))
+    original = ledger.read_text(encoding="utf-8")
+    assert '"event_type":"hold"' in original
+    ledger.write_text(
+        original.replace(
+            '"event_type":"hold"',
+            '"event_type":"stop_rollout","event_type":"hold"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    # The original last-wins parser returns the signed "hold" despite a hidden
+    # STOP. Require rejection before any signature verification can credit it.
+    with pytest.raises(ReleaseLedgerError, match="duplicate|ambiguous|invalid"):
+        read_entries(ledger)
+
+
+def test_signed_ledger_reader_rejects_nonfinite_sequence(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    append(ledger, artifacts(tmp_path))
+    original = ledger.read_text(encoding="utf-8")
+    assert '"sequence":1' in original
+    ledger.write_text(
+        original.replace('"sequence":1', '"sequence":NaN', 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReleaseLedgerError, match="non-finite|invalid|ambiguous"):
+        read_entries(ledger)
+
+
+def test_signed_ledger_reader_rejects_linked_ledger_path(tmp_path):
+    import os
+
+    if os.name != "posix":
+        pytest.skip("requires POSIX no-follow evidence reads")
+    ledger = tmp_path / "release-ledger.jsonl"
+    append(ledger, artifacts(tmp_path))
+    original = tmp_path / "outside-ledger.jsonl"
+    ledger.rename(original)
+    ledger.symlink_to(original)
+    with pytest.raises(ReleaseLedgerError, match="linked|regular|ledger|Ledger"):
+        read_entries(ledger)
+
+
+def test_signed_ledger_reader_rejects_oversized_signed_row(tmp_path):
+    ledger = tmp_path / "release-ledger.jsonl"
+    append(ledger, artifacts(tmp_path))
+    original = ledger.read_bytes().rstrip(b"\\n")
+    ledger.write_bytes(original + b" " * 4_000_100 + b"\\n")
+    # Trailing whitespace is legal JSON, but cannot bypass an evidence cap.
+    with pytest.raises(ReleaseLedgerError, match="oversized|bounded|limit|Ledger"):
+        read_entries(ledger)
+
+
+def test_signed_ledger_reader_maps_nonregular_input_to_domain_error(tmp_path):
+    with pytest.raises(ReleaseLedgerError, match="regular|ledger|Ledger"):
+        read_entries(tmp_path)
+
+
+def test_signed_ledger_reader_preserves_missing_ledger_as_empty_history(tmp_path):
+    assert read_entries(tmp_path / "not-yet-created.jsonl") == []
