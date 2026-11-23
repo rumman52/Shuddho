@@ -770,3 +770,154 @@ def test_day2_operator_rejects_unapproved_credential_destinations(
             auth_issuer=auth_issuer if auth_issuer is not None else EXPECTED_AUTH_ISSUER,
             storage_endpoint=storage_endpoint if storage_endpoint is not None else EXPECTED_S3_ENDPOINT,
         )
+
+
+def _model_provenance_fixture():
+    from types import SimpleNamespace
+
+    attempts = [
+        SimpleNamespace(
+            task_id=TASK_ID, owner_id="synthetic-owner", attempt=1,
+            model="deepseek-flash", state="failed", charged_tokens=12,
+            input_tokens=None, output_tokens=None, latency_ms=None,
+        ),
+        SimpleNamespace(
+            task_id=TASK_ID, owner_id="synthetic-owner", attempt=2,
+            model="deepseek-flash", state="completed", charged_tokens=60,
+            input_tokens=45, output_tokens=15, latency_ms=125,
+        ),
+    ]
+    draft = {
+        "generation": {
+            "provider": "deepseek", "model": "deepseek-flash",
+            "task_type": "report_email", "finish_reason": "stop",
+            "validator_result": "passed", "prompt_sha256": "b" * 64,
+            "input_tokens": 45, "output_tokens": 15,
+            "total_tokens": 60, "latency_ms": 125,
+        }
+    }
+    return attempts, draft
+
+
+def _verify_model_provenance(rows, draft, **changes):
+    return day2.model_provenance_receipt(
+        changes.get("task_id", TASK_ID),
+        changes.get("owner_id", "synthetic-owner"),
+        changes.get("task_state", "completed"),
+        changes.get("workflow_version", "report_email_v1"),
+        rows, draft,
+        expected_model=changes.get("expected_model", "deepseek-flash"),
+        expected_attempts=changes.get("expected_attempts", 2),
+        expected_accounted_tokens=changes.get("expected_accounted_tokens", 72),
+    )
+
+
+def test_day2_model_provenance_corroborates_provider_and_sql_attempts():
+    attempts, draft = _model_provenance_fixture()
+    proof = _verify_model_provenance(attempts, draft)
+    assert proof == {
+        "status": "verified", "task_id": TASK_ID, "provider": "deepseek",
+        "model": "deepseek-flash", "ledger_attempt_count": 2,
+        "ledger_accounted_tokens": 72, "completed_attempt": 2,
+        "completed_input_tokens": 45, "completed_output_tokens": 15,
+        "completed_total_tokens": 60, "prompt_sha256": "b" * 64,
+        "generation_validator": "passed",
+    }
+
+
+@pytest.mark.parametrize("corruption", [
+    "wrong_task", "wrong_owner", "unfinished_task", "wrong_workflow",
+    "wrong_model", "wrong_api_attempts", "wrong_api_tokens", "wrong_ledger_task",
+    "wrong_ledger_owner", "wrong_ledger_model", "reserved_model_attempt",
+    "duplicate_ordinal", "nonconsecutive_ordinal", "no_completed_attempt",
+    "duplicate_completed_attempt", "negative_ledger_usage", "wrong_provider",
+    "wrong_generation_model", "wrong_task_type", "wrong_finish_reason",
+    "wrong_validator_result", "invalid_prompt_digest", "missing_generation",
+    "missing_input_tokens", "zero_output_tokens", "underreported_total",
+    "completed_attempt_token_mismatch", "wrong_latency",
+])
+def test_day2_rejects_unverified_model_provider_or_accounting(corruption):
+    attempts, draft = _model_provenance_fixture()
+    changes = {}
+    if corruption == "wrong_task":
+        changes["task_id"] = "unrelated-task"
+    elif corruption == "wrong_owner":
+        changes["owner_id"] = "unrelated-owner"
+    elif corruption == "unfinished_task":
+        changes["task_state"] = "running"
+    elif corruption == "wrong_workflow":
+        changes["workflow_version"] = "research_v1"
+    elif corruption == "wrong_model":
+        changes["expected_model"] = "unreviewed-model"
+    elif corruption == "wrong_api_attempts":
+        changes["expected_attempts"] = 3
+    elif corruption == "wrong_api_tokens":
+        changes["expected_accounted_tokens"] = 999
+    elif corruption == "wrong_ledger_task":
+        attempts[0].task_id = "unrelated-task"
+    elif corruption == "wrong_ledger_owner":
+        attempts[1].owner_id = "unrelated-owner"
+    elif corruption == "wrong_ledger_model":
+        attempts[1].model = "unreviewed-model"
+    elif corruption == "reserved_model_attempt":
+        attempts[0].state = "reserved"
+    elif corruption == "duplicate_ordinal":
+        attempts[1].attempt = 1
+    elif corruption == "nonconsecutive_ordinal":
+        attempts[1].attempt = 3
+    elif corruption == "no_completed_attempt":
+        attempts[1].state = "failed"
+    elif corruption == "duplicate_completed_attempt":
+        attempts[0].state = "completed"
+    elif corruption == "negative_ledger_usage":
+        attempts[1].charged_tokens = -1
+    elif corruption == "wrong_provider":
+        draft["generation"]["provider"] = "unapproved-provider"
+    elif corruption == "wrong_generation_model":
+        draft["generation"]["model"] = "unreviewed-model"
+    elif corruption == "wrong_task_type":
+        draft["generation"]["task_type"] = "other"
+    elif corruption == "wrong_finish_reason":
+        draft["generation"]["finish_reason"] = "length"
+    elif corruption == "wrong_validator_result":
+        draft["generation"]["validator_result"] = "failed"
+    elif corruption == "invalid_prompt_digest":
+        draft["generation"]["prompt_sha256"] = "incomplete"
+    elif corruption == "missing_generation":
+        draft.pop("generation")
+    elif corruption == "missing_input_tokens":
+        draft["generation"]["input_tokens"] = None
+    elif corruption == "zero_output_tokens":
+        draft["generation"]["output_tokens"] = 0
+    elif corruption == "underreported_total":
+        draft["generation"]["total_tokens"] = 40
+    elif corruption == "completed_attempt_token_mismatch":
+        attempts[1].charged_tokens = 55
+    elif corruption == "wrong_latency":
+        draft["generation"]["latency_ms"] = 200
+    with pytest.raises(day2.Day2Failure, match="model|Model|provider|task|draft|token|usage"):
+        _verify_model_provenance(attempts, draft, **changes)
+
+
+def test_model_provenance_sql_driver_error_redacts_private_endpoint():
+    from types import SimpleNamespace
+
+    sqlalchemy = pytest.importorskip("sqlalchemy")
+    pytest.importorskip("services.coworker.models")
+
+    class BrokenSessions:
+        def __enter__(self):
+            raise sqlalchemy.exc.SQLAlchemyError("private SQL endpoint: secret-postgres")
+
+        def __exit__(self, *_args):
+            return False
+
+    container = SimpleNamespace(
+        repository=SimpleNamespace(sessions=lambda: BrokenSessions())
+    )
+    with pytest.raises(day2.Day2Failure, match="could not be independently verified") as raised:
+        day2.persisted_model_provenance(
+            container, TASK_ID, expected_model="deepseek-flash",
+            expected_attempts=2, expected_accounted_tokens=72,
+        )
+    assert "secret-postgres" not in str(raised.value)
