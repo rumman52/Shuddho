@@ -655,7 +655,18 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
             raise AssertionError("The post-pause observer must be read-only.")
 
     monkeypatch.setattr(check.httpx, "Client", lambda **_kwargs: Client())
-    qualified = check.collect_paused_opportunity(args)
+    import os
+    import stat
+
+    # Exercise the real paused-opportunity collector with the normal 022
+    # operator umask: sensitive owner/run/notification evidence must be 0600.
+    previous_umask = os.umask(0o022)
+    try:
+        qualified = check.collect_paused_opportunity(args)
+    finally:
+        os.umask(previous_umask)
+    if os.name == "posix":
+        assert stat.S_IMODE(args.output.stat().st_mode) == 0o600
     observation = qualified["post_pause_observation"]
     assert observation["new_occurrence_count"] == 0
     assert observation["new_run_count"] == 0
@@ -822,3 +833,62 @@ def test_day7_gate_refuses_missing_or_invalid_daily_occurrence_and_run_counts(
         day[field] = bad_value
     with pytest.raises(GateFailure, match="one new occurrence|one new run"):
         verify_two_day(first, second, paused)
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX symlink and file mode contract")
+def test_paused_opportunity_private_writer_does_not_follow_existing_output_link(tmp_path):
+    import stat
+    from scripts import staging_day7_paused_opportunity as check
+
+    sensitive_target = tmp_path / "must-remain-unchanged.txt"
+    sensitive_target.write_text("original-sensitive-record", encoding="utf-8")
+    output = tmp_path / "paused-observation.json"
+    output.symlink_to(sensitive_target)
+
+    check.write_private_paused_evidence(output, {
+        "owner_id": "synthetic-owner", "automation_id": "synthetic-automation",
+    })
+
+    assert sensitive_target.read_text(encoding="utf-8") == "original-sensitive-record"
+    assert not output.is_symlink()
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert output.read_text(encoding="utf-8").find("synthetic-owner") >= 0
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX file mode contract")
+def test_paused_opportunity_private_writer_restricts_existing_world_readable_file(tmp_path):
+    import stat
+    from scripts import staging_day7_paused_opportunity as check
+
+    output = tmp_path / "paused-observation.json"
+    output.write_text("obsolete-evidence", encoding="utf-8")
+    output.chmod(0o644)
+    check.write_private_paused_evidence(output, {
+        "owner_id": "synthetic-owner", "automation_id": "synthetic-automation",
+    })
+
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert "synthetic-owner" in output.read_text(encoding="utf-8")
+    assert "obsolete-evidence" not in output.read_text(encoding="utf-8")
+
+
+def test_paused_opportunity_private_writer_failed_replace_retains_original_and_hides_paths(
+    monkeypatch, tmp_path,
+):
+    import os
+    from scripts import staging_day7_paused_opportunity as check
+
+    output = tmp_path / "private-operator-secret-path.json"
+    output.write_text("previous-good-evidence", encoding="utf-8")
+
+    def failed_replace(*_args, **_kwargs):
+        raise OSError("sensitive-exception-token")
+
+    monkeypatch.setattr(os, "replace", failed_replace)
+    with pytest.raises(check.ScheduledProfileProbeFailure,
+                       match="private paused-opportunity evidence") as exc:
+        check.write_private_paused_evidence(output, {"owner_id": "synthetic-owner"})
+    assert "sensitive-exception-token" not in str(exc.value)
+    assert "private-operator-secret-path" not in str(exc.value)
+    assert output.read_text(encoding="utf-8") == "previous-good-evidence"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [output.name]
