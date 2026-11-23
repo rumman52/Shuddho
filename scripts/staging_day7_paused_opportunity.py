@@ -16,6 +16,7 @@ from scripts.staging_day7_two_day_gate import (
     GateFailure,
     next_paused_opportunity,
     verify_two_day,
+    write_private_report,
 )
 from scripts.staging_pa10_scheduled_profile import (
     ScheduledProfileProbeFailure,
@@ -50,6 +51,21 @@ def _baseline(paused: dict, field: str) -> set[str]:
             or len(set(raw)) != len(raw)):
         raise ScheduledProfileProbeFailure(f"Missing or malformed {field}.")
     return set(raw)
+
+
+def write_private_paused_evidence(path: Path, evidence: dict) -> None:
+    """Commit sensitive post-pause operator evidence atomically with mode 0600.
+
+    The two-day gate's private writer uses a same-directory temporary file
+    and os.replace, so existing symlinks are replaced rather than followed.
+    Never expose filesystem paths or sensitive payloads in CLI errors.
+    """
+    try:
+        write_private_report(path, evidence)
+    except OSError as error:
+        raise ScheduledProfileProbeFailure(
+            f"Could not commit private paused-opportunity evidence: {type(error).__name__}."
+        ) from None
 
 
 def collect_paused_opportunity(args: argparse.Namespace) -> dict:
@@ -159,7 +175,7 @@ def collect_paused_opportunity(args: argparse.Namespace) -> dict:
             raise ScheduledProfileProbeFailure(
                 f"Post-pause scheduled opportunity did not qualify: {error}"
             ) from None
-    args.output.write_text(json.dumps(complete, indent=2) + "\n", encoding="utf-8")
+    write_private_paused_evidence(args.output, complete)
     return complete
 
 
