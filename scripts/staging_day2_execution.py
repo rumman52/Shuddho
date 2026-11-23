@@ -705,6 +705,126 @@ def run_probe(
     }
 
 
+
+def model_provenance_receipt(
+    task_id: str,
+    owner_id: str,
+    task_state: str,
+    workflow_version: str,
+    rows: list,
+    draft_output: object,
+    *,
+    expected_model: str,
+    expected_attempts: int,
+    expected_accounted_tokens: int,
+) -> dict:
+    """Corroborate actual draft generation metadata with the persisted model ledger.
+
+    An API usage aggregate alone is not evidence of provider identity: a
+    charged reservation can exist even when the provider was never called.
+    Only a successfully settled attempt with provider-returned token counts
+    and a matching generated draft qualifies for D02.T07/G02.
+    """
+    if (not isinstance(task_id, str) or not task_id
+            or not isinstance(owner_id, str) or not owner_id
+            or task_state != "completed" or workflow_version != "report_email_v1"):
+        raise Day2Failure("Model provenance is not bound to the completed private report task.")
+    if (not isinstance(expected_model, str) or not expected_model.strip()
+            or type(expected_attempts) is not int or expected_attempts < 1
+            or type(expected_accounted_tokens) is not int or expected_accounted_tokens < 1):
+        raise Day2Failure("Approved model identity or API usage totals are invalid.")
+    if len(rows) != expected_attempts or not rows:
+        raise Day2Failure("Model attempt ledger does not match the API-reported attempt count.")
+    ordered = sorted(rows, key=lambda row: row.attempt)
+    if [row.attempt for row in ordered] != list(range(1, len(ordered) + 1)):
+        raise Day2Failure("Model attempt ordinals are missing, duplicated or nonconsecutive.")
+    for row in ordered:
+        if (row.task_id != task_id or row.owner_id != owner_id
+                or row.model != expected_model
+                or row.state not in {"completed", "failed", "unknown"}
+                or type(row.charged_tokens) is not int or row.charged_tokens < 0):
+            raise Day2Failure("Model attempt ledger contains mismatched identity, model or unsettled usage.")
+    charged = sum(row.charged_tokens for row in ordered)
+    if charged != expected_accounted_tokens:
+        raise Day2Failure("API model usage is inconsistent with persisted charged tokens.")
+    completed = [row for row in ordered if row.state == "completed"]
+    if len(completed) != 1:
+        raise Day2Failure("Completed report requires exactly one settled successful model attempt.")
+    finished = completed[0]
+    if (not isinstance(draft_output, dict)
+            or not isinstance(draft_output.get("generation"), dict)):
+        raise Day2Failure("Completed report is missing persisted provider-generation metadata.")
+    generation = draft_output["generation"]
+    if (generation.get("provider") != "deepseek"
+            or generation.get("model") != expected_model
+            or generation.get("task_type") != "report_email"
+            or generation.get("finish_reason") != "stop"
+            or generation.get("validator_result") != "passed"
+            or not isinstance(generation.get("prompt_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", generation["prompt_sha256"])):
+        raise Day2Failure("Report draft provider, model, prompt or validator provenance is invalid.")
+    input_tokens = generation.get("input_tokens")
+    output_tokens = generation.get("output_tokens")
+    total_tokens = generation.get("total_tokens")
+    if (type(input_tokens) is not int or input_tokens < 1
+            or type(output_tokens) is not int or output_tokens < 1
+            or type(total_tokens) is not int or total_tokens < input_tokens + output_tokens
+            or (finished.input_tokens, finished.output_tokens, finished.charged_tokens)
+            != (input_tokens, output_tokens, total_tokens)):
+        raise Day2Failure("Settled model attempt lacks matching positive provider-reported token usage.")
+    latency_ms = generation.get("latency_ms")
+    if (type(latency_ms) is not int or latency_ms < 0
+            or type(finished.latency_ms) is not int
+            or finished.latency_ms != latency_ms):
+        raise Day2Failure("Provider generation latency differs from the model attempt ledger.")
+    return {
+        "status": "verified", "task_id": task_id,
+        "provider": "deepseek", "model": expected_model,
+        "ledger_attempt_count": len(ordered), "ledger_accounted_tokens": charged,
+        "completed_attempt": finished.attempt,
+        "completed_input_tokens": input_tokens,
+        "completed_output_tokens": output_tokens,
+        "completed_total_tokens": total_tokens,
+        "prompt_sha256": generation["prompt_sha256"],
+        "generation_validator": "passed",
+    }
+
+
+def persisted_model_provenance(
+    container: Container,
+    task_id: str,
+    *,
+    expected_model: str,
+    expected_attempts: int,
+    expected_accounted_tokens: int,
+) -> dict:
+    """Read real cw_tasks, cw_model_attempts and cw_steps without modifying staging."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+    from services.coworker.models import ModelAttempt, Step, Task
+
+    try:
+        with container.repository.sessions() as db:
+            task = db.scalar(select(Task).where(Task.id == task_id))
+            if task is None:
+                raise Day2Failure("Completed model task is missing from the staging database.")
+            rows = list(db.scalars(
+                select(ModelAttempt).where(ModelAttempt.task_id == task_id)
+            ).all())
+            draft = db.get(Step, (task_id, "draft"))
+            return model_provenance_receipt(
+                task_id, task.owner_id, task.state, task.workflow_version,
+                rows, draft.output if draft is not None else None,
+                expected_model=expected_model,
+                expected_attempts=expected_attempts,
+                expected_accounted_tokens=expected_accounted_tokens,
+            )
+    except SQLAlchemyError:
+        # SQL driver details can contain private endpoints and should not be
+        # written to operator logs or issue comments.
+        raise Day2Failure("Model provider ledger could not be independently verified.") from None
+
+
 def active_worker(container: Container, revision: str) -> dict:
     workers = container.repository.worker_inventory(task_queue=container.settings.task_queue)
     active = [w for w in workers if (
@@ -806,8 +926,13 @@ def main() -> None:
             or settings.source_revision != release["source_revision"]
             or settings.storage_backend != "s3"
             or not settings.chat_provider_configured
+            # The currently reviewed Coworker report_email DraftModel is
+            # DeepSeekDraftModel, regardless of other Chat API provider support.
+            # Do not charge a task when the operator only configured Gemma.
+            or settings.chat_provider != "deepseek"
+            or not settings.deepseek_api_key
         ):
-            raise Day2Failure("Operator runtime does not match staging source, private S3 or configured model.")
+            raise Day2Failure("Operator runtime does not match staging source, private S3 or the reviewed DeepSeek draft provider.")
         # Pin all three credential destinations before any outbound request.
         origin = clean_origin(os.getenv("SHUDDHO_STAGING_API_BASE_URL", ""))
         require_approved_staging_destinations(
@@ -840,6 +965,12 @@ def main() -> None:
                 expected_source_anchor=args.expected_source_anchor,
             )
         asyncio.run(temporal_completed(settings, result["workflow_id"]))
+        result["model_evidence"] = persisted_model_provenance(
+            container, result["task_id"],
+            expected_model=settings.deepseek_model,
+            expected_attempts=result["model_attempts"],
+            expected_accounted_tokens=result["accounted_tokens"],
+        )
         result["document_outbox"] = persisted_document_outbox(container, result["task_id"])
         after = heartbeat_advanced(container, before, release["source_revision"])
         result["worker"] = {
