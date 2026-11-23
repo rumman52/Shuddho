@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import stat
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ from services.coworker.agent_schemas import AgentPlanStep, AgentRunCreate
 from services.coworker.config import Settings
 from services.coworker.container import Container
 from services.coworker.models import AgentOutbox, AgentRun, AgentStep, Artifact, Outbox, Task
+from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 from services.coworker.workflow import AgentWorkflowV2
 
 REQUIRED_FLAGS = (
@@ -65,6 +67,50 @@ def _preflight_private_state(path: Path) -> None:
         write_private_json(probe, {"preflight": True})
     finally:
         probe.unlink(missing_ok=True)
+
+
+
+def read_private_recovery_receipt(path: Path) -> dict:
+    """Read only a protected, regular, single-owner receipt, without following symlinks.
+
+    Operator evidence may contain resource identities. Do not silently read
+    a public, replaced, malformed or duplicate-key checkpoint file.
+    """
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise RecoveryFailure("Protected recovery receipt contains duplicate JSON fields.")
+            result[key] = value
+        return result
+
+    descriptor = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode)
+                or info.st_size > 1024 * 1024
+                or (os.name == "posix" and (
+                    stat.S_IMODE(info.st_mode) & 0o077
+                    or info.st_uid != os.getuid()
+                ))):
+            raise RecoveryFailure("Protected recovery receipt must be an owned private regular file.")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = None
+            receipt = json.load(
+                handle, object_pairs_hook=unique_fields,
+                parse_constant=lambda _value: (_ for _ in ()).throw(
+                    RecoveryFailure("Protected recovery receipt has non-finite JSON values.")
+                ),
+            )
+        if not isinstance(receipt, dict):
+            raise RecoveryFailure("Protected recovery receipt must contain a JSON object.")
+        return receipt
+    except (OSError, UnicodeError, ValueError):
+        raise RecoveryFailure("Protected recovery receipt cannot be safely opened or decoded.") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def require_exercise_guard() -> None:
@@ -223,6 +269,16 @@ def validate_worker_replacement(
     before_heartbeat = parse_utc(before.get("heartbeat_at", ""))
     if before_heartbeat < before_started or before_started >= restart_at:
         raise RecoveryFailure("Pre-restart worker was not registered before the restart event.")
+    # The prepare receipt snapshots the OLD worker. A later platform event
+    # cannot treat that snapshot as proof of an active poller when its last
+    # heartbeat is older than the SAME registry TTL used for live-worker
+    # inventory. A future-dated heartbeat also cannot prove interruption.
+    if (before_started > active_start
+            or before_heartbeat > restart_at
+            or (restart_at - before_heartbeat).total_seconds() > WORKER_HEARTBEAT_TTL_SECONDS):
+        raise RecoveryFailure(
+            "Pre-restart worker heartbeat was stale, future-dated or registered after active work began."
+        )
 
     after = require_active_worker(current, revision=revision, task_queue=task_queue)
     if after["id"] == previous_id:
@@ -242,6 +298,159 @@ def validate_worker_replacement(
         "worker_before_heartbeat_at": before_heartbeat.isoformat(),
         "worker_after_heartbeat_at": heartbeat.isoformat(),
     }
+
+
+
+def attest_active_worker_checkpoint(
+    state: dict,
+    run: AgentRun,
+    steps: list[AgentStep],
+    tasks: list[Task],
+    current: list[dict],
+    *,
+    revision: str,
+    task_queue: str,
+    captured_at: datetime,
+) -> dict:
+    """Read-only proof of a live child and the ORIGINAL worker just before restart.
+
+    The initial prepare snapshot may have aged beyond the 15-second registry
+    TTL while a legitimate research child executes. A new private checkpoint
+    must be captured during the active child; no timestamp is backdated.
+    """
+    original = state.get("worker_before")
+    if not isinstance(original, dict) or not isinstance(original.get("id"), str):
+        raise RecoveryFailure("Initial worker identity is missing from the protected prepare state.")
+    if run.id != state.get("run_id") or run.owner_id != state.get("owner_id") or run.state != "running":
+        raise RecoveryFailure("Pre-restart checkpoint requires the original actively running AgentRun.")
+    worker = require_active_worker(current, revision=revision, task_queue=task_queue)
+    if worker["id"] != original["id"]:
+        raise RecoveryFailure("Original staging worker has already been replaced; checkpoint cannot be backfilled.")
+    if worker["task_queue"] != original.get("task_queue") or worker["source_revision"] != original.get("source_revision"):
+        raise RecoveryFailure("Checkpoint worker differs from the reviewed original queue or SHA.")
+    registered, heartbeat = parse_utc(worker["started_at"]), parse_utc(worker["heartbeat_at"])
+    old_registered = parse_utc(original.get("started_at", ""))
+    if registered != old_registered or not registered <= heartbeat <= captured_at:
+        raise RecoveryFailure("Checkpoint worker registration or heartbeat chronology is invalid.")
+    if (captured_at - heartbeat).total_seconds() > WORKER_HEARTBEAT_TTL_SECONDS:
+        raise RecoveryFailure("Original worker heartbeat was already stale when checkpointed.")
+
+    running = [
+        (step, task)
+        for step in steps
+        for task in tasks
+        if step.ordinal in (1, 2, 3)
+        and step.run_id == run.id and step.owner_id == run.owner_id
+        and step.state == "running" and step.started_at is not None
+        and step.finished_at is None and _utc(step.started_at) <= captured_at
+        and task.agent_run_id == run.id and task.owner_id == run.owner_id
+        and task.agent_step_id == step.id and task.state == "running"
+    ]
+    if not running:
+        raise RecoveryFailure(
+            "Pre-restart checkpoint requires an actively executing, persisted Agent child task."
+        )
+    step, child = sorted(running, key=lambda pair: pair[0].ordinal)[0]
+    return {
+        "status": "active_child_observed",
+        "release_context": state["release_context"],
+        "run_id": run.id,
+        "owner_id": run.owner_id,
+        "workflow_id": state["workflow_id"],
+        "captured_at": captured_at.isoformat(),
+        "active_ordinal": step.ordinal,
+        "active_child_task_id": child.id,
+        "worker_before": {
+            key: worker[key]
+            for key in ("id", "task_queue", "source_revision", "started_at", "heartbeat_at")
+        },
+    }
+
+
+def worker_from_active_checkpoint(
+    state: dict,
+    checkpoint: object,
+    facts: dict,
+    *,
+    restart_at: datetime,
+    revision: str,
+    task_queue: str,
+) -> dict:
+    """Bind a private pre-restart observation to the same child and event."""
+    if not isinstance(checkpoint, dict) or checkpoint.get("status") != "active_child_observed":
+        raise RecoveryFailure("A valid private active-child checkpoint receipt is required.")
+    if any(checkpoint.get(key) != state.get(key) for key in (
+        "release_context", "run_id", "owner_id", "workflow_id",
+    )):
+        raise RecoveryFailure("Active-worker checkpoint belongs to a different prepared run or release.")
+    original = state.get("worker_before")
+    before = checkpoint.get("worker_before")
+    if not isinstance(original, dict) or not isinstance(before, dict):
+        raise RecoveryFailure("Checkpoint has no corroborated original worker identity.")
+    if (before.get("id") != original.get("id")
+            or before.get("task_queue") != task_queue
+            or before.get("source_revision") != revision
+            or before.get("started_at") != original.get("started_at")):
+        raise RecoveryFailure("Checkpoint worker is not the initial reviewed worker.")
+    captured = parse_utc(checkpoint.get("captured_at", ""))
+    heartbeat = parse_utc(before.get("heartbeat_at", ""))
+    if not heartbeat <= captured <= restart_at:
+        raise RecoveryFailure("Checkpoint was not captured before restart with a real prior heartbeat.")
+    if ((restart_at - captured).total_seconds() > WORKER_HEARTBEAT_TTL_SECONDS
+            or (restart_at - heartbeat).total_seconds() > WORKER_HEARTBEAT_TTL_SECONDS):
+        raise RecoveryFailure("Checkpoint or original-worker heartbeat is stale at the platform restart.")
+    ordinal, child_id = checkpoint.get("active_ordinal"), checkpoint.get("active_child_task_id")
+    if type(ordinal) is not int or ordinal not in (1, 2, 3) or not isinstance(child_id, str):
+        raise RecoveryFailure("Checkpoint active-child identity is invalid.")
+    matching_children = [
+        child for child in facts.get("completed_children", [])
+        if child.get("ordinal") == ordinal and child.get("task_id") == child_id
+    ]
+    if len(matching_children) != 1:
+        raise RecoveryFailure("Checkpoint child does not match the persisted recovered child tasks.")
+    child = matching_children[0]
+    if not parse_utc(child["started_at"]) <= captured <= restart_at <= parse_utc(child["finished_at"]):
+        raise RecoveryFailure("Checkpoint and platform restart did not interrupt the same active child.")
+    return before
+
+
+def capture_active_checkpoint(
+    settings: Settings, state_path: Path, rollout_path: Path, checkpoint_path: Path,
+) -> dict:
+    """Observe only: DB active child and old worker heartbeat, then private 0600 receipt."""
+    require_exercise_guard()
+    require_runtime(settings)
+    _preflight_private_state(checkpoint_path)
+    state = read_private_recovery_receipt(state_path)
+    validate_prepared_release_context(state.get("release_context"), settings, rollout_path)
+    run_id, owner = state.get("run_id"), state.get("owner_id")
+    if (not isinstance(run_id, str) or not isinstance(owner, str)
+            or state.get("workflow_id") != "shuddho-agent-" + run_id):
+        raise RecoveryFailure("Pre-restart checkpoint state has an invalid AgentRun identity.")
+    container = Container.create(settings)
+    try:
+        with container.repository.sessions() as db:
+            run = db.scalar(select(AgentRun).where(
+                AgentRun.id == run_id, AgentRun.owner_id == owner,
+            ))
+            if run is None:
+                raise RecoveryFailure("Prepared recovery AgentRun was not found.")
+            steps = list(db.scalars(select(AgentStep).where(
+                AgentStep.run_id == run_id, AgentStep.owner_id == owner,
+            )).all())
+            tasks = list(db.scalars(select(Task).where(
+                Task.agent_run_id == run_id, Task.owner_id == owner,
+            )).all())
+            receipt = attest_active_worker_checkpoint(
+                state, run, steps, tasks,
+                container.repository.worker_inventory(task_queue=settings.task_queue),
+                revision=settings.source_revision, task_queue=settings.task_queue,
+                captured_at=datetime.now(timezone.utc),
+            )
+        write_private_json(checkpoint_path, receipt)
+        return receipt
+    finally:
+        container.repository.sessions.kw["bind"].dispose()
 
 
 def validate_outbox_effects(
@@ -340,14 +549,13 @@ async def verify(
     rollout_path: Path,
     evidence_path: Path,
     base_evidence: Path | None,
+    checkpoint_path: Path | None = None,
 ) -> dict:
     require_exercise_guard()
     require_runtime(settings)
     if not restart_reference.strip():
         raise RecoveryFailure("A non-empty worker restart evidence reference is required.")
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise RecoveryFailure("Recovery state file must be a JSON object.")
+    state = read_private_recovery_receipt(state_path)
     context = validate_prepared_release_context(
         state.get("release_context"),
         settings,
@@ -382,8 +590,18 @@ async def verify(
             )).all())
             outbox = validate_outbox_effects(run, tasks, agent_outbox, task_outbox)
 
+        before = state.get("worker_before")
+        if checkpoint_path is not None:
+            # Refreshing a stale prepare snapshot is allowed ONLY via a
+            # separate read-only observation made during a live child task.
+            checkpoint = read_private_recovery_receipt(checkpoint_path)
+            before = worker_from_active_checkpoint(
+                state, checkpoint, facts,
+                restart_at=restart_at, revision=settings.source_revision,
+                task_queue=settings.task_queue,
+            )
         worker = validate_worker_replacement(
-            state.get("worker_before"),
+            before,
             container.repository.worker_inventory(task_queue=settings.task_queue),
             revision=settings.source_revision, task_queue=settings.task_queue,
             restart_at=restart_at, active_start=parse_utc(facts["active_start"]),
@@ -449,12 +667,23 @@ def main() -> None:
     prepare_parser.add_argument("--state", type=Path, required=True)
     prepare_parser.add_argument("--rollout", type=Path, required=True)
 
+    checkpoint_parser = sub.add_parser(
+        "checkpoint", help="Capture a read-only active-child/old-worker heartbeat before the real restart.",
+    )
+    checkpoint_parser.add_argument("--state", type=Path, required=True)
+    checkpoint_parser.add_argument("--rollout", type=Path, required=True)
+    checkpoint_parser.add_argument("--output", type=Path, required=True)
+
     verify_parser = sub.add_parser("verify")
     verify_parser.add_argument("--state", type=Path, required=True)
     verify_parser.add_argument("--restart-at", required=True, help="ISO-8601 timestamp from the staging worker restart/deployment event.")
     verify_parser.add_argument("--restart-reference", required=True, help="Deployment event, pod UID transition, or platform run reference.")
     verify_parser.add_argument("--rollout", type=Path, required=True)
     verify_parser.add_argument("--base-evidence", type=Path)
+    verify_parser.add_argument(
+        "--checkpoint", type=Path,
+        help="Separate protected active-child heartbeat checkpoint, captured just before the real platform restart.",
+    )
     verify_parser.add_argument("--output", type=Path, required=True)
 
     args = parser.parse_args()
@@ -466,7 +695,18 @@ def main() -> None:
                 "status": "prepared",
                 "run_id": result["run_id"],
                 "workflow_id": result["workflow_id"],
-                "next": "Restart/replace the staging Coworker worker while this run is active, then run verify with the platform restart timestamp and reference.",
+                "next": "Capture a just-in-time active-child worker checkpoint, immediately restart the real staging worker, then verify with the checkpoint and platform event.",
+            }, indent=2))
+        elif args.command == "checkpoint":
+            result = capture_active_checkpoint(
+                settings, args.state, args.rollout, args.output,
+            )
+            print(json.dumps({
+                "status": result["status"],
+                "run_id": result["run_id"],
+                "captured_at": result["captured_at"],
+                "written": str(args.output),
+                "next": "Immediately restart the actual staging worker while this child task is active, then verify with the platform event.",
             }, indent=2))
         else:
             result = asyncio.run(verify(
@@ -477,6 +717,7 @@ def main() -> None:
                 args.rollout,
                 args.output,
                 args.base_evidence,
+                args.checkpoint,
             ))
             print(json.dumps({"written": str(args.output), **result}, indent=2))
     except (

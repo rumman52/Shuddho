@@ -50,9 +50,38 @@ The script:
 
 No customer content is used. The prepare phase also captures the pre-restart registered worker ID; it refuses to create the run if exactly one matching live poller is not available.
 
-## Phase 2 — replace the worker
+## Phase 2 — observe the active child, then replace the worker
 
-While the run is active, replace or restart the staging Coworker worker using the real deployment platform.
+The `prepare` receipt captures a worker registration **before** the AgentRun
+starts. Its heartbeat can legitimately become older than the worker registry's
+15-second TTL while the real research child executes. Do not invent a newer
+timestamp or loosen the TTL. Just **before** triggering the authorized platform
+restart, record a new, read-only, protected checkpoint:
+
+```bash
+uv run --extra coworker python scripts/staging_temporal_recovery.py checkpoint \
+  --state /secure/path/temporal-recovery-state.json \
+  --rollout /secure/release/cohort-rollout.json \
+  --output /secure/path/temporal-pre-restart-checkpoint.json
+```
+
+This refuses to publish a checkpoint unless the same source-SHA worker
+registration remains the only fresh poller, the original worker ID and
+registration are unchanged, and a real, owned child `cw_tasks` row plus
+its `cw_agent_steps` row are currently running in the original AgentRun.
+It writes an immutable new 0600 file without overwriting the prepare
+receipt. The checkpoint carries only IDs, times, the approved release context
+and the old worker heartbeat, not credentials, customer content or object keys.
+
+**Immediately after this readback**, replace or restart the staging Coworker
+worker through the actual authorized deployment platform. The recorded
+platform restart time must follow the checkpoint, the old heartbeat must
+still be within the real 15-second worker TTL, and the same checkpointed child
+must be active at interruption. A checkpoint is not a platform restart or
+approval for provisioning; reviewer D independently corroborates both.
+If a phase has already finished or more than 15 seconds elapsed, create
+a fresh, new observed checkpoint while another child is genuinely running,
+rather than modifying an existing protected receipt.
 
 Record:
 
@@ -60,6 +89,24 @@ Record:
 - a durable platform reference such as deployment ID, pod UID transition, service event, or run ID.
 
 The verifier rejects a restart timestamp that occurred before Agent execution actually started.
+
+The old initial prepare snapshot remains a supported fast-exercise fallback
+when the restart truly happens within its 15-second heartbeat freshness
+window. For real longer-running hosted tasks, supply the separate
+`--checkpoint` receipt; the verifier binds its recorded original worker ID,
+release, run, active child ID, captured timestamp and fresh heartbeat to
+the actual restart and the DB-confirmed completed child window.
+
+The pre-restart worker identity and heartbeat are captured by `prepare`.
+That heartbeat must still be fresh **at the actual platform restart**, using
+the same 15-second `WORKER_HEARTBEAT_TTL_SECONDS` as the persisted
+`worker_inventory`, and it must not be future-dated. The old worker must
+have registered before the Agent child execution began. A delayed operator
+restart **must not** reuse a stale prepare snapshot to claim active-worker
+interruption. If the old-worker heartbeat has aged beyond this boundary,
+the exercise fails closed; re-run a fresh approved synthetic recovery
+exercise rather than edit timestamps or backdate the restart event.
+Independent reviewer D still checks the actual host/Temporal event history.
 
 ## Phase 3 — verify
 
@@ -70,6 +117,7 @@ uv run --extra coworker python scripts/staging_temporal_recovery.py verify \
   --state /secure/path/temporal-recovery-state.json \
   --restart-at 2026-09-22T08:30:00+06:00 \
   --restart-reference render-deploy-12345 \
+  --checkpoint /secure/path/temporal-pre-restart-checkpoint.json \
   --rollout /secure/release/cohort-rollout.json \
   --base-evidence /secure/path/staging-evidence.json \
   --output /secure/path/staging-evidence.recovery.json
