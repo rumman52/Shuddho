@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.release_contract import normalize_capabilities, required_activation_requirements
-from scripts.ruke_pilot_eval import MAX_BYTES, strict_json_loads
+from scripts.ruke_pilot_eval import MAX_BYTES, read_json as read_bounded_json, strict_json_loads
 
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
@@ -397,8 +397,8 @@ def file_sha256(path: Path) -> str:
 
 def load_json_object(path: Path, label: str) -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        value = read_bounded_json(path)
+    except (OSError, ValueError, UnicodeError) as error:
         raise ReleaseLedgerError(
             f"Could not read {label}: {type(error).__name__}"
         ) from None
