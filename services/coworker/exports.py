@@ -69,6 +69,20 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
 
     try:
         document = Document(io.BytesIO(rows[docx_name]))
+        # The Day 6 renderer emits only direct body paragraphs. Tables,
+        # block content controls and other body elements are omitted by
+        # python-docx Document.paragraphs yet can display unreviewed claims.
+        if any(child.tag not in {qn("w:p"), qn("w:sectPr")}
+               for child in document.element.body):
+            raise ValueError("DOCX contains unreviewed secondary body content")
+        # Headers and footers live in separate OOXML parts and never appear in
+        # the reviewed paragraph sequence. Our renderer does not create them.
+        # Reject even if they have no external relationships.
+        if any(part.content_type in {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+        } for part in document.part.package.parts):
+            raise ValueError("DOCX contains unreviewed header or footer content")
         document_paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
         document_text = "\n".join(document_paragraphs)
         if not document_text.strip() or not title or title not in document_text:
