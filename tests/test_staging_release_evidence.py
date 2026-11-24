@@ -172,3 +172,45 @@ def test_write_private_json_refuses_to_overwrite_existing_evidence(tmp_path):
 
     assert target.read_text(encoding="utf-8") == original
     assert list(tmp_path.glob(".state.json.*.tmp")) == []
+
+
+
+@pytest.mark.parametrize("mutation", ["equal_length_rewrite", "append", "after_eof"])
+def test_rollout_manifest_rejects_in_place_mutation_during_single_descriptor_read(
+    tmp_path, monkeypatch, mutation,
+):
+    """A single fd prevents pathname swaps, not in-place torn/replaced evidence."""
+    rollout = tmp_path / "rollout.json"
+    original = b'{"release_id":"reviewed"}'
+    replacement = b'{"release_id":"forged!!"}'
+    assert len(original) == len(replacement)
+    rollout.write_bytes(original)
+    inode = rollout.stat().st_ino
+    real_read = os.read
+    mutated = False
+
+    def change_inode_content(fd, size):
+        nonlocal mutated
+        if os.fstat(fd).st_ino != inode or mutated:
+            return real_read(fd, size)
+        if mutation == "after_eof":
+            raw = real_read(fd, size)
+            if raw:
+                return raw
+            # The old reader returned the formerly valid bytes and digest even
+            # after the source had changed immediately before descriptor close.
+            rollout.write_bytes(replacement)
+            mutated = True
+            return raw
+        if mutation == "equal_length_rewrite":
+            rollout.write_bytes(replacement)
+        else:
+            with rollout.open("ab") as out:
+                out.write(b"  ")
+        mutated = True
+        return real_read(fd, size)
+
+    monkeypatch.setattr(os, "read", change_inode_content)
+    with pytest.raises(StagingReleaseEvidenceError, match="changed|size|rollout"):
+        release_context(SimpleNamespace(source_revision="a" * 40), rollout)
+    assert mutated, "The mutation must run against the manifest descriptor"
