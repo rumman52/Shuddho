@@ -952,3 +952,122 @@ def test_model_provenance_rejects_db_task_owned_by_another_managed_identity():
             expected_model="deepseek-flash",
             expected_attempts=1, expected_accounted_tokens=60,
         )
+
+
+# Part 02 D02.T04/G01: a worker-registry "fresh" flag is necessary but
+# insufficient if registration or heartbeat timestamps are malformed, forged,
+# in the future, or only lexically greater under a different UTC offset.
+def _staging_worker_snapshot():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc)
+    task_queue = "day2-worker-evidence"
+    worker = {
+        "id": "worker-identity-1",
+        "task_queue": task_queue,
+        "source_revision": SHA,
+        "state": "running",
+        "heartbeat_fresh": True,
+        "started_at": (now - timedelta(minutes=2)).isoformat(),
+        "heartbeat_at": (now - timedelta(seconds=5)).isoformat(),
+    }
+    container = SimpleNamespace(
+        settings=SimpleNamespace(task_queue=task_queue),
+        repository=SimpleNamespace(worker_inventory=lambda **_: [worker]),
+    )
+    return now, worker, container
+
+
+def test_day2_active_worker_accepts_actual_fresh_utc_registration():
+    now, worker, container = _staging_worker_snapshot()
+    assert day2.active_worker(container, SHA)["id"] == worker["id"]
+
+
+@pytest.mark.parametrize("tamper", [
+    "future_heartbeat", "stale_heartbeat", "heartbeat_before_registration",
+    "future_registration", "naive_heartbeat", "non_iso_heartbeat",
+    "missing_worker_id",
+])
+def test_day2_active_worker_rejects_untrustworthy_registry_freshness(tamper):
+    from datetime import timedelta
+
+    now, worker, container = _staging_worker_snapshot()
+    if tamper == "future_heartbeat":
+        worker["heartbeat_at"] = (now + timedelta(seconds=45)).isoformat()
+    elif tamper == "stale_heartbeat":
+        worker["heartbeat_at"] = (now - timedelta(minutes=1)).isoformat()
+    elif tamper == "heartbeat_before_registration":
+        worker["started_at"] = (now - timedelta(seconds=3)).isoformat()
+    elif tamper == "future_registration":
+        worker["started_at"] = (now + timedelta(seconds=30)).isoformat()
+    elif tamper == "naive_heartbeat":
+        worker["heartbeat_at"] = now.replace(tzinfo=None).isoformat()
+    elif tamper == "non_iso_heartbeat":
+        worker["heartbeat_at"] = "undated"
+    elif tamper == "missing_worker_id":
+        worker["id"] = ""
+    with pytest.raises(day2.Day2Failure, match="worker|Worker|heartbeat|Heartbeat"):
+        day2.active_worker(container, SHA)
+
+
+def _rechecked_worker(monkeypatch, before, after, task_queue):
+    from types import SimpleNamespace
+
+    # Exhaust the existing 15-second retry window deterministically.
+    times = iter((100.0, 200.0))
+    monkeypatch.setattr(
+        day2, "time", SimpleNamespace(
+            monotonic=lambda: next(times, 200.0),
+            sleep=lambda _: None,
+        ),
+    )
+    container = SimpleNamespace(
+        settings=SimpleNamespace(task_queue=task_queue),
+        repository=SimpleNamespace(worker_inventory=lambda **_: [after]),
+    )
+    return day2.heartbeat_advanced(container, before, SHA)
+
+
+def test_day2_worker_heartbeat_accepts_newer_actual_utc_instant(monkeypatch):
+    from datetime import timedelta, timezone
+
+    now, before, container = _staging_worker_snapshot()
+    after = dict(before)
+    after["heartbeat_at"] = (
+        now - timedelta(seconds=1)
+    ).astimezone(timezone(timedelta(hours=3))).isoformat()
+    assert _rechecked_worker(monkeypatch, before, after, before["task_queue"])["id"] == before["id"]
+
+
+@pytest.mark.parametrize("tamper", [
+    "offset_lexical_reversal", "future_heartbeat", "worker_registration_changed",
+    "wrong_queue", "missing_worker_id", "stale_heartbeat",
+])
+def test_day2_worker_heartbeat_rejects_false_advancement(monkeypatch, tamper):
+    from datetime import timedelta, timezone
+
+    now, before, container = _staging_worker_snapshot()
+    after = dict(before)
+    after["heartbeat_at"] = (now - timedelta(seconds=1)).isoformat()
+    if tamper == "offset_lexical_reversal":
+        # Lexicographically greater: UTC hour 10 becomes offset hour 13;
+        # chronologically OLDER than the original heartbeat.
+        after["heartbeat_at"] = (
+            now - timedelta(seconds=8)
+        ).astimezone(timezone(timedelta(hours=3))).isoformat()
+    elif tamper == "future_heartbeat":
+        after["heartbeat_at"] = (now + timedelta(hours=3)).isoformat()
+    elif tamper == "worker_registration_changed":
+        after["started_at"] = (now - timedelta(seconds=20)).isoformat()
+    elif tamper == "wrong_queue":
+        after["task_queue"] = "unapproved-queue"
+    elif tamper == "missing_worker_id":
+        after["id"] = ""
+        before["id"] = ""
+    elif tamper == "stale_heartbeat":
+        after["heartbeat_at"] = (
+            now - timedelta(seconds=80)
+        ).astimezone(timezone(timedelta(hours=3))).isoformat()
+    with pytest.raises(day2.Day2Failure, match="worker|Worker|heartbeat|Heartbeat"):
+        _rechecked_worker(monkeypatch, before, after, before["task_queue"])
