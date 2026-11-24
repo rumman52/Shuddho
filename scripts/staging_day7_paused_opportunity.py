@@ -27,6 +27,7 @@ from scripts.staging_pa10_scheduled_profile import (
     load_json,
     release_identity,
     require_guard,
+    require_prepared_daily_profile,
     utcnow_iso,
 )
 
@@ -109,6 +110,10 @@ def collect_paused_opportunity(args: argparse.Namespace) -> dict:
             client.get(f"/api/v1/automations/{automation_id}", headers=auth(token)),
             "paused synthetic automation",
         )
+        # Once paused, the live schedule must still carry the seven exact
+        # owner-approved settings. Do not silently accept a changed briefing
+        # profile merely because the scheduler is disabled and counts are zero.
+        require_prepared_daily_profile(first, current)
         if (current.get("id") != automation_id
                 or current.get("state") != "paused"
                 or current.get("revision") != paused["paused_revision"]

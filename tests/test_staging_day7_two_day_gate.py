@@ -321,7 +321,14 @@ def test_day7_preflight_does_not_invent_post_pause_observation_offset():
     assert report["owner_local_receipts"]["post_pause_observed_at"] is None
 
 
-@pytest.mark.parametrize("unexpected", [None, "occurrence", "run", "notification"])
+@pytest.mark.parametrize("unexpected", [
+    None, "occurrence", "run", "notification",
+    "policy_timezone", "policy_schedule", "policy_run_profile",
+    "policy_output_language", "policy_quiet_hours", "policy_overlap_policy",
+    "policy_catchup_window_seconds",
+    "after_pause_run_profile", "after_pause_output_language",
+    "after_pause_quiet_hours",
+])
 def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path, unexpected):
     import argparse
     import json
@@ -339,7 +346,27 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
         "goal_id": "goal-1", "goal_revision": 1,
         "authorized_document_ids": ["doc-1"], "project_id": "project-1",
         "expires_at": "2026-11-15T02:00:00+00:00",
+        **{name: deepcopy(first[name]) for name in (
+            "timezone", "schedule", "run_profile", "output_language",
+            "quiet_hours", "overlap_policy", "catchup_window_seconds",
+        )},
     }))
+    live_profile = {name: deepcopy(first[name]) for name in (
+        "timezone", "schedule", "run_profile", "output_language",
+        "quiet_hours", "overlap_policy", "catchup_window_seconds",
+    )}
+    if unexpected and unexpected.startswith("policy_"):
+        field = unexpected.removeprefix("policy_")
+        changed = {
+            "timezone": "UTC",
+            "schedule": {"kind": "daily", "hour": 9, "minute": 0, "weekdays": []},
+            "run_profile": "deadline",
+            "output_language": "bn",
+            "quiet_hours": {"start": "23:00", "end": "07:00"},
+            "overlap_policy": "buffer_one",
+            "catchup_window_seconds": 7200,
+        }
+        live_profile[field] = changed[field]
     args = argparse.Namespace(
         state=state_path, first_evidence=first_path, second_evidence=second_path,
         rollout=tmp_path / "rollout.json", provider_policy_plan=tmp_path / "policy.json",
@@ -353,6 +380,7 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
     monkeypatch.setattr(probe, "release_identity", lambda *_args: deepcopy(RELEASE))
     monkeypatch.setattr(probe, "load_owned", lambda *_args: {
         "owner_id": "owner-1", "automation": {
+            **live_profile,
             "revision": 1, "expires_at": "2026-11-15T02:00:00+00:00",
             "schedule_applied_revision": 1, "schedule_applied_enabled": True,
         },
@@ -367,10 +395,20 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
             self.payload = payload
 
         def json(self):
-            return self.payload if self.payload is not None else {
+            if self.payload is not None:
+                return self.payload
+            policy = deepcopy(live_profile)
+            if unexpected and unexpected.startswith("after_pause_"):
+                field = unexpected.removeprefix("after_pause_")
+                policy[field] = {
+                    "run_profile": "deadline",
+                    "output_language": "bn",
+                    "quiet_hours": {"start": "23:00", "end": "07:00"},
+                }[field]
+            return {
                 "id": "automation-1", "state": "paused", "revision": 2,
                 "schedule_applied_revision": 2, "schedule_applied_enabled": False,
-                "schedule_error_code": None,
+                "schedule_error_code": None, **policy,
             }
 
     class Client:
@@ -412,6 +450,20 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
 
     client = Client()
     monkeypatch.setattr(probe.httpx, "Client", lambda **_args: client)
+    if unexpected and unexpected.startswith("policy_"):
+        with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
+            probe.pause_two_day(args)
+        assert client.posts == []  # policy drift must block before pause mutation
+        assert not args.output.exists()
+        return
+    if unexpected and unexpected.startswith("after_pause_"):
+        with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
+            probe.pause_two_day(args)
+        assert client.posts == [(
+            "/api/v1/automations/automation-1/pause", {"expected_revision": 1},
+        )]
+        assert not args.output.exists()  # never certify drifted applied-pause
+        return
     if unexpected:
         with pytest.raises(probe.ScheduledProfileProbeFailure, match="Pause baseline"):
             probe.pause_two_day(args)
@@ -580,8 +632,11 @@ def test_two_day_gate_rejects_unproven_paused_opportunity(defect):
         verify_two_day(first, second, paused)
 
 
+@pytest.mark.parametrize("policy_drift", [
+    None, "run_profile", "output_language", "quiet_hours",
+])
 def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activity(
-    monkeypatch, tmp_path,
+    monkeypatch, tmp_path, policy_drift,
 ):
     import argparse
     import json
@@ -613,6 +668,17 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
         {"id": "completed-13", "automation_id": "automation-1"},
     ]
     paths_read = []
+    live_profile = {name: deepcopy(first[name]) for name in (
+        "timezone", "schedule", "run_profile", "output_language",
+        "quiet_hours", "overlap_policy", "catchup_window_seconds",
+    )}
+    if policy_drift:
+        changed = {
+            "run_profile": "deadline",
+            "output_language": "bn",
+            "quiet_hours": {"start": "23:00", "end": "07:00"},
+        }
+        live_profile[policy_drift] = changed[policy_drift]
 
     class Response:
         status_code = 200
@@ -638,10 +704,7 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
                 return Response({
                     "id": "automation-1", "state": "paused", "revision": 2,
                     "schedule_applied_revision": 2, "schedule_applied_enabled": False,
-                    "schedule_error_code": None, "schedule": first["schedule"],
-                    "timezone": first["timezone"],
-                    "overlap_policy": first["overlap_policy"],
-                    "catchup_window_seconds": first["catchup_window_seconds"],
+                    "schedule_error_code": None, **live_profile,
                     "expires_at": first["expires_at"], "goal_id": first["goal_id"],
                     "goal_revision": first["goal_revision"],
                 })
@@ -662,6 +725,12 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
     # operator umask: sensitive owner/run/notification evidence must be 0600.
     previous_umask = os.umask(0o022)
     try:
+        if policy_drift:
+            with pytest.raises(check.ScheduledProfileProbeFailure, match="prepared|drift"):
+                check.collect_paused_opportunity(args)
+            assert not args.output.exists()
+            assert paths_read == ["/api/v1/me", "/api/v1/automations/automation-1"]
+            return
         qualified = check.collect_paused_opportunity(args)
     finally:
         os.umask(previous_umask)
