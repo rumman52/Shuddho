@@ -69,6 +69,20 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
 
     try:
         document = Document(io.BytesIO(rows[docx_name]))
+        # The Day 6 renderer emits only direct body paragraphs. Tables,
+        # block content controls and other body elements are omitted by
+        # python-docx Document.paragraphs yet can display unreviewed claims.
+        if any(child.tag not in {qn("w:p"), qn("w:sectPr")}
+               for child in document.element.body):
+            raise ValueError("DOCX contains unreviewed secondary body content")
+        # Headers and footers live in separate OOXML parts and never appear in
+        # the reviewed paragraph sequence. Our renderer does not create them.
+        # Reject even if they have no external relationships.
+        if any(part.content_type in {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+        } for part in document.part.package.parts):
+            raise ValueError("DOCX contains unreviewed header or footer content")
         document_paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
         document_text = "\n".join(document_paragraphs)
         if not document_text.strip() or not title or title not in document_text:
@@ -86,6 +100,7 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
         # External OOXML relationships are reviewable authority, not merely
         # decoration. Only exact approved research source hyperlinks are allowed.
         reviewed_external_relationship_ids: set[str] = set()
+        approved_pdf_urls: set[str] = set()
         if skill_id == "report_email":
             expected_paragraphs = [draft.report.title, draft.report.summary]
             pdf_claims.append(draft.report.summary)
@@ -129,6 +144,7 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
             # resolve to authorized origins. Check every source-bearing
             # hyperlink's actual relationship target, and reject extra links.
             expected_links = [None] + [block.url for block in research_blocks]
+            approved_pdf_urls = {url for url in expected_links if url}
             for paragraph, expected_url in zip(document.paragraphs, expected_links):
                 links = list(paragraph._p.iter(qn("w:hyperlink")))
                 if expected_url is None:
@@ -169,6 +185,43 @@ def validate_day6_exports(skill_id, draft, outputs, *, expected_sources):
         reader = PdfReader(io.BytesIO(rows[pdf_name]))
         if reader.is_encrypted or not reader.pages:
             raise ValueError("PDF has no readable pages")
+
+        # Native PDF links and active actions are a separate authority surface
+        # from extractable text. The renderer permits only the exact reviewed
+        # research-source URLs, while the report/email PDF has no links.
+        # Reject document/page launch actions, embedded scripts, forms and
+        # non-link annotations before private publication or final readback.
+        from pypdf.generic import DictionaryObject
+
+        catalog = reader.trailer["/Root"]
+        if any(key in catalog for key in ("/OpenAction", "/AA", "/AcroForm")):
+            raise ValueError("PDF contains an unreviewed document action or form")
+        if "/Names" in catalog:
+            names = catalog["/Names"]
+            if not isinstance(names, DictionaryObject) or any(
+                key in names for key in ("/JavaScript", "/EmbeddedFiles")
+            ):
+                raise ValueError("PDF contains an unreviewed script or attachment")
+        for page in reader.pages:
+            if "/AA" in page:
+                raise ValueError("PDF contains an unreviewed page action")
+            for ref in page["/Annots"] if "/Annots" in page else ():
+                annotation = ref.get_object()
+                if (not isinstance(annotation, DictionaryObject)
+                        or annotation.get("/Subtype") != "/Link"
+                        or "/AA" in annotation or "/Dest" in annotation):
+                    raise ValueError("PDF contains an unreviewed annotation")
+                action = annotation.get("/A")
+                action = action.get_object() if action is not None else None
+                if (not isinstance(action, DictionaryObject)
+                        or action.get("/S") != "/URI"
+                        or ("/Type" in action and action["/Type"] != "/Action")
+                        or any(key not in {"/S", "/URI", "/Type"} for key in action)):
+                    raise ValueError("PDF contains an unreviewed link action")
+                target = action.get("/URI")
+                if not isinstance(target, str) or target not in approved_pdf_urls:
+                    raise ValueError("PDF link does not match an approved research source")
+
         pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
         if not pdf_text.strip():
             raise ValueError("PDF contains no extractable text")

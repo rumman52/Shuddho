@@ -707,6 +707,11 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         if (current["owner_id"] != state.get("owner_id")
                 or int(current["automation"]["revision"]) != revision):
             raise ScheduledProfileProbeFailure("Owner or revision changed before two-day pause.")
+        # The pause itself is a state mutation. Before POSTing, prove the
+        # live schedule/delivery policy still matches *both* dated receipts
+        # and the owner-approved preparation, not only its revision number.
+        for prepared in (state, first, second):
+            require_prepared_daily_profile(prepared, current["automation"])
         daily_scope = current["daily_scope"]
         if (not daily_scope
                 or any(item.get(field) != daily_scope.get(field)
@@ -772,6 +777,9 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             )
         if int(paused.get("revision", -1)) != int(observed.get("revision", -2)):
             raise ScheduledProfileProbeFailure("Pause response and readback revisions disagree.")
+        # Do not certify an applied pause if its readback quietly changed
+        # owner-approved timing, quiet hours or briefing delivery settings.
+        require_prepared_daily_profile(state, observed)
         evidence["schedule_applied_revision"] = observed.get("schedule_applied_revision")
         evidence["schedule_applied_enabled"] = observed.get("schedule_applied_enabled")
         evidence["paused_revision"] = int(observed["revision"])

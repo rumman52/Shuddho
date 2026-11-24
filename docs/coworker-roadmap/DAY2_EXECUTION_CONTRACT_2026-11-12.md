@@ -40,6 +40,17 @@ The merged Day 2 source includes:
 - The operator script reads a **fresh, running worker on the same SHA and task
   queue**, requires a progressing database heartbeat, and directly describes
   `shuddho-task-<task_id>` in Temporal as `completed`.
+  For the private-PDF worker receipt, the repository's `heartbeat_fresh` field
+  is **not sufficient by itself**: the operator independently parses registration
+  and heartbeat timestamps as timezone-aware **UTC instants**, checks that
+  registration precedes heartbeat and neither is future-dated, and applies
+  the canonical **15-second** worker registry TTL at each fresh observation.
+  The post-task poll must be a later actual UTC instant from the **same worker
+  ID, registration, queue and reviewed source SHA**, not a lexical ISO-8601
+  string comparison. The initial heartbeat is allowed to age while the real
+  provider-backed task runs; only the current post-task poll must be fresh.
+  Source tests and internal registry evidence remain insufficient by themselves
+  to prove a live Temporal poller: reviewer D must corroborate platform histories.
 - After Temporal confirms the private `report_email` workflow completed, the Day 2 operator reads the actual `cw_outbox` row keyed by that **same PDF task ID**. Exactly one row, `delivered=true` and positive dispatch attempts are required; `document_outbox` travels unchanged with the task identity through recovery and isolated restore acceptance. This proves one logical task-dispatch ledger effect, not provider-side exactly-once execution.
 - The separate recovery AgentRun receipt records three ordered, distinct,
   completed child task IDs with their server-owned idempotency keys and step
