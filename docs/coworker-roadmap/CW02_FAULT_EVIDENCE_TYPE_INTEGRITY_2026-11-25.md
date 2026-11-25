@@ -1,0 +1,12 @@
+# CW-02 fault evidence type integrity — Prompt 04
+
+- Baseline: `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; branch `fix/cw02-strict-fault-receipt-types-20261125`; relates to #378.
+- Root cause: `verify_evidence_files` compared record fields by Python value equality; JSON booleans and floating-point numbers can compare equal to manifest integers. `qualify` used hash-set membership for an untrusted outcome without validating its type, raising TypeError for lists and objects. The evidence file verifier assumed a list even after manifest validation reported otherwise.
+- Tests-first commit: `a9ee84e7b0ed2823b3cb98ad10a46a576b22ff04`; implementation: `9f1e6ba4be8bd493c9aaf1749432bdaef59023c3`.
+- Acceptance: require each bound record field to exist and match both JSON type and value; invalid outcomes and non-list scenario collections produce explicit rejection reasons rather than crashes. Maintain all sixteen scenario IDs, existing exact counter contracts, checksums, operator/environment bindings and independent provider observation requirements.
+- Changes: `scripts/transaction_chaos_matrix.py`, `tests/test_transaction_chaos_matrix.py` (13 new parameterized cases).
+- Local isolated Python reproductions: bool/float equality bypass and list/dict hash membership failure observed; proposed strict predicates reject them. Full pytest red/green and mandatory exact-head CI are pending because the local container cannot resolve github.com.
+- Run `uv run --extra coworker pytest tests/test_transaction_chaos_matrix.py tests/test_transaction_chaos_qualification.py tests/test_transaction_chaos_postgres.py tests/test_transaction_chaos_temporal.py -q -rs` in the authorized test environment with real disposable PostgreSQL/Temporal targets and existing mandatory CI. Do not substitute source tests or fabricated fixture records for operated staging receipts.
+- No provider calls, provisioning, migration, production activation or governance changes. No duplicate-mutation or authorization proof claimed from this slice. Independent security review and final-head CI remain mandatory.
+
+**Status:** source patch proposed; repository/staging qualification and production activation not established. Next: verify exact-head CI and operate 16 separately evidenced isolated scenarios with independent provider-side counts and owner-authorized targets.

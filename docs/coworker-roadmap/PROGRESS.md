@@ -6,7 +6,20 @@
 
 ---
 
+## 25 November 2026 — Prompt 02 research provider input boundary
+
+**SOURCE PATCH ONLY; not release-qualified.** Base `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. Branch `codex/p02-research-provider-input-boundary-20261125`. Test-first `2c0a203de5933be212eec189f2c4db180dd9b070`; source `3642322151e184024fc53277633ca57e7b348259`. Isolated parser probe (copied logic, not repository checkout) RED 4 / GREEN 4. See [task contract and blockers](P02_RESEARCH_PROVIDER_INPUT_BOUNDARY_2026-11-25.md). Full exact-head CI and independent review pending. Main CI #45351544500 failed governance and merge gate, staging API revision is stale and persistent worker is absent. No deployment, provider calls, paid resources, external actions or activation. No change to pilot acceptance credits.
+
+---
+
 ## 24 November 2026 — Day 10 release-ledger operator-receipt pre-sign boundary ([draft PR #908](https://github.com/rumman52/Shuddho/pull/908))
+
+## 2026-11-25 — Prompt 04 / CW-02 fault evidence strict types (#378)
+
+- **Baseline:** `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; draft [PR #916](https://github.com/rumman52/Shuddho/pull/916). Tests-first `a9ee84e7b0ed2823b3cb98ad10a46a576b22ff04`; implementation `9f1e6ba4be8bd493c9aaf1749432bdaef59023c3`.
+- **Proposed source repair:** exact JSON types and values for fault-receipt manifest bindings; reject malformed outcome and scenarios collection without exceptions. 13 regression cases added; isolated Python predicates reproduce the original bypass/crash. See [task contract](CW02_FAULT_EVIDENCE_TYPE_INTEGRITY_2026-11-25.md).
+- **Repository/staging:** exact-head mandatory CI and independent review pending; local checkout blocked by DNS. No operated staging receipts, deployment, provider mutations, payment or capability activation; 16-case qualification remains NO-GO.
+
 
 **SOURCE CORRECTION; controlled pilot remains NO-GO.** Base `main=a3e8dba039436e2553d10f2147f886cdf1877815`. Merged #901 hardened reading signed JSONL *history* but left `scripts/cohort_release_ledger.load_json_object` using permissive, unbounded, link-following JSON at **event-creation time**. An early duplicate `STOP_ROLLOUT` followed by `ELIGIBLE_FOR_EXPANSION` could be shadowed before creating a seemingly valid HMAC-signed `stage_approved` event. Test-only commit `8dfdf9aaab3a35d14e41430e172c522e506d340e` added six synthetic signed-ledger checks. [Actual RED Actions #45246504107](https://github.com/rumman52/Shuddho/actions/runs/45246504107) Python **4 failed / 3,783 passed / 109 skipped / six warnings**, all four from newly exposed missing rejections (duplicate stage decision, symlinked rollout, oversized canary plan, nonfinite cohort cap). Existing directory-to-domain-error and valid signed-history cases passed, so neither is credited as RED. Minimal source fix `ace514e03d114b6f91040904c879e2cb3e804d75` uses the existing 4MB strict bounded, no-follow regular JSON reader with `ReleaseLedgerError` wrapping. [Task contract](DAY10_LEDGER_OPERATOR_RECEIPT_TRUST_BOUNDARY_2026-11-24.md) and [Superpowers execution plan](../superpowers/plans/2026-11-24-day10-ledger-operator-receipt-boundary.md). Source-head and **exact final-head GREEN require independent CI readback**; unverified work is not counted.
 
@@ -2953,3 +2966,10 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - **Verification:** reproduced the baseline behavior using the exact pre-patch function in an isolated Python invocation (five invalid origins accepted). Focused source tests and exact-head CI are **not yet certified**; required: `uv run --extra coworker pytest tests/test_staging_pa10_scheduled_profile.py tests/test_automations.py tests/test_coworker_temporal.py -q -rs` and the repository's full PR checks. Record the final PR SHA and CI jobs before merging.
 - **Live staging readback (read-only):** Supabase migration `0070`, with zero Auth users, automations, occurrences and Agent runs; Render has the staging web API but **no persistent coworker worker**; Vercel has no linked Shuddho project. Day 2 #728 is not approved/complete, and the prior worker-billing approval is expired. **SOURCE_ONLY / NO-GO:** no real owner-approved goal/schedule, Temporal firing, immutable source or notification receipt, natural-fire proof, Day 8 second fire or next local-fire time can be claimed.
 - **Owners / next executable step:** C + Founder approve the exact no-/paid-resource staging boundary, secure worker/Temporal/S3/model credentials, migrate only after backup/release authorization and restore proof, and pair API/worker/schema. B + A then create and read back the approved daily goal/schedule. C + D witness natural Temporal history without manual trigger; B + D update an authorized document before Day 8. Keep primary schedule eligible through Day 8; use a separate synthetic schedule for destructive/quiet-hour tests.
+
+
+## 2026-11-25 — Prompt 04 / TX-27 hosted handoff integrity (#378)
+
+- **Baseline:** main `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; branch `fix/tx27-handoff-origin-chronology-20261125`. Tests-first commit `21704b5159b789b70d23009e6eaf8459827dd0a8`; source commit `e3dc2cf871abb53f5bdcdda8b5c94dd461cec5dc`. See [task contract and external decision package](TX27_HOSTED_HANDOFF_INTEGRITY_2026-11-25.md).
+- **Proposed implementation:** fail closed on ambiguous hosted URLs, revalidate stored handoff schema/URL/ID and receipt chronology, preserve late observation of timely completion; no new runtime provider or authority. Local DNS blocked checkout and exact-head test verification is pending. Baseline CI #45351544500 failed governance/merge gate because GitHub app token client-id was missing; application/coworker/frontend/browser/PostgreSQL compatibility jobs succeeded.
+- **Qualification:** SOURCE_ONLY / NO-GO. Shopping/travel ActionSpecs remain absent; no selected provider access, independently operated 16-fault receipts, staging identity, provider audit, or security reviewer signoff established. No production deployment, flags, credentials, migration, spending or real provider mutations changed. Next: exact final-head CI and independent review, owner-selected provider contract and authorized isolated staging.

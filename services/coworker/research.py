@@ -69,7 +69,11 @@ def source_date(value) -> datetime | None:
             parsed = parsedate_to_datetime(value)
         except (TypeError, ValueError, OverflowError):
             return None
-    return (parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed).astimezone(timezone.utc)
+    try:
+        return (parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed).astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        # A provider timestamp may parse but fall outside the UTC datetime range.
+        return None
 
 
 @dataclass
@@ -162,9 +166,18 @@ class TavilyResearchProvider:
                 continue  # An empty page or a search snippet is not a fetched page.
             excerpt = text[:MAX_PAGE_CHARS]
             label = item.get("title") if isinstance(item.get("title"), str) else urlsplit(url).hostname
+            label = " ".join(clean_text(label).split())[:180] or urlsplit(url).hostname
+            try:
+                # JSON permits escaped lone surrogates; reject rows that cannot
+                # be persisted as strict UTF-8 rather than altering evidence.
+                url.encode("utf-8")
+                label.encode("utf-8")
+                excerpt_bytes = excerpt.encode("utf-8")
+            except UnicodeEncodeError:
+                continue
             sources.append({"id": f"web-{len(sources) + 1}", "kind": "web", "url": url,
-                            "label": " ".join(clean_text(label).split())[:180] or urlsplit(url).hostname,
-                            "text": excerpt, "sha256": hashlib.sha256(excerpt.encode()).hexdigest(),
+                            "label": label,
+                            "text": excerpt, "sha256": hashlib.sha256(excerpt_bytes).hexdigest(),
                             "retrieved_at": now.isoformat(), "source_date": date.isoformat() if date else None,
                             "date_basis": "provider_estimate", "provider": "tavily", "truncated": len(text) > len(excerpt)})
         if not sources:
