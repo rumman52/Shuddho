@@ -2076,6 +2076,7 @@ class AutomationRepository:
                 PersonalGoal.id == row.goal_id,
                 PersonalGoal.owner_id == row.owner_id,
             ))
+            now = utcnow()
             reason = None
             if not self.settings.automations_enabled:
                 reason = "kill_switch"
@@ -2085,7 +2086,7 @@ class AutomationRepository:
                 reason = "not_active"
             elif row.run_profile != "reminder":
                 reason = "reminder_profile_changed"
-            elif row.expires_at is not None and aware(row.expires_at) <= due_at:
+            elif row.expires_at is not None and aware(row.expires_at) <= max(now, due_at):
                 reason = "expired"
             elif goal is None:
                 reason = "goal_missing"
@@ -2093,7 +2094,7 @@ class AutomationRepository:
                 reason = "goal_not_active"
             elif goal.revision != row.goal_revision:
                 reason = "goal_revision_changed"
-            elif utcnow() - due_at > timedelta(seconds=row.catchup_window_seconds):
+            elif now - due_at > timedelta(seconds=row.catchup_window_seconds):
                 reason = "catchup_window"
 
             if reason is not None:
