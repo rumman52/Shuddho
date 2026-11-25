@@ -516,3 +516,43 @@ def test_insufficient_evidence_produces_a_needs_input_report_without_made_up_fin
     asyncio.run(DocumentRunner(container, EvidenceGap(), research=SimulatedResearch(container.settings)).run_for_test(task["id"]))
     value = container.repository.get_task(account(container), task["id"])
     assert value["state"] == "needs_input" and value["draft"]["findings"] == [] and len(value["artifacts"]) == 4
+
+
+@pytest.mark.parametrize("published_date", [
+    "0001-01-01T00:00:00+01:00",
+    "9999-12-31T23:59:59-01:00",
+])
+def test_research_provider_out_of_range_utc_date_is_unavailable(published_date):
+    data = search_data()
+    data["results"][0]["published_date"] = published_date
+    any_date = TavilyResearchProvider.parse(
+        data, ResearchOptions(query="public evidence", time_range="any"))
+    assert any_date.sources[0]["source_date"] is None
+    with pytest.raises(SearchFailure) as exc:
+        TavilyResearchProvider.parse(
+            data, ResearchOptions(query="public evidence", time_range="week"))
+    assert exc.value.code == "research_no_evidence"
+
+
+@pytest.mark.parametrize("field", ["raw_content", "title"])
+def test_research_provider_skips_non_utf8_evidence_and_preserves_valid_page(field):
+    data = search_data()
+    good = data["results"][0]
+    malformed = dict(good, url="https://example.org/malformed")
+    malformed[field] += "\ud800"
+    data["results"] = [malformed, good]
+    result = TavilyResearchProvider.parse(
+        data, ResearchOptions(query="public evidence", time_range="any"))
+    assert len(result.sources) == 1
+    assert result.sources[0]["url"] == good["url"]
+    assert result.sources[0]["id"] == "web-1"
+    assert result.sources[0]["sha256"] == hashlib.sha256(
+        result.sources[0]["text"].encode("utf-8")).hexdigest()
+    assert result.metadata["skipped_results"] == 1
+    # Persisted evidence must remain serializable as strict UTF-8.
+    json.dumps(result.sources, ensure_ascii=False).encode("utf-8")
+    data["results"] = [malformed]
+    with pytest.raises(SearchFailure) as exc:
+        TavilyResearchProvider.parse(
+            data, ResearchOptions(query="public evidence", time_range="any"))
+    assert exc.value.code == "research_no_evidence"

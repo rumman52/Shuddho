@@ -81,45 +81,59 @@ def _safe_text(value: object, *, label: str, max_length: int = 255) -> str:
     return value.strip()
 
 
-def _clean_origin(value: object, *, label: str) -> str:
-    if not isinstance(value, str):
+def _parse_https_url(value: object, *, label: str):
+    # urllib silently strips some controls and differs from browser URL parsers
+    # on backslashes and encoded authorities. Validate the original text first.
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 2048
+        or "\\" in value
+        or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)
+        or "#" in value
+    ):
         raise HostedTransactionHandoffError(
-            f"{label} must be a clean HTTPS origin."
+            f"{label} must be an unambiguous HTTPS URL."
         )
-    clean = value.rstrip("/")
-    parsed = urlparse(clean)
+    try:
+        parsed = urlparse(value)
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError as exc:
+        raise HostedTransactionHandoffError(
+            f"{label} has an invalid HTTPS authority."
+        ) from exc
     if (
         parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.username
-        or parsed.password
-        or parsed.path not in {"", "/"}
+        or not hostname
+        or not parsed.netloc.isascii()
+        or "@" in parsed.netloc
+        or "%" in parsed.netloc
+        or parsed.netloc.endswith(":")
+        or port == 0
+    ):
+        raise HostedTransactionHandoffError(
+            f"{label} must have a valid credential-free HTTPS authority."
+        )
+    return parsed
+
+
+def _clean_origin(value: object, *, label: str) -> str:
+    parsed = _parse_https_url(value, label=label)
+    if (
+        parsed.path not in {"", "/"}
         or parsed.params
-        or parsed.query
-        or parsed.fragment
+        or "?" in value
+        or ";" in value
     ):
         raise HostedTransactionHandoffError(
             f"{label} must be a clean HTTPS origin."
         )
-    return clean
+    return value.removesuffix("/")
 
 
 def _handoff_url(value: object, *, reviewed_origin: str) -> str:
-    if not isinstance(value, str) or len(value) > 2048:
-        raise HostedTransactionHandoffError(
-            "Hosted handoff URL must be a bounded HTTPS URL."
-        )
-    parsed = urlparse(value)
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.username
-        or parsed.password
-        or parsed.fragment
-    ):
-        raise HostedTransactionHandoffError(
-            "Hosted handoff URL must be HTTPS, credential-free and fragment-free."
-        )
+    parsed = _parse_https_url(value, label="Hosted handoff URL")
     origin = f"{parsed.scheme}://{parsed.netloc}"
     if origin != reviewed_origin:
         raise HostedTransactionHandoffError(
@@ -257,6 +271,8 @@ def validate_hosted_transaction_completion(
         raise HostedTransactionHandoffError(
             "TX-27 handoff digest does not match its contents."
         )
+    if type(handoff_value["schema_version"]) is not int or handoff_value["schema_version"] != 1:
+        raise HostedTransactionHandoffError("TX-27 handoff schema version is invalid.")
     if handoff_value["status"] != "awaiting_user_completion":
         raise HostedTransactionHandoffError(
             "TX-27 can complete only an awaiting-user handoff."
@@ -295,6 +311,19 @@ def validate_hosted_transaction_completion(
             "TX-27 handoff unexpectedly grants authority."
         )
 
+    reviewed_origin = _clean_origin(
+        handoff_value["handoff_origin"], label="TX-27 reviewed handoff origin"
+    )
+    if reviewed_origin != handoff_value["handoff_origin"]:
+        raise HostedTransactionHandoffError("TX-27 stored handoff origin is not canonical.")
+    _handoff_url(handoff_value["handoff_url"], reviewed_origin=reviewed_origin)
+    if _safe_text(handoff_value["handoff_id"], label="TX-27 provider handoff ID") != handoff_value["handoff_id"]:
+        raise HostedTransactionHandoffError("TX-27 stored handoff ID is not canonical.")
+    created_at = _parse_time(handoff_value["created_at"], label="TX-27 handoff created_at")
+    expires_at = _parse_time(handoff_value["expires_at"], label="TX-27 handoff expires_at")
+    if created_at > current or created_at >= expires_at:
+        raise HostedTransactionHandoffError("TX-27 handoff creation time is outside its valid window.")
+
     try:
         if preview.kind == "shopping_checkout_create":
             validated = validate_checkout_receipt(
@@ -317,11 +346,11 @@ def validate_hosted_transaction_completion(
         validated["receipt"]["confirmed_at"],
         label="TX-27 receipt confirmed_at",
     )
-    expires_at = _parse_time(
-        handoff_value["expires_at"],
-        label="TX-27 handoff expires_at",
-    )
-    if confirmed_at > expires_at:
+    if confirmed_at < created_at:
+        raise HostedTransactionHandoffError(
+            "TX-27 provider confirmation predates the hosted handoff."
+        )
+    if confirmed_at >= expires_at:
         raise HostedTransactionHandoffError(
             "TX-27 provider confirmation occurred after approval expiry."
         )
