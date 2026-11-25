@@ -538,3 +538,31 @@ def test_freeze_binds_validated_bytes_not_reopened_paths(tmp_path, monkeypatch):
     assert state["rollout_manifest_sha256"] == original_rollout_hash
     assert state["provider_policy_sha256"] == original_policy_hash
     assert state["expected_environment"] == "staging"
+
+
+def test_freeze_prepare_publishes_private_receipt_without_overwrite(tmp_path, monkeypatch):
+    import stat
+
+    candidate = rollout()
+    rollout_path = write_json(tmp_path / "rollout.json", candidate)
+    policy_path = write_json(tmp_path / "policy.json", {"release_id": candidate["release_id"]})
+    state_path = tmp_path / "state.json"
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RELEASE_FREEZE", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setattr("sys.argv", [
+        "staging_release_freeze", "prepare",
+        "--rollout", str(rollout_path),
+        "--provider-policy-plan", str(policy_path),
+        "--expected-source-revision", "a" * 40,
+        "--build-reference", "build-1",
+        "--deployment-reference", "deploy-1",
+        "--synthetic-account-reference", "synthetic-1",
+        "--state", str(state_path),
+    ])
+    freeze.main()
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    original = state_path.read_bytes()
+    with pytest.raises(SystemExit) as exc:
+        freeze.main()
+    assert exc.value.code == 1
+    assert state_path.read_bytes() == original
