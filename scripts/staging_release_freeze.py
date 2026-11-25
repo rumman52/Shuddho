@@ -15,6 +15,7 @@ import httpx
 from scripts.staging_release_evidence import (
     StagingReleaseEvidenceError,
     _read_rollout_manifest,
+    write_private_json,
 )
 
 
@@ -622,10 +623,7 @@ def main() -> None:
                 deployment_reference=args.deployment_reference,
                 synthetic_account_reference=args.synthetic_account_reference,
             )
-            args.state.write_text(
-                json.dumps(state, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            write_private_json(args.state, state)
             print(json.dumps({
                 "status": "prepared",
                 "state": str(args.state),
@@ -654,17 +652,14 @@ def main() -> None:
                 "runtime manifest",
             )
         evidence = verify_runtime(state, runtime)
-        args.output.write_text(
-            json.dumps(evidence, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_private_json(args.output, evidence)
         print(json.dumps({
             "status": evidence["status"],
             "output": str(args.output),
             "release": evidence["release"],
             "runtime_manifest_sha256": evidence["runtime_manifest_sha256"],
         }, indent=2))
-    except (OSError, httpx.HTTPError, StagingReleaseFreezeError) as error:
+    except (OSError, httpx.HTTPError, StagingReleaseFreezeError, StagingReleaseEvidenceError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
         raise SystemExit(1) from None
 
