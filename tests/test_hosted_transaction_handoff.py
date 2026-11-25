@@ -282,3 +282,115 @@ def test_tx27_does_not_register_transaction_actions():
         and "travel_booking_create" not in operation
         for operation in registered_transaction_operations()
     )
+
+
+@pytest.mark.parametrize("url", [
+    "https://checkout.example.test\n/session",
+    " https://checkout.example.test/session",
+    "https://checkout.example.test/session\t",
+    "https://checkout.example.test/session\\next",
+    "https://checkout.example.test/session#",
+])
+def test_tx27_rejects_ambiguous_handoff_urls(url):
+    now = utcnow()
+    with pytest.raises(HostedTransactionHandoffError):
+        build_hosted_transaction_handoff(
+            shopping_preview(now),
+            handoff_id="session-123",
+            handoff_url=url,
+            reviewed_handoff_origin="https://checkout.example.test",
+            now=now,
+        )
+
+
+@pytest.mark.parametrize("authority", [
+    "@checkout.example.test",
+    "checkout.example.test:bogus",
+    "checkout.example.test:65536",
+    "checkout.example.test\\other.example",
+    "%63heckout.example.test",
+])
+def test_tx27_rejects_ambiguous_reviewed_authority(authority):
+    now = utcnow()
+    with pytest.raises(HostedTransactionHandoffError):
+        build_hosted_transaction_handoff(
+            shopping_preview(now),
+            handoff_id="session-123",
+            handoff_url=f"https://{authority}/session",
+            reviewed_handoff_origin=f"https://{authority}",
+            now=now,
+        )
+
+
+@pytest.mark.parametrize("kind", ["shopping", "travel"])
+@pytest.mark.parametrize("offset_minutes", [-1, 0, 2, 10])
+def test_tx27_binds_confirmation_to_handoff_time_window(kind, offset_minutes):
+    now = utcnow()
+    preview = shopping_preview(now) if kind == "shopping" else travel_preview(now)
+    handoff = build_hosted_transaction_handoff(
+        preview,
+        handoff_id="session-123",
+        handoff_url="https://provider.example.test/session",
+        reviewed_handoff_origin="https://provider.example.test",
+        now=now,
+    )
+    receipt = {
+        "provider": preview["provider"],
+        "currency": preview["currency"],
+        "total_minor": preview["total_minor"],
+        "status": "confirmed",
+        "confirmed_at": (now + timedelta(minutes=offset_minutes)).isoformat(),
+    }
+    if kind == "shopping":
+        receipt.update(provider_order_id="order-456", merchant_cart_id="cart-123")
+    else:
+        receipt.update(
+            provider_booking_id="booking-456",
+            provider_quote_id="quote-123",
+            travel_kind="flight",
+        )
+    # A later read can reconcile a genuinely timely completion, even after expiry.
+    observed = now + timedelta(minutes=12)
+    if offset_minutes in {-1, 10}:
+        with pytest.raises(HostedTransactionHandoffError):
+            validate_hosted_transaction_completion(handoff, preview, receipt, now=observed)
+    else:
+        assert validate_hosted_transaction_completion(
+            handoff, preview, receipt, now=observed
+        )["status"] == "confirmed"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("schema_version", True),
+    ("handoff_url", "https://evil.example.test/session"),
+    ("created_at", "not-a-timestamp"),
+    ("handoff_id", " "),
+])
+def test_tx27_rejects_structurally_invalid_redigested_handoff(field, value):
+    from services.coworker.action_registry import stable_digest
+
+    now = utcnow()
+    preview = shopping_preview(now)
+    handoff = build_hosted_transaction_handoff(
+        preview,
+        handoff_id="session-123",
+        handoff_url="https://checkout.example.test/session",
+        reviewed_handoff_origin="https://checkout.example.test",
+        now=now,
+    )
+    handoff[field] = value
+    handoff.pop("handoff_sha256")
+    handoff["handoff_sha256"] = stable_digest(handoff)
+    receipt = {
+        "provider": "merchantx",
+        "provider_order_id": "order-456",
+        "merchant_cart_id": "cart-123",
+        "currency": "USD",
+        "total_minor": 12500,
+        "status": "confirmed",
+        "confirmed_at": (now + timedelta(minutes=1)).isoformat(),
+    }
+    with pytest.raises(HostedTransactionHandoffError):
+        validate_hosted_transaction_completion(
+            handoff, preview, receipt, now=now + timedelta(minutes=2)
+        )
