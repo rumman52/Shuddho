@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.release_contract import normalize_capabilities, required_activation_requirements
-from scripts.ruke_pilot_eval import MAX_BYTES, read_json as read_bounded_json, strict_json_loads
+from scripts.ruke_pilot_eval import MAX_BYTES, _read_json_and_sha256, strict_json_loads
 
 SCHEMA_VERSION = 1
 ROLLBACK_SCHEMA_VERSION = 2
@@ -395,16 +395,52 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+class _EvidenceSnapshot:
+    """Bind one append's parsed evidence to its exact byte digests.
+
+    A digest recorded by validation must never be replaced by a later
+    pathname read. Hash-only artifacts retain the existing streaming reader.
+    """
+    def __init__(self) -> None:
+        self._digests: dict[Path, str] = {}
+        self._objects: dict[Path, dict] = {}
+
+    def load_json_object(self, path: Path, label: str) -> dict:
+        if path in self._objects:
+            return self._objects[path]
+        try:
+            value, digest = _read_json_and_sha256(path)
+        except (OSError, ValueError, UnicodeError) as error:
+            raise ReleaseLedgerError(
+                f"Could not read {label}: {type(error).__name__}"
+            ) from None
+        if not isinstance(value, dict):
+            raise ReleaseLedgerError(f"{label} must contain a JSON object.")
+        if path in self._digests and self._digests[path] != digest:
+            raise ReleaseLedgerError(f"{label} changed during evidence validation.")
+        self._digests[path] = digest
+        self._objects[path] = value
+        return value
+
+    def sha256(self, path: Path) -> str:
+        if path not in self._digests:
+            self._digests[path] = file_sha256(path)
+        return self._digests[path]
+
+    def artifact_hashes(
+        self, rollout: Path, canary_plan: Path,
+        progression_decision: Path, operator_status: Path,
+    ) -> dict[str, str]:
+        return {
+            "rollout_manifest": self.sha256(rollout),
+            "canary_plan": self.sha256(canary_plan),
+            "progression_decision": self.sha256(progression_decision),
+            "operator_status": self.sha256(operator_status),
+        }
+
+
 def load_json_object(path: Path, label: str) -> dict:
-    try:
-        value = read_bounded_json(path)
-    except (OSError, ValueError, UnicodeError) as error:
-        raise ReleaseLedgerError(
-            f"Could not read {label}: {type(error).__name__}"
-        ) from None
-    if not isinstance(value, dict):
-        raise ReleaseLedgerError(f"{label} must contain a JSON object.")
-    return value
+    return _EvidenceSnapshot().load_json_object(path, label)
 
 
 def ledger_key() -> bytes:
@@ -441,7 +477,9 @@ def validate_bound_inputs(
     canary_plan: Path,
     progression_decision: Path,
     operator_status: Path,
+    _snapshot: _EvidenceSnapshot | None = None,
 ) -> None:
+    snapshot = _snapshot if _snapshot is not None else _EvidenceSnapshot()
     if event_type not in EVENT_DECISIONS:
         raise ReleaseLedgerError(f"Unsupported release ledger event type: {event_type!r}.")
     if not release_id.strip() or len(release_id) > 200:
@@ -451,10 +489,10 @@ def validate_bound_inputs(
     if next_stage is not None and (not next_stage.strip() or len(next_stage) > 100):
         raise ReleaseLedgerError("next_stage must be null or a non-empty string of at most 100 characters.")
 
-    rollout_value = load_json_object(rollout, "rollout manifest")
-    plan_value = load_json_object(canary_plan, "canary plan")
-    decision_value = load_json_object(progression_decision, "progression decision")
-    status_value = load_json_object(operator_status, "operator status")
+    rollout_value = snapshot.load_json_object(rollout, "rollout manifest")
+    plan_value = snapshot.load_json_object(canary_plan, "canary plan")
+    decision_value = snapshot.load_json_object(progression_decision, "progression decision")
+    status_value = snapshot.load_json_object(operator_status, "operator status")
 
     for label, value in (
         ("rollout manifest", rollout_value),
@@ -988,6 +1026,58 @@ def atomic_write(path: Path, content: str) -> None:
         raise
 
 
+def _commit_append(path: Path, expected: list[dict], content: str) -> None:
+    """Compare-and-swap history under a persistent per-ledger POSIX lock.
+
+    Writers must use this protocol in the same trusted private directory.
+    Lock the sidecar, not the ledger inode replaced by atomic_write. Never
+    unlink the sidecar: a waiting writer may still hold its descriptor.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        raise ReleaseLedgerError("Ledger append requires POSIX file locking.") from None
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ReleaseLedgerError("Ledger append requires no-follow locking.")
+    lock_path = path.with_name("." + path.name + ".lock")
+    flags = (
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, flags, 0o600)
+        try:
+            metadata = os.fstat(fd)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or stat.S_IMODE(metadata.st_mode) & 0o077
+            ):
+                raise ReleaseLedgerError("Ledger lock must be a private regular file.")
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            current_lock = os.stat(lock_path, follow_symlinks=False)
+            if (
+                (metadata.st_dev, metadata.st_ino)
+                != (current_lock.st_dev, current_lock.st_ino)
+                or current_lock.st_nlink != 1
+            ):
+                raise ReleaseLedgerError("Ledger lock changed; retry from fresh evidence.")
+            current = read_entries(path)
+            if len(current) != len(expected) or any(
+                canonical(left) != canonical(right)
+                for left, right in zip(current, expected)
+            ):
+                raise ReleaseLedgerError("Ledger changed; retry from fresh evidence.")
+            atomic_write(path, content)
+        finally:
+            os.close(fd)
+    except OSError as error:
+        raise ReleaseLedgerError(
+            f"Could not commit ledger append: {type(error).__name__}"
+        ) from None
+
+
 def append_event(
     *,
     ledger: Path,
@@ -1004,6 +1094,7 @@ def append_event(
     operator_status: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError("actor_reference must be non-empty and at most 500 characters.")
     if not change_reference.strip() or len(change_reference) > 500:
@@ -1018,6 +1109,7 @@ def append_event(
         canary_plan=canary_plan,
         progression_decision=progression_decision,
         operator_status=operator_status,
+        _snapshot=snapshot,
     )
     entries = read_entries(ledger)
     state = verify_entries(entries, key)
@@ -1034,7 +1126,7 @@ def append_event(
         "change_reference": change_reference,
         "current_stage": current_stage,
         "next_stage": next_stage,
-        "artifact_sha256": artifact_hashes(
+        "artifact_sha256": snapshot.artifact_hashes(
             rollout,
             canary_plan,
             progression_decision,
@@ -1048,7 +1140,7 @@ def append_event(
         json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -1068,16 +1160,17 @@ def append_rollback_event(
     rollback_completion: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError("actor_reference must be non-empty and at most 500 characters.")
     if not change_reference.strip() or len(change_reference) > 500:
         raise ReleaseLedgerError("change_reference must be non-empty and at most 500 characters.")
 
-    rollout_value = load_json_object(rollout, "rollout manifest")
-    plan_value = load_json_object(canary_plan, "canary plan")
-    decision_value = load_json_object(progression_decision, "progression decision")
-    status_value = load_json_object(operator_status, "post-rollback operator status")
-    rollback_value = load_json_object(rollback_completion, "rollback completion evidence")
+    rollout_value = snapshot.load_json_object(rollout, "rollout manifest")
+    plan_value = snapshot.load_json_object(canary_plan, "canary plan")
+    decision_value = snapshot.load_json_object(progression_decision, "progression decision")
+    status_value = snapshot.load_json_object(operator_status, "post-rollback operator status")
+    rollback_value = snapshot.load_json_object(rollback_completion, "rollback completion evidence")
 
     for label, value in (
         ("rollout manifest", rollout_value),
@@ -1101,9 +1194,9 @@ def append_rollback_event(
     rollback_hashes = rollback_value.get("artifact_sha256")
     if not isinstance(rollback_hashes, dict):
         raise ReleaseLedgerError("Rollback completion evidence has no artifact hashes.")
-    if rollback_hashes.get("rollout_manifest") != file_sha256(rollout):
+    if rollback_hashes.get("rollout_manifest") != snapshot.sha256(rollout):
         raise ReleaseLedgerError("Rollback completion evidence does not bind this rollout manifest.")
-    if rollback_hashes.get("operator_status") != file_sha256(operator_status):
+    if rollback_hashes.get("operator_status") != snapshot.sha256(operator_status):
         raise ReleaseLedgerError("Rollback completion evidence does not bind this operator status.")
 
     entries = read_entries(ledger)
@@ -1115,9 +1208,9 @@ def append_rollback_event(
         raise ReleaseLedgerError("rollback_completed requires an earlier stop_rollout ledger entry.")
     stop = stop_entries[-1]
     expected_common = {
-        "rollout_manifest": file_sha256(rollout),
-        "canary_plan": file_sha256(canary_plan),
-        "progression_decision": file_sha256(progression_decision),
+        "rollout_manifest": snapshot.sha256(rollout),
+        "canary_plan": snapshot.sha256(canary_plan),
+        "progression_decision": snapshot.sha256(progression_decision),
     }
     for name, value in expected_common.items():
         if stop["artifact_sha256"].get(name) != value:
@@ -1138,8 +1231,8 @@ def append_rollback_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            **artifact_hashes(rollout, canary_plan, progression_decision, operator_status),
-            "rollback_completion": file_sha256(rollback_completion),
+            **snapshot.artifact_hashes(rollout, canary_plan, progression_decision, operator_status),
+            "rollback_completion": snapshot.sha256(rollback_completion),
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
     }
@@ -1149,7 +1242,7 @@ def append_rollback_event(
         json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -1170,17 +1263,18 @@ def append_recovery_event(
     recovery_verification: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError("actor_reference must be non-empty and at most 500 characters.")
     if not change_reference.strip() or len(change_reference) > 500:
         raise ReleaseLedgerError("change_reference must be non-empty and at most 500 characters.")
 
-    rollout_value = load_json_object(rollout, "rollout manifest")
-    plan_value = load_json_object(canary_plan, "canary plan")
-    decision_value = load_json_object(progression_decision, "STOP progression decision")
-    status_value = load_json_object(operator_status, "post-recovery operator status")
-    rollback_value = load_json_object(rollback_completion, "rollback completion evidence")
-    recovery_value = load_json_object(recovery_verification, "recovery verification evidence")
+    rollout_value = snapshot.load_json_object(rollout, "rollout manifest")
+    plan_value = snapshot.load_json_object(canary_plan, "canary plan")
+    decision_value = snapshot.load_json_object(progression_decision, "STOP progression decision")
+    status_value = snapshot.load_json_object(operator_status, "post-recovery operator status")
+    rollback_value = snapshot.load_json_object(rollback_completion, "rollback completion evidence")
+    recovery_value = snapshot.load_json_object(recovery_verification, "recovery verification evidence")
 
     for label, value in (
         ("rollout manifest", rollout_value),
@@ -1210,13 +1304,13 @@ def append_recovery_event(
     recovery_hashes = recovery_value.get("artifact_sha256")
     if not isinstance(rollback_hashes, dict) or not isinstance(recovery_hashes, dict):
         raise ReleaseLedgerError("Recovery evidence is missing artifact hashes.")
-    if rollback_hashes.get("rollout_manifest") != file_sha256(rollout):
+    if rollback_hashes.get("rollout_manifest") != snapshot.sha256(rollout):
         raise ReleaseLedgerError("Rollback completion does not bind this rollout manifest.")
     expected_recovery_hashes = {
-        "rollout_manifest": file_sha256(rollout),
-        "canary_plan": file_sha256(canary_plan),
-        "rollback_completion": file_sha256(rollback_completion),
-        "operator_status": file_sha256(operator_status),
+        "rollout_manifest": snapshot.sha256(rollout),
+        "canary_plan": snapshot.sha256(canary_plan),
+        "rollback_completion": snapshot.sha256(rollback_completion),
+        "operator_status": snapshot.sha256(operator_status),
     }
     for name, value in expected_recovery_hashes.items():
         if recovery_hashes.get(name) != value:
@@ -1238,16 +1332,16 @@ def append_recovery_event(
         raise ReleaseLedgerError("recovery_verified requires the original stop_rollout ledger entry.")
     stop = stop_entries[-1]
     expected_common = {
-        "rollout_manifest": file_sha256(rollout),
-        "canary_plan": file_sha256(canary_plan),
-        "progression_decision": file_sha256(progression_decision),
+        "rollout_manifest": snapshot.sha256(rollout),
+        "canary_plan": snapshot.sha256(canary_plan),
+        "progression_decision": snapshot.sha256(progression_decision),
     }
     for name, value in expected_common.items():
         if stop["artifact_sha256"].get(name) != value:
             raise ReleaseLedgerError(
                 f"recovery_verified does not bind the same {name} as the latest STOP event."
             )
-    if rollback_entry["artifact_sha256"].get("rollback_completion") != file_sha256(rollback_completion):
+    if rollback_entry["artifact_sha256"].get("rollback_completion") != snapshot.sha256(rollback_completion):
         raise ReleaseLedgerError(
             "Recovery does not bind the rollback-completion artifact recorded in the ledger."
         )
@@ -1587,7 +1681,7 @@ def append_recovery_event(
             )
             if recovery_schema == 12:
                 rollout_hash = recovery_hashes.get("rollout_manifest")
-                expected_rollout_hash = file_sha256(rollout)
+                expected_rollout_hash = snapshot.sha256(rollout)
                 if rollout_hash != expected_rollout_hash:
                     raise ReleaseLedgerError(
                         "Schema-v12 recovery evidence does not bind this rollout manifest."
@@ -1618,9 +1712,9 @@ def append_recovery_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            **artifact_hashes(rollout, canary_plan, progression_decision, operator_status),
-            "rollback_completion": file_sha256(rollback_completion),
-            "recovery_verification": file_sha256(recovery_verification),
+            **snapshot.artifact_hashes(rollout, canary_plan, progression_decision, operator_status),
+            "rollback_completion": snapshot.sha256(rollback_completion),
+            "recovery_verification": snapshot.sha256(recovery_verification),
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
     }
@@ -1630,7 +1724,7 @@ def append_recovery_event(
         json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -1651,6 +1745,7 @@ def append_scale_event(
     rollout_manifest: Path | None = None,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError("actor_reference must be non-empty and at most 500 characters.")
     if not change_reference.strip() or len(change_reference) > 500:
@@ -1658,10 +1753,10 @@ def append_scale_event(
     if not current_stage.strip() or not next_stage.strip():
         raise ReleaseLedgerError("Scale ledger event requires current_stage and next_stage.")
 
-    decision = load_json_object(scale_decision, "scale decision")
-    deployment = load_json_object(deployment_change, "deployment change")
-    status = load_json_object(operator_status, "post-scale operator status")
-    activation = load_json_object(scale_activation, "scale activation evidence")
+    decision = snapshot.load_json_object(scale_decision, "scale decision")
+    deployment = snapshot.load_json_object(deployment_change, "deployment change")
+    status = snapshot.load_json_object(operator_status, "post-scale operator status")
+    activation = snapshot.load_json_object(scale_activation, "scale activation evidence")
 
     for label, value in (
         ("scale decision", decision),
@@ -1693,9 +1788,9 @@ def append_scale_event(
     if not isinstance(hashes, dict):
         raise ReleaseLedgerError("Scale activation evidence has no artifact hashes.")
     expected_bound = {
-        "scale_decision": file_sha256(scale_decision),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "scale_decision": snapshot.sha256(scale_decision),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     for name, value in expected_bound.items():
         if hashes.get(name) != value:
@@ -2058,7 +2153,7 @@ def append_scale_event(
                         "Schema-v12 scale activation requires the rollout manifest."
                     )
                 rollout_hash = hashes.get("rollout_manifest")
-                expected_rollout_hash = file_sha256(rollout_manifest)
+                expected_rollout_hash = snapshot.sha256(rollout_manifest)
                 if rollout_hash != expected_rollout_hash:
                     raise ReleaseLedgerError(
                         "Schema-v12 scale activation does not bind this rollout manifest."
@@ -2097,10 +2192,10 @@ def append_scale_event(
         "current_stage": current_stage,
         "next_stage": next_stage,
         "artifact_sha256": {
-            "scale_decision": file_sha256(scale_decision),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
-            "scale_activation": file_sha256(scale_activation),
+            "scale_decision": snapshot.sha256(scale_decision),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
+            "scale_activation": snapshot.sha256(scale_activation),
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
     }
@@ -2110,7 +2205,7 @@ def append_scale_event(
         json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -2130,6 +2225,7 @@ def append_provider_policy_event(
     policy_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -2143,16 +2239,16 @@ def append_provider_policy_event(
             "Provider policy ledger event requires current_stage and next_stage."
         )
 
-    policy = load_json_object(provider_policy, "provider policy")
-    deployment = load_json_object(
+    policy = snapshot.load_json_object(provider_policy, "provider policy")
+    deployment = snapshot.load_json_object(
         deployment_change,
         "provider policy deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-policy operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         policy_activation,
         "provider policy activation evidence",
     )
@@ -2224,9 +2320,9 @@ def append_provider_policy_event(
             "Provider policy activation evidence has no artifact hashes."
         )
     expected_bound = {
-        "provider_policy": file_sha256(provider_policy),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "provider_policy": snapshot.sha256(provider_policy),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     for name, value in expected_bound.items():
         if hashes.get(name) != value:
@@ -2258,7 +2354,7 @@ def append_provider_policy_event(
         and item.get("current_stage") == current_stage
         and item.get("next_stage") == next_stage
         and item.get("artifact_sha256", {}).get("provider_policy")
-        == file_sha256(provider_policy)
+        == snapshot.sha256(provider_policy)
     ]
     if duplicates:
         raise ReleaseLedgerError(
@@ -2276,10 +2372,10 @@ def append_provider_policy_event(
         "current_stage": current_stage,
         "next_stage": next_stage,
         "artifact_sha256": {
-            "provider_policy": file_sha256(provider_policy),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
-            "policy_activation": file_sha256(policy_activation),
+            "provider_policy": snapshot.sha256(provider_policy),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
+            "policy_activation": snapshot.sha256(policy_activation),
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
     }
@@ -2298,7 +2394,7 @@ def append_provider_policy_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -2317,6 +2413,7 @@ def append_microsoft_rollout_event(
     rollout_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -2330,19 +2427,19 @@ def append_microsoft_rollout_event(
             "Microsoft rollout ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "Microsoft live staging evidence",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "Microsoft rollout deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-Microsoft-rollout operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         rollout_activation,
         "Microsoft rollout activation evidence",
     )
@@ -2373,7 +2470,7 @@ def append_microsoft_rollout_event(
         raise ReleaseLedgerError(
             "Microsoft rollout deployment change reference does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
@@ -2428,8 +2525,8 @@ def append_microsoft_rollout_event(
             "Microsoft rollout activation evidence has no artifact hashes."
         )
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "operator_status": snapshot.sha256(operator_status),
     }
     for name, value in expected_bound.items():
         if hashes.get(name) != value:
@@ -2455,7 +2552,7 @@ def append_microsoft_rollout_event(
             "microsoft_rollout_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(rollout_activation)
+    activation_hash = snapshot.sha256(rollout_activation)
     duplicates = [
         item
         for item in entries
@@ -2480,9 +2577,9 @@ def append_microsoft_rollout_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "rollout_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -2502,7 +2599,7 @@ def append_microsoft_rollout_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -2521,6 +2618,7 @@ def append_action_selection_event(
     action_selection_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -2534,19 +2632,19 @@ def append_action_selection_event(
             "Action-selection ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "action-selection live staging evidence",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "action-selection deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-action-selection operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_selection_activation,
         "action-selection activation evidence",
     )
@@ -2581,7 +2679,7 @@ def append_action_selection_event(
         raise ReleaseLedgerError(
             "Action-selection deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
@@ -2631,9 +2729,9 @@ def append_action_selection_event(
             "Action-selection activation evidence has no artifact hashes."
         )
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     for name, value in expected_bound.items():
         if hashes.get(name) != value:
@@ -2659,7 +2757,7 @@ def append_action_selection_event(
             "action_selection_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_selection_activation)
+    activation_hash = snapshot.sha256(action_selection_activation)
     duplicates = [
         item
         for item in entries
@@ -2685,9 +2783,9 @@ def append_action_selection_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_selection_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -2707,7 +2805,7 @@ def append_action_selection_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -2726,6 +2824,7 @@ def append_action_proposals_event(
     action_proposals_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -2739,23 +2838,23 @@ def append_action_proposals_event(
             "Action-proposals ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "action-proposal live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed action-proposal rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "action-proposal deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-action-proposal operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_proposals_activation,
         "action-proposal activation evidence",
     )
@@ -2836,13 +2935,13 @@ def append_action_proposals_event(
         raise ReleaseLedgerError(
             "Action-proposal deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Action-proposal deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -2960,10 +3059,10 @@ def append_action_proposals_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -2996,7 +3095,7 @@ def append_action_proposals_event(
             "action_proposals_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_proposals_activation)
+    activation_hash = snapshot.sha256(action_proposals_activation)
     duplicates = [
         item
         for item in entries
@@ -3022,10 +3121,10 @@ def append_action_proposals_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_proposals_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -3045,7 +3144,7 @@ def append_action_proposals_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -3065,6 +3164,7 @@ def append_action_attachments_event(
     action_attachments_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -3078,23 +3178,23 @@ def append_action_attachments_event(
             "Action-attachments ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "action-attachment live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed action-attachment rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "action-attachment deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-action-attachment operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_attachments_activation,
         "action-attachment activation evidence",
     )
@@ -3174,13 +3274,13 @@ def append_action_attachments_event(
         raise ReleaseLedgerError(
             "Action-attachment deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Action-attachment deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -3297,10 +3397,10 @@ def append_action_attachments_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -3333,7 +3433,7 @@ def append_action_attachments_event(
             "action_attachments_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_attachments_activation)
+    activation_hash = snapshot.sha256(action_attachments_activation)
     duplicates = [
         item
         for item in entries
@@ -3359,10 +3459,10 @@ def append_action_attachments_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_attachments_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -3382,7 +3482,7 @@ def append_action_attachments_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -3402,6 +3502,7 @@ def append_action_reminders_event(
     action_reminders_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -3415,23 +3516,23 @@ def append_action_reminders_event(
             "Action-reminders ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "action-reminder live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed action-reminder rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "action-reminder deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-action-reminder operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_reminders_activation,
         "action-reminder activation evidence",
     )
@@ -3512,13 +3613,13 @@ def append_action_reminders_event(
         raise ReleaseLedgerError(
             "Action-reminder deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Action-reminder deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -3633,10 +3734,10 @@ def append_action_reminders_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -3669,7 +3770,7 @@ def append_action_reminders_event(
             "action_reminders_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_reminders_activation)
+    activation_hash = snapshot.sha256(action_reminders_activation)
     duplicates = [
         item
         for item in entries
@@ -3695,10 +3796,10 @@ def append_action_reminders_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_reminders_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -3718,7 +3819,7 @@ def append_action_reminders_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -3738,6 +3839,7 @@ def append_action_recipients_event(
     action_recipients_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -3751,23 +3853,23 @@ def append_action_recipients_event(
             "Action-recipients ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "action-recipient live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed action-recipient rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "action-recipient deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-action-recipient operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_recipients_activation,
         "action-recipient activation evidence",
     )
@@ -3847,13 +3949,13 @@ def append_action_recipients_event(
         raise ReleaseLedgerError(
             "Action-recipient deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Action-recipient deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -3969,10 +4071,10 @@ def append_action_recipients_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -4005,7 +4107,7 @@ def append_action_recipients_event(
             "action_recipients_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_recipients_activation)
+    activation_hash = snapshot.sha256(action_recipients_activation)
     duplicates = [
         item
         for item in entries
@@ -4031,10 +4133,10 @@ def append_action_recipients_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_recipients_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -4054,7 +4156,7 @@ def append_action_recipients_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -4074,6 +4176,7 @@ def append_action_document_sharing_event(
     action_document_sharing_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -4087,23 +4190,23 @@ def append_action_document_sharing_event(
             "Document-sharing ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "document-sharing live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed document-sharing rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "document-sharing deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-document-sharing operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_document_sharing_activation,
         "document-sharing activation evidence",
     )
@@ -4184,13 +4287,13 @@ def append_action_document_sharing_event(
         raise ReleaseLedgerError(
             "Document-sharing deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Document-sharing deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -4307,10 +4410,10 @@ def append_action_document_sharing_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -4343,7 +4446,7 @@ def append_action_document_sharing_event(
             "action_document_sharing_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_document_sharing_activation)
+    activation_hash = snapshot.sha256(action_document_sharing_activation)
     duplicates = [
         item
         for item in entries
@@ -4369,10 +4472,10 @@ def append_action_document_sharing_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_document_sharing_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -4392,7 +4495,7 @@ def append_action_document_sharing_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -4412,6 +4515,7 @@ def append_action_email_threading_event(
     action_email_threading_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -4425,23 +4529,23 @@ def append_action_email_threading_event(
             "Email-threading ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "email-threading live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed email-threading rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "email-threading deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-email-threading operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_email_threading_activation,
         "email-threading activation evidence",
     )
@@ -4521,13 +4625,13 @@ def append_action_email_threading_event(
         raise ReleaseLedgerError(
             "Email-threading deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Email-threading deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -4643,10 +4747,10 @@ def append_action_email_threading_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -4679,7 +4783,7 @@ def append_action_email_threading_event(
             "action_email_threading_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_email_threading_activation)
+    activation_hash = snapshot.sha256(action_email_threading_activation)
     duplicates = [
         item
         for item in entries
@@ -4705,10 +4809,10 @@ def append_action_email_threading_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_email_threading_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -4728,7 +4832,7 @@ def append_action_email_threading_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -4748,6 +4852,7 @@ def append_action_social_publishing_event(
     action_social_publishing_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -4761,23 +4866,23 @@ def append_action_social_publishing_event(
             "Social-publishing ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "social-publishing live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed social-publishing rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "social-publishing deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-social-publishing operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         action_social_publishing_activation,
         "social-publishing activation evidence",
     )
@@ -4857,13 +4962,13 @@ def append_action_social_publishing_event(
         raise ReleaseLedgerError(
             "Social-publishing deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Social-publishing deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -4983,10 +5088,10 @@ def append_action_social_publishing_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -5019,7 +5124,7 @@ def append_action_social_publishing_event(
             "action_social_publishing_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(action_social_publishing_activation)
+    activation_hash = snapshot.sha256(action_social_publishing_activation)
     duplicates = [
         item
         for item in entries
@@ -5045,10 +5150,10 @@ def append_action_social_publishing_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "action_social_publishing_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -5068,7 +5173,7 @@ def append_action_social_publishing_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -5087,6 +5192,7 @@ def append_personal_transactions_event(
     personal_transactions_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -5100,23 +5206,23 @@ def append_personal_transactions_event(
             "Personal-transactions ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "personal-transactions live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed personal-transactions rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "personal-transactions deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-personal-transactions operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         personal_transactions_activation,
         "PA-09 personal-transactions activation evidence",
     )
@@ -5215,13 +5321,13 @@ def append_personal_transactions_event(
         raise ReleaseLedgerError(
             "Personal-transactions deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "Personal-transactions deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -5362,10 +5468,10 @@ def append_personal_transactions_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -5398,7 +5504,7 @@ def append_personal_transactions_event(
             "personal_transactions_verified requires an existing ledger chain that reached current_stage."
         )
 
-    activation_hash = file_sha256(personal_transactions_activation)
+    activation_hash = snapshot.sha256(personal_transactions_activation)
     duplicates = [
         item
         for item in entries
@@ -5424,10 +5530,10 @@ def append_personal_transactions_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "personal_transactions_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -5447,7 +5553,7 @@ def append_personal_transactions_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -5468,6 +5574,7 @@ def append_agent_browser_read_event(
     activation_evidence: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     """Append only exact, reviewable CW-09 read-only Agent browser evidence.
 
     Operated staging evidence and release-eligible runtime state are prerequisites.
@@ -5480,11 +5587,11 @@ def append_agent_browser_read_event(
     if not isinstance(current_stage, str) or not 0 < len(current_stage.strip()) <= 100:
         raise ReleaseLedgerError("Agent browser read requires an exact current_stage.")
 
-    staging = load_json_object(staging_evidence, "Agent browser read staging evidence")
-    rollout = load_json_object(rollout_manifest, "reviewed Agent browser read rollout")
-    deployment = load_json_object(deployment_change, "Agent browser read deployment")
-    status = load_json_object(operator_status, "Agent browser read operator status")
-    activation = load_json_object(activation_evidence, "Agent browser read activation")
+    staging = snapshot.load_json_object(staging_evidence, "Agent browser read staging evidence")
+    rollout = snapshot.load_json_object(rollout_manifest, "reviewed Agent browser read rollout")
+    deployment = snapshot.load_json_object(deployment_change, "Agent browser read deployment")
+    status = snapshot.load_json_object(operator_status, "Agent browser read operator status")
+    activation = snapshot.load_json_object(activation_evidence, "Agent browser read activation")
     if any(
         item.get("release_id") != release_id
         for item in (rollout, deployment, status, activation)
@@ -5527,8 +5634,8 @@ def append_agent_browser_read_event(
     if (
         deployment.get("change_reference") != change_reference
         or deployment.get("current_stage") != current_stage
-        or deployment.get("staging_evidence_sha256") != file_sha256(staging_evidence)
-        or deployment.get("rollout_manifest_sha256") != file_sha256(rollout_manifest)
+        or deployment.get("staging_evidence_sha256") != snapshot.sha256(staging_evidence)
+        or deployment.get("rollout_manifest_sha256") != snapshot.sha256(rollout_manifest)
     ):
         raise ReleaseLedgerError(
             "Agent browser deployment does not bind the exact reviewed rollout and staging evidence."
@@ -5615,10 +5722,10 @@ def append_agent_browser_read_event(
         raise ReleaseLedgerError("Agent browser read activation has no verified cohort isolation.")
 
     bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     hashes = activation.get("artifact_sha256")
     if not isinstance(hashes, dict) or hashes != bound:
@@ -5640,7 +5747,7 @@ def append_agent_browser_read_event(
         for entry in entries
     ):
         raise ReleaseLedgerError("Agent browser read requires an attested existing stage.")
-    activation_hash = file_sha256(activation_evidence)
+    activation_hash = snapshot.sha256(activation_evidence)
     if any(
         entry.get("schema_version") == AGENT_BROWSER_READ_SCHEMA_VERSION
         and entry.get("artifact_sha256", {}).get("agent_browser_read_activation") == activation_hash
@@ -5663,7 +5770,7 @@ def append_agent_browser_read_event(
     }
     entry_hash, tag = sign_entry(core, key)
     entry = {**core, "entry_hash": entry_hash, "hmac_sha256": tag}
-    atomic_write(ledger, "".join(
+    _commit_append(ledger, entries, "".join(
         json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
         for item in [*entries, entry]
     ))
@@ -5686,6 +5793,7 @@ def append_transaction_capability_event(
     activation_evidence: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     spec = TRANSACTION_CAPABILITY_LEDGER.get(capability)
     if spec is None:
         raise ReleaseLedgerError("Unsupported transaction capability ledger event.")
@@ -5702,11 +5810,11 @@ def append_transaction_capability_event(
             "Transaction capability ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(staging_evidence, f"{capability} staging evidence")
-    rollout = load_json_object(rollout_manifest, f"{capability} rollout manifest")
-    deployment = load_json_object(deployment_change, f"{capability} deployment change")
-    status = load_json_object(operator_status, f"{capability} operator status")
-    activation = load_json_object(activation_evidence, f"{capability} activation evidence")
+    staging = snapshot.load_json_object(staging_evidence, f"{capability} staging evidence")
+    rollout = snapshot.load_json_object(rollout_manifest, f"{capability} rollout manifest")
+    deployment = snapshot.load_json_object(deployment_change, f"{capability} deployment change")
+    status = snapshot.load_json_object(operator_status, f"{capability} operator status")
+    activation = snapshot.load_json_object(activation_evidence, f"{capability} activation evidence")
 
     for label, value in (
         ("rollout", rollout),
@@ -5764,8 +5872,8 @@ def append_transaction_capability_event(
     if (
         deployment.get("change_reference") != change_reference
         or deployment.get("current_stage") != current_stage
-        or deployment.get("staging_evidence_sha256") != file_sha256(staging_evidence)
-        or deployment.get("rollout_manifest_sha256") != file_sha256(rollout_manifest)
+        or deployment.get("staging_evidence_sha256") != snapshot.sha256(staging_evidence)
+        or deployment.get("rollout_manifest_sha256") != snapshot.sha256(rollout_manifest)
     ):
         raise ReleaseLedgerError(
             f"{capability} deployment does not bind the exact reviewed artifacts/stage."
@@ -5876,10 +5984,10 @@ def append_transaction_capability_event(
         )
 
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     hashes = activation.get("artifact_sha256")
     if (
@@ -5907,7 +6015,7 @@ def append_transaction_capability_event(
             f"{spec['event_type']} requires a personal_transactions_verified attestation at current_stage."
         )
 
-    activation_hash = file_sha256(activation_evidence)
+    activation_hash = snapshot.sha256(activation_evidence)
     activation_key = spec["activation_key"]
     if any(
         item.get("schema_version") == spec["schema_version"]
@@ -5950,7 +6058,7 @@ def append_transaction_capability_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -5969,6 +6077,7 @@ def append_negotiation_proposal_promotion_event(
     negotiation_proposal_promotion_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -5982,23 +6091,23 @@ def append_negotiation_proposal_promotion_event(
             "Negotiation-proposal-promotion ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "negotiation-proposal-promotion live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed negotiation-proposal-promotion rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "negotiation-proposal-promotion deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-negotiation-proposal-promotion operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         negotiation_proposal_promotion_activation,
         "negotiation-proposal-promotion activation evidence",
     )
@@ -6095,11 +6204,11 @@ def append_negotiation_proposal_promotion_event(
         raise ReleaseLedgerError(
             "Negotiation-promotion deployment identity does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(staging_evidence):
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(staging_evidence):
         raise ReleaseLedgerError(
             "Negotiation-promotion deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(rollout_manifest):
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(rollout_manifest):
         raise ReleaseLedgerError(
             "Negotiation-promotion deployment does not bind this rollout manifest."
         )
@@ -6206,10 +6315,10 @@ def append_negotiation_proposal_promotion_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -6256,7 +6365,7 @@ def append_negotiation_proposal_promotion_event(
             "personal_transactions_verified attestation."
         )
 
-    activation_hash = file_sha256(negotiation_proposal_promotion_activation)
+    activation_hash = snapshot.sha256(negotiation_proposal_promotion_activation)
     if any(
         item.get("schema_version") == NEGOTIATION_PROPOSAL_PROMOTION_SCHEMA_VERSION
         and item.get("event_type") == "negotiation_proposal_promotion_verified"
@@ -6299,7 +6408,7 @@ def append_negotiation_proposal_promotion_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -6318,6 +6427,7 @@ def append_agent_linkedin_proposals_event(
     agent_linkedin_proposals_activation: Path,
     created_at: str | None = None,
 ) -> dict:
+    snapshot = _EvidenceSnapshot()
     if not actor_reference.strip() or len(actor_reference) > 500:
         raise ReleaseLedgerError(
             "actor_reference must be non-empty and at most 500 characters."
@@ -6331,23 +6441,23 @@ def append_agent_linkedin_proposals_event(
             "LinkedIn Agent-proposals ledger event requires a valid current_stage."
         )
 
-    staging = load_json_object(
+    staging = snapshot.load_json_object(
         staging_evidence,
         "LinkedIn Agent-proposals live staging evidence",
     )
-    rollout = load_json_object(
+    rollout = snapshot.load_json_object(
         rollout_manifest,
         "reviewed LinkedIn Agent-proposals rollout manifest",
     )
-    deployment = load_json_object(
+    deployment = snapshot.load_json_object(
         deployment_change,
         "LinkedIn Agent-proposals deployment change",
     )
-    status = load_json_object(
+    status = snapshot.load_json_object(
         operator_status,
         "post-LinkedIn Agent-proposals operator status",
     )
-    activation = load_json_object(
+    activation = snapshot.load_json_object(
         agent_linkedin_proposals_activation,
         "LinkedIn Agent-proposals activation evidence",
     )
@@ -6431,13 +6541,13 @@ def append_agent_linkedin_proposals_event(
         raise ReleaseLedgerError(
             "LinkedIn Agent-proposals deployment current_stage does not match."
         )
-    if deployment.get("staging_evidence_sha256") != file_sha256(
+    if deployment.get("staging_evidence_sha256") != snapshot.sha256(
         staging_evidence
     ):
         raise ReleaseLedgerError(
             "LinkedIn Agent-proposals deployment does not bind this staging evidence."
         )
-    if deployment.get("rollout_manifest_sha256") != file_sha256(
+    if deployment.get("rollout_manifest_sha256") != snapshot.sha256(
         rollout_manifest
     ):
         raise ReleaseLedgerError(
@@ -6557,10 +6667,10 @@ def append_agent_linkedin_proposals_event(
 
     hashes = activation.get("artifact_sha256")
     expected_bound = {
-        "staging_evidence": file_sha256(staging_evidence),
-        "rollout_manifest": file_sha256(rollout_manifest),
-        "deployment_change": file_sha256(deployment_change),
-        "operator_status": file_sha256(operator_status),
+        "staging_evidence": snapshot.sha256(staging_evidence),
+        "rollout_manifest": snapshot.sha256(rollout_manifest),
+        "deployment_change": snapshot.sha256(deployment_change),
+        "operator_status": snapshot.sha256(operator_status),
     }
     if (
         not isinstance(hashes, dict)
@@ -6611,7 +6721,7 @@ def append_agent_linkedin_proposals_event(
             "agent_linkedin_proposals_verified requires current-stage action_social_publishing_verified attestation."
         )
 
-    activation_hash = file_sha256(agent_linkedin_proposals_activation)
+    activation_hash = snapshot.sha256(agent_linkedin_proposals_activation)
     duplicates = [
         item
         for item in entries
@@ -6637,10 +6747,10 @@ def append_agent_linkedin_proposals_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "staging_evidence": file_sha256(staging_evidence),
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "deployment_change": file_sha256(deployment_change),
-            "operator_status": file_sha256(operator_status),
+            "staging_evidence": snapshot.sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "deployment_change": snapshot.sha256(deployment_change),
+            "operator_status": snapshot.sha256(operator_status),
             "agent_linkedin_proposals_activation": activation_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -6660,7 +6770,7 @@ def append_agent_linkedin_proposals_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 
@@ -6681,8 +6791,9 @@ def append_release_activation_bundle_event(
     artifact_quality_evidence: Path | None = None,
     created_at: str | None = None,
 ) -> dict:
-    rollout = load_json_object(rollout_manifest, "rollout manifest")
-    bundle = load_json_object(
+    snapshot = _EvidenceSnapshot()
+    rollout = snapshot.load_json_object(rollout_manifest, "rollout manifest")
+    bundle = snapshot.load_json_object(
         release_activation_bundle,
         "release activation bundle",
     )
@@ -6699,11 +6810,11 @@ def append_release_activation_bundle_event(
         raise ReleaseLedgerError(
             "Release activation bundle has not verified this release/stage."
         )
-    if bundle.get("rollout_manifest_sha256") != file_sha256(rollout_manifest):
+    if bundle.get("rollout_manifest_sha256") != snapshot.sha256(rollout_manifest):
         raise ReleaseLedgerError(
             "Release activation bundle does not bind this rollout manifest."
         )
-    if bundle.get("staging_evidence_sha256") != file_sha256(staging_evidence):
+    if bundle.get("staging_evidence_sha256") != snapshot.sha256(staging_evidence):
         raise ReleaseLedgerError(
             "Release activation bundle does not bind this staging evidence."
         )
@@ -6713,7 +6824,7 @@ def append_release_activation_bundle_event(
             raise ReleaseLedgerError(
                 "Quality-bound release activation bundle requires quality evidence."
             )
-        if bundle_quality_hash != file_sha256(quality_evidence):
+        if bundle_quality_hash != snapshot.sha256(quality_evidence):
             raise ReleaseLedgerError(
                 "Release activation bundle does not bind this quality evidence."
             )
@@ -6723,7 +6834,7 @@ def append_release_activation_bundle_event(
             raise ReleaseLedgerError(
                 "Model-bound release activation bundle requires planner evidence."
             )
-        if bundle_model_hash != file_sha256(model_evidence):
+        if bundle_model_hash != snapshot.sha256(model_evidence):
             raise ReleaseLedgerError(
                 "Release activation bundle does not bind this planner evidence."
             )
@@ -6739,7 +6850,7 @@ def append_release_activation_bundle_event(
             raise ReleaseLedgerError(
                 "Artifact-enabled release activation bundle requires artifact-quality evidence."
             )
-        if bundle_artifact_hash != file_sha256(artifact_quality_evidence):
+        if bundle_artifact_hash != snapshot.sha256(artifact_quality_evidence):
             raise ReleaseLedgerError(
                 "Release activation bundle does not bind this artifact-quality evidence."
             )
@@ -6820,7 +6931,7 @@ def append_release_activation_bundle_event(
             label=f"{requirement.key} activation bundle attestation",
         )
 
-    bundle_hash = file_sha256(release_activation_bundle)
+    bundle_hash = snapshot.sha256(release_activation_bundle)
     if any(
         item.get("schema_version") == RELEASE_ACTIVATION_BUNDLE_SCHEMA_VERSION
         and item.get("event_type") == "release_activation_bundle_verified"
@@ -6843,8 +6954,8 @@ def append_release_activation_bundle_event(
         "current_stage": current_stage,
         "next_stage": None,
         "artifact_sha256": {
-            "rollout_manifest": file_sha256(rollout_manifest),
-            "staging_evidence": file_sha256(staging_evidence),
+            "rollout_manifest": snapshot.sha256(rollout_manifest),
+            "staging_evidence": snapshot.sha256(staging_evidence),
             "release_activation_bundle": bundle_hash,
         },
         "previous_entry_hash": state["head_entry_hash"] or ZERO_HASH,
@@ -6864,7 +6975,7 @@ def append_release_activation_bundle_event(
         ) + "\n"
         for item in [*entries, entry]
     )
-    atomic_write(ledger, serialized)
+    _commit_append(ledger, entries, serialized)
     return entry
 
 def main() -> None:
