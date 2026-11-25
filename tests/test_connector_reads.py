@@ -1022,7 +1022,10 @@ def _one_gmail_event(container, message_id):
     return events[0]
 
 
-def test_meeting_coworker_prepares_one_exact_upcoming_calendar_snapshot(container):
+@pytest.mark.parametrize("expired_catchup", [False, True])
+def test_meeting_coworker_prepares_one_exact_upcoming_calendar_snapshot(
+    container, monkeypatch, expired_catchup,
+):
     fake = enable_reads(container)
     settings = replace(container.settings, work_services_enabled=True)
     settings.validate()
@@ -1090,6 +1093,33 @@ def test_meeting_coworker_prepares_one_exact_upcoming_calendar_snapshot(containe
     assert created is True
 
     scan_at = start_at - timedelta(minutes=20)
+    if expired_catchup:
+        # The timer was due while authorized, but the worker did not admit it
+        # until after the owner's expiry. A direct occurrence call must also
+        # reject the historical timestamp, not just the outer scan.
+        with container.repository.sessions.begin() as db:
+            db.get(Automation, automation["id"]).expires_at = scan_at + timedelta(seconds=30)
+        monkeypatch.setattr(
+            "services.coworker.automation_repository.utcnow",
+            lambda: scan_at + timedelta(minutes=1),
+        )
+        scan = container.automations.accept_occurrence(
+            automation["id"], automation["revision"], scan_at,
+        )
+        assert scan == {"state": "suppressed", "reason": "automation_inactive", "meetings": []}
+        direct = container.automations.accept_meeting_occurrence(
+            automation["id"], automation["revision"], snapshot["id"], start_at, scan_at,
+        )
+        assert direct["state"] == "skipped"
+        assert direct["reason"] == "expired"
+        assert direct["run_id"] is None
+        with container.repository.sessions() as db:
+            assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all() == []
+            assert db.scalars(select(Notification).where(
+                Notification.automation_id == automation["id"]
+            )).all() == []
+        return
+
     first = container.automations.accept_occurrence(
         automation["id"], automation["revision"], scan_at
     )
