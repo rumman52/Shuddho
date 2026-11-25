@@ -269,3 +269,39 @@ def test_cw02_rejects_symlinked_evidence_directory(tmp_path):
     link.symlink_to(actual_dir, target_is_directory=True)
     assert any("missing or unsafe" in reason for reason in verify_evidence_files(doc, link))
     assert verify_evidence_files(doc, actual_dir) == []
+
+
+@pytest.mark.parametrize("counter,bad", [
+    ("attempted_mutations", True),
+    ("attempted_mutations", 1.0),
+    ("applied_mutations", True),
+    ("applied_mutations", 1.0),
+])
+def test_fault_record_counter_type_must_match_manifest(tmp_path, counter, bad):
+    doc = _bundle(tmp_path, evidence())
+    target = tmp_path / "lost_provider_response.json"
+    record = json.loads(target.read_bytes())
+    record[counter] = bad
+    raw = json.dumps(record).encode()
+    target.write_bytes(raw)
+    row = next(item for item in doc["scenarios"] if item["id"] == "lost_provider_response")
+    row["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+    assert check(doc) == []
+    assert any("identity/counter mismatch" in problem
+               for problem in verify_evidence_files(doc, tmp_path))
+
+
+@pytest.mark.parametrize("bad", [[], {}, True, None, 1])
+def test_fault_manifest_invalid_outcome_is_rejected_not_raised(bad):
+    doc = evidence()
+    row = next(item for item in doc["scenarios"] if item["id"] == "provider_500")
+    row["outcome"] = bad
+    assert any("outcome" in problem for problem in check(doc))
+
+
+@pytest.mark.parametrize("bad", [None, 1, {}, "invalid"])
+def test_fault_evidence_verifier_rejects_non_list_scenarios(tmp_path, bad):
+    doc = _bundle(tmp_path, evidence())
+    doc["scenarios"] = bad
+    assert "scenarios must be a list" in check(doc)
+    assert "scenarios must be a list" in verify_evidence_files(doc, tmp_path)

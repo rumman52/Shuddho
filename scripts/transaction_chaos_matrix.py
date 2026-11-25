@@ -73,6 +73,9 @@ def _strict_json_loads(data):
 def verify_evidence_files(document: dict, directory: Path) -> list[str]:
     """Integrity checks only: independent staging/provenance audit is still required."""
     problems = []
+    entries = document.get("scenarios")
+    if not isinstance(entries, list):
+        return ["scenarios must be a list"]
     # Reject redirects through directory symlinks and ambiguous extra artifacts.
     # A reviewer must know precisely which 16 evidence files were considered.
     if directory.is_symlink():
@@ -87,7 +90,7 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
         return ["evidence directory unreadable"]
     if actual_files != expected_files:
         problems.append("CW-02 requires exactly sixteen named fault evidence files")
-    for entry in document.get("scenarios", []):
+    for entry in entries:
         if not isinstance(entry, dict) or entry.get("id") not in SCENARIOS:
             continue
         name = entry["id"]
@@ -128,7 +131,14 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
             "environment": entry.get("environment"),
             "result": entry.get("result"),
         }
-        if any(record.get(key) != value for key, value in expected.items()):
+        # JSON booleans and floats compare equal to integers in Python.
+        # A receipt must bind the exact JSON type as well as the value.
+        if any(
+            key not in record
+            or type(record[key]) is not type(value)
+            or record[key] != value
+            for key, value in expected.items()
+        ):
             problems.append(f"{name}: evidence identity/counter mismatch")
         if record.get("provider_observation_source") not in ("provider_sandbox", "provider_audit"):
             problems.append(f"{name}: provider-side observer source required")
@@ -201,7 +211,8 @@ def qualify(document: dict, *, expected_revision: str, expected_rollout: str) ->
                     f"{name}: expected attempted_mutations={expected_attempts} "
                     f"and applied_mutations={expected_applied}"
                 )
-            if entry.get("outcome") not in expected_outcomes:
+            outcome = entry.get("outcome")
+            if not isinstance(outcome, str) or outcome not in expected_outcomes:
                 problems.append(
                     f"{name}: outcome must be one of {sorted(expected_outcomes)} "
                     f"for its fault contract"
