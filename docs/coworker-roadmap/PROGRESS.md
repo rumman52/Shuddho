@@ -10,6 +10,10 @@
 
 ---
 
+## 26 November 2026 — Day 9 evidence snapshot stability
+
+**SOURCE PATCH / controlled pilot NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; test-first `fed91d80651df426d30e29306f4ddedf7b8ef720`; source `6cb23f0a3ec76d0d3d5804523e51b5790ff4689f`. The bounded Day 9 evidence reader now fences concurrent same-inode writes and mode changes. Local exact-function reproduction with filesystem tests: RED 4 failed/1 passed; GREEN 5 passed. Full checkout, exact-head CI, independent review and operated holdout/recovery remain unverified. [Task contract](DAY9_EVIDENCE_SNAPSHOT_STABILITY_2026-11-26.md). No staging, production, spending or acceptance-credit change.
+
 ## 25 November 2026 — PA-10 reminder expiry at admission
 
 **Source correction; staging qualification remains blocked.** Inspected main `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; [baseline CI](https://github.com/rumman52/Shuddho/actions/runs/45351544500) reports application and coworker success but governance-audit and ci-merge-gate failure. On `fix/pa10-reminder-expiry-admission-20261125`, [test-first commit](https://github.com/rumman52/Shuddho/commit/cd8869f1a0ff7b23371b3845ca36f4b7a7a045b3) adds two parameterized SQLite/API regression cases for a reminder due before expiry but admitted at or after expiry, including stable replay and zero notifications/runs. [Source commit](https://github.com/rumman52/Shuddho/commit/4c1661a5b010717350470c90d5beba88f39084d9) uses one fresh admission timestamp and rejects expiry at the later of admission and due time, consistent with ordinary scheduled Agent admission.
