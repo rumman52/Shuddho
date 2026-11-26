@@ -18,3 +18,11 @@
 | Production / activation | NO-GO / unchanged |
 
 No production deployment, provider calls, paid provisioning, external sends, telemetry or transaction changes were performed.
+
+## Continuation: negated style directives
+
+The prior deterministic whole-word fix left a separate axis-precedence defect: negated style commands (e.g. "don't write professionally") could be classified as a positive style choice, suppressing a compatible saved preference and retaining the forbidden one. Generic negation could also misread "write" as banning all writing. Separate bounded affirmative and negative choices and track recognized style-negation offsets; preserve generic negation elsewhere and ordinary research-topic vocabulary.
+
+- Test-first `7ab205c19570a0abf0f4f7c695aa8ad79a01ad90`: 9 failed / 28 passed on previous exact module. Source `eeb81c6bee311844ddea511647543266ee6e9c12`: 37 passed. Topic guard and prepositional regression tests `35fda9a8398e7fad7d0ac615395fed7440e0b647`, `957dcce9d96f2bbdf0919b0f9084e2d1c5760081`: 3 failed / 39 passed on intermediate code. Source `6724b312028cd9312e8ccad5dca83e7c53b924ad`: 42 passed / 0 failed / 0 skipped across each of four hash seeds.
+- Exact source blob `aaa154d47f4801f5e282b019fc717a7a04828519`, test blob `d84ce2028871a7b1af5eb9c4b38f93923856ae29`. Command: `cd /tmp/rukh-p03-precedence && PYTHONHASHSEED=1 PYTHONPATH=. python -m pytest -q tests/test_context_policy_security.py --tb=short` (also 2, 3, 42); compileall succeeded. Full byte-identical module/test copies; no integrated checkout.
+- Original PR CI run 45776214356: engineering jobs passed; independent review gate failed because draft. New head requires fresh CI. No human review or hosted acceptance. This deliberately bounded English-language heuristic does not establish arbitrary natural-language or bilingual preference correctness.
