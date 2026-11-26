@@ -421,6 +421,11 @@ class MemoryRepository:
                 ):
                     # Current reviewed instructions take precedence for this run.
                     continue
+                # A key is model-visible metadata, not a trusted identifier.
+                # Suppress the fact rather than rewriting its identity or leaking it.
+                _, key_redactions = filter_sensitive(row.key)
+                if key_redactions:
+                    continue
                 value, redactions = filter_sensitive(row.value)
                 if not value.strip():
                     continue
