@@ -22,6 +22,8 @@ import stat
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
+from scripts.release_contract import pilot_canonical_only_capabilities_disabled
+from scripts.staging_release_evidence import write_private_bytes
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from services.coworker.schemas import parse_draft, source_references
 
@@ -124,6 +126,29 @@ def pairs_unique(pairs):
     return value
 
 
+MAX_JSON_DEPTH = 128
+
+
+def _require_bounded_json_nesting(value: object) -> None:
+    """Bound container nesting independently of the Python recursion limit."""
+    sentinel = object()
+    stack = [iter((value,))]
+    while stack:
+        item = next(stack[-1], sentinel)
+        if item is sentinel:
+            stack.pop()
+            continue
+        if isinstance(item, dict):
+            children = iter(item.values())
+        elif isinstance(item, (list, tuple)):
+            children = iter(item)
+        else:
+            continue
+        if len(stack) > MAX_JSON_DEPTH:
+            raise EvidenceError("JSON evidence nesting exceeds 128 levels")
+        stack.append(children)
+
+
 def strict_json_loads(content: str):
     """Reject ambiguous or non-finite JSON in release and holdout evidence."""
     def reject_constant(value: str):
@@ -135,8 +160,13 @@ def strict_json_loads(content: str):
             raise EvidenceError("non-finite JSON number")
         return number
 
-    return json.loads(content, object_pairs_hook=pairs_unique,
-                      parse_constant=reject_constant, parse_float=finite_float)
+    try:
+        value = json.loads(content, object_pairs_hook=pairs_unique,
+                           parse_constant=reject_constant, parse_float=finite_float)
+    except RecursionError:
+        raise EvidenceError("JSON evidence nesting exceeds parser limits") from None
+    _require_bounded_json_nesting(value)
+    return value
 
 
 def _read_json_and_sha256(path: Path) -> tuple[object, str]:
@@ -171,9 +201,10 @@ def read_jsonl(path: Path) -> list[dict]:
 def canonical_sha256(value: dict) -> str:
     """Canonical digest for a release-bound JSON readback object."""
     try:
+        _require_bounded_json_nesting(value)
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
                              separators=(",", ":"), allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise EvidenceError("candidate readback is not canonical JSON") from exc
     return hashlib.sha256(encoded).hexdigest()
 
@@ -192,7 +223,7 @@ def validate_candidate_identity(manifest: dict) -> dict:
         "api_source_revision", "worker_source_revision",
         "api_build_digest", "worker_build_digest", "alembic_revision",
         "provider_id", "model_id", "prompt_registry_sha256", "tool_registry_sha256",
-        "context_budget_bytes", "runtime_capabilities",
+        "context_budget_bytes", "runtime_capabilities", "canonical_only_capabilities",
         "api_readback_sha256", "worker_readback_sha256", "schema_readback_sha256",
     }
     if not isinstance(identity, dict) or set(identity) != required:
@@ -229,6 +260,8 @@ def validate_candidate_identity(manifest: dict) -> dict:
             or set(capabilities) != RUNTIME_CAPABILITY_KEYS
             or any(type(value) is not bool for value in capabilities.values())):
         raise EvidenceError("candidate runtime capability inventory must contain exactly 43 boolean keys")
+    if not pilot_canonical_only_capabilities_disabled(identity.get("canonical_only_capabilities")):
+        raise EvidenceError("candidate canonical-only capabilities must be explicitly disabled")
     return identity
 
 
@@ -332,6 +365,7 @@ def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
         "context_budget_bytes": identity["context_budget_bytes"],
         "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
         "runtime_capabilities": identity["runtime_capabilities"],
+        "canonical_only_capabilities": identity["canonical_only_capabilities"],
     }
     for role in ("api", "worker"):
         row = readbacks.get(role)
@@ -344,7 +378,11 @@ def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
             raise EvidenceError(role + " readback fields are incomplete or unexpected")
         if any(row.get(key) != value for key, value in expected.items()):
             raise EvidenceError(role + " authenticated readback does not match candidate manifest")
-        if row.get("readback_sha256") != identity[f"{role}_readback_sha256"] or _readback_digest(row) != row.get("readback_sha256"):
+        # Python equality aliases True/1 and 12288/12288.0. The expected
+        # canonical bytes must match too, not merely the supplied self-digest.
+        if (row.get("readback_sha256") != identity[f"{role}_readback_sha256"]
+                or _readback_digest(row) != row.get("readback_sha256")
+                or canonical_sha256(expected) != row.get("readback_sha256")):
             raise EvidenceError(role + " readback digest does not match candidate manifest")
     schema = readbacks.get("schema")
     schema_expected = {
@@ -1147,26 +1185,55 @@ def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], comp
     return result
 
 def immutable_write(path: Path, obj: object) -> str:
-    """O_EXCL preserves first-run evidence; reruns require a NEW named path."""
+    """Publish one complete private first-run artifact; reruns need a new path."""
     content = (json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as fp:
-        fp.write(content)
-        fp.flush()
-        os.fsync(fp.fileno())
+    write_private_bytes(path, content)
     return hashlib.sha256(content).hexdigest()
 
 
+def _exact_checkout_revision(root: Path) -> str:
+    """Reject observable checkout drift; independent custody remains required."""
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+             "-c", "core.ignorestat=false", "-c", "core.untrackedCache=false", *args],
+            cwd=root, text=True, encoding="utf-8", errors="surrogateescape",
+            capture_output=True, timeout=10, check=True,
+        ).stdout
+
+    try:
+        if Path(git("rev-parse", "--show-toplevel").rstrip("\n")).resolve() != root.resolve():
+            raise EvidenceError("qualification requires the exact repository root")
+        head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
+        status = git("status", "--porcelain=v1", "-z", "--untracked-files=all",
+                     "--ignore-submodules=none")
+        index_entries = git("ls-files", "-v", "-z").split("\0")
+        final_head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise EvidenceError("cannot verify exact checkout identity") from exc
+    # A nominally clean status can hide assume-unchanged or skip-worktree files.
+    if (not REV.fullmatch(head) or final_head != head or status
+            or any(entry and not entry.startswith("H ") for entry in index_entries)):
+        raise EvidenceError("qualification requires a clean checkout at one exact revision")
+    return head
+
+
 def preflight() -> dict:
+    candidate_revision = _exact_checkout_revision(ROOT)
     commands = [
         [sys.executable, "-m", "scripts.release_contract_check"],
         [sys.executable, "-m", "pytest", "-q", "tests/test_ruke_pilot_eval.py", "tests/test_pilot_workflow_eval.py", "tests/test_release_contract.py"],
     ]
     checks = []
     for command in commands:
-        proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=600, check=False)
+        try:
+            proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=600, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise EvidenceError("repository preflight command did not complete") from exc
         checks.append({"command": command, "exit_code": proc.returncode, "stdout_tail": proc.stdout[-4000:], "stderr_tail": proc.stderr[-2000:]})
-    return {"candidate_revision": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True).stdout.strip(),
+    if _exact_checkout_revision(ROOT) != candidate_revision:
+        raise EvidenceError("checkout revision changed during repository preflight")
+    return {"candidate_revision": candidate_revision,
             "checks": checks, "passed": all(x["exit_code"] == 0 for x in checks)}
 
 
@@ -1229,8 +1296,7 @@ def main(argv=None) -> int:
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
             if not source_checks_ok(evidence, manifest):
                 raise EvidenceError("exact-head required CI and canonical release contract must pass before reading heldout bytes")
-            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
-                                  text=True, capture_output=True, check=True).stdout.strip()
+            head = _exact_checkout_revision(ROOT)
             if manifest.get("candidate_revision") != head:
                 raise EvidenceError("manifest revision differs from exact checkout head; heldout corpus was not read")
             cases = validate_manifest(manifest, args.heldout, custody_verified=True)
@@ -1351,6 +1417,9 @@ def main(argv=None) -> int:
                         "This report never authorizes activation.",
                     ],
                 }
+        if args.action in {"prepare-blind", "evaluate"}:
+            if _exact_checkout_revision(ROOT) != head:
+                raise EvidenceError("checkout revision changed before evidence publication")
         outputs = {}
         if args.report:
             digest = immutable_write(args.report, obj)
@@ -1378,7 +1447,7 @@ def main(argv=None) -> int:
         return 0
     except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         failure = {
-            "schema_version": 2 if manifest and manifest.get("schema_version") == 2 else 1,
+            "schema_version": 2 if isinstance(manifest, dict) and manifest.get("schema_version") == 2 else 1,
             "error": str(exc),
             "qualified": False,
             "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",

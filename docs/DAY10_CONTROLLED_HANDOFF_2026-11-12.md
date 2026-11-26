@@ -11,7 +11,7 @@
 
 Existing `scripts/cohort_release_gate.py` remains the **canonical** `GO_CONTROLLED_COHORT` decision and keeps its existing 100% live planner pass-rate and 100% live curated-quality pass-rate/fact-recall thresholds (plus all previously defined infrastructure, feature, capability and rollback gates). `scripts/day10_release_decision.py` **adds** exact-release, operations and owner-signoff requirements; it never weakens or bypasses the canonical gate and never activates a pilot.
 
-1. Freeze one immutable rollout manifest and its literal SHA-256; record a 40-character API source revision, worker source revision, image/build and deploy receipts, schema/migration readback and **all 43 runtime-v2 boolean capability keys (including disabled ones)**. The reviewed rollout and authenticated API manifest must both declare exactly `scripts/staging_release_freeze.py::RUNTIME_CAPABILITY_KEYS` with identical boolean values; omitted or extra false flags are not an acceptable runtime freeze. The v2 runtime manifest is read from authenticated staging/protected API; a source config is not a runtime receipt. For PA-10 staging use the existing `scripts/staging_release_freeze.py prepare` and `verify` contract, including its provider-policy plan, before relying on staging claims. A new source commit invalidates any earlier exact-head receipt.
+1. Freeze one immutable rollout manifest and its literal SHA-256; record a 40-character API source revision, worker source revision, image/build and deploy receipts, schema/migration readback and **all 43 runtime-v2 boolean capability keys (including disabled ones)**. The reviewed rollout and authenticated API manifest must both declare exactly `scripts/staging_release_freeze.py::RUNTIME_CAPABILITY_KEYS` with identical boolean values; omitted or extra false flags are not an acceptable runtime freeze. The v2 runtime manifest is read from authenticated staging/protected API; a source config is not a runtime receipt. For PA-10 staging use the existing `scripts/staging_release_freeze.py prepare` and `verify` contract, including its provider-policy plan, before relying on staging claims. A new source commit invalidates any earlier exact-head receipt. Keep the separate canonical-only `suggestion_model_relevance` setting explicitly disabled for this pilot: the API and worker must each report `canonical_only_capabilities: {"suggestion_model_relevance": false}` outside the original 43-key map. Match the original and fresh composite readbacks including this field. Neither omission nor numeric zero qualifies; this does not change the generic capability's separate activation contract.
 2. Close defects and obtain actual GitHub final-head `test-and-build`, `frontend`, `coworker`, `browser-qualification`, `postgres-18-qualification`, `governance-audit` and `ci-merge-gate` success without skipped required checks. Confirm protected-main policy via native GitHub governance controls and independent review. Source test execution alone is not CI qualification.
 3. Produce authenticated live `scripts/agent_eval.py --live --release-id ... --rollout ...` and `scripts/coworker_quality_eval.py --live --release-id ... --rollout ...` reports against the exact release/provider model; do not substitute offline calibration. The canonical gate consumes the resulting JSON, plus `scripts/staging_api_exercise.py` and the other existing required staging collectors/receipts for this rollout. Where `artifact_services=true`, require the existing `--artifact-quality-eval` report.
 4. On that exact API/worker/schema/model release, actually demonstrate global/agent flag rollback, cancellation/no late side effects, paused schedule/no execution and two-owner isolation; preserve individual operated receipts. The `rollback` receipt must name the actual toggle and return-to-safe-state procedure. Run the integrated multi-turn golden case against the **final candidate**, not a nearby preview or source-only test. Record provider outcome, failures, latency/tokens/cost and the unmodified first-run Day 9 results in **different** artifacts/run IDs; the post-fix rerun must never overwrite the first run.
@@ -21,6 +21,24 @@ Existing `scripts/cohort_release_gate.py` remains the **canonical** `GO_CONTROLL
 ## Machine handoff (read-only; does not perform a rollout)
 
 Create the rollout from `docs/cohort-rollout.template.json` in a secure location, **adjust `cohort.max_users` from its generic 25-user example to 5–10 and fill every capability named in `RUNTIME_CAPABILITY_KEYS`**; the generic template is not a ready-to-run Day 10 rollout. Then collect real JSON receipts in an access-controlled release directory. Every operated receipt for `--rollback`, `--cancellation`, `--paused-schedule`, `--owner-isolation`, `--worker`, and `--schema` must contain the actual `release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`, `evidence_ref` and timezone-aware `verified_at` for that release; the schema receipt additionally binds `migration_revision=api_revision=worker_revision`. Do not put credentials or sensitive data into receipts. Additional facts: rollback must list actual verified global/agent kill switches plus observed worker stop and restoration; cancellation requires a run ID and zero late side effects; paused schedule requires a schedule ID and zero executions while paused; owner isolation requires distinct synthetic owner references and an observed cross-owner denial. Each of the 20 recovery cases must have its *own* evidence reference. Final golden must identify the same provider model as the live planner. The independent D holdout must contain a release-bound `custody_receipt` with independently controlled access and a negative developer-read check (the CLI cannot itself authenticate that claim).
+
+For `--final-runtime-readbacks`, D/C must independently collect a fresh,
+authenticated API/worker/schema identity readback **after the original Day 9
+report was generated**. Supply a private JSON object with the usual
+`release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`,
+`verified_at`, and `evidence_ref="sha256:<digest>"` of the independently retained
+original evidence, plus `readbacks` containing the same three exact
+`api`, `worker`, and `schema` row schemas as the original Day 9
+`candidate_readbacks`. Re-observe rather than copy the original rows.
+The validator recomputes the expected canonical readback digests and requires
+both sets to match the original frozen `candidate_identity`. It reconciles
+the final API/worker builds, Alembic revision, 43 capability flags and
+DeepSeek model with the actual Day 10 receipts and live quality/planner gates.
+The two independent written decisions must not predate this final readback.
+A missing, earlier, or inconsistent receipt is SOURCE_ONLY; archival evidence
+must not be rewritten. The CLI cannot authenticate the source systems or the
+private original evidence. The decision scorecard records the bounded final
+readback artifact's SHA-256.
 
 For `--recovery`, submit one release-bound `status="passed"` receipt per exact
 `scenario` in the [Day 9 operated inventory](coworker-roadmap/DAY9_PILOT_QUALIFICATION_2026-11-12.md#c--operated-scenario-inventory).
@@ -60,6 +78,34 @@ in `founder_decision` and `owner_c_decision`, containing:
   `rollback_owner` **and** the `rollback` operated proof's `rollback_owner`.
   D/C must authenticate the actual operator and private rollback evidence.
 
+The summary **and both separately signed private decisions** must also contain:
+
+- `scope_sha256`: the lowercase SHA-256 of the canonical UTF-8 JSON object with
+  exactly these fields from the reviewed rollout: `environment`,
+  `cohort` (only `reference` and `max_users`), all 43 explicit
+  `capabilities`, `action_providers` and `transaction_operations`
+  (absent lists are represented as empty lists). Canonical JSON uses sorted
+  object keys, compact separators, unescaped Unicode and rejects NaN/Infinity.
+  List order is preserved. This is computed by
+  `scripts.day10_release_decision.pilot_scope_sha256(rollout)`.
+  Both humans must inspect the actual frozen scope, not approve an unexplained hash.
+- `max_spend_microusd`: the identical nonnegative integer USD-micro-unit cap
+  across summary and both signoffs. Zero explicitly authorizes no spending.
+  This is a signed budget claim, **not** a billing control or authorization for
+  prior evaluation spend; the operator must separately enforce the approved cap.
+- `expires_at`: an identical timezone-aware future instant across summary and
+  both signoffs (different offsets for the same instant are accepted). Expired,
+  missing, naive or contradictory terms cannot qualify. Recheck the expiry,
+  scope, remaining approved spend and the canonical gate immediately before
+  manual admission. No automatic admission or ongoing spend authority.
+
+The decision output exposes only the validated `pilot_authorization_claim`
+(scope digest, spend cap, expiry), or null for an incomplete/inconsistent claim.
+Older records without these three terms remain archival, NOT QUALIFYING;
+do not retrofit them. Obtain new authentic decisions from each owner.
+
+The post-admission access verifier also requires the separate live canonical-only capability readback to remain exactly disabled, and the exact current `pilot_authorization_claim` in the Day 10 decision, checks it before private token reads and network probes, and rechecks expiry before publishing a passing receipt. A legacy READY decision with missing terms is nonqualifying. Neither command authenticates the humans or enforces actual spending; those remain the operator's responsibility. No automatic admissions.
+
 A legacy one-document approval may be retained as an **archival / NOT QUALIFYING**
 record; never rewrite it retrospectively to claim two independent signoffs.
 This CLI verifies only claimed receipt shapes, relative dates, hashes, identity
@@ -83,6 +129,7 @@ uv run --extra coworker python scripts/day10_release_decision.py \
   --owner-isolation /secure/release/owner-isolation.json \
   --golden /secure/release/final-golden-rerun.json \
   --day9-first-run /secure/release/day9-original-first-run.json \
+  --final-runtime-readbacks /secure/release/final-runtime-readbacks.json \
   --holdout /secure/release/independent-D-holdout.json \
   --recovery /secure/release/operated-recovery.json \
   --staging /secure/release/staging-evidence.json \

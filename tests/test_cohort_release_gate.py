@@ -977,3 +977,43 @@ def test_release_first_decision_report_is_write_once(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="already exists|unused output"):
         gate.main()
     assert output.read_bytes() == b"ORIGINAL_FIRST_DECISION\\n"
+
+
+# Day 10 requires the exact 43-field frozen runtime inventory, even for
+# disabled capabilities without a canonical production activation contract.
+def frozen_pilot_rollout():
+    from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+
+    value = rollout(users=5)
+    value["capabilities"] = {
+        key: value["capabilities"].get(key, False)
+        for key in RUNTIME_CAPABILITY_KEYS
+    }
+    assert len(value["capabilities"]) == 43
+    return value
+
+
+def test_exact_day10_frozen_runtime_rollout_is_accepted_by_canonical_gate():
+    value = frozen_pilot_rollout()
+    assert validate_rollout(value, max_cohort_users=10) == []
+    # Synthetic staging fixtures exercise only the real canonical decision
+    # path; this is not evidence of live qualification.
+    result = evaluate_release(evidence(), value, max_cohort_users=10)
+    assert result["rollout_failures"] == []
+    assert result["decision"] == "GO_CONTROLLED_COHORT"
+
+
+@pytest.mark.parametrize("key", ["projects", "fly_github", "conversation_replies", "reviewed_research"])
+@pytest.mark.parametrize("enabled", [True, 0, None])
+def test_frozen_unqualified_runtime_capabilities_cannot_be_enabled(key, enabled):
+    value = frozen_pilot_rollout()
+    value["capabilities"][key] = enabled
+    result = evaluate_release(evidence(), value, max_cohort_users=10)
+    assert result["decision"] == "NO-GO"
+    assert (key + "_not_qualified" if enabled is True else "capability_types") in result["rollout_failures"]
+
+
+def test_frozen_runtime_does_not_allow_unknown_false_capability():
+    value = frozen_pilot_rollout()
+    value["capabilities"]["unregistered_future_authority"] = False
+    assert "capabilities" in validate_rollout(value, max_cohort_users=10)

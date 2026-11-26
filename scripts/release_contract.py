@@ -43,6 +43,30 @@ BASE_CAPABILITY_KEYS = frozenset({
     "actions",
 })
 
+# Runtime-v2 reports these four features, but they have no canonical
+# production activation contract in this registry. A frozen Day 10 rollout
+# must explicitly declare them false; older generic manifests may omit them.
+# Do not register them as optional activation capabilities merely to accept
+# their disabled readback. Enabling any of them requires a separate contract.
+FROZEN_DISABLED_RUNTIME_KEYS = frozenset({
+    "projects", "fly_github", "conversation_replies", "reviewed_research",
+})
+
+# The canonical registry also has this separately governed capability, which
+# is not part of the fixed 43-field runtime-v2 inventory. It must remain off
+# for the ten-day pilot until its own activation contract is qualified.
+PILOT_CANONICAL_ONLY_KEYS = frozenset({"suggestion_model_relevance"})
+
+
+def pilot_canonical_only_capabilities_disabled(value: object) -> bool:
+    """Require an explicit disabled readback for the canonical-only pilot settings."""
+    return (
+        isinstance(value, dict)
+        and set(value) == PILOT_CANONICAL_ONLY_KEYS
+        and all(flag is False for flag in value.values())
+    )
+
+
 BASE_KILL_SWITCHES = {
     "global_kill_switch": "SHUDDHO_COWORKER_ENABLED=false",
     "agent_kill_switch": "SHUDDHO_AGENT_RUNTIME_ENABLED=false",

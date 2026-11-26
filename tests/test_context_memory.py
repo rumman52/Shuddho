@@ -631,3 +631,58 @@ def test_invalidated_workspace_document_label_does_not_expose_secret(container):
     label = view["invalidated"][0]["label"]
     assert "multi word private token" not in label
     assert "api_key=[REDACTED]" in label
+
+
+def test_delete_accepted_memory_detaches_proposals_and_never_recreates_fact(container):
+    """Accepted proposal history must not block deletion or resurrect a fact."""
+    from services.coworker.models import MemoryProposal
+    from sqlalchemy import select
+
+    enable_pa04(container)
+    alice = owner(container, "accepted-memory-delete")
+    bob = owner(container, "accepted-memory-other-owner")
+    run, _ = container.agent.create(
+        alice, AgentRunCreate(goal="Use concise weekly updates.", output_language="en"),
+        "accepted-memory-delete-run",
+    )
+    _, source_map = container.context.planner_context(alice, run["id"])
+    accepted = []
+    for value in ("Use concise weekly updates.", "Use very concise weekly updates."):
+        proposal = container.memory.propose_from_agent(
+            alice, run["id"], AgentMemoryProposal(
+                namespace="preferences", key="weekly_update_style",
+                value=value, language="en", source_ids=["goal"],
+            ), source_map,
+        )
+        accepted.append(container.memory.accept_proposal(alice, proposal["id"]))
+    fact = accepted[-1]["fact"]
+    assert accepted[0]["fact"]["id"] == fact["id"]
+    foreign = container.memory.create(bob, MemoryFactCreate(
+        namespace="preferences", key="weekly_update_style", value="Other owner's preference.",
+    ))
+    with pytest.raises(CoworkerError) as denied:
+        container.memory.delete(bob, fact["id"])
+    assert denied.value.status_code == 404
+
+    assert container.memory.delete(alice, fact["id"])["deleted"] is True
+    assert container.memory.list(alice) == []
+    with container.repository.sessions() as db:
+        assert db.get(MemoryFact, fact["id"]) is None
+        rows = db.scalars(select(MemoryProposal).where(
+            MemoryProposal.owner_id == alice,
+        )).all()
+        assert len(rows) == 2
+        assert all(row.state == "accepted" and row.accepted_fact_id is None for row in rows)
+    for result in accepted:
+        replay = container.memory.accept_proposal(alice, result["proposal"]["id"])
+        assert replay["proposal"]["state"] == "accepted"
+        assert replay["fact"] is None
+    assert container.memory.list(alice) == []
+    assert container.memory.list(bob)[0]["id"] == foreign["id"]
+
+    replacement = container.memory.create(alice, MemoryFactCreate(
+        namespace="preferences", key="weekly_update_style", value="Use a new style.",
+    ))
+    assert replacement["id"] != fact["id"]
+    assert container.memory.accept_proposal(alice, accepted[0]["proposal"]["id"])["fact"] is None
+    assert container.memory.list(alice)[0]["id"] == replacement["id"]

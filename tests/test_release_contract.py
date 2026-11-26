@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 from scripts.cohort_release_gate import validate_rollout
 from scripts.release_contract import (
@@ -14,7 +17,11 @@ from scripts.release_contract import (
     required_activation_requirements,
     required_conditional_gate_ids,
 )
-from scripts.release_contract_check import validate_templates
+from scripts.release_contract_check import (
+    ReleaseContractCheckError,
+    load_json_object,
+    validate_templates,
+)
 
 
 def load(path: str) -> dict:
@@ -22,8 +29,8 @@ def load(path: str) -> dict:
 
 
 def test_checked_in_release_templates_match_canonical_contract():
-    staging = load("docs/staging-evidence.template.json")
-    rollout = load("docs/cohort-rollout.template.json")
+    staging = load_json_object(Path("docs/staging-evidence.template.json"), "staging template")
+    rollout = load_json_object(Path("docs/cohort-rollout.template.json"), "rollout template")
     assert validate_templates(staging, rollout) == []
     assert set(staging) == expected_staging_evidence_keys()
     assert set(rollout["capabilities"]) == expected_rollout_capability_keys()
@@ -464,3 +471,80 @@ def test_microsoft_activation_requirement_is_provider_aware():
             {"google", "microsoft"},
         )
     ] == ["microsoft_actions"]
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"capabilities":{"agent_runtime":true,"agent_runtime":false}}',
+    b'{"extra":NaN}', b'{"extra":Infinity}', b'{"extra":1e999}',
+    b'{}' + b' ' * (1024 * 1024), b'[]', b'{"bad":"\xff"}',
+], ids=["duplicate", "nan", "infinity", "overflow", "oversize", "nonobject", "utf8"])
+def test_template_loader_rejects_invalid_input(tmp_path, raw):
+    path = tmp_path / "template.json"
+    path.write_bytes(raw)
+    with pytest.raises(ReleaseContractCheckError, match="test template"):
+        load_json_object(path, "test template")
+
+
+def test_template_loader_rejects_symlink(tmp_path):
+    real = tmp_path / "real.json"
+    real.write_text('{}', encoding="utf-8")
+    link = tmp_path / "alias.json"
+    link.symlink_to(real)
+    with pytest.raises(ReleaseContractCheckError, match="test template"):
+        load_json_object(link, "test template")
+
+
+def test_template_loader_preserves_valid_object(tmp_path):
+    path = tmp_path / "template.json"
+    value = {"capabilities": {"agent_runtime": False}, "label": "বাংলা", "limit": 1.5}
+    path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    assert load_json_object(path, "test template") == value
+
+
+def test_template_loader_rejects_concurrent_mutation(tmp_path, monkeypatch):
+    path = tmp_path / "template.json"
+    raw = b'{"enabled":false}'
+    path.write_bytes(raw)
+    inode = path.stat().st_ino
+    original_read = os.read
+    original_text = Path.read_text
+
+    def read(fd, count):
+        content = original_read(fd, count)
+        if content and os.fstat(fd).st_ino == inode:
+            path.write_bytes(raw + b' ')
+        return content
+
+    def read_text(target, *args, **kwargs):
+        content = original_text(target, *args, **kwargs)
+        if target == path:
+            path.write_bytes(raw + b' ')
+        return content
+
+    monkeypatch.setattr(os, "read", read)
+    monkeypatch.setattr(Path, "read_text", read_text)
+    with pytest.raises(ReleaseContractCheckError, match="test template"):
+        load_json_object(path, "test template")
+
+
+def test_template_loader_normalizes_parser_recursion_failure(tmp_path, monkeypatch):
+    path = tmp_path / "template.json"
+    path.write_bytes(b'{}')
+
+    def parser_failure(*args, **kwargs):
+        raise RecursionError("parser nesting limit")
+
+    monkeypatch.setattr(json, "loads", parser_failure)
+    with pytest.raises(ReleaseContractCheckError, match="test template"):
+        load_json_object(path, "test template")
+
+
+def test_frozen_runtime_registry_reconciles_canonical_activation_contract():
+    from scripts.release_contract import FROZEN_DISABLED_RUNTIME_KEYS, PILOT_CANONICAL_ONLY_KEYS
+    from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+
+    canonical = expected_rollout_capability_keys()
+    # Deliberate, reviewed differences rather than accepting arbitrary keys.
+    assert RUNTIME_CAPABILITY_KEYS - canonical == FROZEN_DISABLED_RUNTIME_KEYS
+    assert canonical - RUNTIME_CAPABILITY_KEYS == PILOT_CANONICAL_ONLY_KEYS == {"suggestion_model_relevance"}
+    assert not FROZEN_DISABLED_RUNTIME_KEYS & OPTIONAL_CAPABILITY_KEYS
