@@ -1,0 +1,5 @@
+## 26 November 2026 — Prompt 05 exact qualification checkout
+
+**SOURCE_IN_PROGRESS / controlled pilot NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests `f31cc0daba8b83fe10883998a418fd9693a2ae7f`, `241c2df253ced520292b380d08431311f89a136b`; source `b9278bbab12318a1a12990fc8d237e50d3bd3753`, `3c76141fdc4809eb17eb81f23864ad01064e874f`. Real disposable Git + synthetic test-command results: RED 7 failed/1 passed; GREEN 8 passed; index-negative RED 2 failed/8 passed, GREEN 10 passed. Require observable clean unchanged checkout before/after preflight and before heldout read/report publication; hidden index flags fail. Full checkout and integrated guard test unexecuted locally; exact-head CI and independent review remain required. [Task contract](P05_EXACT_QUALIFICATION_CHECKOUT_2026-11-26.md). No live evidence or acceptance credit.
+
+Reconcile this PR-specific record with the canonical [PROGRESS.md](PROGRESS.md) during reviewed merge. Shared history remains unchanged on this branch.
