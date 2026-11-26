@@ -125,6 +125,29 @@ def pairs_unique(pairs):
     return value
 
 
+MAX_JSON_DEPTH = 128
+
+
+def _require_bounded_json_nesting(value: object) -> None:
+    """Bound container nesting independently of the Python recursion limit."""
+    sentinel = object()
+    stack = [iter((value,))]
+    while stack:
+        item = next(stack[-1], sentinel)
+        if item is sentinel:
+            stack.pop()
+            continue
+        if isinstance(item, dict):
+            children = iter(item.values())
+        elif isinstance(item, (list, tuple)):
+            children = iter(item)
+        else:
+            continue
+        if len(stack) > MAX_JSON_DEPTH:
+            raise EvidenceError("JSON evidence nesting exceeds 128 levels")
+        stack.append(children)
+
+
 def strict_json_loads(content: str):
     """Reject ambiguous or non-finite JSON in release and holdout evidence."""
     def reject_constant(value: str):
@@ -136,8 +159,13 @@ def strict_json_loads(content: str):
             raise EvidenceError("non-finite JSON number")
         return number
 
-    return json.loads(content, object_pairs_hook=pairs_unique,
-                      parse_constant=reject_constant, parse_float=finite_float)
+    try:
+        value = json.loads(content, object_pairs_hook=pairs_unique,
+                           parse_constant=reject_constant, parse_float=finite_float)
+    except RecursionError:
+        raise EvidenceError("JSON evidence nesting exceeds parser limits") from None
+    _require_bounded_json_nesting(value)
+    return value
 
 
 def _read_json_and_sha256(path: Path) -> tuple[object, str]:
@@ -172,9 +200,10 @@ def read_jsonl(path: Path) -> list[dict]:
 def canonical_sha256(value: dict) -> str:
     """Canonical digest for a release-bound JSON readback object."""
     try:
+        _require_bounded_json_nesting(value)
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
                              separators=(",", ":"), allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise EvidenceError("candidate readback is not canonical JSON") from exc
     return hashlib.sha256(encoded).hexdigest()
 
