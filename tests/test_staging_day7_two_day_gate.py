@@ -961,3 +961,34 @@ def test_paused_opportunity_private_writer_failed_replace_retains_original_and_h
     assert "private-operator-secret-path" not in str(exc.value)
     assert output.read_text(encoding="utf-8") == "previous-good-evidence"
     assert sorted(path.name for path in tmp_path.iterdir()) == [output.name]
+
+
+@pytest.mark.parametrize("catchup", [60, 3599, 3601, 7200, True, 3600.0, "3600"])
+def test_day7_gate_requires_exact_approved_catchup_window(catchup):
+    first, second, paused = valid_pair()
+    for item in (first, second):
+        item["catchup_window_seconds"] = catchup
+    # Even a sufficiently late observation must not qualify the wrong policy.
+    paused["post_pause_observation"]["observed_at"] = "2026-11-14T05:10:00+00:00"
+    with pytest.raises(GateFailure, match="3600"):
+        verify_two_day(first, second, paused)
+    with pytest.raises(GateFailure, match="3600"):
+        verify_two_day(first, second, paused, require_paused_opportunity=False)
+
+
+@pytest.mark.parametrize("day_index", [0, 1])
+def test_day7_gate_rejects_fractional_due_instant(day_index):
+    first, second, paused = valid_pair()
+    day = (first, second)[day_index]
+    day["due_at"] = day["due_at"].replace(":00+00:00", ":00.000001+00:00")
+    with pytest.raises(GateFailure, match="owner-approved local schedule time"):
+        verify_two_day(first, second, paused)
+
+
+def test_day7_paused_opportunity_requires_exact_approved_catchup_window():
+    from scripts.staging_day7_two_day_gate import next_paused_opportunity
+
+    first, second, _ = valid_pair()
+    first["catchup_window_seconds"] = 60
+    with pytest.raises(GateFailure, match="3600"):
+        next_paused_opportunity(first, second)
