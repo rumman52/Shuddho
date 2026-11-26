@@ -60,6 +60,32 @@ in `founder_decision` and `owner_c_decision`, containing:
   `rollback_owner` **and** the `rollback` operated proof's `rollback_owner`.
   D/C must authenticate the actual operator and private rollback evidence.
 
+The summary **and both separately signed private decisions** must also contain:
+
+- `scope_sha256`: the lowercase SHA-256 of the canonical UTF-8 JSON object with
+  exactly these fields from the reviewed rollout: `environment`,
+  `cohort` (only `reference` and `max_users`), all 43 explicit
+  `capabilities`, `action_providers` and `transaction_operations`
+  (absent lists are represented as empty lists). Canonical JSON uses sorted
+  object keys, compact separators, unescaped Unicode and rejects NaN/Infinity.
+  List order is preserved. This is computed by
+  `scripts.day10_release_decision.pilot_scope_sha256(rollout)`.
+  Both humans must inspect the actual frozen scope, not approve an unexplained hash.
+- `max_spend_microusd`: the identical nonnegative integer USD-micro-unit cap
+  across summary and both signoffs. Zero explicitly authorizes no spending.
+  This is a signed budget claim, **not** a billing control or authorization for
+  prior evaluation spend; the operator must separately enforce the approved cap.
+- `expires_at`: an identical timezone-aware future instant across summary and
+  both signoffs (different offsets for the same instant are accepted). Expired,
+  missing, naive or contradictory terms cannot qualify. Recheck the expiry,
+  scope, remaining approved spend and the canonical gate immediately before
+  manual admission. No automatic admission or ongoing spend authority.
+
+The decision output exposes only the validated `pilot_authorization_claim`
+(scope digest, spend cap, expiry), or null for an incomplete/inconsistent claim.
+Older records without these three terms remain archival, NOT QUALIFYING;
+do not retrofit them. Obtain new authentic decisions from each owner.
+
 A legacy one-document approval may be retained as an **archival / NOT QUALIFYING**
 record; never rewrite it retrospectively to claim two independent signoffs.
 This CLI verifies only claimed receipt shapes, relative dates, hashes, identity
