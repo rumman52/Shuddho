@@ -394,3 +394,68 @@ def test_tx27_rejects_structurally_invalid_redigested_handoff(field, value):
         validate_hosted_transaction_completion(
             handoff, preview, receipt, now=now + timedelta(minutes=2)
         )
+
+
+def _hosted_receipt_fixture(kind, now, *, amount=None):
+    preview = shopping_preview(now) if kind == "shopping" else travel_preview(now)
+    if amount is not None:
+        preview["total_minor"] = amount
+    handoff = build_hosted_transaction_handoff(
+        preview,
+        handoff_id="session-123",
+        handoff_url="https://provider.example.test/session",
+        reviewed_handoff_origin="https://provider.example.test",
+        now=now,
+    )
+    receipt = {
+        "provider": preview["provider"],
+        "currency": preview["currency"],
+        "total_minor": preview["total_minor"],
+        "status": "confirmed",
+        "confirmed_at": (now + timedelta(minutes=2)).isoformat(),
+    }
+    if kind == "shopping":
+        receipt.update(provider_order_id="order-456", merchant_cart_id=preview["merchant_cart_id"])
+    else:
+        receipt.update(
+            provider_booking_id="booking-456",
+            provider_quote_id=preview["provider_quote_id"],
+            travel_kind=preview["travel_kind"],
+        )
+    return preview, handoff, receipt
+
+
+@pytest.mark.parametrize("kind", ["shopping", "travel"])
+@pytest.mark.parametrize("amount,bad", [(12500, 12500.0), (1, True), (0, False)])
+def test_tx27_rehashed_handoff_requires_integer_total_minor(kind, amount, bad):
+    from services.coworker.action_registry import stable_digest
+
+    now = utcnow()
+    preview, handoff, receipt = _hosted_receipt_fixture(kind, now, amount=amount)
+    handoff["total_minor"] = bad
+    handoff.pop("handoff_sha256")
+    handoff["handoff_sha256"] = stable_digest(handoff)
+    with pytest.raises(HostedTransactionHandoffError):
+        validate_hosted_transaction_completion(
+            handoff, preview, receipt, now=now + timedelta(minutes=3)
+        )
+
+
+@pytest.mark.parametrize("kind", ["shopping", "travel"])
+def test_tx27_confirmation_cannot_follow_observation(kind):
+    now = utcnow()
+    preview, handoff, receipt = _hosted_receipt_fixture(kind, now)
+    with pytest.raises(HostedTransactionHandoffError):
+        validate_hosted_transaction_completion(
+            handoff, preview, receipt, now=now + timedelta(minutes=1)
+        )
+
+
+@pytest.mark.parametrize("kind", ["shopping", "travel"])
+@pytest.mark.parametrize("minutes", [2, 12])
+def test_tx27_timely_receipt_can_be_observed_at_confirmation_or_after_expiry(kind, minutes):
+    now = utcnow()
+    preview, handoff, receipt = _hosted_receipt_fixture(kind, now)
+    assert validate_hosted_transaction_completion(
+        handoff, preview, receipt, now=now + timedelta(minutes=minutes)
+    )["status"] == "confirmed"
