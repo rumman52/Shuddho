@@ -228,14 +228,26 @@ class DeepSeekAgentPlanner:
         tokens = None
         try:
             data = response.json()
-            usage = data.get("usage") or {}
-            if isinstance(usage.get("total_tokens"), int) and not isinstance(usage["total_tokens"], bool):
-                tokens = max(0, usage["total_tokens"])
-            choices = data["choices"]
-            if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
+            if not isinstance(data, dict):
+                raise ValueError("Malformed provider result")
+            usage = data.get("usage")
+            reported = usage.get("total_tokens") if isinstance(usage, dict) else None
+            # Unknown/invalid usage retains the conservative provider reservation.
+            if type(reported) is int and reported >= 0:
+                tokens = reported
+            if data.get("error") is not None:
+                raise ValueError("Malformed provider result")
+            choices = data.get("choices")
+            if not isinstance(choices, list) or len(choices) != 1:
                 raise ValueError("Incomplete provider result")
-            message = choices[0]["message"]
-            if message.get("tool_calls") or message.get("refusal"):
+            choice = choices[0]
+            if (not isinstance(choice, dict) or choice.get("finish_reason") != "stop"
+                    or ("index" in choice and (type(choice["index"]) is not int or choice["index"] != 0))):
+                raise ValueError("Incomplete provider result")
+            message = choice.get("message")
+            if (not isinstance(message, dict) or message.get("role") not in (None, "assistant")
+                    or message.get("tool_calls") or message.get("function_call") is not None
+                    or message.get("refusal")):
                 raise ValueError("Unsafe provider output")
             raw = message["content"]
             if not isinstance(raw, str) or len(raw.encode("utf-8")) > 12000:
