@@ -1,0 +1,7 @@
+# Prompt 02 D03.T02 — current-turn grounding isolation
+
+Base main `43d99fd64467492a7da809cda0ae178191e53981`; implemented serially on existing reply-hardening PR #935 to avoid competing edits to the same files.
+
+Previously a completed grounded assistant answer was sent as ordinary history on a later request, even if its source was no longer selected, revoked or deleted. Now historical assistant replies with selected pins or source metadata are omitted from provider context; historical user text, ordinary replies and stored/visible transcript remain unchanged. The current turn receives only its freshly verified excerpts; earlier source IDs are not reintroduced. `context_truncated` indicates the omission. This does not erase already persisted transcripts or retroactively identify facts copied into ungrounded legacy replies. No hosted data change.
+
+Test-first `9f7fae436d48832fe5042f49433d4e5a67ffe3a8`; source `21b05b6a73f601be3f86b7ef24e3dc321487fe7f`. Isolated exact pinned-function harness (only CoworkerError stub): `python -m pytest -q --tb=short test_history_probe.py`: RED 4 failed, 1 passed; GREEN 5 passed in 0.03s. `python -m py_compile history_probe.py test_history_probe.py`: exit 0. Added six repository cases including actual DB source revocation + second provider call and zero AgentRun/outbox assertions; not executed locally due to unavailable full checkout. Exact-head CI and independent review remain required.
