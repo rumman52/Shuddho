@@ -486,3 +486,33 @@ def test_s3_inventory_second_page_foreign_prefix_rejected():
     with pytest.raises(ValueError, match="outside requested prefix"):
         store.inventory(prefix="owner/")
     assert len(client.calls) == 2
+
+
+@pytest.mark.parametrize("operation", ["fsync", "replace"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_local_storage_failed_put_preserves_object_and_removes_temporary(tmp_path, monkeypatch, operation, existing):
+    import errno
+    from services.coworker import storage
+
+    store = storage.LocalObjectStore(tmp_path / "objects")
+    key = "owner/artifacts/report.txt"
+    destination = store.path(key)
+    if existing:
+        store.put(key, b"original", "text/plain")
+
+    def fail(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "injected storage failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage.os, operation, fail)
+        with pytest.raises(OSError, match="injected storage failure"):
+            store.put(key, b"replacement", "text/plain")
+
+    assert sorted(p.name for p in destination.parent.iterdir()) == ([destination.name] if existing else [])
+    if existing:
+        assert destination.read_bytes() == b"original"
+    else:
+        assert not destination.exists()
+    store.put(key, b"replacement", "text/plain")
+    assert destination.read_bytes() == b"replacement"
+    assert sorted(p.name for p in destination.parent.iterdir()) == [destination.name]

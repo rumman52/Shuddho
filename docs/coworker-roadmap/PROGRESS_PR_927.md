@@ -1,0 +1,4 @@
+## 26 November 2026 — Prompt 03 Day 6 local artifact write recovery
+
+**Source patch; not release-qualified.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; test-first `47f1b120aba17b461394ebf460684814269d694c`, fix `6ba75e5e0f0c5c29f37ad55a6e295d4345bc901d`. A failed fsync leaked unpublished temporary artifact bytes. Cleanup now covers the entire write and atomic replacement, retaining previous bytes and retry behavior. Isolated filesystem probe using copied exact local methods: RED 2 failed/2 passed; GREEN 4 passed. Full checkout/mandatory exact-head CI and distinct review remain pending. Local development/test backend only; no claim of hosted S3, ownership, or provider qualification. [Contract](P03_LOCAL_ARTIFACT_TEMP_CLEANUP_2026-11-26.md). No deployment, provider calls, paid provisioning or activation.
+

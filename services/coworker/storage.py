@@ -50,15 +50,17 @@ class LocalObjectStore:
     def put(self, key, data, content_type):
         destination = self.path(key)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
+        temporary = None
         try:
+            with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary, destination)
         finally:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def get(self, key, max_bytes):
         with self.path(key).open("rb") as handle:
