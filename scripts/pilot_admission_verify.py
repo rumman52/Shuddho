@@ -19,7 +19,7 @@ import stat
 import httpx
 
 from scripts.cohort_release_gate import validate_rollout
-from scripts.day10_release_decision import read_json, read_json_with_sha
+from scripts.day10_release_decision import pilot_authorization_terms, read_json, read_json_with_sha
 from scripts.ruke_pilot_eval import immutable_write, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_release_freeze import api_runtime_capabilities_match_rollout
@@ -38,7 +38,15 @@ class PilotVerificationFailure(ValueError):
     """An operated pilot access check cannot be credited."""
 
 
-def require_release_decision(rollout_path: Path, decision_path: Path, revision: str) -> tuple[dict, str]:
+def require_pilot_authorization_claim(claim: object, rollout: dict) -> None:
+    """Reject expired or mismatched authorization terms; not signer authentication."""
+    if (not isinstance(claim, dict)
+            or set(claim) != {"scope_sha256", "max_spend_microusd", "expires_at"}
+            or pilot_authorization_terms(claim, rollout, now=datetime.now(timezone.utc)) is None):
+        raise PilotVerificationFailure("Day 10 pilot authorization terms are absent, invalid, or expired.")
+
+
+def _require_release_decision_snapshot(rollout_path: Path, decision_path: Path, revision: str) -> tuple[dict, str, dict]:
     """Check the exact released digest and canonical GO, without claiming human authentication."""
     if not SHA40.fullmatch(revision):
         raise PilotVerificationFailure("Expected an exact 40-character source revision.")
@@ -64,6 +72,14 @@ def require_release_decision(rollout_path: Path, decision_path: Path, revision: 
         decision.get("rollout_manifest_sha256") == digest,
     )):
         raise PilotVerificationFailure("Day 10 GO/approval decision is absent or mismatched.")
+    claim = decision.get("pilot_authorization_claim")
+    require_pilot_authorization_claim(claim, rollout)
+    return rollout, digest, claim
+
+
+def require_release_decision(rollout_path: Path, decision_path: Path, revision: str) -> tuple[dict, str]:
+    """Compatibility entrypoint: verify the exact decision and current pilot terms."""
+    rollout, digest, _ = _require_release_decision_snapshot(rollout_path, decision_path, revision)
     return rollout, digest
 
 
@@ -203,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        rollout, digest = require_release_decision(args.rollout, args.decision, args.source_revision)
+        rollout, digest, claim = _require_release_decision_snapshot(args.rollout, args.decision, args.source_revision)
         member_tokens = load_member_tokens(args.member_tokens_file)
         settings = Settings.from_env()
         denied_token = env_secret("SHUDDHO_PILOT_NONMEMBER_TOKEN")
@@ -211,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         member_ids, denied_id = require_exact_pilot_members(
             settings, member_tokens, denied_token, rollout["cohort"]["max_users"],
         )
+        require_pilot_authorization_claim(claim, rollout)
         assert_denied_unprovisioned(settings, denied_id)
         with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False,
                           trust_env=False) as client:
@@ -218,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
                                 args.source_revision, len(member_tokens))
             probe_access(client, member_tokens, denied_token, member_ids)
         assert_denied_unprovisioned(settings, denied_id)
+        require_pilot_authorization_claim(claim, rollout)
         report = {
             "schema_version": 1,
             "status": "passed",
