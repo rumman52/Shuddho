@@ -1,6 +1,8 @@
 """Day 8 operational telemetry: consent, strict schema, and failure isolation."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 
 from services.coworker.day8_telemetry import (
@@ -248,3 +250,97 @@ def test_sync_sink_returning_awaitable_is_not_counted_as_delivery():
 
 def test_positive_explicit_sink_acknowledgement_remains_supported():
     assert emit_operational_event(BASE, policy(), lambda *_: True) is True
+
+
+class _ChangingOperationalMapping(Mapping):
+    """Return a valid value during validation, then change the source."""
+
+    def __init__(self, key):
+        self.key = key
+        self.reads = 0
+
+    def __iter__(self):
+        return iter(BASE)
+
+    def __len__(self):
+        return len(BASE)
+
+    def __getitem__(self, key):
+        value = BASE[key]
+        if key == self.key:
+            self.reads += 1
+            if self.reads > 2:
+                return "SYNTHETIC_PRIVATE_INPUT@example.test"
+        return value
+
+
+@pytest.mark.parametrize("key", ["workflow", "outcome", "error_category"])
+def test_emitted_enums_are_the_same_values_validated_from_one_snapshot(key):
+    raw = _ChangingOperationalMapping(key)
+    received = []
+    assert emit_operational_event(raw, policy(), lambda *args: received.append(args))
+    assert received[0][1][key] == BASE[key]
+    assert raw.reads == 1
+
+
+class _SpoofedPolicyString(str):
+    def __eq__(self, _other):
+        return True
+
+    __hash__ = str.__hash__
+
+
+@pytest.mark.parametrize("overrides", [
+    {"environment": _SpoofedPolicyString("SYNTHETIC_PRIVATE_INPUT@example.test")},
+    {"approved_retention_days": True, "destination_retention_days": 1},
+    {"approved_provider_models": {("deepseek", "deepseek-chat")}},
+    {"approved_provider_models": frozenset({(_SpoofedPolicyString("deepseek"), "deepseek-chat")})},
+    {"approved_ingestion_host": _SpoofedPolicyString("wrong.example.test")},
+    {"approved_project_id": _SpoofedPolicyString("wrong")},
+    {"approved_region": _SpoofedPolicyString("wrong")},
+])
+def test_policy_requires_exact_immutable_authorization_types(overrides):
+    observed = []
+    assert emit_operational_event(BASE, policy(**overrides), lambda *args: observed.append(args)) is False
+    assert observed == []
+
+
+def test_policy_subclass_cannot_override_default_deny():
+    class AlwaysPermit(EventPolicy):
+        def permits(self):
+            return True
+
+    guard = AlwaysPermit(approved_provider_models=frozenset({("deepseek", "deepseek-chat")}))
+    observed = []
+    assert emit_operational_event(BASE, guard, lambda *args: observed.append(args)) is False
+    assert observed == []
+
+
+def test_failed_mapping_snapshot_does_not_echo_private_exception():
+    class BrokenMapping(_ChangingOperationalMapping):
+        def __getitem__(self, _key):
+            raise RuntimeError("SYNTHETIC_PRIVATE_INPUT@example.test")
+
+    with pytest.raises(ValueError, match="^invalid operational event$"):
+        build_operational_event(BrokenMapping("workflow"), policy())
+    received = []
+    assert emit_operational_event(BrokenMapping("workflow"), policy(),
+                                  lambda *args: received.append(args)) is False
+    assert received == []
+
+
+def test_snapshot_rejects_non_plain_string_keys():
+    class NonPlainKey(str):
+        pass
+
+    raw = dict(BASE)
+    del raw["workflow"]
+    raw[NonPlainKey("workflow")] = "research"
+    with pytest.raises(ValueError, match="^invalid operational event$"):
+        build_operational_event(raw, policy())
+
+
+def test_snapshot_preserves_read_only_mapping_support():
+    from types import MappingProxyType
+
+    assert build_operational_event(MappingProxyType(BASE), policy()) == build_operational_event(BASE, policy())
