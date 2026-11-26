@@ -82,7 +82,10 @@ class AutomationOnceTrigger(AutomationModel):
     def exact_instant(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("One-time reminders require an explicit timezone offset")
-        value = value.astimezone(timezone.utc)
+        try:
+            value = value.astimezone(timezone.utc)
+        except (OverflowError, ValueError) as error:
+            raise ValueError("One-time reminder timestamp is outside the supported range") from error
         if value.microsecond:
             raise ValueError("One-time reminders require whole-second precision")
         if not 1970 <= value.year <= 2199:

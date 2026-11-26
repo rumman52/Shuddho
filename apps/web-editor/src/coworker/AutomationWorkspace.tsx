@@ -425,7 +425,7 @@ export default function AutomationWorkspace({ client }: { client: CoworkerClient
             if (nextKind === "reminder" || nextKind === "once" || nextKind === "event" || nextKind === "meeting" || nextKind === "email" || nextKind === "deadline" || nextKind === "proactive") setBriefing(false);
             createKey.current = "";
           }}>
-            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="reminder">Daily reminder</option><option value="once">One-time reminder</option><option value="event">Authorized connected update</option><option value="email">Important email coworker</option><option value="meeting">Upcoming meeting preparation</option><option value="deadline">Deadline coworker</option><option value="proactive">Goal-driven coworker</option>
+            <option value="daily">Daily schedule</option><option value="weekly">Selected weekdays</option><option value="reminder">Simple reminder</option><option value="once">One-time reminder</option><option value="event">Authorized connected update</option><option value="email">Important email coworker</option><option value="meeting">Upcoming meeting preparation</option><option value="deadline">Deadline coworker</option><option value="proactive">Goal-driven coworker</option>
           </select></label>
           {kind === "event" && <label>Connected read authorization<select required value={eventGrantId} onChange={event => { setEventGrantId(event.target.value); createKey.current = ""; }}>
             <option value="">Choose an active connection grant</option>
