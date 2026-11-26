@@ -86,6 +86,8 @@ The decision output exposes only the validated `pilot_authorization_claim`
 Older records without these three terms remain archival, NOT QUALIFYING;
 do not retrofit them. Obtain new authentic decisions from each owner.
 
+The post-admission access verifier also requires the exact current `pilot_authorization_claim` in the Day 10 decision, checks it before private token reads and network probes, and rechecks expiry before publishing a passing receipt. A legacy READY decision with missing terms is nonqualifying. Neither command authenticates the humans or enforces actual spending; those remain the operator's responsibility. No automatic admissions.
+
 A legacy one-document approval may be retained as an **archival / NOT QUALIFYING**
 record; never rewrite it retrospectively to claim two independent signoffs.
 This CLI verifies only claimed receipt shapes, relative dates, hashes, identity
