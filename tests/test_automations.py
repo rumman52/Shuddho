@@ -3045,3 +3045,103 @@ def test_simple_reminder_rejects_connector_and_tool_authority(automation_client)
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "reminder_authority_scope"
+
+
+def test_one_time_reminder_has_one_utc_calendar_instant_and_no_agent(
+    automation_client, automation_container, monkeypatch,
+):
+    from services.coworker import automation_repository
+    from services.coworker.automation_scheduler import temporal_schedule
+
+    client, headers = automation_client
+    auth = headers()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "once-goal"},
+        json=goal_payload(),
+    ).json()
+    due = utcnow().replace(microsecond=0) + timedelta(minutes=5)
+    body = reminder_payload(goal)
+    body["schedule"] = {"kind": "once", "run_at": due.astimezone(ZoneInfo("Asia/Dhaka")).isoformat()}
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "once-reminder"},
+        json=body,
+    )
+    assert response.status_code == 201, response.text
+    saved = response.json()
+    assert datetime.fromisoformat(saved["schedule"]["run_at"].replace("Z", "+00:00")) == due
+    schedule = temporal_schedule(saved, "test-queue")
+    calendar = schedule.spec.calendars[0]
+    assert schedule.spec.time_zone_name == "UTC"
+    for field, expected in {
+        "year": due.year, "month": due.month, "day_of_month": due.day,
+        "hour": due.hour, "minute": due.minute, "second": due.second,
+    }.items():
+        ranges = getattr(calendar, field)
+        assert len(ranges) == 1
+        assert ranges[0].start == expected
+    assert schedule.state.limited_actions is True
+    assert schedule.state.remaining_actions == 1
+
+    repo = automation_container.automations
+    premature = repo.accept_occurrence(saved["id"], saved["revision"], due)
+    assert premature["state"] == "suppressed"
+    assert premature["reason"] == "not_due"
+    monkeypatch.setattr(automation_repository, "utcnow", lambda: due + timedelta(seconds=1))
+    off_schedule = repo.accept_occurrence(saved["id"], saved["revision"], due + timedelta(seconds=1))
+    assert off_schedule["state"] == "suppressed"
+    assert off_schedule["reason"] == "not_scheduled"
+    first = repo.accept_occurrence(saved["id"], saved["revision"], due)
+    assert first["state"] == "notified"
+    assert first["run_id"] is None
+    replay = repo.accept_occurrence(saved["id"], saved["revision"], due)
+    assert replay["replayed"] is True
+    assert replay["notification_id"] == first["notification_id"]
+    with automation_container.repository.sessions() as db:
+        assert len(db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == saved["id"]
+        )).all()) == 1
+        assert len(db.scalars(select(Notification).where(
+            Notification.automation_id == saved["id"]
+        )).all()) == 1
+        assert db.scalars(select(AgentRun)).all() == []
+    with pytest.raises(CoworkerError) as edit_error:
+        from services.coworker.automation_schemas import AutomationPatch
+        with automation_container.repository.sessions() as db:
+            owner = db.scalar(select(Account).where(Account.subject == "alice")).id
+        repo.update(owner, saved["id"], AutomationPatch(
+            expected_revision=saved["revision"], quiet_hours=None,
+        ))
+    assert edit_error.value.code == "one_time_schedule_elapsed"
+
+
+@pytest.mark.parametrize("case", ["past", "naive", "fractional", "wrong_profile", "expiry_at_due"])
+def test_one_time_reminder_rejects_unsafe_schedule_inputs(automation_client, case):
+    client, headers = automation_client
+    auth = headers()
+    goal = client.post(
+        "/api/v1/goals",
+        headers=auth | {"Idempotency-Key": "once-invalid-goal"},
+        json=goal_payload(),
+    ).json()
+    due = utcnow().replace(microsecond=0) + timedelta(minutes=5)
+    body = reminder_payload(goal)
+    run_at = due
+    if case == "past":
+        run_at = due - timedelta(minutes=10)
+    elif case == "naive":
+        run_at = due.replace(tzinfo=None)
+    elif case == "fractional":
+        run_at = due.replace(microsecond=123)
+    elif case == "wrong_profile":
+        body["run_profile"] = "goal"
+    elif case == "expiry_at_due":
+        body["expires_at"] = due.isoformat()
+    body["schedule"] = {"kind": "once", "run_at": run_at.isoformat()}
+    response = client.post(
+        "/api/v1/automations",
+        headers=auth | {"Idempotency-Key": "once-invalid"},
+        json=body,
+    )
+    assert response.status_code == (422 if case in {"naive", "fractional"} else 409), response.text
