@@ -598,3 +598,28 @@ def test_runtime_http_json_rejects_unexpected_content_encoding():
     response.headers['content-encoding'] = 'gzip'
     with pytest.raises(freeze.StagingReleaseFreezeError):
         freeze.json_object(response, "runtime manifest")
+
+
+def test_runtime_http_stream_stops_at_bound_and_closes_response():
+    class OversizedStream(freeze.httpx.SyncByteStream):
+        chunks = 0
+        closed = False
+
+        def __iter__(self):
+            for _ in range(100):
+                self.chunks += 1
+                yield b'x' * 65536
+
+        def close(self):
+            self.closed = True
+
+    stream = OversizedStream()
+    transport = freeze.httpx.MockTransport(
+        lambda _: freeze.httpx.Response(200, stream=stream)
+    )
+    with freeze.httpx.Client(transport=transport) as client:
+        with pytest.raises(freeze.StagingReleaseFreezeError, match="byte bound"):
+            with client.stream("GET", "https://stage.example.test/runtime") as response:
+                freeze.json_object(response, "runtime manifest")
+    assert stream.chunks == 17
+    assert stream.closed
