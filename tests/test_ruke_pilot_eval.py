@@ -146,6 +146,7 @@ def _candidate_identity_base():
         "tool_registry_sha256": "4" * 64,
         "context_budget_bytes": 12_288,
         "runtime_capabilities": {key: False for key in RUNTIME_CAPABILITY_KEYS},
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
     }
 
 
@@ -161,6 +162,7 @@ def _readback_payloads(value):
         "context_budget_bytes": identity["context_budget_bytes"],
         "rollout_manifest_sha256": value["rollout_manifest_sha256"],
         "runtime_capabilities": identity["runtime_capabilities"],
+        "canonical_only_capabilities": identity["canonical_only_capabilities"],
     }
     api = {
         **common, "source_revision": identity["api_source_revision"],
@@ -1470,3 +1472,345 @@ def test_day9_evidence_read_rejects_in_place_change(tmp_path, monkeypatch, mutat
     else:
         with pytest.raises(EvidenceError, match="changed during bounded read"):
             module._read_evidence_bytes(path)
+
+
+@pytest.fixture
+def synthetic_git_checkout(tmp_path, monkeypatch):
+    import subprocess
+    import scripts.ruke_pilot_eval as module
+
+    real_run = subprocess.run
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+
+    def git(*args):
+        return real_run(["git", *args], cwd=repo, check=True,
+                        capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Synthetic QA")
+    git("config", "user.email", "synthetic@example.invalid")
+    (repo / "source.py").write_text("value = 1\n", encoding="utf-8")
+    git("add", "source.py")
+    git("commit", "-qm", "synthetic frozen source")
+    monkeypatch.setattr(module, "ROOT", repo)
+    return repo, git, real_run
+
+
+@pytest.mark.parametrize("case", [
+    "clean", "modified", "staged", "untracked", "head_changed",
+    "dirty_during", "timeout", "no_git", "assume_unchanged", "skip_worktree",
+])
+def test_preflight_requires_one_clean_exact_checkout(synthetic_git_checkout, monkeypatch, case):
+    import subprocess
+    import sys
+    from scripts.ruke_pilot_eval import preflight
+
+    repo, git, real_run = synthetic_git_checkout
+    revision = git("rev-parse", "HEAD")
+    source = repo / "source.py"
+    if case in {"modified", "staged"}:
+        source.write_text("value = 2\n", encoding="utf-8")
+        if case == "staged":
+            git("add", "source.py")
+    elif case in {"assume_unchanged", "skip_worktree"}:
+        git("update-index", "--" + case.replace("_", "-"), "source.py")
+        source.write_text("value = 2\n", encoding="utf-8")
+    elif case == "untracked":
+        (repo / "new_module.py").write_text("value = 2\n", encoding="utf-8")
+    elif case == "no_git":
+        (repo / ".git").rename(repo / "git-metadata")
+
+    checks_started = 0
+
+    def run(command, *args, **kwargs):
+        nonlocal checks_started
+        if command[0] != sys.executable:
+            return real_run(command, *args, **kwargs)
+        checks_started += 1
+        if case == "timeout":
+            raise subprocess.TimeoutExpired(command, 600)
+        if case == "dirty_during" and checks_started == 1:
+            source.write_text("value = 3\n", encoding="utf-8")
+        if case == "head_changed" and checks_started == 1:
+            source.write_text("value = 3\n", encoding="utf-8")
+            git("add", "source.py")
+            git("commit", "-qm", "synthetic new revision")
+        return subprocess.CompletedProcess(command, 0, "synthetic check", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if case == "clean":
+        result = preflight()
+        assert result["passed"] is True
+        assert result["candidate_revision"] == revision
+        assert checks_started == 2
+    else:
+        with pytest.raises(EvidenceError):
+            preflight()
+        if case in {"modified", "staged", "untracked", "no_git", "assume_unchanged", "skip_worktree"}:
+            assert checks_started == 0
+
+
+def test_day9_dirty_checkout_blocks_before_holdout_read(synthetic_git_checkout, external_dir, monkeypatch, capsys):
+    import scripts.ruke_pilot_eval as module
+
+    repo, git, _ = synthetic_git_checkout
+    manifest_path = external_dir / "manifest.json"
+    manifest_path.write_text(json.dumps({"candidate_revision": git("rev-parse", "HEAD")}), encoding="utf-8")
+    evidence_path = external_dir / "evidence.json"
+    evidence_path.write_text(json.dumps({
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "custody": {},
+    }), encoding="utf-8")
+    # Isolate the checkout gate: no real custody or qualification is asserted.
+    monkeypatch.setattr(module, "custody_receipt_ok", lambda *args: True)
+    monkeypatch.setattr(module, "validate_candidate_readbacks", lambda *args: {"consistent": True})
+    monkeypatch.setattr(module, "source_checks_ok", lambda *args: True)
+
+    def forbidden_read(*args, **kwargs):
+        pytest.fail("holdout gate reached from dirty checkout")
+
+    monkeypatch.setattr(module, "validate_manifest", forbidden_read)
+    (repo / "source.py").write_text("value = 2\n", encoding="utf-8")
+    assert module.main([
+        "evaluate", "--manifest", str(manifest_path), "--heldout", str(external_dir / "never-read.jsonl"),
+        "--evidence", str(evidence_path),
+    ]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["qualified"] is False
+    assert result["release_authorization"] is False
+    assert "clean checkout" in result["error"]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_exact_checkout_rejects_parent_repository_discovery(tmp_path, nested):
+    import subprocess
+    from scripts.ruke_pilot_eval import _exact_checkout_revision
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Synthetic QA")
+    git("config", "user.email", "synthetic@example.invalid")
+    (tmp_path / ".gitignore").write_text("nested/\n", encoding="utf-8")
+    git("add", ".gitignore")
+    git("commit", "-qm", "synthetic parent checkout")
+    child = tmp_path / "nested"
+    child.mkdir()
+    (child / "source.py").write_text("value = 2\n", encoding="utf-8")
+    if nested:
+        with pytest.raises(EvidenceError, match="exact repository root"):
+            _exact_checkout_revision(child)
+    else:
+        assert _exact_checkout_revision(tmp_path) == git("rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("case", [
+    "valid", "existing", "file_sync_failure", "partial_write", "before_sync", "directory_sync_failure",
+])
+def test_first_run_publication_is_atomic(tmp_path, monkeypatch, case):
+    import os
+    import stat
+
+    if case == "directory_sync_failure" and os.name != "posix":
+        pytest.skip("directory fsync is POSIX-specific")
+    target = tmp_path / "first-run.json"
+    obj = {"language": "বাংলা", "accepted": False}
+    original_sync = os.fsync
+    original_fdopen = os.fdopen
+    observed = []
+    if case == "existing":
+        target.write_bytes(b"original\n")
+    if case in {"file_sync_failure", "before_sync", "directory_sync_failure"}:
+        def sync(fd):
+            is_directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+            if is_directory:
+                observed.append("directory")
+                if case == "directory_sync_failure":
+                    raise OSError("injected directory sync failure")
+            else:
+                observed.append("file")
+                if case == "file_sync_failure":
+                    raise OSError("injected file sync failure")
+                if case == "before_sync":
+                    assert not target.exists(), "published before the complete file was synced"
+            return original_sync(fd)
+        monkeypatch.setattr(os, "fsync", sync)
+    if case == "partial_write":
+        class PartialWriter:
+            def __init__(self, fp):
+                self.fp = fp
+            def __enter__(self):
+                self.fp.__enter__()
+                return self
+            def __exit__(self, *args):
+                return self.fp.__exit__(*args)
+            def write(self, data):
+                self.fp.write(data[:5])
+                raise OSError("injected partial write failure")
+        def fdopen(fd, mode, *args, **kwargs):
+            return PartialWriter(original_fdopen(fd, mode, *args, **kwargs))
+        monkeypatch.setattr(os, "fdopen", fdopen)
+    if case == "existing":
+        with pytest.raises(FileExistsError):
+            immutable_write(target, obj)
+        assert target.read_bytes() == b"original\n"
+    elif case in {"file_sync_failure", "partial_write"}:
+        with pytest.raises(OSError):
+            immutable_write(target, obj)
+        assert not target.exists()
+    elif case == "directory_sync_failure":
+        with pytest.raises(OSError):
+            immutable_write(target, obj)
+        assert json.loads(target.read_bytes()) == obj
+        assert observed == ["file", "directory"]
+    else:
+        digest = immutable_write(target, obj)
+        raw = target.read_bytes()
+        assert raw == (json.dumps(obj, ensure_ascii=False, sort_keys=True,
+                                  indent=2, allow_nan=False) + "\n").encode()
+        assert hashlib.sha256(raw).hexdigest() == digest
+        if os.name == "posix":
+            assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert list(tmp_path.glob(".first-run.json.*.tmp")) == []
+
+
+@pytest.mark.parametrize("manifest_value", [[1], "not-an-object", 17, True, [], None])
+def test_day9_malformed_manifest_retains_failure_report(external_dir, monkeypatch, capsys, manifest_value):
+    import scripts.ruke_pilot_eval as module
+
+    manifest_path = external_dir / "manifest.json"
+    report_path = external_dir / "first-run.json"
+    manifest_path.write_text(json.dumps(manifest_value), encoding="utf-8")
+    original_read = module._read_json_and_sha256
+
+    def read_manifest_only(path):
+        assert path == manifest_path, "malformed manifest reached a protected evidence read"
+        return original_read(path)
+
+    monkeypatch.setattr(module, "_read_json_and_sha256", read_manifest_only)
+    assert module.main([
+        "evaluate", "--manifest", str(manifest_path),
+        "--heldout", str(external_dir / "never-read.jsonl"),
+        "--report", str(report_path),
+    ]) == 2
+    failure = json.loads(report_path.read_text(encoding="utf-8"))
+    assert failure["schema_version"] == 1
+    assert failure["qualified"] is False
+    assert failure["release_authorization"] is False
+    assert "must be an object" in failure["error"]
+    assert json.loads(capsys.readouterr().out)["sha256"] == hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+@pytest.mark.parametrize("field", ["runtime_capabilities", "context_budget_bytes"])
+def test_candidate_readback_digest_cannot_relabel_numeric_aliases_as_exact(role, field):
+    value = manifest()
+    readbacks = candidate_readbacks(value)
+    row = readbacks[role]
+    if field == "runtime_capabilities":
+        row[field] = {key: int(enabled) for key, enabled in row[field].items()}
+    else:
+        row[field] = float(row[field])
+    # A digest of the wrong types is still not a digest of the frozen identity.
+    row["readback_sha256"] = canonical_sha256({k: v for k, v in row.items() if k != "readback_sha256"})
+    value["candidate_identity"][f"{role}_readback_sha256"] = row["readback_sha256"]
+    with pytest.raises(EvidenceError, match="readback"):
+        validate_candidate_readbacks(value, readbacks)
+
+
+@pytest.mark.parametrize("kind", ["array", "object"])
+@pytest.mark.parametrize("depth", [129, 10_000])
+def test_strict_evidence_json_has_deterministic_nesting_bound(kind, depth):
+    if kind == "array":
+        raw = "[" * depth + "null" + "]" * depth
+    else:
+        raw = '{"nested":' * depth + "null" + "}" * depth
+    with pytest.raises(EvidenceError, match="nesting"):
+        strict_json_loads(raw)
+
+
+def test_evidence_nesting_bound_retains_exact_boundary_and_unicode_strings():
+    raw = "[" * 128 + '"[{বাংলা}]"' + "]" * 128
+    parsed = strict_json_loads(raw)
+    for _ in range(128):
+        parsed = parsed[0]
+    assert parsed == "[{বাংলা}]"
+    assert strict_json_loads("[" + ",".join(["0"] * 10_000) + "]") == [0] * 10_000
+
+
+def test_canonical_readback_rejects_excessive_depth_and_cycles():
+    nested = {}
+    for _ in range(129):
+        nested = {"nested": nested}
+    with pytest.raises(EvidenceError, match="canonical JSON"):
+        canonical_sha256(nested)
+    cyclic = {}
+    cyclic["nested"] = cyclic
+    with pytest.raises(EvidenceError, match="canonical JSON"):
+        canonical_sha256(cyclic)
+
+
+def test_day9_deep_manifest_preserves_failure_without_protected_read(external_dir, monkeypatch, capsys):
+    import scripts.ruke_pilot_eval as module
+
+    manifest_path = external_dir / "manifest.json"
+    report_path = external_dir / "first-run.json"
+    manifest_path.write_text('{"nested":' * 10_000 + "null" + "}" * 10_000, encoding="utf-8")
+    original_read = module._read_json_and_sha256
+
+    def read_manifest_only(path):
+        assert path == manifest_path, "deep manifest reached a protected evidence read"
+        return original_read(path)
+
+    monkeypatch.setattr(module, "_read_json_and_sha256", read_manifest_only)
+    assert module.main([
+        "evaluate", "--manifest", str(manifest_path),
+        "--heldout", str(external_dir / "never-read.jsonl"),
+        "--report", str(report_path),
+    ]) == 2
+    failure = json.loads(report_path.read_text(encoding="utf-8"))
+    assert failure["qualified"] is False
+    assert failure["release_authorization"] is False
+    assert "nesting" in failure["error"]
+    assert json.loads(capsys.readouterr().out)["sha256"] == hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("value", [
+    None, {}, {"suggestion_model_relevance": True},
+    {"suggestion_model_relevance": 0}, {"suggestion_model_relevance": "false"},
+    {"suggestion_model_relevance": False, "unknown": False},
+])
+def test_candidate_requires_disabled_canonical_only_setting(value):
+    frozen = manifest()
+    assert len(frozen["candidate_identity"]["runtime_capabilities"]) == 43
+    assert validate_candidate_identity(frozen)["canonical_only_capabilities"] == {
+        "suggestion_model_relevance": False,
+    }
+    frozen["candidate_identity"]["canonical_only_capabilities"] = value
+    with pytest.raises(EvidenceError):
+        validate_candidate_identity(frozen)
+
+
+def test_candidate_missing_canonical_only_setting_is_nonqualifying():
+    frozen = manifest()
+    frozen["candidate_identity"].pop("canonical_only_capabilities")
+    with pytest.raises(EvidenceError):
+        validate_candidate_identity(frozen)
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+@pytest.mark.parametrize("value", [None, {}, {"suggestion_model_relevance": True}, {"suggestion_model_relevance": 0}])
+def test_canonical_only_readback_cannot_differ_even_if_rehashed(role, value):
+    frozen = manifest()
+    rows = candidate_readbacks(frozen)
+    row = rows[role]
+    row["canonical_only_capabilities"] = value
+    row["readback_sha256"] = canonical_sha256({key: item for key, item in row.items() if key != "readback_sha256"})
+    frozen["candidate_identity"][f"{role}_readback_sha256"] = row["readback_sha256"]
+    with pytest.raises(EvidenceError, match="readback"):
+        validate_candidate_readbacks(frozen, rows)
