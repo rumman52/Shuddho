@@ -12,8 +12,8 @@ services:
     region: oregon
     plan: free
     autoDeployTrigger: off
-    buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
-    startCommand: uv run --extra coworker python -m services.coworker.migrate --check && uv run --extra coworker uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker
+    startCommand: uv run --no-sync --extra coworker python -m services.coworker.migrate --check && uv run --no-sync --extra coworker uvicorn services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: SHUDDHO_COWORKER_ENV
@@ -154,9 +154,9 @@ services:
     region: oregon
     plan: 0.5c-512mb
     autoDeployTrigger: off
-    buildCommand: pip install uv && uv sync --frozen --no-dev --extra coworker
-    preDeployCommand: uv run --extra coworker python -m services.coworker.migrate --check
-    startCommand: uv run --extra coworker python -m services.coworker.worker
+    buildCommand: pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker
+    preDeployCommand: uv run --no-sync --extra coworker python -m services.coworker.migrate --check
+    startCommand: uv run --no-sync --extra coworker python -m services.coworker.worker
     maxShutdownDelaySeconds: 120
     envVars:
       - key: SHUDDHO_COWORKER_ENV

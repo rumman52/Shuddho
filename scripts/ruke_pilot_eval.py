@@ -87,11 +87,22 @@ def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
                 raise EvidenceError("missing, linked, or oversized evidence file")
             content = stream.read(MAX_BYTES + 1)
+            final_metadata = os.fstat(stream.fileno())
     except OSError as exc:
         raise EvidenceError("missing, linked, or oversized evidence file") from exc
     # A regular file may grow after fstat, so always cap the actual read.
     if len(content) > MAX_BYTES:
         raise EvidenceError("missing, linked, or oversized evidence file")
+    # Reject a concurrent rewrite, growth, truncation or permission change.
+    if (
+        (metadata.st_dev, metadata.st_ino) != (final_metadata.st_dev, final_metadata.st_ino)
+        or metadata.st_mode != final_metadata.st_mode
+        or metadata.st_size != final_metadata.st_size
+        or len(content) != metadata.st_size
+        or metadata.st_mtime_ns != final_metadata.st_mtime_ns
+        or metadata.st_ctime_ns != final_metadata.st_ctime_ns
+    ):
+        raise EvidenceError("evidence file changed during bounded read")
     return content, metadata.st_mode
 
 
