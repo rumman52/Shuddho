@@ -2995,3 +2995,11 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - **Baseline:** main `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; branch `fix/tx27-handoff-origin-chronology-20261125`. Tests-first commit `21704b5159b789b70d23009e6eaf8459827dd0a8`; source commit `e3dc2cf871abb53f5bdcdda8b5c94dd461cec5dc`. See [task contract and external decision package](TX27_HOSTED_HANDOFF_INTEGRITY_2026-11-25.md).
 - **Proposed implementation:** fail closed on ambiguous hosted URLs, revalidate stored handoff schema/URL/ID and receipt chronology, preserve late observation of timely completion; no new runtime provider or authority. Local DNS blocked checkout and exact-head test verification is pending. Baseline CI #45351544500 failed governance/merge gate because GitHub app token client-id was missing; application/coworker/frontend/browser/PostgreSQL compatibility jobs succeeded.
 - **Qualification:** SOURCE_ONLY / NO-GO. Shopping/travel ActionSpecs remain absent; no selected provider access, independently operated 16-fault receipts, staging identity, provider audit, or security reviewer signoff established. No production deployment, flags, credentials, migration, spending or real provider mutations changed. Next: exact final-head CI and independent review, owner-selected provider contract and authorized isolated staging.
+
+
+### 2026-11-26 — Prompt 04 / D07 exact briefing evidence (draft PR #928)
+
+- Status: SOURCE_IN_PROGRESS; operational and independent acceptance BLOCKED_EXTERNAL.
+- Isolated from main `8970492aa11b39fdcb4072713323791e5e4bf75d`; test-first `34c5e35118f4d37a74af66cb6fef889d23051646`; implementation `5d98eb145ed8198f0bd58795015d677be525d36c`.
+- Two defects: catch-up bounds permitted values other than exactly 3600; due-time comparison ignored fractional microseconds. Regression coverage added. Isolated predicate RED 6 failed/4 passed; GREEN 10 passed. Full repository CI and independent review pending; no operated receipts.
+- [Task contract and continuation](DAY7_EXACT_BRIEFING_EVIDENCE_2026-11-26.md). No deployment, billing, telemetry activation or merge.
