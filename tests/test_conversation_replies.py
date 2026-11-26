@@ -1202,3 +1202,74 @@ def test_deepseek_accepts_one_usage_trailer_and_bangla_assistant_text(container)
         return [part async for part in model.stream([{"role": "user", "content": "Hi"}])]
 
     assert asyncio.run(collect()) == ["বাংলা "]
+
+@pytest.mark.parametrize("grounding", [
+    None,
+    {"prompt": '{"untrusted_selected_source_excerpts": [{"source_id": "src-1", "excerpt": "NEW FACT"}]}'},
+])
+@pytest.mark.parametrize("marker", [
+    {"sources": [{"source_id": "src-1"}]},
+    {"sources": [], "selected_sources": [{"resource_id": "old"}]},
+])
+def test_prior_grounded_answer_is_not_resent_with_later_selection(grounding, marker):
+    prior = {"state": "completed", "text": "OLD PRIVATE FACT [[src-1]]",
+             "sources": marker.get("sources", [])}
+    history = [
+        {"text": "Hello", "assistant_reply": {"state": "completed", "text": "ordinary answer"}},
+        {"text": "Old question", "selected_sources": marker.get("selected_sources", []),
+         "assistant_reply": prior},
+        {"text": "New question", "assistant_reply": None},
+    ]
+    messages, truncated = build_reply_messages(history, grounding=grounding)
+    assert "OLD PRIVATE FACT" not in str(messages)
+    assert "ordinary answer" in str(messages) and "Old question" in str(messages)
+    assert ("NEW FACT" in str(messages)) is bool(grounding)
+    assert truncated
+    assert prior["text"] == "OLD PRIVATE FACT [[src-1]]"
+
+
+def test_plain_history_remains_in_new_inference_prompt():
+    messages, truncated = build_reply_messages([
+        {"text": "hello", "assistant_reply": {"state": "completed", "text": "ordinary"}},
+        {"text": "new", "assistant_reply": None},
+    ])
+    assert messages[-2] == {"role": "assistant", "content": "ordinary"}
+    assert not truncated
+
+
+def test_followup_after_source_revocation_does_not_resend_old_grounded_answer(container):
+    from services.coworker.models import Document, AgentRun, AgentOutbox
+    data = setup(container, question="What is in the attachment?")
+    service, model, owner, conversation, _ = data
+    document_id, _ = _attached_chat_source(container, data, b"OLD PRIVATE FACT.")
+
+    async def cited(messages):
+        model.history = messages
+        model.calls += 1
+        return "OLD PRIVATE FACT [[src-1]]"
+
+    model.generate = cited
+    assert reply(data)["state"] == "completed"
+    with service.sessions.begin() as db:
+        db.get(Document, document_id).deleted = True
+
+    followup, _ = service.conversations.append_message(
+        owner, conversation["id"], MessageCreate(text="New unrelated question",
+        client_request_key="followup-no-file"),
+    )
+
+    async def ordinary(messages):
+        model.history = messages
+        model.calls += 1
+        return "Ordinary answer"
+
+    model.generate = ordinary
+    result = asyncio.run(service.reply(owner, conversation["id"], followup["id"], 2))
+    assert result["state"] == "completed" and result["context_truncated"]
+    assert "OLD PRIVATE FACT" not in str(model.history)
+    assert "New unrelated question" in str(model.history)
+    assert model.calls == 2
+    with service.sessions() as db:
+        assert db.get(ConversationMessage, data[4]["id"]).assistant_reply["text"] == "OLD PRIVATE FACT [[src-1]]"
+        assert db.scalar(select(AgentRun)) is None
+        assert db.scalar(select(AgentOutbox)) is None
