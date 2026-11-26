@@ -3013,3 +3013,11 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 ## 26 November 2026 — PA-10 staging locked build and startup
 
 **IMPLEMENTED_UNVERIFIED / staging NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. The checked-in Blueprint and worker provisioning create/update/readback now pin the CI-selected uv 0.7.22 and require no-sync runtime/migration commands. Test-first `6498b8907a057a758495d3c49129e4d6bff0da0d`; implementation `de118cae816cde17bd5b6630a67a5ec68bff5ca3`. Isolated command-excerpt unittest: four failing assertions/subtests RED; two test methods GREEN. Full mocked provisioning and exact-head CI, independent review and hosted build proof remain pending. See [task contract](PA10_STAGING_LOCKED_STARTUP_2026-11-26.md). No Render access/mutation, billing, migration, deployment or activation.
+
+
+### 2026-11-26 — Prompt 04 / D07 exact briefing evidence (draft PR #928)
+
+- Status: SOURCE_IN_PROGRESS; operational and independent acceptance BLOCKED_EXTERNAL.
+- Isolated from main `8970492aa11b39fdcb4072713323791e5e4bf75d`; test-first `34c5e35118f4d37a74af66cb6fef889d23051646`; implementation `5d98eb145ed8198f0bd58795015d677be525d36c`.
+- Two defects: catch-up bounds permitted values other than exactly 3600; due-time comparison ignored fractional microseconds. Regression coverage added. Isolated predicate RED 6 failed/4 passed; GREEN 10 passed. Full repository CI and independent review pending; no operated receipts.
+- [Task contract and continuation](DAY7_EXACT_BRIEFING_EVIDENCE_2026-11-26.md). No deployment, billing, telemetry activation or merge.

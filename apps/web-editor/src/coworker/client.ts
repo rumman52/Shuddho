@@ -92,6 +92,7 @@ export type PersonalSuggestion = {
 };
 export type AutomationSchedule =
   | { kind: "daily" | "weekly"; hour: number; minute: number; weekdays: string[] }
+  | { kind: "once"; run_at: string }
   | { kind: "event"; grant_id: string }
   | { kind: "meeting"; grant_id: string; preparation_minutes: number; scan_interval_minutes: 5 | 10 | 15 | 30 | 60 };
 export type PersonalAutomation = {
