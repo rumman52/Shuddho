@@ -118,3 +118,36 @@ def test_atomic_write_replaces_existing_file(tmp_path):
     atomic_write(path, "new\n")
     assert path.read_text(encoding="utf-8") == "new\n"
     assert list(tmp_path.iterdir()) == [path]
+
+
+def test_new_observability_metrics_are_unknown_for_legacy_snapshot():
+    text = render_openmetrics(result())
+    assert "shuddho_coworker_cohort_task_dispatch_samples NaN\n" in text
+    assert "shuddho_coworker_cohort_agent_dispatch_p95_ms NaN\n" in text
+    assert "shuddho_coworker_queue_worker_fresh_running NaN\n" in text
+    assert "shuddho_coworker_provider_active_leases NaN\n" in text
+
+
+def test_dispatch_heartbeat_metrics_preserve_measured_zero_and_privacy():
+    value = result()
+    snapshot = value["snapshot"]
+    snapshot["dispatch"] = {
+        "tasks": {"admissions": 2, "samples": 1, "unobserved": 1, "invalid_clock": 0,
+                  "p50_ms": 0, "p95_ms": 0, "private_id": "secret-task"},
+        "agents": {"admissions": 0, "samples": 0, "unobserved": 0, "invalid_clock": 0,
+                   "p50_ms": None, "p95_ms": None},
+    }
+    snapshot["workers"] = {
+        "active_rows": 1, "fresh_running": 0, "stale": 1, "invalid_clock": 0,
+        "starting": 0, "draining": 0, "oldest_valid_heartbeat_age_seconds": 16,
+        "private_id": "secret-worker",
+    }
+    snapshot["provider"]["active_leases"] = 0
+    text = render_openmetrics(value)
+    assert "shuddho_coworker_cohort_task_dispatch_samples 1\n" in text
+    assert "shuddho_coworker_cohort_task_dispatch_p95_ms 0\n" in text
+    assert "shuddho_coworker_cohort_agent_dispatch_p95_ms NaN\n" in text
+    assert "shuddho_coworker_queue_worker_fresh_running 0\n" in text
+    assert "shuddho_coworker_queue_worker_stale 1\n" in text
+    assert "shuddho_coworker_provider_active_leases 0\n" in text
+    assert "secret-task" not in text and "secret-worker" not in text and "{" not in text
