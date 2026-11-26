@@ -380,3 +380,82 @@ def test_access_receipt_written_private_with_ordinary_umask(tmp_path):
         os.umask(previous_umask)
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     assert json.loads(output.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+@pytest.mark.parametrize("mutation", ["same_size", "grow", "truncate", "permissions", "none"])
+def test_private_member_token_capture_rejects_in_place_mutation(tmp_path, monkeypatch, mutation):
+    from contextlib import contextmanager
+
+    tokens = [f"synthetic-token-{i}" for i in range(5)]
+    path = secret_file(tmp_path, tokens)
+    raw = path.read_bytes()
+    original_fdopen = os.fdopen
+
+    @contextmanager
+    def mutate_after_read(fd, mode):
+        with original_fdopen(fd, mode) as stream:
+            class Reader:
+                def fileno(self):
+                    return stream.fileno()
+
+                def read(self, count):
+                    assert count == pilot.MAX_SECRET_FILE_BYTES + 1
+                    content = stream.read(count)
+                    if mutation == "same_size":
+                        path.write_bytes(raw.replace(b"synthetic", b"replaced!"))
+                    elif mutation == "grow":
+                        path.write_bytes(raw + b" " * pilot.MAX_SECRET_FILE_BYTES)
+                    elif mutation == "truncate":
+                        path.write_bytes(b"[]")
+                    elif mutation == "permissions":
+                        path.chmod(0o644)
+                    return content
+
+            yield Reader()
+
+    monkeypatch.setattr(os, "fdopen", mutate_after_read)
+    if mutation == "none":
+        assert pilot.load_member_tokens(path) == tokens
+    else:
+        with pytest.raises(pilot.PilotVerificationFailure, match="Cannot read"):
+            pilot.load_member_tokens(path)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO requires POSIX")
+def test_member_token_fifo_rejected_without_blocking(tmp_path, monkeypatch):
+    path = tmp_path / "private-tokens"
+    os.mkfifo(path, 0o600)
+    original_open = os.open
+
+    def guarded_open(target, flags, *args, **kwargs):
+        if Path(target) == path:
+            assert flags & os.O_NONBLOCK, "token reader attempted blocking FIFO open"
+        return original_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", guarded_open)
+    with pytest.raises(pilot.PilotVerificationFailure, match="Cannot read"):
+        pilot.load_member_tokens(path)
+
+
+def test_member_token_parser_recursion_fails_without_exposing_payload(tmp_path, monkeypatch):
+    path = secret_file(tmp_path, [f"synthetic-token-{i}" for i in range(5)])
+
+    def fail_parser(*args):
+        raise RecursionError("synthetic private parser error")
+
+    monkeypatch.setattr(pilot, "strict_json_loads", fail_parser)
+    with pytest.raises(pilot.PilotVerificationFailure, match="Cannot read") as exc:
+        pilot.load_member_tokens(path)
+    assert "synthetic" not in str(exc.value)
+
+
+def test_member_token_capture_keeps_original_64k_limit(tmp_path):
+    tokens = [f"synthetic-token-{i}" for i in range(5)]
+    path = secret_file(tmp_path, tokens)
+    raw = path.read_bytes()
+    padded = raw + b" " * (pilot.MAX_SECRET_FILE_BYTES - len(raw))
+    path.write_bytes(padded)
+    assert pilot.load_member_tokens(path) == tokens
+    path.write_bytes(padded + b" ")
+    with pytest.raises(pilot.PilotVerificationFailure):
+        pilot.load_member_tokens(path)
