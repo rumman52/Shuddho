@@ -248,3 +248,92 @@ def test_three_arm_fixed_input_synthetic_output_scoring_and_owner_denial(contain
     assert [result[2] for result in outcomes] == [0, 1, 1]
     assert "GREEN HARBOR" not in outcomes[0][1]
     assert "GOLDEN KITE" in outcomes[2][1] and "GREEN HARBOR" not in outcomes[2][1]
+
+
+def _selected_memory_child_task(container):
+    from services.coworker.schemas import TaskCreate
+
+    alice, _, conversation, conversations, dispatch, selected, _, _ = seeded(container)
+    item = message(conversations, alice, conversation, "Create a customer report for the project release.")
+    admitted, _ = dispatch.dispatch(
+        alice, conversation["id"], item["id"], expected_sequence=1,
+        memory_pins=[pin(selected)],
+    )
+    task, _ = container.repository.create_task(
+        alice, TaskCreate(
+            instruction="Prepare a customer report and draft email.",
+            notes="The team completed 12 reviews.", output_language="en",
+        ), "day5-pinned-child-task", agent_run_id=admitted["run_id"],
+    )
+    return alice, selected, task
+
+
+@pytest.mark.parametrize("change", ["corrected", "deleted"])
+def test_child_draft_rejects_memory_revoked_during_inference(container, change):
+    alice, selected, task = _selected_memory_child_task(container)
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class DelayedModel(FakeModel):
+            def messages(self, task, sources):
+                assert [entry["key"] for entry in task["memory"]] == [selected["key"]]
+                return super().messages(task, sources)
+
+            async def generate(self, *args):
+                entered.set()
+                await release.wait()
+                return await super().generate(*args)
+
+        runner = DocumentRunner(container, DelayedModel())
+        pending = asyncio.create_task(runner.run_for_test(task["id"]))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            if change == "corrected":
+                container.memory.update(
+                    alice, selected["id"], MemoryFactUpdate(
+                        expected_version=selected["version"], value="Use Bangla instead.",
+                    ),
+                )
+            else:
+                container.memory.delete(alice, selected["id"])
+            release.set()
+            with pytest.raises(CoworkerError) as denied:
+                await pending
+            assert denied.value.code == "memory_pins_changed"
+        finally:
+            release.set()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert container.repository.step(task["id"], "draft") is None
+    assert container.repository.step(task["id"], "export") is None
+    result = container.repository.get_task(alice, task["id"])
+    assert result["state"] == "failed" and result["draft"] is None
+    assert result["artifacts"] == []
+    assert result["usage"]["model_attempts"] == 1
+
+
+def test_child_publication_revalidates_memory_after_export_checkpoint(container):
+    alice, selected, task = _selected_memory_child_task(container)
+    runner = DocumentRunner(container, FakeModel())
+
+    async def scenario():
+        for phase in ("extract", "draft", "export"):
+            await runner.phase(task["id"], phase)
+        saved = container.repository.step(task["id"], "export")
+        assert saved and len(saved["artifacts"]) == 4
+        # Revoke after the draft and private object writes have committed.
+        # Invoke the trusted completion method directly to exercise its final
+        # persistence transaction independently of the phase-entry check.
+        container.memory.delete(alice, selected["id"])
+        with pytest.raises(CoworkerError) as denied:
+            await runner.complete(container.repository.worker_task(task["id"], check_live=False))
+        assert denied.value.code == "memory_pins_changed"
+
+    asyncio.run(scenario())
+    result = container.repository.get_task(alice, task["id"])
+    assert result["state"] not in {"completed", "needs_input"}
+    assert result["artifacts"] == []
