@@ -25,7 +25,8 @@ from services.coworker.runner import DocumentRunner
 from services.coworker.task_brief_schemas import TaskBrief
 
 
-def test_corrected_pin_during_planner_inference_rejects_new_decision(container):
+@pytest.mark.parametrize("change", ["corrected", "deleted"])
+def test_corrected_or_deleted_pin_during_planner_inference_rejects_new_decision(container, change):
     alice, _, conversation, conversations, dispatch, selected, unselected, _ = seeded(container)
     item = message(conversations, alice, conversation, "Create a customer report for the project release.")
     brief = TaskBrief(objective=item["text"], deliverables=["A customer report"])
@@ -65,14 +66,17 @@ def test_corrected_pin_during_planner_inference_rejects_new_decision(container):
         pending = asyncio.create_task(runtime.decide_v3(admitted["run_id"]))
         try:
             await asyncio.wait_for(entered.wait(), timeout=5)
-            corrected = container.memory.update(
-                alice, selected["id"],
-                MemoryFactUpdate(
-                    expected_version=selected["version"],
-                    value="The corrected customer report must be in Bangla.",
-                ),
-            )
-            assert corrected["version"] == selected["version"] + 1
+            if change == "corrected":
+                corrected = container.memory.update(
+                    alice, selected["id"],
+                    MemoryFactUpdate(
+                        expected_version=selected["version"],
+                        value="The corrected customer report must be in Bangla.",
+                    ),
+                )
+                assert corrected["version"] == selected["version"] + 1
+            else:
+                assert container.memory.delete(alice, selected["id"])["deleted"] is True
             release.set()
             with pytest.raises(CoworkerError) as denied:
                 await pending
