@@ -72,10 +72,13 @@ def reviewer_identity(value: object) -> str | None:
     return identity if identity.strip() and len(identity) <= 128 else None
 
 
-def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
+def _read_evidence_bytes(
+    path: Path, *, max_bytes: int = MAX_BYTES, require_private: bool = False,
+) -> tuple[bytes, int]:
     """Read one bounded regular inode without following a final symlink.
 
     Parse and hash the same bytes: a pathname can change between two opens.
+    Secret consumers may retain a smaller bound and reject shared modes before reading.
     """
     if not hasattr(os, "O_NOFOLLOW"):
         raise EvidenceError("no-follow evidence reads are unavailable")
@@ -84,14 +87,16 @@ def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as stream:
             metadata = os.fstat(stream.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
                 raise EvidenceError("missing, linked, or oversized evidence file")
-            content = stream.read(MAX_BYTES + 1)
+            if require_private and (not metadata.st_mode & 0o400 or metadata.st_mode & 0o077):
+                raise EvidenceError("evidence file must be owner-private")
+            content = stream.read(max_bytes + 1)
             final_metadata = os.fstat(stream.fileno())
     except OSError as exc:
         raise EvidenceError("missing, linked, or oversized evidence file") from exc
     # A regular file may grow after fstat, so always cap the actual read.
-    if len(content) > MAX_BYTES:
+    if len(content) > max_bytes:
         raise EvidenceError("missing, linked, or oversized evidence file")
     # Reject a concurrent rewrite, growth, truncation or permission change.
     if (
