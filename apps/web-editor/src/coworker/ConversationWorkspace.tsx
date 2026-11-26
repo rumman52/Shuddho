@@ -13,6 +13,7 @@ import VoiceDictation from "./VoiceDictation";
 import { buildConversationJson, buildConversationMarkdown, conversationExportFilename } from "./conversationExport";
 import "./conversation-enhancements.css";
 import { RefreshOrder } from "./refreshOrder";
+import { memorySelectionLimit, memorySelectionCurrent, reviewedMemoryDigest } from "./taskMemoryReview";
 import { getInitialConversationId } from "../../../coworker/src/navigation.mjs";
 
 function sourceLabel(source: Record<string, unknown>, manifest: WorkspaceManifest | null): string {
@@ -61,6 +62,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
   const [selectedMemoryPins, setSelectedMemoryPins] = useState<MemoryPin[]>([]);
   const [memoryEnabled, setMemoryEnabled] = useState<boolean | null>(null);
+  const [maxSelectedMemoryFacts, setMaxSelectedMemoryFacts] = useState(memorySelectionLimit());
   const [memoryError, setMemoryError] = useState("");
   const [editingMemory, setEditingMemory] = useState("");
   const [memoryDraft, setMemoryDraft] = useState("");
@@ -83,7 +85,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [working, setWorking] = useState(false);
   const [briefMessageId, setBriefMessageId] = useState("");
   const [briefDraft, setBriefDraft] = useState<TaskBrief | null>(null);
-  const [briefPreview, setBriefPreview] = useState<{ value: TaskBriefPreview; explicitMemory: boolean } | null>(null);
+  const [briefPreview, setBriefPreview] = useState<{ response: TaskBriefPreview; memorySelectionEnabled: boolean } | null>(null);
   const [briefQuestion, setBriefQuestion] = useState("");
   const [steeringMessageId, setSteeringMessageId] = useState("");
   const [steeringDraft, setSteeringDraft] = useState("");
@@ -251,6 +253,10 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       if (!controller.signal.aborted) {
         setMemoryEnabled(reply.enabled);
         setMemoryFacts(reply.enabled ? reply.facts : []);
+        setMaxSelectedMemoryFacts(memorySelectionLimit(reply.max_selected_facts));
+        setSelectedMemoryPins(current => current.filter(pin =>
+          reply.enabled && reply.facts.some(fact =>
+            fact.id === pin.fact_id && fact.version === pin.expected_version && fact.active)));
       }
     }).catch(cause => {
       if (!controller.signal.aborted) setMemoryError(
@@ -312,6 +318,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     const reply = await client.memory();
     setMemoryEnabled(reply.enabled);
     setMemoryFacts(reply.enabled ? reply.facts : []);
+    setMaxSelectedMemoryFacts(memorySelectionLimit(reply.max_selected_facts));
     // A corrected or deleted version cannot remain silently selected.
     setSelectedMemoryPins(current => current.filter(pin =>
       reply.enabled && reply.facts.some(fact =>
@@ -505,8 +512,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         setBriefQuestion(suggestion.question ?? "Please clarify the requested task.");
       } else {
         setBriefDraft(suggestion.brief);
-        // Propose omits memory_pins, even when the memory feature is enabled.
-        setBriefPreview({ value: suggestion, explicitMemory: false });
+        // Proposals never bind explicit memory selection, even if it is empty.
+        setBriefPreview({ response: suggestion, memorySelectionEnabled: false });
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Task brief proposal failed.");
@@ -523,30 +530,27 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   }
 
   async function previewBrief(item: ConversationMessageRecord) {
-    if (!selected || !briefDraft || working) return;
+    if (!selected || !briefDraft || working || !memorySelectionValid) return;
     setWorking(true); setError("");
     try {
       const preview = await client.previewConversationTaskBrief(
         selected, item.id, item.sequence, briefDraft, projectId,
         explicitMemory ? taskPins : undefined);
-      if (selectedRef.current === selected) setBriefPreview({ value: preview, explicitMemory });
+      if (selectedRef.current === selected) setBriefPreview({ response: preview, memorySelectionEnabled: explicitMemory });
     } catch (cause) {
       setBriefPreview(null);
       setError(cause instanceof Error ? cause.message : "Task brief could not be validated.");
     } finally { setWorking(false); }
   }
 
-  const reviewedPins = briefPreview?.value.memory_pins ?? [];
-  // An unavailable or pending capability is not a confirmed disabled feature.
-  // Bind explicit empty memory rather than falling back to implicit retrieval.
+  // Pending or failed capability discovery must never opt into legacy implicit memory.
   const explicitMemory = memoryEnabled !== false;
   const taskPins = memoryEnabled === true ? selectedMemoryPins : [];
-  // The backend distinguishes omitted pins (legacy) from explicit [] (no memory).
-  // Equal pin arrays alone do not establish that the digest reviewed this mode.
-  const reviewedDigest = briefPreview && briefPreview.explicitMemory === explicitMemory
-    && reviewedPins.length === taskPins.length && reviewedPins.every((pin, index) =>
-      pin.fact_id === taskPins[index].fact_id && pin.expected_version === taskPins[index].expected_version)
-    ? briefPreview.value.canonical_digest : null;
+  const memorySelectionValid = memoryEnabled !== true || memorySelectionCurrent(taskPins, memoryFacts, maxSelectedMemoryFacts);
+  const reviewedDigest = memorySelectionValid ? reviewedMemoryDigest(
+    briefPreview?.response ?? null, briefPreview?.memorySelectionEnabled ?? false,
+    explicitMemory, taskPins,
+  ) : null;
 
   async function dispatch(item: ConversationMessageRecord) {
     if (!selected || working || !briefDraft || !reviewedDigest
@@ -858,14 +862,16 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                   {selectedMemoryPins.length === 0 ? <p className="rukh-muted">No saved memory selected. This task will not use other saved facts.</p> :
                     <ul aria-label="Selected task memories">
                       {selectedMemoryPins.map(pin => {
-                        const fact = memoryFacts.find(value => value.id === pin.fact_id && value.version === pin.expected_version);
+                        const fact = memoryFacts.find(value => value.id === pin.fact_id && value.version === pin.expected_version && value.active);
                         return <li key={pin.fact_id}>
-                          {fact ? <><strong>{fact.namespace} / {fact.key} · version {fact.version}</strong>
-                            <p dir="auto">{fact.value}</p></> : "Memory version changed · reselect"}
+                          {fact ? <><strong>{fact.namespace} / {fact.key} · version {pin.expected_version}</strong>
+                            <p dir="auto">{fact.value}</p></> : <strong>Memory unavailable or version changed · reselect version {pin.expected_version}</strong>}
+                          <small className="rukh-memory-fact-id">Fact ID: <code>{pin.fact_id}</code></small>
                         </li>;
                       })}
                     </ul>}
-                  <small>Only selected fact IDs and versions are admitted; saved facts can be edited or deleted below.</small>
+                  {!memorySelectionValid && <p role="alert">Selected memories changed or exceed the current limit. Review and reselect them before starting.</p>}
+                  <small>{selectedMemoryPins.length} of {maxSelectedMemoryFacts} selected. Only selected fact IDs and versions are admitted; saved facts can be edited or deleted below.</small>
                 </section>}
                 {canDispatch && briefMessageId === item.id && <section className="rukh-task-brief-review" aria-label="Review task brief">
                   <h3>Review task before starting</h3>
@@ -906,7 +912,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                     })}
                     {reviewedDigest && <p role="status">Validated preview: {reviewedDigest.slice(0, 12)}…</p>}
                     <small>Edits invalidate the preview. Sources are untrusted data; this does not approve external actions.</small>
-                    <button type="submit" disabled={working || !briefDraft.objective.trim() || briefDraft.deliverables.length === 0}>
+                    <button type="submit" disabled={working || !memorySelectionValid || !briefDraft.objective.trim() || briefDraft.deliverables.length === 0}>
                       {reviewedDigest ? "Confirm and start reviewed task" : "Validate task preview"}
                     </button>
                   </form>}
@@ -1036,12 +1042,17 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
               <label className="rukh-memory-select">
                 <input type="checkbox" aria-label={`Use memory ${fact.namespace} / ${fact.key} in next task`}
                   checked={selectedMemoryPins.some(pin => pin.fact_id === fact.id && pin.expected_version === fact.version)}
-                  disabled={working || !fact.active || (!selectedMemoryPins.some(pin => pin.fact_id === fact.id) && selectedMemoryPins.length >= 20)}
+                  disabled={working || (!selectedMemoryPins.some(pin => pin.fact_id === fact.id) &&
+                    (!fact.active || selectedMemoryPins.length >= maxSelectedMemoryFacts))}
                   onChange={event => {
+                    const checked = event.target.checked;
                     setBriefPreview(null);
-                    setSelectedMemoryPins(current => event.target.checked
-                      ? [...current.filter(pin => pin.fact_id !== fact.id), { fact_id: fact.id, expected_version: fact.version }]
-                      : current.filter(pin => pin.fact_id !== fact.id));
+                    setSelectedMemoryPins(current => {
+                      if (!checked) return current.filter(pin => pin.fact_id !== fact.id);
+                      const others = current.filter(pin => pin.fact_id !== fact.id);
+                      if (!fact.active || others.length >= maxSelectedMemoryFacts) return current;
+                      return [...others, { fact_id: fact.id, expected_version: fact.version }];
+                    });
                   }} />
                 Use in next task
               </label>

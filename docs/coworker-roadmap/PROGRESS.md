@@ -1,3 +1,9 @@
+## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
+
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
+
+---
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
