@@ -196,3 +196,76 @@ def test_preflight_rejects_public_https_endpoints_outside_approved_staging_proje
     env[name] = endpoint
     with pytest.raises(preflight.PreflightFailure, match=name):
         preflight.validate(env)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "SHUDDHO_COWORKER_ENV",
+        "SHUDDHO_AUTH_AUDIENCE",
+        "SHUDDHO_TEMPORAL_NAMESPACE",
+        "SHUDDHO_TEMPORAL_TLS",
+        "SHUDDHO_TEMPORAL_TASK_QUEUE",
+        "SHUDDHO_COWORKER_STORAGE",
+        "SHUDDHO_COWORKER_BUCKET",
+        "AWS_DEFAULT_REGION",
+    ],
+)
+@pytest.mark.parametrize("padding", [" ", "\t"], ids=["space", "tab"])
+def test_preflight_rejects_padding_that_runtime_does_not_normalize(name, padding):
+    env = valid_env()
+    env[name] = padding + env[name] + padding
+    with pytest.raises(preflight.PreflightFailure, match=name):
+        preflight.validate(env)
+
+
+@pytest.mark.parametrize("name", ["SHUDDHO_TEMPORAL_NAMESPACE", "AWS_DEFAULT_REGION"])
+def test_preflight_rejects_non_whitespace_control_characters_in_runtime_fields(name):
+    env = valid_env()
+    env[name] += "\x7f"
+    with pytest.raises(preflight.PreflightFailure, match=name):
+        preflight.validate(env)
+
+
+@pytest.mark.parametrize(
+    "port",
+    ["７２３３", "9" * 5000],
+    ids=["unicode-digits", "overlong"],
+)
+def test_preflight_temporal_port_must_be_bounded_ascii(port):
+    env = valid_env()
+    env["SHUDDHO_TEMPORAL_ADDRESS"] = "example.tmprl.cloud:" + port
+    with pytest.raises(preflight.PreflightFailure, match="SHUDDHO_TEMPORAL_ADDRESS"):
+        preflight.validate(env)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("postgresql://", "POSTGRESQL://"),
+        ("postgresql://", "\x01postgresql://"),
+        ("fixture-secret", "fixture-secret@extra"),
+        ("fixture-secret", "fixture\x7fsecret"),
+        ("fixture-secret", "fixture%00secret"),
+    ],
+    ids=["scheme-case", "leading-control", "ambiguous-userinfo", "raw-control", "decoded-nul"],
+)
+def test_preflight_rejects_database_urls_not_safe_for_runtime_parser(old, new):
+    env = valid_env()
+    name = "SHUDDHO_COWORKER_DATABASE_URL"
+    env[name] = env[name].replace(old, new, 1)
+    with pytest.raises(preflight.PreflightFailure, match=name) as error:
+        preflight.validate(env)
+    assert env[name] not in str(error.value)
+    assert "fixture-secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("scheme", ["postgres", "postgresql", "postgresql+psycopg"])
+def test_preflight_preserves_valid_runtime_scheme_and_percent_encoded_password(scheme):
+    env = valid_env()
+    name = "SHUDDHO_COWORKER_DATABASE_URL"
+    env[name] = env[name].replace("postgresql://", scheme + "://", 1).replace(
+        "fixture-secret", "fixture%40secret%3A%2F"
+    )
+    env["SHUDDHO_TEMPORAL_TLS"] = "TRUE"
+    assert preflight.validate(env)["status"] == "passed"
