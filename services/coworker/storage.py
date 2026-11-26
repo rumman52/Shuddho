@@ -140,7 +140,16 @@ class S3ObjectStore:
             if type(truncated) is not bool:
                 # An absent or non-boolean flag is not evidence of a final page.
                 raise ValueError("S3 inventory missing boolean IsTruncated")
-            for item in response.get("Contents", []):
+            contents = response.get("Contents", [])
+            if not isinstance(contents, list):
+                raise ValueError("S3 inventory Contents must be a list")
+            if "KeyCount" in response and (
+                type(response["KeyCount"]) is not int or response["KeyCount"] != len(contents)
+            ):
+                raise ValueError("S3 inventory KeyCount does not match Contents")
+            for item in contents:
+                if not isinstance(item, dict):
+                    raise ValueError("S3 inventory object must be a mapping")
                 modified = item.get("LastModified")
                 if not isinstance(modified, datetime):
                     # Skipping a malformed entry falsely reports a complete
@@ -148,7 +157,12 @@ class S3ObjectStore:
                     raise ValueError("S3 inventory object missing valid LastModified")
                 if modified.tzinfo is None:
                     modified = modified.replace(tzinfo=timezone.utc)
-                key = validate_key(str(item["Key"]))
+                if not isinstance(item.get("Key"), str):
+                    raise ValueError("S3 inventory object missing valid Key")
+                key = validate_key(item["Key"])
+                size = item.get("Size")
+                if type(size) is not int or size < 0:
+                    raise ValueError("S3 inventory object missing valid Size")
                 if prefix and not key.startswith(prefix):
                     # Never allow an unexpected backend listing to expand the
                     # owner/prefix scope of retention deletion.
@@ -161,7 +175,7 @@ class S3ObjectStore:
                 result.append(StoredObject(
                     key=key,
                     modified_at=modified.astimezone(timezone.utc),
-                    byte_size=int(item.get("Size", 0)),
+                    byte_size=size,
                 ))
             if not truncated:
                 break
