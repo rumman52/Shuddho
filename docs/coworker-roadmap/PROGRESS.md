@@ -2,6 +2,9 @@
 
 **SOURCE PATCH / NOT RELEASE-QUALIFIED.** Base `43d99fd64467492a7da809cda0ae178191e53981`; test-first `4ddd9b916adcfa5d200d361b50a747c465716789`, source `e3496fe15d6c83be114d843d68d878c61eea9c22`, additional deletion regression `04622491071e81a44c976a63ed9d17c173762a9c`. Lock selected owner/workspace fact rows in stable ID order and refresh ORM state before validation; validate expiry after locks. Isolated copied-function SQLite/dialect probe RED 2 failed/1 passed, GREEN 3 passed; PostgreSQL and full CI pending. [Contract](P03_MEMORY_PIN_COMMIT_FENCE_2026-11-26.md). No staging acceptance or deployment, provider, flags or data changes.
 
+
+**Extension:** Child draft/export checkpoint and artifact publication revalidate selected memory in their persistence transactions; model reservation and phase entry also checked. Account reference/mutation lock ordering aligned. Test commits `31664a1288e716e2086b1c77dbf4b79032b6e0dd`, `404cf67a90e25b17170f9ec65531cd2fdc32fcca`; source `72feee2a78a89b925341a1e0eaf744a0a75101ec`. Isolated child persistence probe RED 6 failed/1 passed, GREEN 7 passed; full CI and actual PostgreSQL/hosted evidence pending. [PR #950](https://github.com/rumman52/Shuddho/pull/950).
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
