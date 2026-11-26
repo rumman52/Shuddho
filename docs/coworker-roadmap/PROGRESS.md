@@ -1,3 +1,9 @@
+## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
+
+**Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
+
+---
+
 ## 26 November 2026 — Prompt 03 Day 5 sensitive memory-key filtering
 
 **Source patch; not release-qualified.** Base `460db9ff97c3f4adcc43beaf4d4db82a3957b097`; test-first `e65f629495ea005092bea0920eb6b1dea74bf06d`, source `747bd6f4edd260ba85841013dd3889909b111a09`. Credential-shaped memory keys previously bypassed the value redaction boundary. Existing filter now suppresses sensitive-key facts before model serialization without modifying stored facts, pin versions or selection digest. Isolated copied context assembly/SQLite synthetic probe RED 4 failed, GREEN 4 passed. Full repository CI and distinct review pending; no staging or provider attestation. [Contract](P03_MEMORY_KEY_REDACTION_2026-11-26.md). No deployment, provider calls, paid provisioning or activation.
