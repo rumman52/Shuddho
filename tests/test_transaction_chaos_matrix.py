@@ -383,6 +383,15 @@ def test_fault_receipt_requires_bounded_stable_strict_json(tmp_path, monkeypatch
             return data
 
         monkeypatch.setattr(os, "read", mutate_after_read)
+        read_bytes = Path.read_bytes
+
+        def mutate_after_read_bytes(path):
+            data = read_bytes(path)
+            if path == target:
+                target.write_bytes(raw + b" ")
+            return data
+
+        monkeypatch.setattr(Path, "read_bytes", mutate_after_read_bytes)
 
     reasons = verify_evidence_files(doc, directory)
     if case in ("valid", "large_valid"):
