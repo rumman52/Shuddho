@@ -258,3 +258,112 @@ def test_task_economics_rejects_future_evidence(tmp_path):
             rollout_sha256=value["rollout_manifest_sha256"],
             expected_source_revision=REVISION,
         )
+
+
+def evidence_paths(tmp_path):
+    return {
+        "rollout_path": rollout(tmp_path),
+        "provider_policy_plan_path": provider_policy(tmp_path),
+        "pricing_plan_path": pricing(tmp_path),
+        "samples_path": samples(tmp_path),
+    }
+
+
+@pytest.mark.parametrize(("path_key", "digest_key"), [
+    ("rollout_path", "rollout_manifest_sha256"),
+    ("provider_policy_plan_path", "provider_policy_plan_sha256"),
+    ("pricing_plan_path", "pricing_plan_sha256"),
+    ("samples_path", "samples_sha256"),
+])
+def test_compiler_binds_parsed_snapshot_not_reopened_path(tmp_path, monkeypatch, path_key, digest_key):
+    from scripts import task_economics_evidence as economics
+
+    paths = evidence_paths(tmp_path)
+    target = paths[path_key]
+    original_digest = sha256_file(target)
+    original_costs = economics.task_costs
+    swapped = False
+
+    def swap_then_calculate(*args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            write_json(tmp_path / "substitute.json", {"substituted": True}).replace(target)
+            swapped = True
+        return original_costs(*args, **kwargs)
+
+    monkeypatch.setattr(economics, "task_costs", swap_then_calculate)
+    result = compile_task_economics_evidence(**paths)
+    assert sha256_file(target) != original_digest
+    assert result[digest_key] == original_digest
+
+
+@pytest.mark.parametrize("path_key", [
+    "rollout_path", "provider_policy_plan_path", "pricing_plan_path", "samples_path",
+])
+def test_compiler_rejects_duplicate_keys(tmp_path, path_key):
+    paths = evidence_paths(tmp_path)
+    target = paths[path_key]
+    original = target.read_text(encoding="utf-8")
+    target.write_text('{"release_id": "conflicting-release",' + original[1:], encoding="utf-8")
+    with pytest.raises(TaskEconomicsEvidenceError):
+        compile_task_economics_evidence(**paths)
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity", "1e309"])
+def test_compiler_rejects_nonfinite_json(tmp_path, literal):
+    paths = evidence_paths(tmp_path)
+    target = paths["rollout_path"]
+    original = target.read_text(encoding="utf-8")
+    target.write_text('{"extra": ' + literal + ',' + original[1:], encoding="utf-8")
+    with pytest.raises(TaskEconomicsEvidenceError):
+        compile_task_economics_evidence(**paths)
+
+
+@pytest.mark.parametrize("path_key", [
+    "rollout_path", "provider_policy_plan_path", "pricing_plan_path", "samples_path",
+])
+def test_compiler_rejects_symlink_inputs(tmp_path, path_key):
+    paths = evidence_paths(tmp_path)
+    link = tmp_path / "input-link.json"
+    link.symlink_to(paths[path_key])
+    paths[path_key] = link
+    with pytest.raises(TaskEconomicsEvidenceError):
+        compile_task_economics_evidence(**paths)
+
+
+@pytest.mark.parametrize("version", [True, 1.0])
+@pytest.mark.parametrize("path_key", ["pricing_plan_path", "samples_path"])
+def test_compiler_requires_integer_schema_version(tmp_path, path_key, version):
+    paths = evidence_paths(tmp_path)
+    target = paths[path_key]
+    value = json.loads(target.read_text(encoding="utf-8"))
+    value["schema_version"] = version
+    write_json(target, value)
+    with pytest.raises(TaskEconomicsEvidenceError):
+        compile_task_economics_evidence(**paths)
+
+
+@pytest.mark.parametrize("version", [True, 1.0])
+def test_validator_requires_integer_schema_version(tmp_path, version):
+    value = compile_value(tmp_path)
+    value["schema_version"] = version
+    with pytest.raises(TaskEconomicsEvidenceError):
+        validate_task_economics_evidence(value, release_id=RELEASE_ID,
+            rollout_sha256=value["rollout_manifest_sha256"], expected_source_revision=REVISION)
+
+
+@pytest.mark.parametrize("field", ["average", "category_total", "percentile", "maximum"])
+def test_validator_rejects_inconsistent_cost_aggregates(tmp_path, field):
+    value = compile_value(tmp_path)
+    if field == "average":
+        value["average_cost_microusd"] += 1
+    elif field == "category_total":
+        value["category_cost_microusd"]["model"] += 3
+    elif field == "percentile":
+        value["p95_cost_microusd"] -= 1
+    else:
+        value["max_cost_microusd"] = value["budget_microusd_per_completed_task"]
+        value["p95_cost_microusd"] = value["max_cost_microusd"]
+    with pytest.raises(TaskEconomicsEvidenceError):
+        validate_task_economics_evidence(value, release_id=RELEASE_ID,
+            rollout_sha256=value["rollout_manifest_sha256"], expected_source_revision=REVISION)

@@ -663,3 +663,32 @@ def test_additive_migration_works_with_old_reader_and_default(tmp_path):
             assert revision == ScriptDirectory.from_config(config).get_current_head()
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("constraint_count,expected_state", [(10, "ready"), (11, "needs_input"), (12, "needs_input")])
+def test_retained_constraints_respect_brief_bound_without_silent_loss(container, constraint_count, expected_state):
+    from services.coworker.models import ProviderLease
+
+    owner, conversation, messages, service, dispatch = setup(container, "brief-retained-bound")
+    append(messages, owner, conversation, "Write a two-page report in British English.", "msg-one")
+    latest = append(messages, owner, conversation, "Include quarterly sales.", "msg-two")
+    proposed = TaskBrief(objective="Make a quarterly sales report",
+                         constraints=[f"Constraint {i}" for i in range(constraint_count)],
+                         deliverables=["Report"])
+
+    class Planner:
+        async def propose_task_brief(self, history, source_ids):
+            return TaskBriefSuggestion(state="ready", brief=proposed), 30
+
+    service.model = Planner()
+    result = asyncio.run(service.propose(owner, conversation["id"], latest["id"], expected_sequence=2))
+    assert result["state"] == expected_state
+    if expected_state == "ready":
+        assert result["brief"]["constraints"] == proposed.constraints + ["Maximum two pages", "Use British English"]
+        assert result["canonical_digest"]
+    else:
+        assert result["question"] and result["brief"] is None and result["canonical_digest"] is None
+    with dispatch.sessions() as db:
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
+        assert db.scalar(select(func.count()).select_from(ProviderLease)) == 0

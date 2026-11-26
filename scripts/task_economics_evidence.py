@@ -3,12 +3,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 
-from scripts.provider_policy_compiler import ProviderPolicyError, load_plan as load_provider_policy_plan
+from scripts.provider_policy_compiler import ProviderPolicyError, validate_plan as validate_provider_policy_plan
+from scripts.staging_release_evidence import StagingReleaseEvidenceError, _read_rollout_manifest
 
 
 class TaskEconomicsEvidenceError(RuntimeError):
@@ -16,6 +16,7 @@ class TaskEconomicsEvidenceError(RuntimeError):
 
 
 MAX_CLOCK_SKEW = timedelta(minutes=5)
+MAX_ECONOMICS_INPUT_BYTES = 4_000_000
 GIB = Decimal(1024 ** 3)
 CATEGORY_KEYS = (
     "model",
@@ -92,14 +93,19 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_json(path: Path, label: str) -> dict:
+def _load_json_snapshot(path: Path, label: str) -> tuple[dict, str]:
+    """Reuse the staging evidence reader and bind the exact validated bytes."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise TaskEconomicsEvidenceError(f"Unable to read {label}: {error}") from None
+        value, digest = _read_rollout_manifest(path, max_bytes=MAX_ECONOMICS_INPUT_BYTES)
+    except StagingReleaseEvidenceError:
+        raise TaskEconomicsEvidenceError(f"Unable to read valid {label} evidence.") from None
     if not isinstance(value, dict):
         raise TaskEconomicsEvidenceError(f"{label} must be a JSON object.")
-    return value
+    return value, digest
+
+
+def load_json(path: Path, label: str) -> dict:
+    return _load_json_snapshot(path, label)[0]
 
 
 def parse_time(value: object, label: str) -> datetime:
@@ -178,17 +184,20 @@ def ceil_microusd(value: Decimal) -> int:
 
 def percentile95(values: list[int]) -> int:
     ordered = sorted(values)
-    rank = max(1, math.ceil(len(ordered) * 0.95))
+    rank = (95 * len(ordered) + 99) // 100
     return ordered[rank - 1]
 
 
 def load_pricing(path: Path, release_id: str) -> dict:
-    value = load_json(path, "task economics pricing plan")
+    return _validate_pricing(load_json(path, "task economics pricing plan"), release_id)
+
+
+def _validate_pricing(value: dict, release_id: str) -> dict:
     if set(value) != PRICING_KEYS:
         raise TaskEconomicsEvidenceError(
             "Task economics pricing plan has an unexpected schema."
         )
-    if value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise TaskEconomicsEvidenceError(
             "Task economics pricing plan schema_version must be 1."
         )
@@ -220,12 +229,20 @@ def load_samples(
     min_completed_tasks: int,
     now: datetime,
 ) -> tuple[dict, datetime]:
-    value = load_json(path, "task economics samples")
+    return _validate_samples(
+        load_json(path, "task economics samples"), release_id,
+        min_completed_tasks=min_completed_tasks, now=now,
+    )
+
+
+def _validate_samples(
+    value: dict, release_id: str, *, min_completed_tasks: int, now: datetime,
+) -> tuple[dict, datetime]:
     if set(value) != SAMPLES_KEYS:
         raise TaskEconomicsEvidenceError(
             "Task economics samples have an unexpected schema."
         )
-    if value["schema_version"] != 1:
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
         raise TaskEconomicsEvidenceError(
             "Task economics samples schema_version must be 1."
         )
@@ -308,14 +325,15 @@ def compile_task_economics_evidence(
     samples_path: Path,
 ) -> dict:
     now = datetime.now(timezone.utc)
-    rollout = load_json(rollout_path, "rollout manifest")
+    rollout, rollout_digest = _load_json_snapshot(rollout_path, "rollout manifest")
     release_id = rollout.get("release_id")
     if not isinstance(release_id, str) or not release_id.strip():
         raise TaskEconomicsEvidenceError("Rollout manifest release_id is required.")
 
     try:
-        provider_plan = load_provider_policy_plan(provider_policy_plan_path)
-    except (ProviderPolicyError, OSError, ValueError) as error:
+        provider_input, provider_digest = _load_json_snapshot(provider_policy_plan_path, "provider policy plan")
+        provider_plan = validate_provider_policy_plan(provider_input)
+    except (ProviderPolicyError, OSError, ValueError, OverflowError) as error:
         raise TaskEconomicsEvidenceError(str(error)) from None
     if provider_plan["release_id"] != release_id:
         raise TaskEconomicsEvidenceError(
@@ -329,9 +347,11 @@ def compile_task_economics_evidence(
     # USD per million tokens is numerically equal to micro-USD per token.
     model_microusd_per_token = model_rate
 
-    pricing = load_pricing(pricing_plan_path, release_id)
-    samples, samples_generated = load_samples(
-        samples_path,
+    pricing_input, pricing_digest = _load_json_snapshot(pricing_plan_path, "task economics pricing plan")
+    pricing = _validate_pricing(pricing_input, release_id)
+    samples_input, samples_digest = _load_json_snapshot(samples_path, "task economics samples")
+    samples, samples_generated = _validate_samples(
+        samples_input,
         release_id,
         min_completed_tasks=pricing["min_completed_tasks"],
         now=now,
@@ -375,7 +395,7 @@ def compile_task_economics_evidence(
             + "."
         )
 
-    average = ceil_microusd(Decimal(sum(costs)) / Decimal(len(costs)))
+    average = (sum(costs) + len(costs) - 1) // len(costs)
     return {
         "schema_version": 1,
         "mode": "task_economics",
@@ -383,10 +403,10 @@ def compile_task_economics_evidence(
         "generated_at": now.isoformat(),
         "samples_generated_at": samples_generated.isoformat(),
         "source_revision": require_revision(samples["source_revision"]),
-        "rollout_manifest_sha256": sha256_file(rollout_path),
-        "provider_policy_plan_sha256": sha256_file(provider_policy_plan_path),
-        "pricing_plan_sha256": sha256_file(pricing_plan_path),
-        "samples_sha256": sha256_file(samples_path),
+        "rollout_manifest_sha256": rollout_digest,
+        "provider_policy_plan_sha256": provider_digest,
+        "pricing_plan_sha256": pricing_digest,
+        "samples_sha256": samples_digest,
         "completed_tasks": len(costs),
         "total_retries": retries,
         "category_coverage": coverage,
@@ -411,7 +431,8 @@ def validate_task_economics_evidence(
         raise TaskEconomicsEvidenceError(
             "Task economics evidence has an unexpected schema."
         )
-    if value["schema_version"] != 1 or value["mode"] != "task_economics":
+    if (type(value["schema_version"]) is not int or value["schema_version"] != 1
+            or value["mode"] != "task_economics"):
         raise TaskEconomicsEvidenceError(
             "Task economics evidence has an unsupported schema or mode."
         )
@@ -478,6 +499,22 @@ def validate_task_economics_evidence(
         raise TaskEconomicsEvidenceError(
             "Task economics p95 cost cannot exceed the maximum cost."
         )
+    # The reported category costs are totals across completed tasks. Reconcile
+    # the exact ceiling average and require a feasible nearest-rank p95/max
+    # distribution; aggregate consistency is not proof of authentic receipts.
+    count = value["completed_tasks"]
+    total = sum(value["category_cost_microusd"].values())
+    maximum = value["max_cost_microusd"]
+    p95 = value["p95_cost_microusd"]
+    rank = (95 * count + 99) // 100
+    if (total + count - 1) // count != value["average_cost_microusd"]:
+        raise TaskEconomicsEvidenceError("Task economics average cost does not reconcile with category totals.")
+    if rank == count:
+        consistent = p95 == maximum and maximum <= total <= count * maximum
+    else:
+        consistent = maximum + (count - rank) * p95 <= total <= rank * p95 + (count - rank) * maximum
+    if not consistent:
+        raise TaskEconomicsEvidenceError("Task economics cost totals, p95 and maximum are inconsistent.")
     if value["gate_decision"] != "PASS" or value["failures"] != []:
         raise TaskEconomicsEvidenceError(
             "Task economics evidence did not pass cleanly."

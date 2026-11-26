@@ -293,7 +293,7 @@ def validate_hosted_transaction_completion(
         "expires_at": preview.expires_at.isoformat(),
     }
     for field, value in expected.items():
-        if handoff_value[field] != value:
+        if type(handoff_value[field]) is not type(value) or handoff_value[field] != value:
             raise HostedTransactionHandoffError(
                 f"TX-27 handoff {field} no longer matches the approved preview."
             )
@@ -349,6 +349,10 @@ def validate_hosted_transaction_completion(
     if confirmed_at < created_at:
         raise HostedTransactionHandoffError(
             "TX-27 provider confirmation predates the hosted handoff."
+        )
+    if confirmed_at > current:
+        raise HostedTransactionHandoffError(
+            "TX-27 provider confirmation occurred after observation."
         )
     if confirmed_at >= expires_at:
         raise HostedTransactionHandoffError(

@@ -5,7 +5,7 @@ import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 EXPECTED_BUCKET = "shuddho-coworker-staging"
 EXPECTED_TASK_QUEUE = "shuddho-documents-v1"
@@ -37,6 +37,10 @@ def _require_present(env: dict[str, str], name: str) -> None:
         raise PreflightFailure(f"BLOCKED_EXTERNAL — {name} REQUIRED")
 
 
+def _has_whitespace_or_control(value: str) -> bool:
+    return any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value)
+
+
 def _validate_temporal_address(value: str) -> None:
     candidate = value.strip()
     # A staging credential must not be silently redirected by whitespace.
@@ -55,7 +59,7 @@ def _validate_temporal_address(value: str) -> None:
     if ":" not in candidate:
         raise PreflightFailure("SHUDDHO_TEMPORAL_ADDRESS must include a port.")
     host, port_text = candidate.rsplit(":", 1)
-    if not host or not port_text.isdecimal():
+    if not host or re.fullmatch(r"[0-9]{1,5}", port_text) is None:
         raise PreflightFailure("SHUDDHO_TEMPORAL_ADDRESS must be host:port.")
     port = int(port_text)
     if port < 1 or port > 65535:
@@ -125,7 +129,12 @@ def _validate_postgresql_url(value: str) -> None:
         "SHUDDHO_COWORKER_DATABASE_URL must use the Shuddho staging Supabase session pooler "
         "with the runtime role, port 5432, and sslmode=verify-full."
     )
-    if value != value.strip() or any(char.isspace() for char in value):
+    # The runtime normalizes only the exact lowercase schemes and SQLAlchemy
+    # uses a different userinfo parser. Reject ambiguous raw input before
+    # urllib can normalize it into an apparently approved destination.
+    if _has_whitespace_or_control(value) or not value.startswith(
+        tuple(scheme + "://" for scheme in POSTGRES_SCHEMES)
+    ):
         raise PreflightFailure(message)
     try:
         parsed = urlparse(value)
@@ -136,8 +145,10 @@ def _validate_postgresql_url(value: str) -> None:
     if (
         parsed.scheme not in POSTGRES_SCHEMES
         or parsed.hostname != STAGING_DB_HOST
+        or parsed.netloc.count("@") != 1
         or parsed.username != STAGING_DB_USER
         or not parsed.password
+        or "\x00" in unquote(parsed.password)
         or port != 5432
         or parsed.path != "/postgres"
         or parsed.fragment
@@ -153,7 +164,9 @@ def validate(env: dict[str, str]) -> dict:
     for name in REQUIRED_SECRETS:
         _require_present(env, name)
 
-    environment = env.get("SHUDDHO_COWORKER_ENV", "").strip()
+    # Runtime Settings consume these values verbatim (TLS only lowercases).
+    # Do not certify a trimmed configuration that will not actually be used.
+    environment = env.get("SHUDDHO_COWORKER_ENV", "")
     if environment != EXPECTED_ENVIRONMENT:
         raise PreflightFailure("SHUDDHO_COWORKER_ENV must be staging.")
 
@@ -164,33 +177,33 @@ def validate(env: dict[str, str]) -> dict:
         raise PreflightFailure(
             "SHUDDHO_AUTH_ISSUER must exactly match the approved Supabase staging issuer."
         )
-    audience = env.get("SHUDDHO_AUTH_AUDIENCE", "").strip()
+    audience = env.get("SHUDDHO_AUTH_AUDIENCE", "")
     if audience != EXPECTED_AUTH_AUDIENCE:
         raise PreflightFailure("SHUDDHO_AUTH_AUDIENCE must be authenticated.")
 
     _validate_temporal_address(env["SHUDDHO_TEMPORAL_ADDRESS"])
 
-    namespace = env["SHUDDHO_TEMPORAL_NAMESPACE"].strip()
-    if not namespace or any(char.isspace() for char in namespace):
+    namespace = env["SHUDDHO_TEMPORAL_NAMESPACE"]
+    if not namespace or _has_whitespace_or_control(namespace):
         raise PreflightFailure(
-            "SHUDDHO_TEMPORAL_NAMESPACE must be a non-empty namespace without whitespace."
+            "SHUDDHO_TEMPORAL_NAMESPACE must be a non-empty namespace without whitespace or control characters."
         )
 
-    tls = env.get("SHUDDHO_TEMPORAL_TLS", "").strip().lower()
+    tls = env.get("SHUDDHO_TEMPORAL_TLS", "").lower()
     if tls != "true":
         raise PreflightFailure("SHUDDHO_TEMPORAL_TLS must be true for controlled staging.")
 
-    task_queue = env.get("SHUDDHO_TEMPORAL_TASK_QUEUE", "").strip()
+    task_queue = env.get("SHUDDHO_TEMPORAL_TASK_QUEUE", "")
     if task_queue != EXPECTED_TASK_QUEUE:
         raise PreflightFailure(
             f"SHUDDHO_TEMPORAL_TASK_QUEUE must be {EXPECTED_TASK_QUEUE}."
         )
 
-    storage = env.get("SHUDDHO_COWORKER_STORAGE", "").strip()
+    storage = env.get("SHUDDHO_COWORKER_STORAGE", "")
     if storage != "s3":
         raise PreflightFailure("SHUDDHO_COWORKER_STORAGE must be s3.")
 
-    bucket = env.get("SHUDDHO_COWORKER_BUCKET", "").strip()
+    bucket = env.get("SHUDDHO_COWORKER_BUCKET", "")
     if bucket != EXPECTED_BUCKET:
         raise PreflightFailure(
             f"SHUDDHO_COWORKER_BUCKET must be {EXPECTED_BUCKET}."
@@ -203,9 +216,9 @@ def validate(env: dict[str, str]) -> dict:
             "SHUDDHO_COWORKER_S3_ENDPOINT must exactly match the approved Supabase staging S3 endpoint."
         )
 
-    region = env.get("AWS_DEFAULT_REGION", "").strip()
-    if not region or any(char.isspace() for char in region):
-        raise PreflightFailure("AWS_DEFAULT_REGION must be a non-empty region.")
+    region = env.get("AWS_DEFAULT_REGION", "")
+    if not region or _has_whitespace_or_control(region):
+        raise PreflightFailure("AWS_DEFAULT_REGION must be a non-empty region without whitespace or control characters.")
 
     return {
         "status": "passed",
