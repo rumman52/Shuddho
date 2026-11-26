@@ -15,6 +15,7 @@ from .goal_schemas import _safe_text
 
 
 MEMORY_BOUND_BRIEF_VERSION = 2
+MAX_TASK_MEMORY_PINS = 20
 MAX_REVIEWED_TASK_BRIEF_BYTES = 16_000
 
 
@@ -26,13 +27,13 @@ class MemoryPin(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     fact_id: UUID
-    expected_version: int = Field(ge=1)
+    expected_version: int = Field(ge=1, strict=True)
 
 
 class TaskBriefMemorySelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    memory_pins: list[MemoryPin] = Field(default_factory=list, max_length=20)
+    memory_pins: list[MemoryPin] = Field(default_factory=list, max_length=MAX_TASK_MEMORY_PINS)
 
     @model_validator(mode="after")
     def unique_memory_ids(self):

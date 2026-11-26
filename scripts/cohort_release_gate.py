@@ -9,6 +9,7 @@ from scripts.release_contract import (
     ACTION_PROVIDERS,
     BASE_CAPABILITY_KEYS as CAPABILITY_KEYS,
     BASE_KILL_SWITCHES,
+    FROZEN_DISABLED_RUNTIME_KEYS,
     OPTIONAL_CAPABILITIES,
     OPTIONAL_CAPABILITY_KEYS,
     OPTIONAL_ROLLBACK_KEYS,
@@ -125,13 +126,18 @@ def validate_rollout(rollout: dict, *, max_cohort_users: int) -> list[str]:
     if (
         not isinstance(capabilities, dict)
         or not CAPABILITY_KEYS.issubset(capabilities)
-        or not set(capabilities).issubset(CAPABILITY_KEYS | OPTIONAL_CAPABILITY_KEYS)
+        or not set(capabilities).issubset(
+            CAPABILITY_KEYS | OPTIONAL_CAPABILITY_KEYS | FROZEN_DISABLED_RUNTIME_KEYS
+        )
     ):
         failures.append("capabilities")
     else:
         if any(not isinstance(value, bool) for value in capabilities.values()):
             failures.append("capability_types")
         else:
+            for key in FROZEN_DISABLED_RUNTIME_KEYS:
+                if capabilities.get(key) is True:
+                    failures.append(f"{key}_not_qualified")
             if not capabilities["coworker"] or not capabilities["work_services"]:
                 failures.append("core_capabilities")
             agent_children = {

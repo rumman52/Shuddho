@@ -406,6 +406,17 @@ def test_sensitive_memory_key_never_enters_planner_context(container, key, selec
     assert saved["key"] == key and saved["version"] == sensitive["version"]
 
 
+@pytest.mark.parametrize("configured, expected", [(2, 2), (20, 20), (100, 20)])
+def test_memory_endpoint_advertises_effective_review_selection_limit(container, signed_client, configured, expected):
+    settings = replace(enable_pa04(container), max_memory_context_facts=configured)
+    container.settings = settings
+    container.memory.settings = settings
+    client, headers = signed_client
+    response = client.get("/api/v1/memory", headers=headers())
+    assert response.status_code == 200, response.text
+    assert response.json()["max_selected_facts"] == expected
+
+
 def _brief_provider_probe(container, *, usage=None, choice_fields=None, message_fields=None, extra=None):
     import httpx
     from services.coworker.agent_planning_model import DeepSeekAgentPlanner

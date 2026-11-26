@@ -1447,3 +1447,61 @@ def test_day8_input_preserves_two_megabyte_limit(tmp_path):
         stream.write(b' ')
     with pytest.raises(ValueError):
         _read_day8_input(path)
+
+
+@pytest.mark.parametrize("version", [True, 1.0, 2.0, [], {}])
+def test_day8_rejects_noninteger_evidence_schema_version(version):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    candidate["schema_version"] = version
+    with pytest.raises(ValueError, match="development-only schema"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+@pytest.mark.parametrize("attempt_kind", ["first_run", "rerun"])
+@pytest.mark.parametrize("padding", ["leading", "trailing", "newline", "tab"])
+def test_day8_rejects_noncanonical_run_identity(attempt_kind, padding):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    if attempt_kind == "first_run":
+        row = candidate["results"][0]
+    else:
+        row = _day8_synthetic_rerun(candidate)
+        candidate["reruns"].append(row)
+    # A whitespace variant must not hide reuse of an existing run.
+    identity = baseline["results"][0]["run_id"]
+    row["run_id"] = {
+        "leading": " " + identity,
+        "trailing": identity + " ",
+        "newline": identity + "\n",
+        "tab": "\t" + identity,
+    }[padding]
+    with pytest.raises(ValueError, match="malformed (?:run|rerun) identity"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+@pytest.mark.parametrize("attempt_number", [3, 2**100])
+def test_day8_sparse_rerun_sequence_fails_closed_without_range_allocation(attempt_number):
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    row = _day8_synthetic_rerun(candidate)
+    row["attempt_number"] = attempt_number
+    candidate["reruns"].append(row)
+    # The enormous ordinal is tiny as JSON but cannot allocate a range of
+    # that length. It must return a controlled validation error, not overflow.
+    with pytest.raises(ValueError, match="rerun attempt numbers must be consecutive"):
+        compare_day8_development(baseline, candidate, suite)
+
+
+def test_day8_accepts_out_of_order_but_consecutive_rerun_receipts():
+    suite, baseline, candidate = _day8_complete_measurement_fixture()
+    second = _day8_synthetic_rerun(candidate, cost=1)
+    third = {
+        **second,
+        "attempt_number": 3,
+        "run_id": second["run_id"] + ":third",
+        "provider_usage_case_receipt_sha256": hashlib.sha256(b"third-attempt").hexdigest(),
+    }
+    candidate["reruns"] = [third, second]
+    result = compare_day8_development(baseline, candidate, suite)
+    assert result["status"] == "FROZEN_FOR_DAY9"
+    bounded = result["profile_summaries"]["bounded_context_compact_observations"]
+    assert bounded["rerun_attempts"] == 2
+    assert bounded["total_cost_microusd"] == 602

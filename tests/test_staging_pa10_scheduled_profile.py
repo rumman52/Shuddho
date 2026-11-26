@@ -235,8 +235,9 @@ def test_verify_rejects_unapproved_daily_run_pins_before_writing_evidence(monkey
         "schema_version": 1, "scenario": "daily_coworker",
         "release": release, "owner_id": "owner-1", "automation_id": "automation-1",
         "automation_revision": 1, "timezone": "Asia/Dhaka",
-        "schedule": {"kind": "daily", "hour": 8, "minute": 0},
-        "run_profile": "briefing", "output_language": "en", "quiet_hours": None,
+        "schedule": {"kind": "daily", "hour": 8, "minute": 0, "weekdays": []},
+        "run_profile": "briefing", "output_language": "en",
+        "quiet_hours": {"start": "22:00", "end": "07:00"},
         "overlap_policy": "skip", "catchup_window_seconds": 3600,
         "expires_at": "2030-01-01T00:00:00+00:00",
         "schedule_applied_revision": 1, "schedule_applied_enabled": True,
@@ -645,3 +646,83 @@ def test_day7_verify_invokes_prepared_profile_readback_gate(monkeypatch, tmp_pat
     with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
         probe.verify(args)
     assert not args.output.exists()
+
+
+@pytest.mark.parametrize(("field", "invalid"), [
+    ("timezone", "Invalid/Zone"),
+    ("timezone", 123),
+    ("schedule", {"kind": "daily", "hour": True, "minute": 0, "weekdays": []}),
+    ("schedule", {"kind": "daily", "hour": 8, "minute": 60, "weekdays": []}),
+    ("schedule", {"kind": "daily", "hour": 8, "minute": 0}),
+    ("schedule", {"kind": "daily", "hour": 8, "minute": 0, "weekdays": ["mon"]}),
+    ("schedule", {"kind": "daily", "hour": 8, "minute": 0, "weekdays": [], "extra": True}),
+    ("quiet_hours", None),
+    ("quiet_hours", {"start": "22:00", "end": "22:00"}),
+    ("quiet_hours", {"start": "25:00", "end": "07:00"}),
+    ("overlap_policy", "buffer_one"),
+    ("catchup_window_seconds", 60),
+    ("catchup_window_seconds", 7200),
+    ("catchup_window_seconds", 3600.0),
+])
+def test_matching_daily_profile_must_still_meet_pilot_contract(field, invalid):
+    from copy import deepcopy
+
+    state = deepcopy(PREPARED_DAILY_PROFILE)
+    state[field] = invalid
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="Daily briefing"):
+        probe.require_prepared_daily_profile(state, deepcopy(state))
+
+
+def test_daily_profile_rejects_equal_but_wrongly_typed_prepared_value():
+    from copy import deepcopy
+
+    state = deepcopy(PREPARED_DAILY_PROFILE)
+    state["catchup_window_seconds"] = 3600.0
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="Daily briefing"):
+        probe.require_prepared_daily_profile(state, deepcopy(PREPARED_DAILY_PROFILE))
+
+
+def test_prepare_rejects_noncontract_daily_policy_before_writing_state(monkeypatch, tmp_path):
+    from argparse import Namespace
+    from copy import deepcopy
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    snapshot = {
+        "owner_id": "synthetic-owner",
+        "automation": {
+            **deepcopy(PREPARED_DAILY_PROFILE),
+            "revision": 1,
+            "expires_at": "2030-01-01T00:00:00+00:00",
+            "schedule_applied_revision": 1,
+            "schedule_applied_enabled": True,
+            "catchup_window_seconds": 60,
+        },
+        "daily_scope": {
+            "goal_id": "goal-1", "goal_revision": 1, "project_id": "project-1",
+            "authorized_document_ids": ["doc-1"],
+        },
+        "history": [], "notifications": [],
+    }
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_SCHEDULED_PROFILES", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://stage.example.test")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "synthetic-token")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT_LABEL", "synthetic-owner")
+    monkeypatch.setattr(probe.httpx, "Client", lambda **_kwargs: Client())
+    monkeypatch.setattr(probe, "release_identity", lambda *_args: {"release_id": "release-1"})
+    monkeypatch.setattr(probe, "load_owned", lambda *_args: snapshot)
+    state = tmp_path / "state.json"
+    args = Namespace(
+        scenario="daily_coworker", automation_id="automation-1",
+        rollout=tmp_path / "rollout.json",
+        provider_policy_plan=tmp_path / "provider.json", state=state,
+    )
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="Daily briefing"):
+        probe.prepare(args)
+    assert not state.exists()

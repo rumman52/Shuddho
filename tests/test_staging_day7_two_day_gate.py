@@ -992,3 +992,13 @@ def test_day7_paused_opportunity_requires_exact_approved_catchup_window():
     first["catchup_window_seconds"] = 60
     with pytest.raises(GateFailure, match="3600"):
         next_paused_opportunity(first, second)
+
+
+@pytest.mark.parametrize("field", ["hour", "minute", "catchup_window_seconds"])
+def test_two_day_gate_rejects_numeric_type_drift_in_second_receipt(field):
+    first, second, paused = valid_pair()
+    # Python considers 8 == 8.0; identical values do not establish schema validity.
+    target = second if field == "catchup_window_seconds" else second["schedule"]
+    target[field] = float(target[field])
+    with pytest.raises(GateFailure, match="calendar time|3600"):
+        verify_two_day(first, second, paused)
