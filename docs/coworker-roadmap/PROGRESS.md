@@ -1,10 +1,8 @@
-## 26 November 2026 — Prompt 05 individual CW-02 receipt custody
+## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
-**SOURCE_IN_PROGRESS / controlled pilot NO-GO.** Extended existing PR #922 on its isolated branch, starting from verified main `f7138e2025f6f5719aea4f4babfcc3549fae324b`; reconciled subsequent main `3bd8fe90213f51b3bd4b6b4398f21b56037399b2` without replacing other owners' work. Test-first `936b36f169e90c2c175ba91830764a1ae12fad82`, strengthened mutation injection `0e3ffa15fba5c8fd10a1dbab482339703a025bc2`; shared reader bound `8f6c0fc8080970f8315ff690c4ae7dd61262e58f`; receipt integration `f4a5e093132b062aad3c37c53530e760c5ff5430`. Local isolated filesystem reproduction: RED 3 failed/3 passed, GREEN 6 passed. Full checkout blocked by DNS; this is not exact full-source CI or operated evidence. Preserve 1 MiB manifest/2 MiB receipt limits, reject symlink substitution, in-place mutation, exponent overflow. Full focused repository tests, mandatory exact-head CI, independent review, authenticated custody and operated recovery remain outstanding. Directory-ancestor trust and post-capture mutation are separate constraints. No production, billing, hosted database or telemetry changes.
+**Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
 
-## 26 November 2026 — CW-02 fault manifest custody
-
-**SOURCE PATCH / controlled pilot NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. Test-first `626b3d1930e2c1dde4f3bd8715c9128b8b4b6670`; source `a2663578a66d9f7d703679987943f3eaba841292`. The fault qualification CLI now reuses the bounded, stable no-follow strict JSON reader. Isolated tests against the hash-verified baseline module and copied fixture/reader excerpt: RED 3 failed/1 passed; GREEN 4 passed. Direct/module help succeeded. Full checkout unavailable due DNS; mandatory exact-head CI and independent review pending. See [task contract](CW02_FAULT_MANIFEST_CUSTODY_2026-11-26.md). No live staging, production, billing, or acceptance-credit change.
+---
 
 ## 26 November 2026 — Prompt 03 Day 5 sensitive memory-key filtering
 
@@ -3015,3 +3013,11 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 ## 26 November 2026 — PA-10 staging locked build and startup
 
 **IMPLEMENTED_UNVERIFIED / staging NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. The checked-in Blueprint and worker provisioning create/update/readback now pin the CI-selected uv 0.7.22 and require no-sync runtime/migration commands. Test-first `6498b8907a057a758495d3c49129e4d6bff0da0d`; implementation `de118cae816cde17bd5b6630a67a5ec68bff5ca3`. Isolated command-excerpt unittest: four failing assertions/subtests RED; two test methods GREEN. Full mocked provisioning and exact-head CI, independent review and hosted build proof remain pending. See [task contract](PA10_STAGING_LOCKED_STARTUP_2026-11-26.md). No Render access/mutation, billing, migration, deployment or activation.
+
+
+### 2026-11-26 — Prompt 04 / D07 exact briefing evidence (draft PR #928)
+
+- Status: SOURCE_IN_PROGRESS; operational and independent acceptance BLOCKED_EXTERNAL.
+- Isolated from main `8970492aa11b39fdcb4072713323791e5e4bf75d`; test-first `34c5e35118f4d37a74af66cb6fef889d23051646`; implementation `5d98eb145ed8198f0bd58795015d677be525d36c`.
+- Two defects: catch-up bounds permitted values other than exactly 3600; due-time comparison ignored fractional microseconds. Regression coverage added. Isolated predicate RED 6 failed/4 passed; GREEN 10 passed. Full repository CI and independent review pending; no operated receipts.
+- [Task contract and continuation](DAY7_EXACT_BRIEFING_EVIDENCE_2026-11-26.md). No deployment, billing, telemetry activation or merge.
