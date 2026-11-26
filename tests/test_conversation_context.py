@@ -424,3 +424,15 @@ def test_grounding_accepts_exact_adjacent_and_repeated_citations(answer):
     from services.coworker.conversation_grounding import check_grounded_citations
 
     check_grounded_citations(answer, {"src-1": {}, "src-2": {}})
+
+@pytest.mark.parametrize("resource_type", [[], {}, ["artifact"], {"type": "artifact"}, None, True, 9])
+def test_invalid_resource_type_is_conflict_without_database_access(resource_type):
+    pin = {"resource_type": resource_type, "resource_id": "id", "sha256": "a" * 64}
+    # None is intentional: malformed pins must be rejected before any DB lookup.
+    assert revalidate_selected_sources(None, "owner", [pin]) == {
+        "active": [], "invalidated": [{"index": 0, "reason": "unavailable_or_changed"}],
+    }
+    with pytest.raises(CoworkerError) as error:
+        require_current_selected_sources(None, "owner", [pin])
+    assert error.value.code == "context_sources_changed"
+    assert error.value.status_code == 409
