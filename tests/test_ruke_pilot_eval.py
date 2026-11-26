@@ -1540,3 +1540,30 @@ def test_first_run_publication_is_atomic(tmp_path, monkeypatch, case):
         if os.name == "posix":
             assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert list(tmp_path.glob(".first-run.json.*.tmp")) == []
+
+
+@pytest.mark.parametrize("manifest_value", [[1], "not-an-object", 17, True, [], None])
+def test_day9_malformed_manifest_retains_failure_report(external_dir, monkeypatch, capsys, manifest_value):
+    import scripts.ruke_pilot_eval as module
+
+    manifest_path = external_dir / "manifest.json"
+    report_path = external_dir / "first-run.json"
+    manifest_path.write_text(json.dumps(manifest_value), encoding="utf-8")
+    original_read = module._read_json_and_sha256
+
+    def read_manifest_only(path):
+        assert path == manifest_path, "malformed manifest reached a protected evidence read"
+        return original_read(path)
+
+    monkeypatch.setattr(module, "_read_json_and_sha256", read_manifest_only)
+    assert module.main([
+        "evaluate", "--manifest", str(manifest_path),
+        "--heldout", str(external_dir / "never-read.jsonl"),
+        "--report", str(report_path),
+    ]) == 2
+    failure = json.loads(report_path.read_text(encoding="utf-8"))
+    assert failure["schema_version"] == 1
+    assert failure["qualified"] is False
+    assert failure["release_authorization"] is False
+    assert "must be an object" in failure["error"]
+    assert json.loads(capsys.readouterr().out)["sha256"] == hashlib.sha256(report_path.read_bytes()).hexdigest()
