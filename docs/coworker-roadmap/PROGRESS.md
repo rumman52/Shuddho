@@ -1,6 +1,8 @@
-## 26 November 2026 — Prompt 05 release-contract template integrity
+## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
 
-**SOURCE_IN_PROGRESS / controlled pilot NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; #922/#926 already merged. Test-first `6a3f03caf0b8e0115a16052840626bb178bd8779`; source `a1d3a370fda3507cab6b355df5f19aaa7e8cbd03`. Canonical checker now uses the existing bounded stable no-follow strict JSON reader. Isolated copied-excerpt reproduction RED 8 failed/3 passed; GREEN 11 passed, including valid Unicode control and injected parser error. Full checkout blocked by DNS; focused full-repo and exact-head CI plus distinct human review still required. [Task contract](P05_RELEASE_CONTRACT_INPUT_INTEGRITY_2026-11-26.md). No operational or acceptance credit, spending, deployment, provider, telemetry or authority changes.
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
+
+---
 
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 

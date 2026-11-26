@@ -87,8 +87,12 @@ def fraction(value, label: str) -> float:
 
 
 def load_plan(path: Path) -> dict:
-    value = load_json(path, "provider policy plan")
-    if set(value) != PLAN_KEYS:
+    return validate_plan(load_json(path, "provider policy plan"))
+
+
+def validate_plan(value: dict) -> dict:
+    """Validate an already-read plan without reopening its source path."""
+    if not isinstance(value, dict) or set(value) != PLAN_KEYS:
         raise ProviderPolicyError("Provider policy plan has an unexpected schema.")
     if not isinstance(value["release_id"], str) or not value["release_id"].strip():
         raise ProviderPolicyError("release_id is required.")

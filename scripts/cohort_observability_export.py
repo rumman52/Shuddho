@@ -93,11 +93,36 @@ def render_openmetrics(result: dict) -> str:
     add(sample("shuddho_coworker_cohort_model_failure_ratio", "Model/provider failed-or-unknown ratio in the current observation window.", provider["failure_rate"]))
     add(sample("shuddho_coworker_cohort_model_p95_latency_ms", "Observed p95 model/provider latency in milliseconds.", provider["p95_latency_ms"]))
     add(sample("shuddho_coworker_cohort_model_window_tokens", "Conservatively accounted model tokens in the current observation window, including in-flight reservations.", provider["window_tokens"]))
-    add(sample("shuddho_coworker_provider_active_leases", "Active shared provider-capacity leases across Coworker workers.", provider.get("active_leases", 0)))
-    add(sample("shuddho_coworker_provider_reserved_lease_tokens", "Tokens reserved by active shared provider-capacity leases.", provider.get("reserved_lease_tokens", 0)))
-    add(sample("shuddho_coworker_provider_oldest_lease_age_seconds", "Age in seconds of the oldest active provider-capacity lease.", provider.get("oldest_lease_age_seconds", 0)))
-    add(sample("shuddho_coworker_provider_daily_allocated_tokens", "Conservatively allocated provider tokens for the current UTC day across all workspaces.", provider.get("daily_allocated_tokens", 0)))
+    add(sample("shuddho_coworker_provider_active_leases", "Active shared provider-capacity leases across Coworker workers.", provider.get("active_leases")))
+    add(sample("shuddho_coworker_provider_reserved_lease_tokens", "Tokens reserved by active shared provider-capacity leases.", provider.get("reserved_lease_tokens")))
+    add(sample("shuddho_coworker_provider_oldest_lease_age_seconds", "Age in seconds of the oldest active provider-capacity lease.", provider.get("oldest_lease_age_seconds")))
+    add(sample("shuddho_coworker_provider_daily_allocated_tokens", "Conservatively allocated provider tokens for the current UTC day across all workspaces.", provider.get("daily_allocated_tokens")))
     add(sample("shuddho_coworker_cohort_model_reserved_attempts", "In-flight reserved model attempts in the current observation window.", provider["reserved_attempts"]))
+
+    dispatch = snapshot.get("dispatch", {})
+    for kind, prefix in (("tasks", "task"), ("agents", "agent")):
+        values = dispatch.get(kind, {})
+        for field, help_text in (
+            ("admissions", "Cohort outbox-backed admissions in the observation window."),
+            ("samples", "Admissions with a valid first durable dispatch claim."),
+            ("unobserved", "Admissions without a recorded claim on the configured queue."),
+            ("invalid_clock", "Admissions with a claim outside the valid time interval."),
+            ("p50_ms", "Observed median admission-to-first-claim delay in milliseconds."),
+            ("p95_ms", "Observed p95 admission-to-first-claim delay in milliseconds."),
+        ):
+            add(sample(f"shuddho_coworker_cohort_{prefix}_dispatch_{field}", help_text, values.get(field)))
+
+    workers = snapshot.get("workers", {})
+    for field, help_text in (
+        ("active_rows", "Active worker inventory rows on the configured queue."),
+        ("fresh_running", "Running worker rows within the configured heartbeat TTL."),
+        ("stale", "Active worker rows with a heartbeat older than the TTL."),
+        ("invalid_clock", "Active worker rows with invalid heartbeat chronology."),
+        ("starting", "Worker inventory rows in starting state."),
+        ("draining", "Worker inventory rows in draining state."),
+        ("oldest_valid_heartbeat_age_seconds", "Age of the oldest valid active heartbeat in seconds."),
+    ):
+        add(sample(f"shuddho_coworker_queue_worker_{field}", help_text, workers.get(field)))
 
     agents = snapshot["agents"]
     add(sample("shuddho_coworker_cohort_agent_samples", "Measured terminal Agent runs in the current observation window.", agents["samples"]))

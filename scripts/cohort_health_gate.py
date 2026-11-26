@@ -9,6 +9,7 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
+from scripts.cohort_dispatch_observability import collect_dispatch_observability
 from scripts.cohort_release_gate import load_rollout
 from scripts.ruke_pilot_eval import immutable_write, read_json as read_bounded_json
 from services.coworker.config import Settings
@@ -174,6 +175,9 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
             action_failed = sum(item.state in {"failed", "outcome_unknown"} for item in actions)
             action_unknown = sum(item.state == "outcome_unknown" for item in actions)
 
+            dispatch_observations = collect_dispatch_observability(
+                db, owners=owners, task_queue=settings.task_queue, cutoff=cutoff, now=now,
+            )
             storage_bytes = db.scalar(select(func.coalesce(func.sum(Account.storage_bytes), 0)).where(
                 Account.id.in_(owners)
             )) or 0
@@ -191,6 +195,7 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
             "generated_at": now.isoformat(),
             "window_minutes": window_minutes,
             "cohort_members_configured": len(owners),
+            **dispatch_observations,
             "active": {
                 "tasks": len(active_tasks),
                 "agent_runs": len(active_agents),
