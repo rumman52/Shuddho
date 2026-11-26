@@ -477,3 +477,92 @@ def test_rollout_and_worker_do_not_gain_derived_authority():
     value["capabilities"]["grounded_conversation_replies"] = False
     with pytest.raises(freeze.StagingReleaseFreezeError, match="capabilities"):
         freeze.validate_rollout(value)
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"environment":"production","environment":"staging"}',
+    b'{"nested":{"max_users":100,"max_users":5}}',
+    b'{"number":NaN}',
+    b'{"number":Infinity}',
+    b'{"number":-Infinity}',
+    b'{"number":1e999}',
+])
+def test_freeze_operator_json_rejects_ambiguous_values(tmp_path, raw):
+    path = tmp_path / "receipt.json"
+    path.write_bytes(raw)
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.load_json(path, "operator receipt")
+
+
+def test_freeze_operator_json_rejects_symlink(tmp_path):
+    target = write_json(tmp_path / "target.json", {"release_id": "synthetic"})
+    link = tmp_path / "link.json"
+    link.symlink_to(target)
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.load_json(link, "operator receipt")
+
+
+def test_freeze_operator_json_rejects_oversized_input(tmp_path):
+    path = tmp_path / "oversized.json"
+    path.write_bytes(b'{"padding":"' + b"x" * (1024 * 1024) + b'"}')
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.load_json(path, "operator receipt")
+
+
+def test_freeze_binds_validated_bytes_not_reopened_paths(tmp_path, monkeypatch):
+    import hashlib
+
+    candidate = rollout()
+    rollout_path = write_json(tmp_path / "rollout.json", candidate)
+    policy_path = write_json(tmp_path / "policy.json", {"release_id": candidate["release_id"]})
+    original_rollout_hash = hashlib.sha256(rollout_path.read_bytes()).hexdigest()
+    original_policy_hash = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+    real_validate = freeze.validate_provider_policy
+
+    def replace_paths_after_validation(policy, release_id):
+        real_validate(policy, release_id)
+        replacement = write_json(tmp_path / "new-rollout.json", {"environment": "production"})
+        replacement.replace(rollout_path)
+        replacement = write_json(tmp_path / "new-policy.json", {"release_id": "other"})
+        replacement.replace(policy_path)
+
+    monkeypatch.setattr(freeze, "validate_provider_policy", replace_paths_after_validation)
+    state = freeze.prepare_state(
+        rollout_path=rollout_path,
+        provider_policy_path=policy_path,
+        expected_source_revision="a" * 40,
+        build_reference="build-1",
+        deployment_reference="deploy-1",
+        synthetic_account_reference="synthetic-1",
+    )
+    assert state["rollout_manifest_sha256"] == original_rollout_hash
+    assert state["provider_policy_sha256"] == original_policy_hash
+    assert state["expected_environment"] == "staging"
+
+
+def test_freeze_prepare_publishes_private_receipt_without_overwrite(tmp_path, monkeypatch):
+    import stat
+
+    candidate = rollout()
+    rollout_path = write_json(tmp_path / "rollout.json", candidate)
+    policy_path = write_json(tmp_path / "policy.json", {"release_id": candidate["release_id"]})
+    state_path = tmp_path / "state.json"
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RELEASE_FREEZE", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setattr("sys.argv", [
+        "staging_release_freeze", "prepare",
+        "--rollout", str(rollout_path),
+        "--provider-policy-plan", str(policy_path),
+        "--expected-source-revision", "a" * 40,
+        "--build-reference", "build-1",
+        "--deployment-reference", "deploy-1",
+        "--synthetic-account-reference", "synthetic-1",
+        "--state", str(state_path),
+    ])
+    freeze.main()
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    original = state_path.read_bytes()
+    with pytest.raises(SystemExit) as exc:
+        freeze.main()
+    assert exc.value.code == 1
+    assert state_path.read_bytes() == original

@@ -12,6 +12,12 @@
 
 ---
 
+## 25 November 2026 — Day 2 release-freeze evidence custody (draft source repair)
+
+**IMPLEMENTED_UNVERIFIED / staging NO-GO.** Main base `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. The freeze CLI previously parsed permissive JSON, reopened rollout/provider-policy paths for hashing, and wrote prepared/frozen receipts with ordinary `write_text`. This bounded change reuses the secure snapshot reader and private atomic writer, adds regression tests, and preserves the existing release/rollout/runtime contract. Local isolated excerpt tests: 7 failing assertions before corresponding fixes, 7 passing afterward; not full repository CI. Source implementation head `3e752f5faee2a09563a8ff89d47d648162bd4962`. See [task contract](DAY2_FREEZE_EVIDENCE_CUSTODY_2026-11-25.md). Exact final PR-head mandatory CI and independent review remain required. No live staging or production mutations; no release gate advanced.
+
+---
+
 ## 24 November 2026 — Day 10 release-ledger operator-receipt pre-sign boundary ([draft PR #908](https://github.com/rumman52/Shuddho/pull/908))
 
 ## 2026-11-25 — Prompt 04 / CW-02 fault evidence strict types (#378)

@@ -12,6 +12,12 @@ from urllib.parse import urlparse
 
 import httpx
 
+from scripts.staging_release_evidence import (
+    StagingReleaseEvidenceError,
+    _read_rollout_manifest,
+    write_private_json,
+)
+
 
 SCHEMA_VERSION = 1  # PA-10 rollout / freeze evidence version
 RUNTIME_SCHEMA_VERSION = 2  # /api/v1/runtime-manifest
@@ -261,15 +267,21 @@ def text_ref(value: object, *, maximum: int = 500) -> bool:
     return isinstance(value, str) and bool(value.strip()) and len(value) <= maximum
 
 
-def load_json(path: Path, label: str) -> dict:
+def _load_json_snapshot(path: Path, label: str) -> tuple[dict, str]:
+    """Use the existing bounded, no-follow evidence reader for one snapshot."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        value, digest = _read_rollout_manifest(path)
+    except (StagingReleaseEvidenceError, RecursionError) as error:
         raise StagingReleaseFreezeError(
-            f"Could not read {label}: {type(error).__name__}"
+            f"Could not read {label}: {error}"
         ) from None
     if not isinstance(value, dict):
         raise StagingReleaseFreezeError(f"{label} must contain a JSON object.")
+    return value, digest
+
+
+def load_json(path: Path, label: str) -> dict:
+    value, _ = _load_json_snapshot(path, label)
     return value
 
 
@@ -429,9 +441,9 @@ def prepare_state(
     deployment_reference: str,
     synthetic_account_reference: str,
 ) -> dict:
-    rollout = load_json(rollout_path, "PA-10 staging rollout")
+    rollout, rollout_digest = _load_json_snapshot(rollout_path, "PA-10 staging rollout")
     validate_rollout(rollout)
-    policy = load_json(provider_policy_path, "provider-policy plan")
+    policy, policy_digest = _load_json_snapshot(provider_policy_path, "provider-policy plan")
     validate_provider_policy(policy, rollout["release_id"])
     if not valid_sha(expected_source_revision):
         raise StagingReleaseFreezeError(
@@ -455,8 +467,8 @@ def prepare_state(
         "build_reference": build_reference.strip(),
         "deployment_reference": deployment_reference.strip(),
         "synthetic_account_reference": synthetic_account_reference.strip(),
-        "rollout_manifest_sha256": sha256_file(rollout_path),
-        "provider_policy_sha256": sha256_file(provider_policy_path),
+        "rollout_manifest_sha256": rollout_digest,
+        "provider_policy_sha256": policy_digest,
         "declared_capabilities": rollout["capabilities"],
         "declared_action_providers": rollout["action_providers"],
         "declared_cohort": rollout["cohort"],
@@ -611,10 +623,7 @@ def main() -> None:
                 deployment_reference=args.deployment_reference,
                 synthetic_account_reference=args.synthetic_account_reference,
             )
-            args.state.write_text(
-                json.dumps(state, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            write_private_json(args.state, state)
             print(json.dumps({
                 "status": "prepared",
                 "state": str(args.state),
@@ -643,17 +652,14 @@ def main() -> None:
                 "runtime manifest",
             )
         evidence = verify_runtime(state, runtime)
-        args.output.write_text(
-            json.dumps(evidence, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_private_json(args.output, evidence)
         print(json.dumps({
             "status": evidence["status"],
             "output": str(args.output),
             "release": evidence["release"],
             "runtime_manifest_sha256": evidence["runtime_manifest_sha256"],
         }, indent=2))
-    except (OSError, httpx.HTTPError, StagingReleaseFreezeError) as error:
+    except (OSError, httpx.HTTPError, StagingReleaseFreezeError, StagingReleaseEvidenceError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))
         raise SystemExit(1) from None
 
