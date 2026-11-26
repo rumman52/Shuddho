@@ -1497,7 +1497,7 @@ def synthetic_git_checkout(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("case", [
     "clean", "modified", "staged", "untracked", "head_changed",
-    "dirty_during", "timeout", "no_git",
+    "dirty_during", "timeout", "no_git", "assume_unchanged", "skip_worktree",
 ])
 def test_preflight_requires_one_clean_exact_checkout(synthetic_git_checkout, monkeypatch, case):
     import subprocess
@@ -1511,6 +1511,9 @@ def test_preflight_requires_one_clean_exact_checkout(synthetic_git_checkout, mon
         source.write_text("value = 2\n", encoding="utf-8")
         if case == "staged":
             git("add", "source.py")
+    elif case in {"assume_unchanged", "skip_worktree"}:
+        git("update-index", "--" + case.replace("_", "-"), "source.py")
+        source.write_text("value = 2\n", encoding="utf-8")
     elif case == "untracked":
         (repo / "new_module.py").write_text("value = 2\n", encoding="utf-8")
     elif case == "no_git":
@@ -1542,7 +1545,7 @@ def test_preflight_requires_one_clean_exact_checkout(synthetic_git_checkout, mon
     else:
         with pytest.raises(EvidenceError):
             preflight()
-        if case in {"modified", "staged", "untracked", "no_git"}:
+        if case in {"modified", "staged", "untracked", "no_git", "assume_unchanged", "skip_worktree"}:
             assert checks_started == 0
 
 
