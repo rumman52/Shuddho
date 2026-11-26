@@ -83,7 +83,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [working, setWorking] = useState(false);
   const [briefMessageId, setBriefMessageId] = useState("");
   const [briefDraft, setBriefDraft] = useState<TaskBrief | null>(null);
-  const [briefPreview, setBriefPreview] = useState<TaskBriefPreview | null>(null);
+  const [briefPreview, setBriefPreview] = useState<{ value: TaskBriefPreview; explicitMemory: boolean } | null>(null);
   const [briefQuestion, setBriefQuestion] = useState("");
   const [steeringMessageId, setSteeringMessageId] = useState("");
   const [steeringDraft, setSteeringDraft] = useState("");
@@ -501,7 +501,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
         setBriefQuestion(suggestion.question ?? "Please clarify the requested task.");
       } else {
         setBriefDraft(suggestion.brief);
-        setBriefPreview(suggestion);
+        // Propose omits memory_pins, even when the memory feature is enabled.
+        setBriefPreview({ value: suggestion, explicitMemory: false });
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Task brief proposal failed.");
@@ -524,18 +525,21 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       const preview = await client.previewConversationTaskBrief(
         selected, item.id, item.sequence, briefDraft, projectId,
         memoryEnabled ? selectedMemoryPins : undefined);
-      if (selectedRef.current === selected) setBriefPreview(preview);
+      if (selectedRef.current === selected) setBriefPreview({ value: preview, explicitMemory: memoryEnabled });
     } catch (cause) {
       setBriefPreview(null);
       setError(cause instanceof Error ? cause.message : "Task brief could not be validated.");
     } finally { setWorking(false); }
   }
 
-  const reviewedPins = briefPreview?.memory_pins ?? [];
+  const reviewedPins = briefPreview?.value.memory_pins ?? [];
   const taskPins = memoryEnabled ? selectedMemoryPins : [];
-  const reviewedDigest = reviewedPins.length === taskPins.length && reviewedPins.every((pin, index) =>
-    pin.fact_id === taskPins[index].fact_id && pin.expected_version === taskPins[index].expected_version)
-    ? briefPreview?.canonical_digest : null;
+  // The backend distinguishes omitted pins (legacy) from explicit [] (no memory).
+  // Equal pin arrays alone do not establish that the digest reviewed this mode.
+  const reviewedDigest = briefPreview && briefPreview.explicitMemory === memoryEnabled
+    && reviewedPins.length === taskPins.length && reviewedPins.every((pin, index) =>
+      pin.fact_id === taskPins[index].fact_id && pin.expected_version === taskPins[index].expected_version)
+    ? briefPreview.value.canonical_digest : null;
 
   async function dispatch(item: ConversationMessageRecord) {
     if (!selected || working || !briefDraft || !reviewedDigest
