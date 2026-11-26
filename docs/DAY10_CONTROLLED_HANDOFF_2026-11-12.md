@@ -22,6 +22,24 @@ Existing `scripts/cohort_release_gate.py` remains the **canonical** `GO_CONTROLL
 
 Create the rollout from `docs/cohort-rollout.template.json` in a secure location, **adjust `cohort.max_users` from its generic 25-user example to 5–10 and fill every capability named in `RUNTIME_CAPABILITY_KEYS`**; the generic template is not a ready-to-run Day 10 rollout. Then collect real JSON receipts in an access-controlled release directory. Every operated receipt for `--rollback`, `--cancellation`, `--paused-schedule`, `--owner-isolation`, `--worker`, and `--schema` must contain the actual `release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`, `evidence_ref` and timezone-aware `verified_at` for that release; the schema receipt additionally binds `migration_revision=api_revision=worker_revision`. Do not put credentials or sensitive data into receipts. Additional facts: rollback must list actual verified global/agent kill switches plus observed worker stop and restoration; cancellation requires a run ID and zero late side effects; paused schedule requires a schedule ID and zero executions while paused; owner isolation requires distinct synthetic owner references and an observed cross-owner denial. Each of the 20 recovery cases must have its *own* evidence reference. Final golden must identify the same provider model as the live planner. The independent D holdout must contain a release-bound `custody_receipt` with independently controlled access and a negative developer-read check (the CLI cannot itself authenticate that claim).
 
+For `--final-runtime-readbacks`, D/C must independently collect a fresh,
+authenticated API/worker/schema identity readback **after the original Day 9
+report was generated**. Supply a private JSON object with the usual
+`release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`,
+`verified_at`, and `evidence_ref="sha256:<digest>"` of the independently retained
+original evidence, plus `readbacks` containing the same three exact
+`api`, `worker`, and `schema` row schemas as the original Day 9
+`candidate_readbacks`. Re-observe rather than copy the original rows.
+The validator recomputes the expected canonical readback digests and requires
+both sets to match the original frozen `candidate_identity`. It reconciles
+the final API/worker builds, Alembic revision, 43 capability flags and
+DeepSeek model with the actual Day 10 receipts and live quality/planner gates.
+The two independent written decisions must not predate this final readback.
+A missing, earlier, or inconsistent receipt is SOURCE_ONLY; archival evidence
+must not be rewritten. The CLI cannot authenticate the source systems or the
+private original evidence. The decision scorecard records the bounded final
+readback artifact's SHA-256.
+
 For `--recovery`, submit one release-bound `status="passed"` receipt per exact
 `scenario` in the [Day 9 operated inventory](coworker-roadmap/DAY9_PILOT_QUALIFICATION_2026-11-12.md#c--operated-scenario-inventory).
 Each receipt includes its own `id`, `evidence_ref`, and `verified_at`. Include
@@ -60,6 +78,34 @@ in `founder_decision` and `owner_c_decision`, containing:
   `rollback_owner` **and** the `rollback` operated proof's `rollback_owner`.
   D/C must authenticate the actual operator and private rollback evidence.
 
+The summary **and both separately signed private decisions** must also contain:
+
+- `scope_sha256`: the lowercase SHA-256 of the canonical UTF-8 JSON object with
+  exactly these fields from the reviewed rollout: `environment`,
+  `cohort` (only `reference` and `max_users`), all 43 explicit
+  `capabilities`, `action_providers` and `transaction_operations`
+  (absent lists are represented as empty lists). Canonical JSON uses sorted
+  object keys, compact separators, unescaped Unicode and rejects NaN/Infinity.
+  List order is preserved. This is computed by
+  `scripts.day10_release_decision.pilot_scope_sha256(rollout)`.
+  Both humans must inspect the actual frozen scope, not approve an unexplained hash.
+- `max_spend_microusd`: the identical nonnegative integer USD-micro-unit cap
+  across summary and both signoffs. Zero explicitly authorizes no spending.
+  This is a signed budget claim, **not** a billing control or authorization for
+  prior evaluation spend; the operator must separately enforce the approved cap.
+- `expires_at`: an identical timezone-aware future instant across summary and
+  both signoffs (different offsets for the same instant are accepted). Expired,
+  missing, naive or contradictory terms cannot qualify. Recheck the expiry,
+  scope, remaining approved spend and the canonical gate immediately before
+  manual admission. No automatic admission or ongoing spend authority.
+
+The decision output exposes only the validated `pilot_authorization_claim`
+(scope digest, spend cap, expiry), or null for an incomplete/inconsistent claim.
+Older records without these three terms remain archival, NOT QUALIFYING;
+do not retrofit them. Obtain new authentic decisions from each owner.
+
+The post-admission access verifier also requires the exact current `pilot_authorization_claim` in the Day 10 decision, checks it before private token reads and network probes, and rechecks expiry before publishing a passing receipt. A legacy READY decision with missing terms is nonqualifying. Neither command authenticates the humans or enforces actual spending; those remain the operator's responsibility. No automatic admissions.
+
 A legacy one-document approval may be retained as an **archival / NOT QUALIFYING**
 record; never rewrite it retrospectively to claim two independent signoffs.
 This CLI verifies only claimed receipt shapes, relative dates, hashes, identity
@@ -83,6 +129,7 @@ uv run --extra coworker python scripts/day10_release_decision.py \
   --owner-isolation /secure/release/owner-isolation.json \
   --golden /secure/release/final-golden-rerun.json \
   --day9-first-run /secure/release/day9-original-first-run.json \
+  --final-runtime-readbacks /secure/release/final-runtime-readbacks.json \
   --holdout /secure/release/independent-D-holdout.json \
   --recovery /secure/release/operated-recovery.json \
   --staging /secure/release/staging-evidence.json \

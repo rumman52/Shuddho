@@ -22,6 +22,7 @@ import stat
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
+from scripts.staging_release_evidence import write_private_bytes
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from services.coworker.schemas import parse_draft, source_references
 
@@ -72,10 +73,13 @@ def reviewer_identity(value: object) -> str | None:
     return identity if identity.strip() and len(identity) <= 128 else None
 
 
-def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
+def _read_evidence_bytes(
+    path: Path, *, max_bytes: int = MAX_BYTES, require_private: bool = False,
+) -> tuple[bytes, int]:
     """Read one bounded regular inode without following a final symlink.
 
     Parse and hash the same bytes: a pathname can change between two opens.
+    Secret consumers may retain a smaller bound and reject shared modes before reading.
     """
     if not hasattr(os, "O_NOFOLLOW"):
         raise EvidenceError("no-follow evidence reads are unavailable")
@@ -84,14 +88,16 @@ def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as stream:
             metadata = os.fstat(stream.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
                 raise EvidenceError("missing, linked, or oversized evidence file")
-            content = stream.read(MAX_BYTES + 1)
+            if require_private and (not metadata.st_mode & 0o400 or metadata.st_mode & 0o077):
+                raise EvidenceError("evidence file must be owner-private")
+            content = stream.read(max_bytes + 1)
             final_metadata = os.fstat(stream.fileno())
     except OSError as exc:
         raise EvidenceError("missing, linked, or oversized evidence file") from exc
     # A regular file may grow after fstat, so always cap the actual read.
-    if len(content) > MAX_BYTES:
+    if len(content) > max_bytes:
         raise EvidenceError("missing, linked, or oversized evidence file")
     # Reject a concurrent rewrite, growth, truncation or permission change.
     if (
@@ -339,7 +345,11 @@ def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
             raise EvidenceError(role + " readback fields are incomplete or unexpected")
         if any(row.get(key) != value for key, value in expected.items()):
             raise EvidenceError(role + " authenticated readback does not match candidate manifest")
-        if row.get("readback_sha256") != identity[f"{role}_readback_sha256"] or _readback_digest(row) != row.get("readback_sha256"):
+        # Python equality aliases True/1 and 12288/12288.0. The expected
+        # canonical bytes must match too, not merely the supplied self-digest.
+        if (row.get("readback_sha256") != identity[f"{role}_readback_sha256"]
+                or _readback_digest(row) != row.get("readback_sha256")
+                or canonical_sha256(expected) != row.get("readback_sha256")):
             raise EvidenceError(role + " readback digest does not match candidate manifest")
     schema = readbacks.get("schema")
     schema_expected = {
@@ -1142,26 +1152,55 @@ def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], comp
     return result
 
 def immutable_write(path: Path, obj: object) -> str:
-    """O_EXCL preserves first-run evidence; reruns require a NEW named path."""
+    """Publish one complete private first-run artifact; reruns need a new path."""
     content = (json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as fp:
-        fp.write(content)
-        fp.flush()
-        os.fsync(fp.fileno())
+    write_private_bytes(path, content)
     return hashlib.sha256(content).hexdigest()
 
 
+def _exact_checkout_revision(root: Path) -> str:
+    """Reject observable checkout drift; independent custody remains required."""
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+             "-c", "core.ignorestat=false", "-c", "core.untrackedCache=false", *args],
+            cwd=root, text=True, encoding="utf-8", errors="surrogateescape",
+            capture_output=True, timeout=10, check=True,
+        ).stdout
+
+    try:
+        if Path(git("rev-parse", "--show-toplevel").rstrip("\n")).resolve() != root.resolve():
+            raise EvidenceError("qualification requires the exact repository root")
+        head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
+        status = git("status", "--porcelain=v1", "-z", "--untracked-files=all",
+                     "--ignore-submodules=none")
+        index_entries = git("ls-files", "-v", "-z").split("\0")
+        final_head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise EvidenceError("cannot verify exact checkout identity") from exc
+    # A nominally clean status can hide assume-unchanged or skip-worktree files.
+    if (not REV.fullmatch(head) or final_head != head or status
+            or any(entry and not entry.startswith("H ") for entry in index_entries)):
+        raise EvidenceError("qualification requires a clean checkout at one exact revision")
+    return head
+
+
 def preflight() -> dict:
+    candidate_revision = _exact_checkout_revision(ROOT)
     commands = [
         [sys.executable, "-m", "scripts.release_contract_check"],
         [sys.executable, "-m", "pytest", "-q", "tests/test_ruke_pilot_eval.py", "tests/test_pilot_workflow_eval.py", "tests/test_release_contract.py"],
     ]
     checks = []
     for command in commands:
-        proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=600, check=False)
+        try:
+            proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=600, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise EvidenceError("repository preflight command did not complete") from exc
         checks.append({"command": command, "exit_code": proc.returncode, "stdout_tail": proc.stdout[-4000:], "stderr_tail": proc.stderr[-2000:]})
-    return {"candidate_revision": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True).stdout.strip(),
+    if _exact_checkout_revision(ROOT) != candidate_revision:
+        raise EvidenceError("checkout revision changed during repository preflight")
+    return {"candidate_revision": candidate_revision,
             "checks": checks, "passed": all(x["exit_code"] == 0 for x in checks)}
 
 
@@ -1224,8 +1263,7 @@ def main(argv=None) -> int:
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
             if not source_checks_ok(evidence, manifest):
                 raise EvidenceError("exact-head required CI and canonical release contract must pass before reading heldout bytes")
-            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
-                                  text=True, capture_output=True, check=True).stdout.strip()
+            head = _exact_checkout_revision(ROOT)
             if manifest.get("candidate_revision") != head:
                 raise EvidenceError("manifest revision differs from exact checkout head; heldout corpus was not read")
             cases = validate_manifest(manifest, args.heldout, custody_verified=True)
@@ -1346,6 +1384,9 @@ def main(argv=None) -> int:
                         "This report never authorizes activation.",
                     ],
                 }
+        if args.action in {"prepare-blind", "evaluate"}:
+            if _exact_checkout_revision(ROOT) != head:
+                raise EvidenceError("checkout revision changed before evidence publication")
         outputs = {}
         if args.report:
             digest = immutable_write(args.report, obj)
@@ -1373,7 +1414,7 @@ def main(argv=None) -> int:
         return 0
     except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         failure = {
-            "schema_version": 2 if manifest and manifest.get("schema_version") == 2 else 1,
+            "schema_version": 2 if isinstance(manifest, dict) and manifest.get("schema_version") == 2 else 1,
             "error": str(exc),
             "qualified": False,
             "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
