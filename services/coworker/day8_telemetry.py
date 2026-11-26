@@ -68,15 +68,28 @@ class EventPolicy:
     approved_api_host: str | None = None
 
     def permits(self) -> bool:
-        cloud_hosts = (
-            _POSTHOG_CLOUD_HOSTS.get(self.destination_region)
-            if type(self.destination_region) is str else None
-        )
+        # Type annotations and a frozen dataclass do not validate runtime
+        # values or freeze a mutable allowlist supplied by a caller. Reject
+        # non-primitive approval metadata before invoking any equality checks.
+        if not all(type(value) is str for value in (
+            self.environment, self.project_id, self.approved_project_id,
+            self.destination_region, self.approved_region,
+            self.privacy_approval_sha256, self.destination_ingestion_host,
+            self.approved_ingestion_host, self.destination_api_host,
+            self.approved_api_host,
+        )):
+            return False
+        if type(self.approved_provider_models) is not frozenset or not all(
+            type(pair) is tuple and len(pair) == 2
+            and all(type(value) is str for value in pair)
+            for pair in self.approved_provider_models
+        ):
+            return False
+        cloud_hosts = _POSTHOG_CLOUD_HOSTS.get(self.destination_region)
         return (
             self.enabled is True and self.privacy_scope_approved is True
             and self.consent_granted is True and self.kill_switch is False
             and self.environment == "staging" and bool(self.approved_provider_models)
-            and isinstance(self.project_id, str)
             and _PROJECT_ID.fullmatch(self.project_id) is not None
             and self.project_id == self.approved_project_id
             and self.destination_region in ("us", "eu")
@@ -88,8 +101,8 @@ class EventPolicy:
             and self.approved_api_host == cloud_hosts[1]
             and type(self.destination_retention_days) is int
             and 1 <= self.destination_retention_days <= 3650
+            and type(self.approved_retention_days) is int
             and self.destination_retention_days == self.approved_retention_days
-            and isinstance(self.privacy_approval_sha256, str)
             and _SHA256.fullmatch(self.privacy_approval_sha256) is not None
         )
 
@@ -131,9 +144,17 @@ def build_operational_event(
     An arbitrary exception, account ID, source pin, prompt or connector record
     never becomes an event field. Unknown numeric usage remains null, not zero.
     """
-    if not isinstance(policy, EventPolicy) or not policy.permits():
+    if type(policy) is not EventPolicy or not policy.permits():
         raise _invalid()
-    if not isinstance(raw, Mapping) or set(raw) - (REQUIRED_FIELDS | OPTIONAL_FIELDS):
+    if not isinstance(raw, Mapping):
+        raise _invalid()
+    # Validate and construct from the same private snapshot, never reread a
+    # caller-controlled mapping after its values passed the allowlist checks.
+    try:
+        raw = dict(raw)
+    except Exception:
+        raise _invalid() from None
+    if any(type(key) is not str for key in raw) or set(raw) - (REQUIRED_FIELDS | OPTIONAL_FIELDS):
         raise _invalid()
     if not REQUIRED_FIELDS.issubset(raw):
         raise _invalid()
@@ -174,10 +195,12 @@ def emit_operational_event(
     false sink acknowledgement or unawaited async result cannot qualify an
     operational receipt; never log raw payloads or sink exceptions.
     """
-    if sink is None or inspect.iscoroutinefunction(sink):
-        return False
     try:
+        if sink is None:
+            return False
         event_name, properties = build_operational_event(raw, policy)
+        if inspect.iscoroutinefunction(sink):
+            return False
         acknowledgement = sink(event_name, properties)
         if inspect.isawaitable(acknowledgement):
             # An async callable wrapped by a sync function must not be
