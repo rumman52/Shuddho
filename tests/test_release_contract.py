@@ -464,3 +464,14 @@ def test_microsoft_activation_requirement_is_provider_aware():
             {"google", "microsoft"},
         )
     ] == ["microsoft_actions"]
+
+
+def test_frozen_runtime_registry_reconciles_canonical_activation_contract():
+    from scripts.release_contract import FROZEN_DISABLED_RUNTIME_KEYS
+    from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
+
+    canonical = expected_rollout_capability_keys()
+    # Deliberate, reviewed differences rather than accepting arbitrary keys.
+    assert RUNTIME_CAPABILITY_KEYS - canonical == FROZEN_DISABLED_RUNTIME_KEYS
+    assert canonical - RUNTIME_CAPABILITY_KEYS == {"suggestion_model_relevance"}
+    assert not FROZEN_DISABLED_RUNTIME_KEYS & OPTIONAL_CAPABILITY_KEYS
