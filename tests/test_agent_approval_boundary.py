@@ -250,3 +250,88 @@ def test_phase5_planning_model_cannot_smuggle_linkedin_publish_when_gate_is_off(
             )
         )
     assert error.value.code == "approval_boundary"
+
+
+# All non-streaming planner entry points must share the same provider boundary.
+_PLANNER_CASES = [
+    ("decide", {"decision": "needs_input", "message": "Please clarify."}, "invalid_planner_output"),
+    ("propose", {"steps": [{"tool": "email.draft", "objective": "Draft the update."}]}, "invalid_planner_output"),
+    ("propose_code", {"source": "print('ok')\n"}, "invalid_code_proposal"),
+    ("propose_repository_patch", {"summary": "Draft patch", "changes": [
+        {"path": "example.py", "operation": "create", "content": "print('ok')\n", "rationale": "Example"}
+    ]}, "invalid_fly_patch"),
+]
+
+
+def _invoke_planner_boundary(method, body):
+    planner = DeepSeekAgentPlanner(
+        replace(settings(), deepseek_api_key="test-only-key"),
+        httpx.MockTransport(lambda _request: httpx.Response(200, json=body)),
+    )
+    if method == "decide":
+        return asyncio.run(planner.decide("Draft an update.", ["email.draft"], [],
+                                          remaining_budget={}, dependencies={}))
+    if method == "propose":
+        return asyncio.run(planner.propose("Draft an update.", ["email.draft"]))
+    if method == "propose_code":
+        return asyncio.run(planner.propose_code("Draft an example."))
+    return asyncio.run(planner.propose_repository_patch("Draft an example.", []))
+
+
+def _planner_boundary_body(content):
+    return {"choices": [{"index": 0, "finish_reason": "stop", "message": {
+        "role": "assistant", "content": json.dumps(content),
+    }}], "usage": {"total_tokens": 30, "prompt_tokens": 20, "completion_tokens": 10}}
+
+
+@pytest.mark.parametrize("method,content,code", _PLANNER_CASES)
+@pytest.mark.parametrize("invalid", ["role", "index", "bool_index", "error", "function_call",
+                                     "tool_calls", "refusal", "finish"])
+def test_all_planners_reject_unsafe_provider_envelopes(method, content, code, invalid):
+    from services.coworker.agent_planning_model import PlannerFailure
+
+    body = _planner_boundary_body(content)
+    choice, message = body["choices"][0], body["choices"][0]["message"]
+    if invalid == "role":
+        message["role"] = "user"
+    elif invalid == "index":
+        choice["index"] = 1
+    elif invalid == "bool_index":
+        choice["index"] = False
+    elif invalid == "error":
+        body["error"] = {"message": "private"}
+    elif invalid == "function_call":
+        message["function_call"] = {"name": "unsafe"}
+    elif invalid == "tool_calls":
+        message["tool_calls"] = [{"id": "unsafe"}]
+    elif invalid == "refusal":
+        message["refusal"] = "refused"
+    else:
+        choice["finish_reason"] = "length"
+
+    with pytest.raises(PlannerFailure) as error:
+        _invoke_planner_boundary(method, body)
+    assert error.value.code == code
+    assert error.value.total_tokens == 30
+    if method == "decide":
+        assert (error.value.input_tokens, error.value.output_tokens) == (20, 10)
+
+
+@pytest.mark.parametrize("method,content,_code", _PLANNER_CASES)
+@pytest.mark.parametrize("usage,expected", [
+    ({"total_tokens": -1}, None), ("malformed", None), ({"total_tokens": False}, None),
+    ({"total_tokens": 0}, 0), ({"total_tokens": 30}, 30), (None, None),
+])
+def test_all_planners_preserve_unknown_usage_and_valid_counts(method, content, _code, usage, expected):
+    body = _planner_boundary_body(content)
+    body["usage"] = usage
+    result = _invoke_planner_boundary(method, body)
+    assert result[1] == expected
+
+
+@pytest.mark.parametrize("method,content,_code", _PLANNER_CASES)
+def test_all_planners_accept_legacy_omitted_role_and_index(method, content, _code):
+    body = _planner_boundary_body(content)
+    del body["choices"][0]["index"]
+    del body["choices"][0]["message"]["role"]
+    assert _invoke_planner_boundary(method, body)[1] == 30
