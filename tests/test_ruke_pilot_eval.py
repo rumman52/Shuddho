@@ -1719,3 +1719,60 @@ def test_candidate_readback_digest_cannot_relabel_numeric_aliases_as_exact(role,
     value["candidate_identity"][f"{role}_readback_sha256"] = row["readback_sha256"]
     with pytest.raises(EvidenceError, match="readback"):
         validate_candidate_readbacks(value, readbacks)
+
+
+@pytest.mark.parametrize("kind", ["array", "object"])
+@pytest.mark.parametrize("depth", [129, 10_000])
+def test_strict_evidence_json_has_deterministic_nesting_bound(kind, depth):
+    if kind == "array":
+        raw = "[" * depth + "null" + "]" * depth
+    else:
+        raw = '{"nested":' * depth + "null" + "}" * depth
+    with pytest.raises(EvidenceError, match="nesting"):
+        strict_json_loads(raw)
+
+
+def test_evidence_nesting_bound_retains_exact_boundary_and_unicode_strings():
+    raw = "[" * 128 + '"[{বাংলা}]"' + "]" * 128
+    parsed = strict_json_loads(raw)
+    for _ in range(128):
+        parsed = parsed[0]
+    assert parsed == "[{বাংলা}]"
+    assert strict_json_loads("[" + ",".join(["0"] * 10_000) + "]") == [0] * 10_000
+
+
+def test_canonical_readback_rejects_excessive_depth_and_cycles():
+    nested = {}
+    for _ in range(129):
+        nested = {"nested": nested}
+    with pytest.raises(EvidenceError, match="canonical JSON"):
+        canonical_sha256(nested)
+    cyclic = {}
+    cyclic["nested"] = cyclic
+    with pytest.raises(EvidenceError, match="canonical JSON"):
+        canonical_sha256(cyclic)
+
+
+def test_day9_deep_manifest_preserves_failure_without_protected_read(external_dir, monkeypatch, capsys):
+    import scripts.ruke_pilot_eval as module
+
+    manifest_path = external_dir / "manifest.json"
+    report_path = external_dir / "first-run.json"
+    manifest_path.write_text('{"nested":' * 10_000 + "null" + "}" * 10_000, encoding="utf-8")
+    original_read = module._read_json_and_sha256
+
+    def read_manifest_only(path):
+        assert path == manifest_path, "deep manifest reached a protected evidence read"
+        return original_read(path)
+
+    monkeypatch.setattr(module, "_read_json_and_sha256", read_manifest_only)
+    assert module.main([
+        "evaluate", "--manifest", str(manifest_path),
+        "--heldout", str(external_dir / "never-read.jsonl"),
+        "--report", str(report_path),
+    ]) == 2
+    failure = json.loads(report_path.read_text(encoding="utf-8"))
+    assert failure["qualified"] is False
+    assert failure["release_authorization"] is False
+    assert "nesting" in failure["error"]
+    assert json.loads(capsys.readouterr().out)["sha256"] == hashlib.sha256(report_path.read_bytes()).hexdigest()
