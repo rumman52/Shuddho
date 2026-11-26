@@ -292,14 +292,13 @@ def memory_conflict(current_instruction: str, key: str, value: str) -> str | Non
             return name
 
     current = normalized_text(current_instruction)
-    remembered = normalized_text(value)
-    # A bounded generic override rule for explicit negation. We require a
-    # meaningful remembered phrase to appear after "do not"/"don't" so normal
-    # topic overlap does not suppress memory accidentally.
-    remembered_terms = [term for term in terms(remembered) if len(term) >= 4]
-    for term in remembered_terms[:12]:
-        if f"do not {term}" in current or f"don't {term}" in current:
-            return "explicit_negation"
+    # Compare whole words after explicit negation. Memory values and task
+    # instructions are already bounded; an arbitrary slice of a set made
+    # the result depend on Python's process-specific hash seed.
+    remembered_terms = terms(value)
+    negated_terms = re.findall(r"(?<!\w)(?:do not|don['’]t) (\w{4,})(?!\w)", current)
+    if remembered_terms.intersection(negated_terms):
+        return "explicit_negation"
     return None
 
 
