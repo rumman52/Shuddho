@@ -1377,19 +1377,13 @@ def compare_day8_development(baseline: dict, candidate: dict, suite: dict) -> di
 
 
 def _read_day8_input(path: Path) -> dict:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 2_000_000:
+    from scripts.ruke_pilot_eval import _read_evidence_bytes, strict_json_loads
+
+    # Read a bounded regular inode without a separate pathname check/reopen.
+    content, _ = _read_evidence_bytes(path)
+    if len(content) > 2_000_000:
         raise ValueError("Day 8 input must be a regular non-symlink file <=2 MB")
-    def unique(pairs):
-        value = {}
-        for key, element in pairs:
-            if key in value:
-                raise ValueError("duplicate Day 8 JSON key")
-            value[key] = element
-        return value
-    def invalid_constant(value):
-        raise ValueError(f"non-finite Day 8 JSON constant: {value}")
-    value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique,
-                       parse_constant=invalid_constant)
+    value = strict_json_loads(content.decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError("Day 8 input must be an object")
     return value
