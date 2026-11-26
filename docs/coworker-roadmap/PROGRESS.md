@@ -1,3 +1,9 @@
+## 26 November 2026 — Prompt 04 Day 8 telemetry privacy snapshot ([draft PR #933](https://github.com/rumman52/Shuddho/pull/933))
+
+**Source patch; no activation.** Base `43d99fd64467492a7da809cda0ae178191e53981`, test-only final `6a6cd0124bc6318ef21777bee8e615f049c17bb9`, source `cd77f5ddcee2d2743d733aec310b9a390c16ab9a`. Byte-verified full focused telemetry module/test pair: **RED 15 failed / 85 passed, GREEN 100 passed / 0 skipped**. Fixes validation/emission snapshot mismatch, exact immutable policy type bypasses, private exception handling and deny-before-collector inspection. [Contract](DAY8_TELEMETRY_SNAPSHOT_2026-11-26.md). No event sender, approved destination or live privacy receipt; no paid calls, deployment or production change. Exact-head mandatory CI and distinct review outstanding. Day 7/8 operational qualification remains blocked.
+
+---
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
