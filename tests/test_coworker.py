@@ -2837,6 +2837,9 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     assert value["capabilities"]["coworker"] is True
     assert value["capabilities"]["action_proposals"] is True
     assert value["capabilities"]["agent_browser_read"] is False
+    assert len(value["capabilities"]) == 44
+    assert "suggestion_model_relevance" not in value["capabilities"]
+    assert value["canonical_only_capabilities"] == {"suggestion_model_relevance": False}
     assert value["capabilities"]["action_selection"] is False
     assert value["capabilities"]["action_reminders"] is False
     assert value["capabilities"]["action_document_sharing"] is False
@@ -2860,6 +2863,7 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     # signed_client fixture; the isolated browser gate has no such fixture.
     activated_settings = replace(
         current, browser_enabled=True, agent_browser_read_enabled=True,
+        suggestion_model_relevance_enabled=True,
     )
     container.settings = activated_settings
     container.repository.settings = activated_settings
@@ -2869,6 +2873,7 @@ def test_runtime_manifest_is_authenticated_sanitized_and_uncached(
     assert enabled_response.headers["Cache-Control"] == "no-store"
     assert enabled_response.json()["capabilities"]["browser"] is True
     assert enabled_response.json()["capabilities"]["agent_browser_read"] is True
+    assert enabled_response.json()["canonical_only_capabilities"] == {"suggestion_model_relevance": True}
     assert client.get("/api/v1/runtime-manifest").status_code == 401
 
 

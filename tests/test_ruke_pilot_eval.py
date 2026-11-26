@@ -146,6 +146,7 @@ def _candidate_identity_base():
         "tool_registry_sha256": "4" * 64,
         "context_budget_bytes": 12_288,
         "runtime_capabilities": {key: False for key in RUNTIME_CAPABILITY_KEYS},
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
     }
 
 
@@ -161,6 +162,7 @@ def _readback_payloads(value):
         "context_budget_bytes": identity["context_budget_bytes"],
         "rollout_manifest_sha256": value["rollout_manifest_sha256"],
         "runtime_capabilities": identity["runtime_capabilities"],
+        "canonical_only_capabilities": identity["canonical_only_capabilities"],
     }
     api = {
         **common, "source_revision": identity["api_source_revision"],
@@ -1776,3 +1778,39 @@ def test_day9_deep_manifest_preserves_failure_without_protected_read(external_di
     assert failure["release_authorization"] is False
     assert "nesting" in failure["error"]
     assert json.loads(capsys.readouterr().out)["sha256"] == hashlib.sha256(report_path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("value", [
+    None, {}, {"suggestion_model_relevance": True},
+    {"suggestion_model_relevance": 0}, {"suggestion_model_relevance": "false"},
+    {"suggestion_model_relevance": False, "unknown": False},
+])
+def test_candidate_requires_disabled_canonical_only_setting(value):
+    frozen = manifest()
+    assert len(frozen["candidate_identity"]["runtime_capabilities"]) == 43
+    assert validate_candidate_identity(frozen)["canonical_only_capabilities"] == {
+        "suggestion_model_relevance": False,
+    }
+    frozen["candidate_identity"]["canonical_only_capabilities"] = value
+    with pytest.raises(EvidenceError):
+        validate_candidate_identity(frozen)
+
+
+def test_candidate_missing_canonical_only_setting_is_nonqualifying():
+    frozen = manifest()
+    frozen["candidate_identity"].pop("canonical_only_capabilities")
+    with pytest.raises(EvidenceError):
+        validate_candidate_identity(frozen)
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+@pytest.mark.parametrize("value", [None, {}, {"suggestion_model_relevance": True}, {"suggestion_model_relevance": 0}])
+def test_canonical_only_readback_cannot_differ_even_if_rehashed(role, value):
+    frozen = manifest()
+    rows = candidate_readbacks(frozen)
+    row = rows[role]
+    row["canonical_only_capabilities"] = value
+    row["readback_sha256"] = canonical_sha256({key: item for key, item in row.items() if key != "readback_sha256"})
+    frozen["candidate_identity"][f"{role}_readback_sha256"] = row["readback_sha256"]
+    with pytest.raises(EvidenceError, match="readback"):
+        validate_candidate_readbacks(frozen, rows)

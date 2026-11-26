@@ -40,11 +40,13 @@ def evidence():
            "build_digest": "sha256:" + "1" * 64,
            "capabilities": {**capabilities, "grounded_conversation_replies": capabilities["conversation_replies"]},
            "action_providers": [], "reviewed_skills": {},
+           "canonical_only_capabilities": {"suggestion_model_relevance": False},
            "cohort": {"enforced": True, "max_users": 5, "configured_members": 0}}
     worker = {**proof(), "deployment_reference": "worker-image-sha256:abc",
               "schema_version": 2, "environment": "production",
               "build_digest": "sha256:" + "2" * 64,
-              "capabilities": dict(capabilities), "action_providers": []}
+              "capabilities": dict(capabilities), "action_providers": [],
+              "canonical_only_capabilities": {"suggestion_model_relevance": False}}
     schema = {**proof(), "migration_revision": "0069", "api_revision": "0069", "worker_revision": "0069"}
     ci = {**proof(), "required_checks": {name: "success" for name in
           ("test-and-build", "Frontend tests and builds", "coworker", "browser-qualification",
@@ -216,6 +218,7 @@ def evidence():
         "model_id": "model-r", "prompt_registry_sha256": "3" * 64,
         "tool_registry_sha256": "4" * 64, "context_budget_bytes": 12_288,
         "runtime_capabilities": dict(capabilities),
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
     }
     common = {
         "release_id": RELEASE, "alembic_revision": identity["alembic_revision"],
@@ -224,6 +227,7 @@ def evidence():
         "tool_registry_sha256": identity["tool_registry_sha256"],
         "context_budget_bytes": identity["context_budget_bytes"],
         "rollout_manifest_sha256": HASH, "runtime_capabilities": dict(capabilities),
+        "canonical_only_capabilities": dict(identity["canonical_only_capabilities"]),
     }
     readbacks = {
         "api": {**common, "source_revision": REV, "build_digest": api["build_digest"]},
@@ -1496,3 +1500,30 @@ def test_day10_deep_evidence_produces_immutable_nogo(tmp_path, monkeypatch, caps
     assert day10.main(args) == 2
     assert output.read_bytes() == original
     assert "nested" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("role,blocker", [
+    ("api", "api_runtime_manifest_v2_exact_sha_and_flags"),
+    ("worker", "worker_exact_sha_and_deployment_receipt"),
+])
+@pytest.mark.parametrize("value", [
+    None, {}, {"suggestion_model_relevance": True},
+    {"suggestion_model_relevance": 0},
+    {"suggestion_model_relevance": False, "unknown": False},
+])
+def test_day10_rejects_unreviewed_canonical_only_authority(monkeypatch, role, blocker, value):
+    rollout, artifacts = evidence()
+    artifacts[role]["canonical_only_capabilities"] = value
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert blocker in result["blockers"]
+
+
+def test_day10_final_canonical_only_authority_cannot_drift(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["final_runtime_readbacks"]["readbacks"]["worker"]["canonical_only_capabilities"] = {
+        "suggestion_model_relevance": True,
+    }
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "final_runtime_matches_frozen_day9_identity" in result["blockers"]
