@@ -674,3 +674,48 @@ test("selected task memory is previewed, corrected versions are cleared, and onl
     assert.deepEqual(admissions, [[{ fact_id: factId, expected_version: 2 }]]);
   }, data);
 });
+
+
+for (const enabled of [true, false]) {
+  test(`task brief confirmation binds ${enabled ? "explicit empty" : "legacy omitted"} memory selection`, async () => {
+    const data = fixture([{ ...record, message_sequence: 1 }]);
+    const brief = { objective: "Create a report", deliverables: ["Report"], constraints: [],
+      source_ids: [] as string[], output_language: "en" };
+    const previews: Array<MemoryPin[] | undefined> = [];
+    const admissions: Array<{ pins: MemoryPin[] | undefined; digest: string | undefined }> = [];
+    Object.assign(data.client, {
+      memory: async () => ({ enabled, facts: [] }),
+      conversationHistory: async () => ({ items: [{
+        id: "message-1", conversation_id: record.id, sequence: 1, text: "Create a report",
+        created_at: timestamp, selected_sources: [], resource_links: [],
+      }] }),
+      proposeConversationTaskBrief: async () => ({ state: "ready", brief,
+        canonical_digest: "legacy-digest", memory_pins: [] }),
+      previewConversationTaskBrief: async (...args: Parameters<CoworkerClient["previewConversationTaskBrief"]>) => {
+        previews.push(args[5]);
+        return { state: "ready", brief: args[3], canonical_digest: "explicit-empty-digest", memory_pins: args[5] };
+      },
+      dispatchConversationMessage: async (...args: Parameters<CoworkerClient["dispatchConversationMessage"]>) => {
+        admissions.push({ pins: args[4], digest: args[6] });
+      },
+    });
+    await mount(async tree => {
+      await act(async () => tree.root.findAllByType("button").find(button => button.children.includes("Start task"))!.props.onClick());
+      const review = tree.root.findByProps({ "aria-label": "Review task brief" });
+      const submit = () => act(async () => review.findByType("form").props.onSubmit({ preventDefault() {} }));
+      assert.equal(admissions.length, 0);
+      if (enabled) {
+        assert.ok(review.findByType("button").children.includes("Validate task preview"));
+        await submit();
+        assert.deepEqual(previews, [[]]);
+        assert.equal(admissions.length, 0);
+      }
+      assert.ok(review.findByType("button").children.includes("Confirm and start reviewed task"));
+      await submit();
+      assert.deepEqual(admissions, enabled
+        ? [{ pins: [], digest: "explicit-empty-digest" }]
+        : [{ pins: undefined, digest: "legacy-digest" }]);
+      if (!enabled) assert.deepEqual(previews, []);
+    }, data);
+  });
+}
