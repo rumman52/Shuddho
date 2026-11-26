@@ -516,3 +516,52 @@ def test_local_storage_failed_put_preserves_object_and_removes_temporary(tmp_pat
     store.put(key, b"replacement", "text/plain")
     assert destination.read_bytes() == b"replacement"
     assert sorted(p.name for p in destination.parent.iterdir()) == [destination.name]
+
+
+@pytest.mark.parametrize("bad_contents", [{}, "", None, [None], ["owner/safe.txt"]])
+def test_s3_inventory_rejects_invalid_contents(bad_contents):
+    store, _ = _s3_listing_store({None: {"IsTruncated": False, "Contents": bad_contents}})
+    with pytest.raises(ValueError):
+        store.inventory()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("Key", 123), ("Key", None), ("Key", True),
+    ("Size", True), ("Size", 1.2), ("Size", "5"), ("Size", -1),
+])
+def test_s3_inventory_rejects_invalid_object_metadata(field, value):
+    row = _s3_item("owner/safe.txt")
+    row[field] = value
+    store, _ = _s3_listing_store({None: {"IsTruncated": False, "Contents": [row]}})
+    with pytest.raises(ValueError):
+        store.inventory()
+
+
+def test_s3_inventory_requires_object_size():
+    row = _s3_item("owner/safe.txt")
+    del row["Size"]
+    store, _ = _s3_listing_store({None: {"IsTruncated": False, "Contents": [row]}})
+    with pytest.raises(ValueError):
+        store.inventory()
+
+
+@pytest.mark.parametrize("count", [False, 0, 2, "1", 1.0])
+def test_s3_inventory_rejects_inconsistent_key_count(count):
+    store, _ = _s3_listing_store({None: {
+        "IsTruncated": False, "Contents": [_s3_item("owner/safe.txt")], "KeyCount": count,
+    }})
+    with pytest.raises(ValueError):
+        store.inventory()
+
+
+def test_s3_inventory_valid_empty_and_zero_byte_objects():
+    store, _ = _s3_listing_store({None: {"IsTruncated": False, "KeyCount": 0}})
+    assert store.inventory() == []
+    row = _s3_item("owner/safe.txt")
+    row["Size"] = 0
+    store, _ = _s3_listing_store({None: {
+        "IsTruncated": False, "KeyCount": 1, "Contents": [row],
+    }})
+    assert [(item.key, item.byte_size) for item in store.inventory(prefix="owner/")] == [
+        ("owner/safe.txt", 0),
+    ]
