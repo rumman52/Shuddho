@@ -88,7 +88,8 @@ class DeepSeekReplyModel:
             raise ValueError("Incomplete reply")
         message = choices[0]["message"]
         text = message.get("content")
-        if message.get("tool_calls") or message.get("refusal") or not isinstance(text, str) or not text.strip():
+        if (message.get("tool_calls") or message.get("function_call") is not None
+            or message.get("refusal") or not isinstance(text, str) or not text.strip()):
             raise ValueError("Invalid reply")
         if len(text.encode("utf-8")) > 16000:
             raise ValueError("Reply too long")
@@ -155,8 +156,10 @@ class DeepSeekReplyModel:
                             choice = choices[0]
                             if not isinstance(choice, dict):
                                 raise ValueError("Malformed provider stream")
-                            delta = choice.get("delta") or {}
-                            if not isinstance(delta, dict) or delta.get("tool_calls") or delta.get("refusal"):
+                            # Do not turn malformed falsy provider values into valid terminal objects.
+                            delta = choice.get("delta")
+                            if (not isinstance(delta, dict) or delta.get("tool_calls")
+                                or delta.get("function_call") is not None or delta.get("refusal")):
                                 raise ValueError("Unsafe provider stream")
                             content = delta.get("content")
                             if content is not None:

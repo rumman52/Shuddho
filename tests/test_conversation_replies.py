@@ -1076,3 +1076,38 @@ def test_grounded_stream_never_displays_or_saves_unclosed_source_lookalike(conta
     with container.repository.sessions() as db:
         assert db.scalar(select(AgentRun)) is None
         assert db.get(ConversationMessage, message["id"]).assistant_reply["text"] == ""
+
+
+@pytest.mark.parametrize("bad_delta", [None, False, 0, "", [], {"function_call": {"name": "send_email"}}])
+def test_deepseek_stream_rejects_malformed_terminal_delta_after_text(container, bad_delta):
+    import httpx
+    import json
+    from services.coworker.conversation_replies import DeepSeekReplyModel
+
+    frames = [
+        {"choices": [{"delta": {"content": "বাংলা উত্তর"}, "finish_reason": None}]},
+        {"choices": [{"delta": bad_delta, "finish_reason": "stop"}]},
+    ]
+    body = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
+    model = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(lambda request: httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=body)))
+
+    async def collect():
+        return [part async for part in model.stream([{"role": "user", "content": "Hi"}])]
+
+    with pytest.raises(ValueError):
+        asyncio.run(collect())
+
+
+def test_deepseek_nonstream_reply_rejects_legacy_function_call(container):
+    import httpx
+    from services.coworker.conversation_replies import DeepSeekReplyModel
+
+    body = {"choices": [{"finish_reason": "stop", "message": {
+        "content": "fake action", "function_call": {"name": "send_email", "arguments": "{}"},
+    }}]}
+    model = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(lambda request: httpx.Response(200, json=body)))
+    with pytest.raises(ValueError):
+        asyncio.run(model.generate([{"role": "user", "content": "Hi"}]))
