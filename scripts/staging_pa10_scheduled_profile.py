@@ -288,6 +288,20 @@ DAILY_PREPARED_PROFILE_FIELDS = (
 )
 
 
+def require_daily_policy(profile: dict) -> None:
+    """Reject a non-contract pilot policy before preparing or accepting evidence."""
+    # The gate imports load_json from this module, so load the shared validator
+    # lazily, after both modules have finished initialization.
+    if __package__:
+        from .staging_day7_two_day_gate import GateFailure, require_daily_calendar
+    else:
+        from staging_day7_two_day_gate import GateFailure, require_daily_calendar
+    try:
+        require_daily_calendar(profile)
+    except GateFailure as error:
+        raise ScheduledProfileProbeFailure(f"Daily briefing policy rejected: {error}") from None
+
+
 def require_prepared_daily_profile(prepared: dict, automation: dict) -> None:
     """Bind the live scheduled profile to the exact owner-approved snapshot.
 
@@ -308,6 +322,9 @@ def require_prepared_daily_profile(prepared: dict, automation: dict) -> None:
         raise ScheduledProfileProbeFailure(
             "Daily briefing schedule or delivery policy drifted from the prepared owner-approved profile."
         )
+    # Equal values are not proof of validity (e.g. 3600.0 == 3600).
+    require_daily_policy(prepared)
+    require_daily_policy(automation)
 
 
 def load_owned(
@@ -394,6 +411,8 @@ def prepare(args: argparse.Namespace) -> dict:
             client, token, args.rollout, args.provider_policy_plan
         )
         current = load_owned(client, token, args.automation_id, args.scenario)
+    if args.scenario == "daily_coworker":
+        require_daily_policy(current["automation"])
     state = {
         "schema_version": STATE_SCHEMA_VERSION,
         "evidence_kind": "pa10_scheduled_profile",

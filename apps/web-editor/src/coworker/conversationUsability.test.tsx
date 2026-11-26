@@ -674,3 +674,67 @@ test("selected task memory is previewed, corrected versions are cleared, and onl
     assert.deepEqual(admissions, [[{ fact_id: factId, expected_version: 2 }]]);
   }, data);
 });
+
+
+test("explicitly empty memory selection requires its own validated digest", async () => {
+  const data = fixture([{ ...record, message_sequence: 1 }]);
+  const brief = { objective: "Create a report", deliverables: ["Report"], constraints: [], source_ids: [], output_language: "en" };
+  const previews: (MemoryPin[] | undefined)[] = [];
+  const starts: { pins: MemoryPin[] | undefined; digest: string | undefined }[] = [];
+  Object.assign(data.client, {
+    memory: async () => ({ enabled: true, facts: [], max_selected_facts: 2 }),
+    conversationHistory: async () => ({ items: [{
+      id: "message-1", conversation_id: record.id, sequence: 1, text: "Create a report", created_at: timestamp,
+      selected_sources: [], resource_links: [],
+    }] }),
+    proposeConversationTaskBrief: async () => ({ state: "ready", brief, canonical_digest: "legacy-v1", memory_pins: [] }),
+    previewConversationTaskBrief: async (...args: Parameters<CoworkerClient["previewConversationTaskBrief"]>) => {
+      previews.push(args[5]);
+      return { state: "ready", brief, canonical_digest: "explicit-empty-v2", memory_pins: args[5] };
+    },
+    dispatchConversationMessage: async (...args: Parameters<CoworkerClient["dispatchConversationMessage"]>) => {
+      starts.push({ pins: args[4], digest: args[6] });
+      return { run_id: "run-day5", state: "queued", replayed: false };
+    },
+  });
+  await mount(async tree => {
+    await act(async () => tree.root.findAllByType("button").find(button => button.children.includes("Start task"))!.props.onClick());
+    const form = tree.root.findByProps({ "aria-label": "Review task brief" }).findByType("form");
+    assert.ok(form.findByType("button").children.includes("Validate task preview"));
+    await act(async () => form.props.onSubmit({ preventDefault() {} }));
+    assert.deepEqual(previews, [[]]);
+    assert.equal(starts.length, 0);
+    assert.ok(form.findByType("button").children.includes("Confirm and start reviewed task"));
+    await act(async () => form.props.onSubmit({ preventDefault() {} }));
+    assert.deepEqual(starts, [{ pins: [], digest: "explicit-empty-v2" }]);
+  }, data);
+});
+
+test("selected-memory preview displays exact IDs and enforces lower server cap", async () => {
+  const data = fixture([{ ...record, message_sequence: 1 }]);
+  const facts: MemoryFact[] = ["a", "b", "c", "expired"].map((id, index) => ({
+    id: "fact-" + id, namespace: "project", key: id, value: "Synthetic memory " + id,
+    language: "en", version: 2, active: index < 3,
+  }));
+  Object.assign(data.client, {
+    memory: async () => ({ enabled: true, facts, max_selected_facts: 2 }),
+    conversationHistory: async () => ({ items: [{
+      id: "message-1", conversation_id: record.id, sequence: 1, text: "Create a report", created_at: timestamp,
+      selected_sources: [], resource_links: [],
+    }] }),
+  });
+  await mount(async tree => {
+    const pick = (id: string) => tree.root.findByProps({ "aria-label": "Use memory project / " + id + " in next task" });
+    assert.equal(pick("expired").props.disabled, true);
+    for (const id of ["a", "b"]) await act(async () => pick(id).props.onChange({ target: { checked: true } }));
+    assert.equal(pick("c").props.disabled, true);
+    const preview = tree.root.findByProps({ "aria-label": "Selected task memories" });
+    assert.deepEqual(preview.findAllByType("code").map(node => node.children.join("")), ["fact-a", "fact-b"]);
+    // A queued event must not exceed the configured cap even if delivered
+    // after the checkbox became disabled.
+    await act(async () => pick("c").props.onChange({ target: { checked: true } }));
+    assert.equal(pick("c").props.checked, false);
+    await act(async () => pick("a").props.onChange({ target: { checked: false } }));
+    assert.equal(pick("c").props.disabled, false);
+  }, data);
+});

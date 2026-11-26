@@ -35,16 +35,18 @@ def evidence():
                     for key in day10.RUNTIME_CAPABILITY_KEYS}
     rollout = {"release_id": RELEASE, "environment": "production", "action_providers": [],
                "capabilities": capabilities,
-               "cohort": {"max_users": 5}}
+               "cohort": {"reference": "synthetic-private-cohort", "max_users": 5}}
     api = {"schema_version": 2, "source_revision": REV, "environment": "production",
            "build_digest": "sha256:" + "1" * 64,
            "capabilities": {**capabilities, "grounded_conversation_replies": capabilities["conversation_replies"]},
            "action_providers": [], "reviewed_skills": {},
+           "canonical_only_capabilities": {"suggestion_model_relevance": False},
            "cohort": {"enforced": True, "max_users": 5, "configured_members": 0}}
     worker = {**proof(), "deployment_reference": "worker-image-sha256:abc",
               "schema_version": 2, "environment": "production",
               "build_digest": "sha256:" + "2" * 64,
-              "capabilities": dict(capabilities), "action_providers": []}
+              "capabilities": dict(capabilities), "action_providers": [],
+              "canonical_only_capabilities": {"suggestion_model_relevance": False}}
     schema = {**proof(), "migration_revision": "0069", "api_revision": "0069", "worker_revision": "0069"}
     ci = {**proof(), "required_checks": {name: "success" for name in
           ("test-and-build", "Frontend tests and builds", "coworker", "browser-qualification",
@@ -124,17 +126,30 @@ def evidence():
             },
         } for i, (name, targets) in OPERATED.items()],
     }
-    approval = {**proof(), "explicit_separate_authorization": True,
+    # Independently compute the proposed scope digest; this fixture is synthetic.
+    scope = {
+        "environment": rollout["environment"], "cohort": rollout["cohort"],
+        "capabilities": rollout["capabilities"], "action_providers": rollout["action_providers"],
+        "transaction_operations": rollout.get("transaction_operations", []),
+    }
+    terms = {
+        "scope_sha256": hashlib.sha256(json.dumps(
+            scope, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest(),
+        "max_spend_microusd": 1_000_000,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+    }
+    approval = {**proof(), **terms, "explicit_separate_authorization": True,
                 "reference": "founder-C-approved-change", "founder": "founder-signoff",
                 "owner_c": "C-signoff", "max_users": 5,
                 "rollback_owner": "operator-C",
                 # Separate dated, release-bound, privately retained receipt
                 # claims. These synthetic strings do NOT attest real signers.
-                "founder_decision": {**proof(), "signer_id": "founder-signoff",
+                "founder_decision": {**proof(), **terms, "signer_id": "founder-signoff",
                                      "decision": "approve_controlled_pilot",
                                      "evidence_ref": "sha256:" + "6" * 64,
                                      "max_users": 5, "rollback_owner": "operator-C"},
-                "owner_c_decision": {**proof(), "signer_id": "C-signoff",
+                "owner_c_decision": {**proof(), **terms, "signer_id": "C-signoff",
                                      "decision": "approve_controlled_pilot",
                                      "evidence_ref": "sha256:" + "7" * 64,
                                      "max_users": 5, "rollback_owner": "operator-C"}}
@@ -203,6 +218,7 @@ def evidence():
         "model_id": "model-r", "prompt_registry_sha256": "3" * 64,
         "tool_registry_sha256": "4" * 64, "context_budget_bytes": 12_288,
         "runtime_capabilities": dict(capabilities),
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
     }
     common = {
         "release_id": RELEASE, "alembic_revision": identity["alembic_revision"],
@@ -211,6 +227,7 @@ def evidence():
         "tool_registry_sha256": identity["tool_registry_sha256"],
         "context_budget_bytes": identity["context_budget_bytes"],
         "rollout_manifest_sha256": HASH, "runtime_capabilities": dict(capabilities),
+        "canonical_only_capabilities": dict(identity["canonical_only_capabilities"]),
     }
     readbacks = {
         "api": {**common, "source_revision": REV, "build_digest": api["build_digest"]},
@@ -1333,6 +1350,63 @@ def test_day10_cli_writes_new_decision_private_and_exclusive(tmp_path, monkeypat
 
 
 @pytest.mark.parametrize("case", [
+    "valid", "zero", "timezone", "missing_scope", "wrong_scope", "rollout_scope_drift",
+    "missing_spend", "boolean_spend", "negative_spend", "receipt_spend_drift",
+    "receipt_scope_drift", "missing_expiry", "expired", "naive", "receipt_expiry_drift",
+])
+def test_day10_two_signers_bind_budget_scope_and_expiry(monkeypatch, case):
+    rollout, artifacts = evidence()
+    approval = artifacts["approval"]
+    expires = datetime.fromisoformat(approval["expires_at"])
+    if case == "zero":
+        for row in (approval, approval["founder_decision"], approval["owner_c_decision"]):
+            row["max_spend_microusd"] = 0
+    elif case == "timezone":
+        approval["owner_c_decision"]["expires_at"] = expires.astimezone(
+            timezone(timedelta(hours=6))
+        ).isoformat()
+    elif case == "missing_scope":
+        approval.pop("scope_sha256")
+    elif case == "wrong_scope":
+        approval["scope_sha256"] = "e" * 64
+    elif case == "rollout_scope_drift":
+        rollout["cohort"]["reference"] = "different-private-cohort"
+    elif case == "missing_spend":
+        approval.pop("max_spend_microusd")
+    elif case == "boolean_spend":
+        approval["max_spend_microusd"] = True
+    elif case == "negative_spend":
+        approval["max_spend_microusd"] = -1
+    elif case == "receipt_spend_drift":
+        approval["owner_c_decision"]["max_spend_microusd"] += 1
+    elif case == "receipt_scope_drift":
+        approval["founder_decision"]["scope_sha256"] = "e" * 64
+    elif case == "missing_expiry":
+        approval.pop("expires_at")
+    elif case == "expired":
+        for row in (approval, approval["founder_decision"], approval["owner_c_decision"]):
+            row["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    elif case == "naive":
+        approval["expires_at"] = expires.replace(tzinfo=None).isoformat()
+    elif case == "receipt_expiry_drift":
+        approval["owner_c_decision"]["expires_at"] = (expires + timedelta(seconds=1)).isoformat()
+
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["pilot_activated"] is False
+    if case in {"valid", "zero", "timezone"}:
+        assert result["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+        assert result["pilot_authorization_claim"] == {
+            "scope_sha256": approval["scope_sha256"],
+            "max_spend_microusd": approval["max_spend_microusd"],
+            "expires_at": approval["expires_at"],
+        }
+    else:
+        assert result["decision"] == "STAGING_ONLY"
+        assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+        assert result["pilot_authorization_claim"] is None
+
+
+@pytest.mark.parametrize("case", [
     "valid", "api_build", "worker_build", "schema", "model", "missing_final",
     "registry", "budget", "missing_first", "early", "future", "wrong_release",
     "wrong_provider", "flags", "forged_digest", "unbound_reference",
@@ -1403,3 +1477,53 @@ def test_final_runtime_readback_must_precede_separate_signoffs(monkeypatch):
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "STAGING_ONLY"
     assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+
+
+def test_day10_deep_evidence_produces_immutable_nogo(tmp_path, monkeypatch, capsys):
+    rollout_path = tmp_path / "rollout.json"
+    output = tmp_path / "first-decision.json"
+    rollout_path.write_text('{"nested":' * 10_000 + "null" + "}" * 10_000, encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("malformed rollout reached release decision")
+
+    monkeypatch.setattr(day10, "decide", forbidden)
+    args = ["--rollout", str(rollout_path), "--source-revision", REV, "--output", str(output)]
+    assert day10.main(args) == 1
+    original = output.read_bytes()
+    receipt = json.loads(original)
+    assert receipt["decision"] == "SOURCE_ONLY"
+    assert receipt["canonical_decision"] == "NO-GO"
+    assert receipt["pilot_activated"] is False
+    assert "EvidenceError" in receipt["blockers"][0]
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert day10.main(args) == 2
+    assert output.read_bytes() == original
+    assert "nested" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("role,blocker", [
+    ("api", "api_runtime_manifest_v2_exact_sha_and_flags"),
+    ("worker", "worker_exact_sha_and_deployment_receipt"),
+])
+@pytest.mark.parametrize("value", [
+    None, {}, {"suggestion_model_relevance": True},
+    {"suggestion_model_relevance": 0},
+    {"suggestion_model_relevance": False, "unknown": False},
+])
+def test_day10_rejects_unreviewed_canonical_only_authority(monkeypatch, role, blocker, value):
+    rollout, artifacts = evidence()
+    artifacts[role]["canonical_only_capabilities"] = value
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert blocker in result["blockers"]
+
+
+def test_day10_final_canonical_only_authority_cannot_drift(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["final_runtime_readbacks"]["readbacks"]["worker"]["canonical_only_capabilities"] = {
+        "suggestion_model_relevance": True,
+    }
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "final_runtime_matches_frozen_day9_identity" in result["blockers"]

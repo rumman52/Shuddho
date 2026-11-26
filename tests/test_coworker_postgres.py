@@ -1531,3 +1531,114 @@ def test_agent_decision_latency_migration_is_applied(repository):
             )
         }
     assert "latency_ms" in columns
+
+
+def test_postgres_memory_pin_locks_serialize_correction_and_deletion(repository):
+    """Selected pins remain locked through the calling persistence transaction."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import DBAPIError
+    from services.coworker.memory_repository import MemoryRepository, require_current_memory_pins
+    from services.coworker.memory_schemas import MemoryFactCreate
+    from services.coworker.models import MemoryFact, Workspace
+
+    settings = replace(repository.settings, agent_memory_enabled=True)
+    identity = owner(repository)
+    memory = MemoryRepository(repository.sessions, settings)
+    selected = [
+        memory.create(identity, MemoryFactCreate(
+            namespace="project", key=f"pin-{i}", value=f"Synthetic fact {i}.",
+        ))
+        for i in range(2)
+    ]
+    unrelated = memory.create(identity, MemoryFactCreate(
+        namespace="project", key="unselected", value="Unselected synthetic fact.",
+    ))
+    ordered = sorted(selected, key=lambda fact: fact["id"], reverse=True)
+    pins = [{"fact_id": fact["id"], "expected_version": fact["version"]} for fact in ordered]
+
+    with repository.sessions.begin() as db:
+        workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == identity))
+        resolved = require_current_memory_pins(db, identity, workspace_id, pins, settings)
+        assert [row.id for row in resolved] == [fact["id"] for fact in ordered]
+        # NOWAIT exercises the actual PostgreSQL lock used by correction and
+        # deletion, without sleeps or hanging the CI runner on a missing lock.
+        for fact in selected:
+            with pytest.raises(DBAPIError) as denied:
+                with repository.sessions.begin() as concurrent:
+                    concurrent.scalar(select(MemoryFact).where(
+                        MemoryFact.id == fact["id"],
+                    ).with_for_update(nowait=True))
+            assert getattr(denied.value.orig, "sqlstate", None) == "55P03"
+        with repository.sessions.begin() as concurrent:
+            assert concurrent.scalar(select(MemoryFact).where(
+                MemoryFact.id == unrelated["id"],
+            ).with_for_update(nowait=True)).id == unrelated["id"]
+
+    # After the outer commit, the selected rows are no longer locked.
+    with repository.sessions.begin() as db:
+        for fact in selected:
+            assert db.scalar(select(MemoryFact).where(
+                MemoryFact.id == fact["id"],
+            ).with_for_update(nowait=True)).id == fact["id"]
+
+
+def test_postgres_memory_pin_validation_refreshes_cached_version(repository):
+    from sqlalchemy import select
+    from services.coworker.memory_repository import MemoryRepository, require_current_memory_pins
+    from services.coworker.memory_schemas import MemoryFactCreate, MemoryFactUpdate
+    from services.coworker.models import MemoryFact, Workspace
+
+    settings = replace(repository.settings, agent_memory_enabled=True)
+    identity = owner(repository)
+    memory = MemoryRepository(repository.sessions, settings)
+    fact = memory.create(identity, MemoryFactCreate(
+        namespace="project", key="version", value="Synthetic version one.",
+    ))
+    with repository.sessions.begin() as db:
+        workspace_id = db.scalar(select(Workspace.id).where(Workspace.owner_id == identity))
+        cached = db.get(MemoryFact, fact["id"])
+        assert cached.version == 1
+        assert memory.update(identity, fact["id"], MemoryFactUpdate(
+            expected_version=1, value="Synthetic version two.",
+        ))["version"] == 2
+        with pytest.raises(CoworkerError) as denied:
+            require_current_memory_pins(
+                db, identity, workspace_id,
+                [{"fact_id": fact["id"], "expected_version": 1}], settings,
+            )
+        assert denied.value.code == "memory_pins_changed"
+        assert cached.version == 2
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_postgres_memory_mutation_locks_owner_before_fact(repository, operation):
+    from services.coworker.memory_repository import MemoryRepository
+    from services.coworker.memory_schemas import MemoryFactCreate, MemoryFactUpdate
+
+    settings = replace(repository.settings, agent_memory_enabled=True)
+    identity = owner(repository)
+    memory = MemoryRepository(repository.sessions, settings)
+    fact = memory.create(identity, MemoryFactCreate(
+        namespace="project", key="lock-order", value="Synthetic fact.",
+    ))
+    statements = []
+    engine = repository.sessions.kw["bind"]
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "FOR " in statement.upper():
+            statements.append(statement.upper())
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        if operation == "update":
+            assert memory.update(identity, fact["id"], MemoryFactUpdate(
+                expected_version=1, value="Corrected synthetic fact.",
+            ))["version"] == 2
+        else:
+            assert memory.delete(identity, fact["id"])["deleted"] is True
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert len(statements) >= 2
+    assert "CW_ACCOUNTS" in statements[0] and "FOR NO KEY UPDATE" in statements[0]
+    assert "CW_MEMORY_FACTS" in statements[1] and "FOR UPDATE" in statements[1]

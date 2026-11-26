@@ -414,13 +414,14 @@ def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
     for name in freeze.PA10_REQUIRED_TRUE:
         caps[name] = True
     state = {
-        "schema_version": 1, "status": "prepared", "release_id": "stage-day2-001",
+        "schema_version": 1, "evidence_kind": freeze.EVIDENCE_KIND,
+        "status": "prepared", "release_id": "stage-day2-001",
         "expected_environment": "staging", "expected_source_revision": SHA,
         # The reviewed rollout/worker declares 43 controls. The API response
         # adds one separately checked UI-derived field.
         "declared_capabilities": {key: caps[key] for key in freeze.RUNTIME_CAPABILITY_KEYS},
-        "declared_action_providers": [],
-        "declared_cohort": {"enforced": True, "max_users": 5},
+        "declared_action_providers": ["google", "microsoft"],
+        "declared_cohort": {"reference": "synthetic-cohort", "enforced": True, "max_users": 5},
         "build_reference": "image@sha256:test", "deployment_reference": "deploy-001",
         "rollout_manifest_sha256": "1" * 64, "provider_policy_sha256": "2" * 64,
         "synthetic_account_reference": "synthetic-owners-ref", "prepared_at": "2026-11-12T00:00:00+00:00",
@@ -428,7 +429,7 @@ def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
     # The runtime's additional v2 capability names must be explicit false,
     # rather than silently ignored by the release-freeze verifier.
     manifest["capabilities"] = caps
-    manifest["action_providers"] = []
+    manifest["action_providers"] = ["google", "microsoft"]
     manifest["cohort"] = {"enforced": True, "max_users": 5, "configured_members": 2}
     result = freeze.verify_runtime(state, manifest)
     assert result["status"] == "frozen"
