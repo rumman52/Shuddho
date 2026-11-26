@@ -59,7 +59,12 @@ def build_reply_messages(history, project_context=None, grounding=None):
         turn = [{"role": "user", "content": user_text}]
         reply = row.get("assistant_reply")
         if reply and reply.get("state") == "completed":
-            turn.append({"role": "assistant", "content": reply["text"]})
+            # Grounded answers may contain private excerpts and turn-local
+            # citation IDs. Only this turn's verified selection can ground inference.
+            if row.get("selected_sources") or reply.get("sources"):
+                truncated = True
+            else:
+                turn.append({"role": "assistant", "content": reply["text"]})
         candidate = [system] + turn + [item for part in turns for item in part]
         if len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) > MAX_CONTEXT_BYTES:
             if not turns:
@@ -269,7 +274,8 @@ class ConversationReplyService:
                 ConversationMessage.conversation_id == conversation_id, ConversationMessage.sequence <= expected_sequence)
                 .order_by(ConversationMessage.sequence.desc()).limit(13)))
             messages, truncated = build_reply_messages(
-                [{"text": item.text, "assistant_reply": item.assistant_reply} for item in reversed(history)],
+                [{"text": item.text, "assistant_reply": item.assistant_reply,
+                  "selected_sources": item.selected_sources} for item in reversed(history)],
                 project_context, grounding,
             )
             # UTF-8 bytes plus framing/output is a conservative token reservation.
