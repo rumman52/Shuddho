@@ -337,3 +337,55 @@ def test_cli_fault_manifest_requires_bounded_stable_strict_json(tmp_path, monkey
     else:
         assert status == 1
         assert "NOT QUALIFIED:" in output
+
+
+@pytest.mark.parametrize("case", ["valid", "large_valid", "overflow", "symlink_swap", "in_place", "oversized"])
+def test_fault_receipt_requires_bounded_stable_strict_json(tmp_path, monkeypatch, case):
+    import os
+    from pathlib import Path
+
+    directory = tmp_path / "faults"
+    directory.mkdir()
+    doc = _bundle(directory, evidence())
+    target = directory / "lost_provider_response.json"
+    row = next(item for item in doc["scenarios"] if item["id"] == "lost_provider_response")
+    raw = target.read_bytes()
+    if case == "overflow":
+        raw = raw[:-1] + b', "extra": 1e999}'
+    elif case == "large_valid":
+        raw += b" " * (1024 * 1024)
+    elif case == "oversized":
+        raw += b" " * (2 * 1024 * 1024)
+    target.write_bytes(raw)
+    row["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    if case == "symlink_swap":
+        alternate = tmp_path / "alternate.json"
+        alternate.write_bytes(raw)
+        resolve = Path.resolve
+
+        def swap_after_resolve(path, *args, **kwargs):
+            result = resolve(path, *args, **kwargs)
+            if path == target and not path.is_symlink():
+                path.unlink()
+                path.symlink_to(alternate)
+            return result
+
+        monkeypatch.setattr(Path, "resolve", swap_after_resolve)
+    elif case == "in_place":
+        read = os.read
+        target_inode = target.stat().st_ino
+
+        def mutate_after_read(fd, count):
+            data = read(fd, count)
+            if data and os.fstat(fd).st_ino == target_inode:
+                target.write_bytes(raw + b" ")
+            return data
+
+        monkeypatch.setattr(os, "read", mutate_after_read)
+
+    reasons = verify_evidence_files(doc, directory)
+    if case in ("valid", "large_valid"):
+        assert reasons == []
+    else:
+        assert any("lost_provider_response:" in reason for reason in reasons)
