@@ -2,6 +2,16 @@
 
 **Source patch; not release-qualified.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; test-first `47f1b120aba17b461394ebf460684814269d694c`, fix `6ba75e5e0f0c5c29f37ad55a6e295d4345bc901d`. A failed fsync leaked unpublished temporary artifact bytes. Cleanup now covers the entire write and atomic replacement, retaining previous bytes and retry behavior. Isolated filesystem probe using copied exact local methods: RED 2 failed/2 passed; GREEN 4 passed. Full checkout/mandatory exact-head CI and distinct review remain pending. Local development/test backend only; no claim of hosted S3, ownership, or provider qualification. [Contract](P03_LOCAL_ARTIFACT_TEMP_CLEANUP_2026-11-26.md). No deployment, provider calls, paid provisioning or activation.
 
+## 26 November 2026 — Prompt 03 Day 5 sensitive memory-key filtering
+
+**Source patch; not release-qualified.** Base `460db9ff97c3f4adcc43beaf4d4db82a3957b097`; test-first `e65f629495ea005092bea0920eb6b1dea74bf06d`, source `747bd6f4edd260ba85841013dd3889909b111a09`. Credential-shaped memory keys previously bypassed the value redaction boundary. Existing filter now suppresses sensitive-key facts before model serialization without modifying stored facts, pin versions or selection digest. Isolated copied context assembly/SQLite synthetic probe RED 4 failed, GREEN 4 passed. Full repository CI and distinct review pending; no staging or provider attestation. [Contract](P03_MEMORY_KEY_REDACTION_2026-11-26.md). No deployment, provider calls, paid provisioning or activation.
+
+## 26 November 2026 — Prompt 02 accepted research evidence deduplication
+
+**Source patch; not release-qualified.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; RED test `d9f9f6f69ffe8a38e35a36b922fc0656a56d2a47`, source `67347d8b7a0ccc271e1cc9e6458f4a30ae6d9a67`. Rejected duplicate URL could suppress valid later evidence. Local isolated parser probe 4 failures before / 4 passes after, not full repository suite. [Contract](P02_RESEARCH_VALID_SOURCE_DEDUP_2026-11-26.md). Exact-head CI and independent review pending; no hosted work or activation. Prior PR #910 merged, its CI merge gate failed and no submitted reviews were returned. Prompt 02 exit remains unmet.
+
+---
+
 ## 25 November 2026 — PA-10 expired meeting catch-up admission
 
 **Source correction, not release qualification.** Main inspected: `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. Meeting scan and concrete meeting occurrence previously compared expiry only against the historical scan/admission timestamp. [Test-first commit](https://github.com/rumman52/Shuddho/commit/0be3def01dcaaa15281f057036806a8a183d74b2) adds a regression variant to the existing calendar connector integration fixture: after the scheduled scan but before actual admission the automation expires; scan is suppressed, direct occurrence is skipped, and no new AgentRun or notification exists. [Fix](https://github.com/rumman52/Shuddho/commit/58ebcbdbdb55db492af53582a3544871b46a2fd9) checks both the supplied clock and current UTC clock before admission. Isolated predicate checks reproduced two false expiry decisions and confirmed the corrected comparisons; full integration tests and independent review remain pending. No provider, deployment, production or billing changes. [Task contract](PA10_MEETING_EXPIRY_ADMISSION_2026-11-25.md). Next: exact-head CI, independent review, and controlled staging on an approved worker.
@@ -13,6 +23,10 @@
 **Hosted/gate boundary:** main CI [45351544500](https://github.com/rumman52/Shuddho/actions/runs/45351544500) governance and merge gate failed (missing App client-id); rule 27324410 active but zero approving reviews and no required checks. Supabase staging healthy PG17.11, migration ledger `0070`; Render requires explicit workspace selection. No authorized provider cost run, PostHog ingestion, private holdout, 20 operated recoveries, approved freeze or separate Founder/C approval. No deployment, migration, paid provisioning, flags or membership change. Historical credits unchanged; no pilot admission.
 
 ---
+
+## 26 November 2026 — Day 9 evidence snapshot stability
+
+**SOURCE PATCH / controlled pilot NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; test-first `fed91d80651df426d30e29306f4ddedf7b8ef720`; source `6cb23f0a3ec76d0d3d5804523e51b5790ff4689f`. The bounded Day 9 evidence reader now fences concurrent same-inode writes and mode changes. Local exact-function reproduction with filesystem tests: RED 4 failed/1 passed; GREEN 5 passed. Full checkout, exact-head CI, independent review and operated holdout/recovery remain unverified. [Task contract](DAY9_EVIDENCE_SNAPSHOT_STABILITY_2026-11-26.md). No staging, production, spending or acceptance-credit change.
 
 ## 25 November 2026 — PA-10 reminder expiry at admission
 
@@ -2993,3 +3007,7 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - **Baseline:** main `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; branch `fix/tx27-handoff-origin-chronology-20261125`. Tests-first commit `21704b5159b789b70d23009e6eaf8459827dd0a8`; source commit `e3dc2cf871abb53f5bdcdda8b5c94dd461cec5dc`. See [task contract and external decision package](TX27_HOSTED_HANDOFF_INTEGRITY_2026-11-25.md).
 - **Proposed implementation:** fail closed on ambiguous hosted URLs, revalidate stored handoff schema/URL/ID and receipt chronology, preserve late observation of timely completion; no new runtime provider or authority. Local DNS blocked checkout and exact-head test verification is pending. Baseline CI #45351544500 failed governance/merge gate because GitHub app token client-id was missing; application/coworker/frontend/browser/PostgreSQL compatibility jobs succeeded.
 - **Qualification:** SOURCE_ONLY / NO-GO. Shopping/travel ActionSpecs remain absent; no selected provider access, independently operated 16-fault receipts, staging identity, provider audit, or security reviewer signoff established. No production deployment, flags, credentials, migration, spending or real provider mutations changed. Next: exact final-head CI and independent review, owner-selected provider contract and authorized isolated staging.
+
+## 26 November 2026 — PA-10 staging locked build and startup
+
+**IMPLEMENTED_UNVERIFIED / staging NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. The checked-in Blueprint and worker provisioning create/update/readback now pin the CI-selected uv 0.7.22 and require no-sync runtime/migration commands. Test-first `6498b8907a057a758495d3c49129e4d6bff0da0d`; implementation `de118cae816cde17bd5b6630a67a5ec68bff5ca3`. Isolated command-excerpt unittest: four failing assertions/subtests RED; two test methods GREEN. Full mocked provisioning and exact-head CI, independent review and hosted build proof remain pending. See [task contract](PA10_STAGING_LOCKED_STARTUP_2026-11-26.md). No Render access/mutation, billing, migration, deployment or activation.

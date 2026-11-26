@@ -187,18 +187,33 @@ class ApiCheckRequest(BaseModel):
 
 
 def _parse_allowed_origins(value: str | None) -> list[str]:
-    from urllib.parse import urlparse
+    from urllib.parse import urlsplit
 
     allowed_origins = list(DEFAULT_ALLOWED_ORIGINS)
     if value is None or not value.strip():
         return allowed_origins
 
     for raw_origin in value.split(","):
-        origin = raw_origin.strip().rstrip("/")
+        origin = raw_origin.strip()
         if not origin or origin == "*":
             continue
-        parsed = urlparse(origin)
-        if "=" in origin or parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path not in {"", "/"}:
+        try:
+            parsed = urlsplit(origin)
+            # Accessing port triggers urllib's validation of its syntax/range.
+            _ = parsed.port
+            valid = (
+                parsed.scheme in {"http", "https"}
+                and bool(parsed.hostname)
+                and parsed.username is None
+                and parsed.password is None
+                and not parsed.netloc.endswith(":")
+                and parsed.path in {"", "/"}
+                and not any(char in origin for char in ("=", "?", "#", "*", "\\"))
+                and not any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in origin)
+            )
+        except ValueError:
+            valid = False
+        if not valid:
             logger.warning("Ignoring malformed allowed origin item for %s", ALLOWED_ORIGINS_ENV_VAR)
             continue
         normalized = f"{parsed.scheme}://{parsed.netloc}"
