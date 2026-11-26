@@ -258,6 +258,7 @@ def _axis_choice(text: str, axis: dict[str, tuple[str, ...]]) -> str | None:
 _NEGATED_STYLE_COMMAND = re.compile(
     r"(?<!\w)(?:do not|don['’]t|never) "
     r"(?:make|write|keep|use|be|sound|reply|respond|draft|answer|phrase|word)"
+    r"(?:\s+in)?"
     r"(?:\s+(?:a|an|this|the|my|your|it))?"
     r"(?:\s+(?:message|email|reply|response|answer|draft|report))?"
     r"(?:\s+(?:very|too|more|less))?\s*$"
@@ -299,7 +300,7 @@ def _explicit_axis_directives(
                     continue
                 if (
                     _STYLE_DIRECTIVE_LEFT.search(left)
-                    or style_label
+                    or _STYLE_DIRECTIVE_RIGHT.search(right)
                     or re.search(r"(?i)\b(?:tone|style|voice)\s+(?:should\s+be\s+)?$", left)
                 ):
                     positive.add(choice)
