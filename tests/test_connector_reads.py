@@ -1741,3 +1741,120 @@ def test_event_automation_consumer_failure_retries_after_cursor_advanced(contain
         assert len(runs) == 1
         assert len(occurrences) == 1
         assert occurrences[0].trigger_event_id == event["id"]
+
+
+def _cursor_race_result(cursor, resource=None):
+    return {
+        "cursor": cursor,
+        "changes": [] if resource is None else [{
+            "resource_id": resource, "provider_version": "103",
+            "state": "active", "payload": {"subject": "Synthetic cursor race"},
+        }],
+    }
+
+
+def test_stale_full_sync_cannot_cross_cursor_reset_generation(container, monkeypatch):
+    enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    service = container.connector_reads
+    adapter = container.credentials.provider_for("google")
+
+    async def scenario():
+        entered, release_old, reset_entered, release_reset = [
+            asyncio.Event() for _ in range(4)
+        ]
+        calls = []
+
+        async def read(capability, token, cursor, max_items):
+            calls.append(cursor)
+            if len(calls) == 1:
+                entered.set()
+                await release_old.wait()
+                return _cursor_race_result("stale", "stale-snapshot")
+            if len(calls) == 2:
+                return _cursor_race_result("newer")
+            assert len(calls) == 3 and cursor is None
+            reset_entered.set()
+            await release_reset.wait()
+            return _cursor_race_result("recovered", "fresh-snapshot")
+
+        monkeypatch.setattr(adapter, "read_connected", read)
+        old = asyncio.create_task(service.sync(owner, grant["id"]))
+        reset = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=15)
+            await service.sync(owner, grant["id"])
+            reset = asyncio.create_task(service.sync(owner, grant["id"], force_full=True))
+            await asyncio.wait_for(reset_entered.wait(), timeout=15)
+            release_old.set()
+            with pytest.raises(CoworkerError) as rejected:
+                await old
+            assert rejected.value.code == "connector_sync_conflict"
+            state = service.repo.cursor(owner, grant["id"])
+            assert state["cursor"] is None and state["generation"] == 2
+            release_reset.set()
+            assert (await reset)["cursor_generation"] == 2
+            assert [
+                row["provider_resource_id"]
+                for row in service.repo.snapshots(owner, grant["id"])
+            ] == ["fresh-snapshot"]
+        finally:
+            release_old.set()
+            release_reset.set()
+            await asyncio.gather(
+                *[task for task in (old, reset) if task is not None],
+                return_exceptions=True,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_stale_invalid_cursor_cannot_reset_newer_cursor(container, monkeypatch):
+    from services.coworker.connector_actions import ConnectorFailure
+
+    enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    service = container.connector_reads
+    adapter = container.credentials.provider_for("google")
+    asyncio.run(service.sync(owner, grant["id"]))
+    initial = service.repo.cursor(owner, grant["id"])
+    assert initial["cursor"] == "101"
+
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def read(capability, token, cursor, max_items):
+            calls.append(cursor)
+            if len(calls) == 1:
+                entered.set()
+                await release.wait()
+                raise ConnectorFailure("provider_cursor_invalid", definitive=True)
+            if len(calls) == 2:
+                return _cursor_race_result("102", "newer-snapshot")
+            return _cursor_race_result("stale-recovery", "stale-snapshot")
+
+        monkeypatch.setattr(adapter, "read_connected", read)
+        old = asyncio.create_task(service.sync(owner, grant["id"]))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=15)
+            await service.sync(owner, grant["id"])
+            release.set()
+            with pytest.raises(CoworkerError) as rejected:
+                await old
+            assert rejected.value.code == "connector_sync_conflict"
+            assert calls == ["101", "101"]
+            state = service.repo.cursor(owner, grant["id"])
+            assert state["cursor"] == "102"
+            assert state["generation"] == initial["generation"]
+            assert {row["provider_resource_id"]
+                    for row in service.repo.snapshots(owner, grant["id"])} == {
+                "m1", "newer-snapshot",
+            }
+        finally:
+            release.set()
+            await asyncio.gather(old, return_exceptions=True)
+
+    asyncio.run(scenario())
