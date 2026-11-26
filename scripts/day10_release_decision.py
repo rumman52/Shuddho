@@ -19,7 +19,8 @@ if __package__ in {None, ""}:
 
 from scripts.cohort_release_gate import evaluate_release  # noqa: E402
 from scripts.ruke_pilot_eval import (  # noqa: E402
-    BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, operated_trace_ok,
+    BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, canonical_sha256, operated_trace_ok,
+    validate_candidate_readbacks,
     _read_json_and_sha256 as read_bounded_json_with_sha,
     immutable_write, reviewer_identity, sha256 as sha256_bounded,
 )
@@ -598,9 +599,49 @@ def first_run_matches_holdout(
             and scores.get("by_cell") == expected_cells)
 
 
+def final_runtime_matches_frozen_day9(
+    first: object, final: object, api: object, worker: object, schema: object,
+    model: object, quality: object, capabilities: object,
+    release: str, revision: str, rollout_hash: str,
+) -> bool:
+    """Reconcile separately observed final readbacks with the preserved candidate.
+
+    This verifies exact identity and chronology claims, not their external
+    provenance. Independent D/C must authenticate both sets of raw receipts.
+    """
+    if (not bound(first, release, revision, rollout_hash)
+            or first.get("candidate_revision") != revision
+            or not proof_ok(final, release, revision, rollout_hash)):
+        return False
+    generated = timestamp(first.get("generated_at"))
+    started = timestamp(first.get("run_started_at"))
+    verified = timestamp(final.get("verified_at"))
+    reference = final["evidence_ref"]
+    if (generated is None or started is None or verified is None
+            or generated < started or verified <= generated
+            or not reference.startswith("sha256:")
+            or DIGEST.fullmatch(reference[7:]) is None):
+        return False
+    try:
+        validate_candidate_readbacks(first, first.get("candidate_readbacks"))
+        validate_candidate_readbacks(first, final.get("readbacks"))
+        identity = first["candidate_identity"]
+        # Existing live planner/quality collectors explicitly use DeepSeek.
+        return (
+            identity["provider_id"] == "deepseek"
+            and identity["api_build_digest"] == api.get("build_digest")
+            and identity["worker_build_digest"] == worker.get("build_digest")
+            and identity["alembic_revision"] == schema.get("migration_revision")
+            and canonical_sha256(identity["runtime_capabilities"]) == canonical_sha256(capabilities)
+            and identity["model_id"] == model.get("provider_model") == quality.get("provider_model")
+        )
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
 def separate_pilot_authorization_ok(
     approval: object, rollback: object, ci: object, golden: object,
-    release: str, revision: str, digest: str, cohort_limit: object,
+    release: str, revision: str, digest: str, cohort_limit: object, *, final_readbacks: object,
 ) -> bool:
     """Check two distinct, dated *claimed* owner decisions, never signer authenticity.
 
@@ -632,7 +673,7 @@ def separate_pilot_authorization_ok(
 
     # Owner decisions must follow the exact-head CI, final golden and operated
     # rollback verification. Datetimes are compared as UTC instants, not text.
-    release_proofs = (ci, golden, rollback)
+    release_proofs = (ci, golden, rollback, final_readbacks)
     timestamps = [
         timestamp(row.get("verified_at")) if isinstance(row, dict) else None
         for row in release_proofs
@@ -730,6 +771,11 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and isinstance(model, dict) and isinstance(model.get("provider_model"), str)
          and golden.get("provider_model") == model["provider_model"])
     first_run = artifacts.get("day9_first_run")
+    final_readbacks = artifacts.get("final_runtime_readbacks")
+    need("final_runtime_matches_frozen_day9_identity", final_runtime_matches_frozen_day9(
+        first_run, final_readbacks, api, worker, schema, model, artifacts.get("quality"),
+        capabilities, release, revision, rollout_hash,
+    ))
     need("preserved_day9_first_run", first_run_matches_holdout(
         first_run, artifacts.get("holdout"), release, revision, rollout_hash,
     ))
@@ -775,7 +821,7 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
     approval = artifacts.get("approval")
     approved = separate_pilot_authorization_ok(
         approval, artifacts.get("rollback"), ci, golden,
-        release, revision, rollout_hash, cohort_limit,
+        release, revision, rollout_hash, cohort_limit, final_readbacks=final_readbacks,
     )
     if not approved:
         blockers.append("separate_founder_and_C_pilot_authorization")
@@ -806,28 +852,33 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rollout", type=Path, required=True)
     parser.add_argument("--source-revision", required=True)
-    for name in ("api", "worker", "schema", "ci", *PROOFS, "golden", "day9_first_run", "holdout", "recovery",
+    for name in ("api", "worker", "schema", "ci", *PROOFS, "golden", "day9_first_run", "final_runtime_readbacks", "holdout", "recovery",
                  "staging", "quality", "model", "artifact_quality", "approval"):
         parser.add_argument("--" + name.replace("_", "-"), type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     day9_digest = None
+    final_readbacks_digest = None
     try:
         rollout, rollout_digest = read_json_with_sha(args.rollout)
         artifacts = {}
         for name in ("api", "worker", "schema", "ci", *PROOFS, "golden",
-                     "day9_first_run", "holdout", "recovery", "staging", "quality",
+                     "day9_first_run", "final_runtime_readbacks", "holdout", "recovery", "staging", "quality",
                      "model", "artifact_quality", "approval"):
             value, digest = read_json_with_sha(getattr(args, name))
             artifacts[name] = value
             if name == "day9_first_run":
                 day9_digest = digest
+            elif name == "final_runtime_readbacks":
+                final_readbacks_digest = digest
         result = decide(rollout, rollout_digest, revision=args.source_revision, artifacts=artifacts)
     except (OSError, ValueError) as exc:
         result = {"decision": "SOURCE_ONLY", "canonical_decision": "NO-GO", "pilot_activated": False,
                   "blockers": [str(exc)]}
     if day9_digest is not None and "scorecard" in result:
         result["scorecard"]["day9_first_run_artifact_sha256"] = day9_digest
+    if final_readbacks_digest is not None and "scorecard" in result:
+        result["scorecard"]["final_runtime_readbacks_artifact_sha256"] = final_readbacks_digest
     encoded = json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n"
     if args.output:
         try:
