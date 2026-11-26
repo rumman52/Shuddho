@@ -1523,3 +1523,69 @@ def test_configured_origin_preflight(origin, allowed):
     else:
         assert response.status_code == 400
         assert "access-control-allow-origin" not in response.headers
+
+
+@pytest.mark.parametrize("payload,field,kind", [
+    ({"text": ["SYNTHETIC_PRIVATE_SENTINEL"]}, "text", "string_type"),
+    ({"text": "SYNTHETIC_PRIVATE_SENTINEL" + "x" * app_module.MAX_AI_CHECK_CHARS}, "text", "value_error"),
+    ({"text": ""}, "text", "value_error"),
+    ({}, "text", "missing"),
+    ({"text": "SYNTHETIC_PRIVATE_SENTINEL", "language": "SYNTHETIC_PRIVATE_SENTINEL"}, "language", "literal_error"),
+])
+@pytest.mark.parametrize("raw_logging", ["false", "true"])
+def test_writing_validation_returns_safe_json_without_rejected_body(payload, field, kind, raw_logging, monkeypatch, caplog):
+    monkeypatch.setenv("SHUDDHO_LOG_RAW_TEXT", raw_logging)
+    response = client.post("/api/ai/check", json=payload)
+    assert response.status_code == 422
+    assert response.json()["error"] == "request_validation_error"
+    detail = response.json()["detail"][0]
+    assert detail["loc"][-1] == field
+    assert detail["type"] == kind
+    assert detail["msg"]
+    assert "input" not in detail and "ctx" not in detail
+    assert "SYNTHETIC_PRIVATE_SENTINEL" not in response.text
+    assert "SYNTHETIC_PRIVATE_SENTINEL" not in caplog.text
+
+
+def test_canonical_payload_validation_does_not_echo_rejected_input(monkeypatch, caplog):
+    monkeypatch.setenv("SHUDDHO_LOG_RAW_TEXT", "false")
+    response = client.post("/api/check", json={"text": "SYNTHETIC_PRIVATE_SENTINEL", "revision": -1})
+    assert response.status_code == 422
+    assert response.json()["error"] == "canonical_payload_validation_error"
+    assert response.json()["detail"][0]["loc"] == ["revision"]
+    assert "input" not in response.json()["detail"][0]
+    assert "ctx" not in response.json()["detail"][0]
+    assert "SYNTHETIC_PRIVATE_SENTINEL" not in caplog.text
+
+
+@pytest.mark.parametrize("configured,canonical", [
+    ("HTTPS://APPROVED.example:443/", "https://approved.example"),
+    ("http://Approved.example:80", "http://approved.example"),
+    ("https://APPROVED.example:08443", "https://approved.example:8443"),
+    ("https://[2001:DB8::1]:443", "https://[2001:db8::1]"),
+])
+def test_browser_serialized_origin_preflight_is_exact(configured, canonical):
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    probe = FastAPI()
+    probe.add_middleware(CORSMiddleware, allow_origins=_parse_allowed_origins(configured),
+                         allow_credentials=True, allow_methods=["POST"],
+                         allow_headers=["authorization", "content-type"])
+    probe_client = TestClient(probe)
+    headers = {"Access-Control-Request-Method": "POST",
+               "Access-Control-Request-Headers": "authorization,content-type"}
+    response = probe_client.options("/api/check", headers={**headers, "Origin": canonical})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == canonical
+    assert response.headers["access-control-allow-credentials"] == "true"
+    for denied in ("https://approved.example.attacker.test", "https://unapproved.example", "https://approved.example:444"):
+        response = probe_client.options("/api/check", headers={**headers, "Origin": denied})
+        assert response.status_code == 400
+        assert "access-control-allow-origin" not in response.headers
+
+
+def test_equivalent_cors_origin_entries_deduplicate_without_wildcards():
+    assert _parse_allowed_origins(
+        "https://APPROVED.example:443/,https://approved.example,https://approved.example:0443,*"
+    ) == [*app_module.DEFAULT_ALLOWED_ORIGINS, "https://approved.example"]

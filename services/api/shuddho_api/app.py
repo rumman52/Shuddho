@@ -216,7 +216,14 @@ def _parse_allowed_origins(value: str | None) -> list[str]:
         if not valid:
             logger.warning("Ignoring malformed allowed origin item for %s", ALLOWED_ORIGINS_ENV_VAR)
             continue
-        normalized = f"{parsed.scheme}://{parsed.netloc}"
+        # Browsers serialize ASCII hosts in lowercase and omit default ports.
+        # Preserve exact origin matching, including every non-default port.
+        authority = parsed.netloc.lower() if parsed.netloc.isascii() else parsed.netloc
+        if parsed.port is not None:
+            host, _, _ = authority.rpartition(":")
+            default_port = 443 if parsed.scheme == "https" else 80
+            authority = host if parsed.port == default_port else f"{host}:{parsed.port}"
+        normalized = f"{parsed.scheme}://{authority}"
         if normalized not in allowed_origins:
             allowed_origins.append(normalized)
     return allowed_origins
@@ -278,29 +285,29 @@ app = FastAPI(title="Shuddho API", version="0.1.0")
 BACKEND_VERSION = _resolve_backend_version(app.version)
 
 
+def _validation_error_details(exc: RequestValidationError | ValidationError) -> list[dict[str, Any]]:
+    # Pydantic errors can contain rejected text and non-JSON exception objects.
+    return [{"type": item["type"], "loc": item["loc"], "msg": item["msg"]}
+            for item in exc.errors()]
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    log_raw_text = os.environ.get("SHUDDHO_LOG_RAW_TEXT", "false").lower() == "true"
-    body_info = "<hidden>"
-    if log_raw_text:
-        try:
-            raw_body = await request.body()
-            body_info = raw_body.decode("utf-8", errors="replace")[:2000]
-        except Exception:
-            body_info = "<unavailable>"
+    details = _validation_error_details(exc)
+    # Invalid bodies can contain credentials or private text, including when
+    # writing diagnostics explicitly opt in to raw text logging.
     logger.error(
-        "REQUEST_VALIDATION_ERROR path=%s method=%s errors=%s body=%s",
+        "REQUEST_VALIDATION_ERROR path=%s method=%s error_types=%s",
         request.url.path,
         request.method,
-        exc.errors(),
-        body_info,
+        [item["type"] for item in details],
     )
     return JSONResponse(
         status_code=422,
         content={
             "error": "request_validation_error",
             "message": "Request body did not match backend schema.",
-            "detail": exc.errors(),
+            "detail": details,
         },
     )
 app.add_middleware(
@@ -504,8 +511,9 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     try:
         canonical_payload = CanonicalCheckRequest(**canonical_normalized)
     except ValidationError as exc:
-        logger.error("CANONICAL_PAYLOAD_VALIDATION_ERROR errors=%s", exc.errors())
-        return JSONResponse(status_code=422, content={"error": "canonical_payload_validation_error", "message": "Normalized request still failed internal schema validation.", "detail": exc.errors()})
+        details = _validation_error_details(exc)
+        logger.error("CANONICAL_PAYLOAD_VALIDATION_ERROR error_types=%s", [item["type"] for item in details])
+        return JSONResponse(status_code=422, content={"error": "canonical_payload_validation_error", "message": "Normalized request still failed internal schema validation.", "detail": details})
 
     started_at = time.time()
     request_id = datetime.now(timezone.utc).isoformat()
@@ -737,7 +745,7 @@ def check_canonical(payload: ApiCheckRequest) -> CanonicalCheckResponse:
     try:
         return CanonicalCheckResponse(**response_payload)
     except ValidationError as exc:
-        logger.error("CANONICAL_RESPONSE_VALIDATION_ERROR errors=%s response_keys=%s", exc.errors(), list(response_payload.keys()))
+        logger.error("CANONICAL_RESPONSE_VALIDATION_ERROR error_types=%s", [item["type"] for item in _validation_error_details(exc)])
         response_payload["warnings"] = _dedupe_strings([*(response_payload.get("warnings") or []), "canonical_response_validation_error"])
         return JSONResponse(status_code=200, content=jsonable_encoder(response_payload))
 
