@@ -22,6 +22,24 @@ Existing `scripts/cohort_release_gate.py` remains the **canonical** `GO_CONTROLL
 
 Create the rollout from `docs/cohort-rollout.template.json` in a secure location, **adjust `cohort.max_users` from its generic 25-user example to 5–10 and fill every capability named in `RUNTIME_CAPABILITY_KEYS`**; the generic template is not a ready-to-run Day 10 rollout. Then collect real JSON receipts in an access-controlled release directory. Every operated receipt for `--rollback`, `--cancellation`, `--paused-schedule`, `--owner-isolation`, `--worker`, and `--schema` must contain the actual `release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`, `evidence_ref` and timezone-aware `verified_at` for that release; the schema receipt additionally binds `migration_revision=api_revision=worker_revision`. Do not put credentials or sensitive data into receipts. Additional facts: rollback must list actual verified global/agent kill switches plus observed worker stop and restoration; cancellation requires a run ID and zero late side effects; paused schedule requires a schedule ID and zero executions while paused; owner isolation requires distinct synthetic owner references and an observed cross-owner denial. Each of the 20 recovery cases must have its *own* evidence reference. Final golden must identify the same provider model as the live planner. The independent D holdout must contain a release-bound `custody_receipt` with independently controlled access and a negative developer-read check (the CLI cannot itself authenticate that claim).
 
+For `--final-runtime-readbacks`, D/C must independently collect a fresh,
+authenticated API/worker/schema identity readback **after the original Day 9
+report was generated**. Supply a private JSON object with the usual
+`release_id`, `source_revision`, `rollout_manifest_sha256`, `status="passed"`,
+`verified_at`, and `evidence_ref="sha256:<digest>"` of the independently retained
+original evidence, plus `readbacks` containing the same three exact
+`api`, `worker`, and `schema` row schemas as the original Day 9
+`candidate_readbacks`. Re-observe rather than copy the original rows.
+The validator recomputes the expected canonical readback digests and requires
+both sets to match the original frozen `candidate_identity`. It reconciles
+the final API/worker builds, Alembic revision, 43 capability flags and
+DeepSeek model with the actual Day 10 receipts and live quality/planner gates.
+The two independent written decisions must not predate this final readback.
+A missing, earlier, or inconsistent receipt is SOURCE_ONLY; archival evidence
+must not be rewritten. The CLI cannot authenticate the source systems or the
+private original evidence. The decision scorecard records the bounded final
+readback artifact's SHA-256.
+
 For `--recovery`, submit one release-bound `status="passed"` receipt per exact
 `scenario` in the [Day 9 operated inventory](coworker-roadmap/DAY9_PILOT_QUALIFICATION_2026-11-12.md#c--operated-scenario-inventory).
 Each receipt includes its own `id`, `evidence_ref`, and `verified_at`. Include
@@ -83,6 +101,7 @@ uv run --extra coworker python scripts/day10_release_decision.py \
   --owner-isolation /secure/release/owner-isolation.json \
   --golden /secure/release/final-golden-rerun.json \
   --day9-first-run /secure/release/day9-original-first-run.json \
+  --final-runtime-readbacks /secure/release/final-runtime-readbacks.json \
   --holdout /secure/release/independent-D-holdout.json \
   --recovery /secure/release/operated-recovery.json \
   --staging /secure/release/staging-evidence.json \
