@@ -252,29 +252,59 @@ def _axis_choice(text: str, axis: dict[str, tuple[str, ...]]) -> str | None:
     return matches[0] if len(set(matches)) == 1 else None
 
 
-def _explicit_axis_choice(text: str, axis: dict[str, tuple[str, ...]]) -> str | None:
-    """Recognize an explicit current-task style instruction, not topic words.
+# A negated style directive is not an affirmative preference. Keep the
+# negation span so the generic rule below cannot reinterpret its action verb
+# (e.g. "write") as a separate prohibition on all writing.
+_NEGATED_STYLE_COMMAND = re.compile(
+    r"(?<!\w)(?:do not|don['’]t|never) "
+    r"(?:make|write|keep|use|be|sound|reply|respond|draft|answer|phrase|word)"
+    r"(?:\s+in)?"
+    r"(?:\s+(?:a|an|this|the|my|your|it))?"
+    r"(?:\s+(?:message|email|reply|response|answer|draft|report))?"
+    r"(?:\s+(?:very|too|more|less))?\s*$"
+)
+_NEGATED_STYLE_PREDICATE = re.compile(
+    r"\b(?:tone|style|voice)\s+(?:(?:should|must|will)\s+not\s+be|is\s+not)\s*$"
+)
+_NEGATED_STYLE_AVOID = re.compile(r"\bavoid(?:\s+(?:a|an|the))?\s*$")
+_STYLE_END = re.compile(r"^\s*(?:$|[.,;:!?)]|(?:and|or|but|for|in|when|with)\b)")
 
-    This prevents phrases such as "casual dining market" or "indirect tax"
-    from being mistaken for tone/directness overrides.
-    """
+
+def _explicit_axis_directives(
+    text: str, axis: dict[str, tuple[str, ...]],
+) -> tuple[set[str], set[str], set[int]]:
+    """Recognize bounded style commands, distinguishing affirmation and negation."""
     normalized = normalized_text(text)
-    matches: list[str] = []
+    positive: set[str] = set()
+    negative: set[str] = set()
+    negation_starts: set[int] = set()
     for choice, phrases in axis.items():
         for phrase in phrases:
             for match in _phrase_matches(normalized, phrase):
-                left = normalized[max(0, match.start() - 80):match.start()]
+                left_start = max(0, match.start() - 80)
+                left = normalized[left_start:match.start()]
                 right = normalized[match.end():match.end() + 40]
+                style_label = bool(_STYLE_DIRECTIVE_RIGHT.search(right)) or phrase.endswith(
+                    (" tone", " style", " voice")
+                )
+                command = _NEGATED_STYLE_COMMAND.search(left)
+                predicate = _NEGATED_STYLE_PREDICATE.search(left)
+                avoid = _NEGATED_STYLE_AVOID.search(left)
+                if command or predicate or avoid:
+                    if style_label or ((command or predicate) and _STYLE_END.search(right)):
+                        negative.add(choice)
+                        if command:
+                            negation_starts.add(left_start + command.start())
+                    # A negated command that describes a topic (e.g. formal
+                    # methods) must not fall through as a positive preference.
+                    continue
                 if (
                     _STYLE_DIRECTIVE_LEFT.search(left)
                     or _STYLE_DIRECTIVE_RIGHT.search(right)
                     or re.search(r"(?i)\b(?:tone|style|voice)\s+(?:should\s+be\s+)?$", left)
                 ):
-                    matches.append(choice)
-                    break
-            if choice in matches:
-                break
-    return matches[0] if len(set(matches)) == 1 else None
+                    positive.add(choice)
+    return positive, negative, negation_starts
 
 
 def memory_conflict(current_instruction: str, key: str, value: str) -> str | None:
@@ -285,20 +315,23 @@ def memory_conflict(current_instruction: str, key: str, value: str) -> str | Non
         ("verbosity", _VERBOSITY),
         ("directness", _DIRECTNESS),
     )
+    style_negations: set[int] = set()
     for name, axis in axes:
-        current_choice = _explicit_axis_choice(current_instruction, axis)
+        positive, negative, negation_starts = _explicit_axis_directives(current_instruction, axis)
+        style_negations.update(negation_starts)
         memory_choice = _axis_choice(memory_text, axis)
-        if current_choice is not None and memory_choice is not None and current_choice != memory_choice:
+        if memory_choice is not None and (
+            memory_choice in negative or (len(positive) == 1 and memory_choice not in positive)
+        ):
             return name
 
     current = normalized_text(current_instruction)
-    remembered = normalized_text(value)
-    # A bounded generic override rule for explicit negation. We require a
-    # meaningful remembered phrase to appear after "do not"/"don't" so normal
-    # topic overlap does not suppress memory accidentally.
-    remembered_terms = [term for term in terms(remembered) if len(term) >= 4]
-    for term in remembered_terms[:12]:
-        if f"do not {term}" in current or f"don't {term}" in current:
+    # Compare whole words after explicit negation. Memory values and task
+    # instructions are already bounded; an arbitrary slice of a set made
+    # the result depend on Python's process-specific hash seed.
+    remembered_terms = terms(value)
+    for match in re.finditer(r"(?<!\w)(?:do not|don['’]t) (\w{4,})(?!\w)", current):
+        if match.start() not in style_negations and match.group(1) in remembered_terms:
             return "explicit_negation"
     return None
 
