@@ -415,3 +415,81 @@ def test_memory_endpoint_advertises_effective_review_selection_limit(container, 
     response = client.get("/api/v1/memory", headers=headers())
     assert response.status_code == 200, response.text
     assert response.json()["max_selected_facts"] == expected
+
+
+def _brief_provider_probe(container, *, usage=None, choice_fields=None, message_fields=None, extra=None):
+    import httpx
+    from services.coworker.agent_planning_model import DeepSeekAgentPlanner
+    from services.coworker.task_brief_schemas import TaskBriefSuggestion
+
+    suggestion = TaskBriefSuggestion(state="ready", brief=TaskBrief(
+        objective="Make a report", deliverables=["Report"]))
+    body = {"choices": [{"finish_reason": "stop", "message": {
+        "content": suggestion.model_dump_json(), **(message_fields or {}),
+    }, **(choice_fields or {})}], "usage": usage, **(extra or {})}
+    settings = replace(container.settings, deepseek_api_key="test-only")
+    model = DeepSeekAgentPlanner(settings, transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=body)))
+    return suggestion, model, settings
+
+
+@pytest.mark.parametrize("usage,expected", [
+    ({"total_tokens": -1}, None), ("unknown", None), ({"total_tokens": False}, None),
+    (None, None), ({"total_tokens": 40}, 40),
+])
+def test_task_brief_provider_usage_is_known_or_conservatively_unknown(container, usage, expected):
+    import asyncio
+
+    suggestion, model, _ = _brief_provider_probe(container, usage=usage)
+    value, tokens = asyncio.run(model.propose_task_brief(
+        [{"sequence": 1, "text": "Make a report", "source_ids": []}], []))
+    assert value == suggestion and tokens == expected
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"message_fields": {"role": "user"}},
+    {"choice_fields": {"index": 1}},
+    {"choice_fields": {"index": False}},
+    {"message_fields": {"function_call": {"name": "send_email"}}},
+    {"extra": {"error": {"message": "synthetic error"}}},
+])
+def test_task_brief_provider_rejects_untrusted_completion_envelope(container, kwargs):
+    import asyncio
+    from services.coworker.agent_planning_model import PlannerFailure
+
+    _, model, _ = _brief_provider_probe(container, usage={"total_tokens": -1}, **kwargs)
+    with pytest.raises(PlannerFailure) as error:
+        asyncio.run(model.propose_task_brief(
+            [{"sequence": 1, "text": "Make a report", "source_ids": []}], []))
+    assert error.value.code == "invalid_task_brief"
+    assert error.value.total_tokens is None
+
+
+def test_task_brief_accepts_explicit_assistant_single_choice(container):
+    import asyncio
+
+    suggestion, model, _ = _brief_provider_probe(container, usage={"total_tokens": 40},
+        choice_fields={"index": 0}, message_fields={"role": "assistant"})
+    assert asyncio.run(model.propose_task_brief(
+        [{"sequence": 1, "text": "Make a report", "source_ids": []}], [])) == (suggestion, 40)
+
+
+def test_task_brief_negative_usage_does_not_refund_provider_reservation(container):
+    import asyncio
+    from services.coworker.models import ProviderDailyUsage, ProviderLease
+
+    alice, conv, conversations, dispatch = setup(container, key="brief-negative-usage")
+    msg = message(conversations, alice, conv, "Make a report")
+    _, model, _ = _brief_provider_probe(container, usage={"total_tokens": -1})
+    service = ConversationTaskBriefService(dispatch.sessions,
+        replace(dispatch.settings, deepseek_api_key="test-only"), planner=model)
+    with dispatch.sessions() as db:
+        before = db.scalar(select(func.coalesce(func.sum(ProviderDailyUsage.allocated_tokens), 0)))
+    result = asyncio.run(service.propose(alice, conv["id"], msg["id"], expected_sequence=1))
+    assert result["state"] == "ready"
+    with dispatch.sessions() as db:
+        after = db.scalar(select(func.coalesce(func.sum(ProviderDailyUsage.allocated_tokens), 0)))
+        assert after > before
+        assert db.scalar(select(func.count()).select_from(ProviderLease)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
