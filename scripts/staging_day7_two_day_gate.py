@@ -60,8 +60,8 @@ def next_paused_opportunity(first: dict, second: dict) -> datetime:
     require(first.get("overlap_policy") == "skip",
             "Daily briefing must use the approved skip overlap policy.")
     catchup = first.get("catchup_window_seconds")
-    require(type(catchup) is int and 60 <= catchup <= 86400,
-            "Daily briefing requires an explicit bounded catch-up window.")
+    require(type(catchup) is int and catchup == 3600,
+            "Daily briefing requires an explicit bounded catch-up window of exactly 3600 seconds.")
     try:
         zone = ZoneInfo(str(first.get("timezone", "")))
     except (ZoneInfoNotFoundError, ValueError, TypeError) as error:
@@ -208,8 +208,8 @@ def verify_two_day(
     for item in (first, second):
         due = timestamp(item.get("due_at"), "due_at")
         local = due.astimezone(zone)
-        require((local.hour, local.minute, local.second) ==
-                (schedule["hour"], schedule["minute"], 0),
+        require((local.hour, local.minute, local.second, local.microsecond) ==
+                (schedule["hour"], schedule["minute"], 0, 0),
                 "An occurrence was not due at the owner-approved local schedule time.")
         verified = timestamp(item.get("verified_at"), "verified_at")
         require(timestamp(item.get("prepared_at"), "prepared_at") <= due <= verified <= now,
@@ -280,8 +280,8 @@ def verify_two_day(
             "The approved schedule expiry must remain after the Day 8 pause.")
     post_due = next_paused_opportunity(first, second)
     catchup = first.get("catchup_window_seconds")
-    require(type(catchup) is int and 60 <= catchup <= 86400,
-            "Daily briefing requires an explicit bounded catch-up window.")
+    require(type(catchup) is int and catchup == 3600,
+            "Daily briefing requires an explicit bounded catch-up window of exactly 3600 seconds.")
     require(verified_timestamps[1] < paused_at < post_due,
             "Pause must occur after Day 8 verification and before the next scheduled opportunity.")
     require(timestamp(first.get("expires_at"), "expires_at")
