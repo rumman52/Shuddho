@@ -19,7 +19,7 @@ if __package__ in {None, ""}:
 
 from scripts.cohort_release_gate import evaluate_release  # noqa: E402
 from scripts.ruke_pilot_eval import (  # noqa: E402
-    BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, operated_trace_ok,
+    BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, canonical_sha256, operated_trace_ok,
     _read_json_and_sha256 as read_bounded_json_with_sha,
     immutable_write, reviewer_identity, sha256 as sha256_bounded,
 )
@@ -598,14 +598,54 @@ def first_run_matches_holdout(
             and scores.get("by_cell") == expected_cells)
 
 
+def pilot_scope_sha256(rollout: dict) -> str | None:
+    """Digest the exact frozen scope without expanding the canonical rollout schema."""
+    cohort = rollout.get("cohort")
+    capabilities = rollout.get("capabilities")
+    providers = rollout.get("action_providers", [])
+    operations = rollout.get("transaction_operations", [])
+    if (rollout.get("environment") != "production"
+            or not isinstance(cohort, dict) or not nonempty_text(cohort.get("reference"))
+            or type(cohort.get("max_users")) is not int or not 5 <= cohort["max_users"] <= 10
+            or not isinstance(capabilities, dict) or set(capabilities) != RUNTIME_CAPABILITY_KEYS
+            or any(type(value) is not bool for value in capabilities.values())
+            or not isinstance(providers, list) or not all(nonempty_text(item) for item in providers)
+            or not isinstance(operations, list) or not all(nonempty_text(item) for item in operations)):
+        return None
+    try:
+        return canonical_sha256({
+            "environment": rollout["environment"],
+            "cohort": {"reference": cohort["reference"], "max_users": cohort["max_users"]},
+            "capabilities": capabilities,
+            "action_providers": providers,
+            "transaction_operations": operations,
+        })
+    except (TypeError, ValueError):
+        return None
+
+
+def approval_expiry(value: object, *, now: datetime) -> datetime | None:
+    """An approval must have an explicit, timezone-aware future expiry."""
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            return None
+        stamp = stamp.astimezone(timezone.utc)
+        return stamp if stamp > now else None
+    except (ValueError, OverflowError):
+        return None
+
+
 def separate_pilot_authorization_ok(
     approval: object, rollback: object, ci: object, golden: object,
-    release: str, revision: str, digest: str, cohort_limit: object,
+    release: str, revision: str, digest: str, cohort_limit: object, *, rollout: dict,
 ) -> bool:
     """Check two distinct, dated *claimed* owner decisions, never signer authenticity.
 
     Each signoff is independently bound to the final release, 5-10 cohort cap,
-    operated rollback owner, and proof of its own private evidence reference.
+    operated rollback owner, spending cap, frozen scope, expiry and its own private evidence reference.
     C/D must authenticate the actual signed records outside this CLI.
     """
     if (not proof_ok(approval, release, revision, digest)
@@ -614,6 +654,14 @@ def separate_pilot_authorization_ok(
             or type(cohort_limit) is not int or not 5 <= cohort_limit <= 10
             or type(approval.get("max_users")) is not int
             or approval["max_users"] != cohort_limit):
+        return False
+
+    scope_digest = pilot_scope_sha256(rollout)
+    spend_limit = approval.get("max_spend_microusd")
+    now = datetime.now(timezone.utc)
+    expiry = approval_expiry(approval.get("expires_at"), now=now)
+    if (scope_digest is None or approval.get("scope_sha256") != scope_digest
+            or type(spend_limit) is not int or spend_limit < 0 or expiry is None):
         return False
 
     founder_id = reviewer_identity(approval.get("founder"))
@@ -652,6 +700,10 @@ def separate_pilot_authorization_ok(
                 or receipt.get("decision") != "approve_controlled_pilot"
                 or type(receipt.get("max_users")) is not int
                 or receipt["max_users"] != cohort_limit
+                or receipt.get("scope_sha256") != scope_digest
+                or type(receipt.get("max_spend_microusd")) is not int
+                or receipt["max_spend_microusd"] != spend_limit
+                or approval_expiry(receipt.get("expires_at"), now=now) != expiry
                 or receipt.get("rollback_owner") != rollback_owner
                 or not isinstance(reference, str)
                 or not reference.startswith("sha256:")
@@ -775,7 +827,7 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
     approval = artifacts.get("approval")
     approved = separate_pilot_authorization_ok(
         approval, artifacts.get("rollback"), ci, golden,
-        release, revision, rollout_hash, cohort_limit,
+        release, revision, rollout_hash, cohort_limit, rollout=rollout,
     )
     if not approved:
         blockers.append("separate_founder_and_C_pilot_authorization")
@@ -796,6 +848,11 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
         "decision": ("READY_FOR_OWNER_CONTROLLED_PILOT" if not blockers else
                      "STAGING_ONLY" if blockers == ["separate_founder_and_C_pilot_authorization"] else "SOURCE_ONLY"),
         "pilot_activated": False,
+        "pilot_authorization_claim": ({
+            "scope_sha256": approval["scope_sha256"],
+            "max_spend_microusd": approval["max_spend_microusd"],
+            "expires_at": approval["expires_at"],
+        } if approved else None),
         "blockers": blockers,
         "known_limitations": ["Receipt files are not independently authenticated by this CLI.",
                               "No production or pilot traffic is switched by this CLI."],
