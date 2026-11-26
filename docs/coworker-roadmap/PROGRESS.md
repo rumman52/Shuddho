@@ -1,3 +1,9 @@
+## 26 November 2026 — Prompt 01 / strict release-evidence Unicode and publication parity
+
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `627703002ac9e90542f3593d45ebcc7ce3c37230`; source `ae050e8427d01fabde100bc7f65d341366bbf9f5`; mandatory CI wiring `be6a0c30a122d6c9eb8cec274fa96dd498032172`. Reject escaped lone surrogates and refuse private evidence that its own strict reader cannot decode before publication. Hash-verified complete modules: RED 12 failed/1 passed; GREEN 13 passed, combined existing/new 28 passed; py_compile and both mandatory JUnit module checks passed, zero skips. Valid Bangla/supplementary Unicode and existing byte format preserved. [Task contract](DAY2_STRICT_EVIDENCE_UNICODE_2026-11-26.md). Full exact-head CI, independent review and hosted receipts outstanding; no hosted operation, production activation or billing.
+
+---
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
