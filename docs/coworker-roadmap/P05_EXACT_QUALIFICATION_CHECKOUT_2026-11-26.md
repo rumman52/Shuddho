@@ -8,3 +8,7 @@
 - Residual: this detects observable Git checkout/index state, not malicious Git binaries, ignored import shadowing, transient change-and-restore between observations, or a cryptographic runtime/container attestation. Independent D and authenticated API/worker/schema/readback receipts remain mandatory. A clean checkout is necessary, not sufficient.
 - Verification: `uv run --locked --extra coworker pytest -q tests/test_ruke_pilot_eval.py tests/test_day10_release_decision.py tests/test_release_contract.py -rs`; run preflight on an independently controlled, clean, fully installed checkout and inspect exact-head mandatory CI, with distinct human review.
 - Status: SOURCE_IN_PROGRESS / SOURCE_ONLY / NO-GO. No changes to holdout custody, generation, release threshold, production, billing, provider or telemetry. Roll back through protected revert if required; no release or activation credit.
+
+## Exact-head CI follow-up
+
+Run 45776449796, test-and-build job 139761458495: 1 failed, 3940 passed, 109 skipped (6 warnings), failing no_git case. Git may discover a clean parent repository if intended checkout metadata disappears. Tests-first commit 6843ba933b4baf6340107b563aec1eb4341bb58c introduces a deterministic ignored child-directory fixture; fix 52ad960b7875bfc28f829e58c47eb8fd3d54f84e requires the resolved Git top-level to equal the expected root. Isolated real-Git RED 1 failed/1 passed, GREEN 2 passed. New exact-head CI and independent review remain necessary; the prior failure is not erased.
