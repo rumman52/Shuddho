@@ -395,3 +395,6 @@
   cursor: pointer;
 }
 .rukh-steer-form-actions button:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Exact memory IDs remain readable on narrow review panels. */
+.rukh-memory-fact-id { overflow-wrap: anywhere; }

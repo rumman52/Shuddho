@@ -25,7 +25,7 @@ from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete,
 from .fly_code_schemas import FlyWorkspaceSync
 from .fly_code_schemas import FlyPatchApplyRequest, FlyPatchGenerateRequest, FlyPatchReviewRequest
 from .conversation_schemas import ConversationReplyCreate, ConversationCreate, ConversationRename, MessageCreate, ConversationDispatchCreate, ConversationCancelRequest, ConversationSteerRequest
-from .task_brief_schemas import TaskBriefProposeRequest, TaskBriefPreviewRequest
+from .task_brief_schemas import MAX_TASK_MEMORY_PINS, TaskBriefProposeRequest, TaskBriefPreviewRequest
 from .errors import CoworkerError
 from .schemas import PreferencesRequest, TaskCreate, UploadRequest
 from .skills import available_skills
@@ -973,7 +973,11 @@ def read_notification_digest(
 
 @router.get("/memory")
 def list_memory(identity: Identity, services: Services):
-    return {"enabled": services.settings.agent_memory_enabled, "facts": services.memory.list(identity.account_id)}
+    return {
+        "enabled": services.settings.agent_memory_enabled,
+        "facts": services.memory.list(identity.account_id),
+        "max_selected_facts": min(MAX_TASK_MEMORY_PINS, services.settings.max_memory_context_facts),
+    }
 
 
 @router.get("/memory-proposals")
