@@ -38,7 +38,9 @@ def require_revision(value: object) -> str:
 MAX_ROLLOUT_MANIFEST_BYTES = 1_048_576
 
 
-def _read_rollout_manifest(path: Path) -> tuple[object, str]:
+def _read_rollout_manifest(
+    path: Path, *, max_bytes: int = MAX_ROLLOUT_MANIFEST_BYTES,
+) -> tuple[object, str]:
     """Parse and hash the same bounded regular file bytes; never reopen the path."""
     nofollow = getattr(os, "O_NOFOLLOW", None)
     if nofollow is None:
@@ -48,9 +50,9 @@ def _read_rollout_manifest(path: Path) -> tuple[object, str]:
         descriptor = os.open(path, flags)
         try:
             metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_ROLLOUT_MANIFEST_BYTES:
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
                 raise StagingReleaseEvidenceError("Rollout manifest must be a bounded regular file")
-            remaining = MAX_ROLLOUT_MANIFEST_BYTES + 1
+            remaining = max_bytes + 1
             parts: list[bytes] = []
             while remaining:
                 part = os.read(descriptor, min(65536, remaining))
@@ -66,7 +68,7 @@ def _read_rollout_manifest(path: Path) -> tuple[object, str]:
             f"Could not read rollout manifest: {type(error).__name__}"
         ) from None
     raw = b"".join(parts)
-    if len(raw) > MAX_ROLLOUT_MANIFEST_BYTES:
+    if len(raw) > max_bytes:
         raise StagingReleaseEvidenceError("Rollout manifest exceeds byte bound")
     # One no-follow descriptor prevents a path-swap. This fence also rejects
     # concurrent in-place rewrites, truncation and growth, including a change
