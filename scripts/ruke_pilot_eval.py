@@ -1152,16 +1152,42 @@ def immutable_write(path: Path, obj: object) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _exact_checkout_revision(root: Path) -> str:
+    """Reject observable checkout drift; independent custody remains required."""
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "--no-optional-locks", *args], cwd=root, text=True,
+            capture_output=True, timeout=10, check=True,
+        ).stdout
+
+    try:
+        head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
+        status = git("status", "--porcelain=v1", "-z", "--untracked-files=all",
+                     "--ignore-submodules=none")
+        final_head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise EvidenceError("cannot verify exact checkout identity") from exc
+    if not REV.fullmatch(head) or final_head != head or status:
+        raise EvidenceError("qualification requires a clean checkout at one exact revision")
+    return head
+
+
 def preflight() -> dict:
+    candidate_revision = _exact_checkout_revision(ROOT)
     commands = [
         [sys.executable, "-m", "scripts.release_contract_check"],
         [sys.executable, "-m", "pytest", "-q", "tests/test_ruke_pilot_eval.py", "tests/test_pilot_workflow_eval.py", "tests/test_release_contract.py"],
     ]
     checks = []
     for command in commands:
-        proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=600, check=False)
+        try:
+            proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=600, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise EvidenceError("repository preflight command did not complete") from exc
         checks.append({"command": command, "exit_code": proc.returncode, "stdout_tail": proc.stdout[-4000:], "stderr_tail": proc.stderr[-2000:]})
-    return {"candidate_revision": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True).stdout.strip(),
+    if _exact_checkout_revision(ROOT) != candidate_revision:
+        raise EvidenceError("checkout revision changed during repository preflight")
+    return {"candidate_revision": candidate_revision,
             "checks": checks, "passed": all(x["exit_code"] == 0 for x in checks)}
 
 
@@ -1224,8 +1250,7 @@ def main(argv=None) -> int:
             readback_status = validate_candidate_readbacks(manifest, evidence.get("candidate_readbacks"))
             if not source_checks_ok(evidence, manifest):
                 raise EvidenceError("exact-head required CI and canonical release contract must pass before reading heldout bytes")
-            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
-                                  text=True, capture_output=True, check=True).stdout.strip()
+            head = _exact_checkout_revision(ROOT)
             if manifest.get("candidate_revision") != head:
                 raise EvidenceError("manifest revision differs from exact checkout head; heldout corpus was not read")
             cases = validate_manifest(manifest, args.heldout, custody_verified=True)
@@ -1346,6 +1371,9 @@ def main(argv=None) -> int:
                         "This report never authorizes activation.",
                     ],
                 }
+        if args.action in {"prepare-blind", "evaluate"}:
+            if _exact_checkout_revision(ROOT) != head:
+                raise EvidenceError("checkout revision changed before evidence publication")
         outputs = {}
         if args.report:
             digest = immutable_write(args.report, obj)
