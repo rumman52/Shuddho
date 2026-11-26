@@ -1170,7 +1170,7 @@ export class CoworkerClient {
     });
   }
   readNotification(id: string) { return this.json<{ id: string; state: "read"; read_at: string }>(`/api/v1/notifications/${identifier(id)}/read`, { method: "POST" }); }
-  memory(signal?: AbortSignal) { return this.json<{ enabled: boolean; facts: MemoryFact[] }>("/api/v1/memory", { signal }); }
+  memory(signal?: AbortSignal) { return this.json<{ enabled: boolean; facts: MemoryFact[]; max_selected_facts?: number }>("/api/v1/memory", { signal }); }
   updateMemoryFact(id: string, value: string, language: string, expectedVersion: number, expiresAt: string | null) {
     return this.json<MemoryFact>(`/api/v1/memory/${identifier(id)}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
