@@ -121,3 +121,23 @@ def test_explicit_negation_suppresses_matching_term(instruction):
 def test_positive_style_precedence_is_preserved():
     assert memory_conflict("Make it casual and conversational.", "writing.tone", "Usually write formally.") == "formality"
     assert memory_conflict("Research the casual dining market.", "writing.tone", "Usually write formally.") is None
+
+
+@pytest.mark.parametrize("instruction, memory, expected", [
+    ("Do not use a formal tone.", "Usually write formally.", "formality"),
+    ("Do not use a formal tone.", "Usually write casually.", None),
+    ("Don't write professionally.", "Usually write formally.", "formality"),
+    ("Don't write professionally.", "Usually write casually.", None),
+    ("Don’t make it too detailed.", "Prefer comprehensive reports.", "verbosity"),
+    ("Don’t make it too detailed.", "Prefer concise reports.", None),
+    ("The tone should not be formal.", "Usually write formally.", "formality"),
+    ("The tone should not be formal.", "Usually write casually.", None),
+    ("Don't use a casual tone; use a formal tone.", "Prefer casual responses.", "formality"),
+    ("Don't use a casual tone; use a formal tone.", "Prefer formal responses.", None),
+    ("Avoid a direct tone.", "Prefer straightforward replies.", "directness"),
+    ("Research the casual dining market; do not archive.", "Always archive records.", "explicit_negation"),
+    ("Do not archive the formal documents.", "Usually write formally.", None),
+    ("Write in a formal tone.", "Usually write casually.", "formality"),
+])
+def test_negated_style_directives_do_not_invert_memory_precedence(instruction, memory, expected):
+    assert memory_conflict(instruction, "writing.preference", memory) == expected
