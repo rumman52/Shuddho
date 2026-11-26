@@ -1,0 +1,12 @@
+# Prompt 02 D04.T05 — reviewed digest and memory-selection mode
+
+Base `43d99fd64467492a7da809cda0ae178191e53981`; regression commit `1b57c377f635b1543889c80fd8ec8ca1f22bc900`; implementation `72722d55420fcdcb43a5028dbbe6c7c77e90dcd3`.
+
+The proposal endpoint omits memory_pins (legacy digest); the UI previously compared only pin arrays, making an implicit empty preview appear equivalent to explicit [] when memory was enabled. The server correctly rejects that digest mismatch. Store the preview request's selection mode with its result and require it to match current memoryEnabled, plus the existing exact ordered ID/version comparison. With memory enabled and no facts selected, the proposal must be revalidated with explicit [] before confirmation. With memory disabled, legacy flow is unchanged. No new authority, API contract or hosted mutation.
+
+Isolated Node predicate probe derived from the pinned UI expression: `node --test test_review_digest_probe.mjs`: RED 2 failed, 6 passed; GREEN 8 passed (zero failures/skips). `node --check review_digest_probe.mjs` and `node --check test_review_digest_probe.mjs`: exit 0. Real React component tests are committed in conversationUsability.test.tsx, but full React dependencies/checkout are unavailable locally. Exact-head frontend/browser/mandatory CI and independent human review remain required. This is not a live acceptance receipt. Shared PROGRESS.md left unchanged to avoid concurrent conflicts; reconcile at integration.
+
+## Follow-up: pending/unavailable capability is not disabled
+Test-first `3160c0c24bef84153df580a981bcf6f2c3ab0b30`; implementation `0e97bb54df6f0c2ad0a88fea7b5d859dabbc9704`. Previously the initial false state and failed memory request selected the legacy omitted-pin mode. Use a nullable capability state, clear old selections when the client changes, and bind explicit [] while pending/unavailable. Show the absence of saved memory in the task review and context panel. Confirmed disabled remains legacy-compatible. Existing backend tests prove explicit [] does not fall back to project memory and remains empty with memory disabled.
+
+Isolated mode-selection probe: `node --test test_memory_availability_probe.mjs` RED 2 failed / 3 passed; GREEN combined `node --test test_memory_availability_probe.mjs test_review_digest_probe.mjs` 13 passed, zero failed/skipped. Syntax check exit 0. Added React pending/error component cases; full component and browser CI remain pending.
