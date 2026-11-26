@@ -14,7 +14,11 @@ from urllib.parse import urlencode
 from scripts.main_protection_audit import GovernanceAuditError, _get_json, inspect_repository
 
 REPOSITORY = "rumman52/Shuddho"
-REQUIRED_JOBS = frozenset({"test-and-build", "coworker", "governance-audit", "ci-merge-gate"})
+# Main push CI is always full scope. PR-only ancestry is intentionally absent.
+REQUIRED_JOBS = frozenset({
+    "test-and-build", "coworker", "governance-audit", "ci-merge-gate",
+    "Frontend tests and builds", "browser-qualification", "PostgreSQL 18 staging compatibility",
+})
 
 
 class SourceGateError(ValueError):
@@ -33,12 +37,15 @@ def require_qualified_source(branch: object, runs: object, jobs: object, sha: st
     if not isinstance(runs, dict) or type(runs.get("total_count")) is not int:
         raise SourceGateError("CI workflow results unavailable")
     records = runs.get("workflow_runs")
-    if not isinstance(records, list) or runs["total_count"] < 1 or runs["total_count"] > len(records):
+    if not isinstance(records, list) or runs["total_count"] < 1 or runs["total_count"] != len(records):
         raise SourceGateError("CI workflow results missing or truncated")
     candidates = [run for run in records if isinstance(run, dict) and run.get("head_sha") == sha]
     if len(candidates) != runs["total_count"]:
         raise SourceGateError("CI workflow results include an unexpected revision")
-    latest = max(candidates, key=lambda run: run.get("id") if type(run.get("id")) is int else -1)
+    run_ids = [run.get("id") for run in candidates]
+    if any(type(value) is not int or value <= 0 for value in run_ids) or len(set(run_ids)) != len(run_ids):
+        raise SourceGateError("CI workflow run identifiers are invalid or duplicated")
+    latest = max(candidates, key=lambda run: run["id"])
     run_id = latest.get("id")
     if (
         type(run_id) is not int or run_id <= 0
@@ -54,7 +61,22 @@ def require_qualified_source(branch: object, runs: object, jobs: object, sha: st
     entries = jobs.get("jobs")
     if not isinstance(entries, list) or jobs["total_count"] != len(entries):
         raise SourceGateError("CI job results missing or truncated")
-    for name in REQUIRED_JOBS:
+    # Bind each returned row to the selected run and exact revision; the
+    # aggregate success alone cannot establish individual job evidence.
+    seen_job_ids: set[int] = set()
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or type(entry.get("id")) is not int
+            or entry["id"] <= 0
+            or entry["id"] in seen_job_ids
+            or type(entry.get("run_id")) is not int
+            or entry["run_id"] != run_id
+            or entry.get("head_sha") != sha
+        ):
+            raise SourceGateError("CI job identity is invalid, duplicated, or not bound to the selected run and revision")
+        seen_job_ids.add(entry["id"])
+    for name in sorted(REQUIRED_JOBS):
         matched = [j for j in entries if isinstance(j, dict) and j.get("name") == name]
         if len(matched) != 1 or matched[0].get("conclusion") != "success" or matched[0].get("status") != "completed":
             raise SourceGateError("mandatory CI job missing, duplicated, skipped, or unsuccessful: " + name)
