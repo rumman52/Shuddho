@@ -1163,6 +1163,8 @@ def _exact_checkout_revision(root: Path) -> str:
         ).stdout
 
     try:
+        if Path(git("rev-parse", "--show-toplevel").rstrip("\n")).resolve() != root.resolve():
+            raise EvidenceError("qualification requires the exact repository root")
         head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
         status = git("status", "--porcelain=v1", "-z", "--untracked-files=all",
                      "--ignore-submodules=none")
