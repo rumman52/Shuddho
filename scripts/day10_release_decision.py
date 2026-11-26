@@ -18,6 +18,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.cohort_release_gate import evaluate_release  # noqa: E402
+from scripts.release_contract import pilot_canonical_only_capabilities_disabled  # noqa: E402
 from scripts.ruke_pilot_eval import (  # noqa: E402
     BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, canonical_sha256, operated_trace_ok,
     validate_candidate_readbacks,
@@ -790,6 +791,7 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
         # Check all 43 frozen authority flags and the additional API-only
         # UI-derived field. Any unreviewed keys or unexpected drift fail closed.
         and api_runtime_capabilities_match_rollout(api.get("capabilities"), capabilities)
+        and pilot_canonical_only_capabilities_disabled(api.get("canonical_only_capabilities"))
         and isinstance(api.get("reviewed_skills"), dict)
         and api.get("action_providers") == rollout.get("action_providers", [])
         and isinstance(api.get("cohort"), dict)
@@ -815,6 +817,7 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and set(worker["capabilities"]) == RUNTIME_CAPABILITY_KEYS
          and all(type(enabled) is bool for enabled in worker["capabilities"].values())
          and worker["capabilities"] == capabilities
+         and pilot_canonical_only_capabilities_disabled(worker.get("canonical_only_capabilities"))
          and worker.get("action_providers") == rollout.get("action_providers", []))
     ci = artifacts.get("ci")
     need("final_head_ci", bound(ci, release, revision, rollout_hash)

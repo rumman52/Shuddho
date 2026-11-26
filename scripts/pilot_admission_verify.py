@@ -17,6 +17,7 @@ import re
 import httpx
 
 from scripts.cohort_release_gate import validate_rollout
+from scripts.release_contract import pilot_canonical_only_capabilities_disabled
 from scripts.day10_release_decision import pilot_authorization_terms, read_json, read_json_with_sha
 from scripts.ruke_pilot_eval import _read_evidence_bytes, immutable_write, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
@@ -174,6 +175,7 @@ def verify_live_runtime(client: httpx.Client, token: str, rollout: dict, revisio
         and runtime.get("source_revision") == revision
         and runtime.get("environment") == rollout.get("environment")
         and api_runtime_capabilities_match_rollout(capabilities, declared)
+        and pilot_canonical_only_capabilities_disabled(runtime.get("canonical_only_capabilities"))
         and isinstance(runtime.get("reviewed_skills"), dict)
         and runtime.get("action_providers") == rollout.get("action_providers", [])
         and isinstance(cohort, dict)

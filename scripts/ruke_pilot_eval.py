@@ -22,6 +22,7 @@ import stat
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
+from scripts.release_contract import pilot_canonical_only_capabilities_disabled
 from scripts.staging_release_evidence import write_private_bytes
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from services.coworker.schemas import parse_draft, source_references
@@ -222,7 +223,7 @@ def validate_candidate_identity(manifest: dict) -> dict:
         "api_source_revision", "worker_source_revision",
         "api_build_digest", "worker_build_digest", "alembic_revision",
         "provider_id", "model_id", "prompt_registry_sha256", "tool_registry_sha256",
-        "context_budget_bytes", "runtime_capabilities",
+        "context_budget_bytes", "runtime_capabilities", "canonical_only_capabilities",
         "api_readback_sha256", "worker_readback_sha256", "schema_readback_sha256",
     }
     if not isinstance(identity, dict) or set(identity) != required:
@@ -259,6 +260,8 @@ def validate_candidate_identity(manifest: dict) -> dict:
             or set(capabilities) != RUNTIME_CAPABILITY_KEYS
             or any(type(value) is not bool for value in capabilities.values())):
         raise EvidenceError("candidate runtime capability inventory must contain exactly 43 boolean keys")
+    if not pilot_canonical_only_capabilities_disabled(identity.get("canonical_only_capabilities")):
+        raise EvidenceError("candidate canonical-only capabilities must be explicitly disabled")
     return identity
 
 
@@ -362,6 +365,7 @@ def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
         "context_budget_bytes": identity["context_budget_bytes"],
         "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
         "runtime_capabilities": identity["runtime_capabilities"],
+        "canonical_only_capabilities": identity["canonical_only_capabilities"],
     }
     for role in ("api", "worker"):
         row = readbacks.get(role)
