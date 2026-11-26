@@ -1470,3 +1470,73 @@ def test_day9_evidence_read_rejects_in_place_change(tmp_path, monkeypatch, mutat
     else:
         with pytest.raises(EvidenceError, match="changed during bounded read"):
             module._read_evidence_bytes(path)
+
+
+@pytest.mark.parametrize("case", [
+    "valid", "existing", "file_sync_failure", "partial_write", "before_sync", "directory_sync_failure",
+])
+def test_first_run_publication_is_atomic(tmp_path, monkeypatch, case):
+    import os
+    import stat
+
+    if case == "directory_sync_failure" and os.name != "posix":
+        pytest.skip("directory fsync is POSIX-specific")
+    target = tmp_path / "first-run.json"
+    obj = {"language": "বাংলা", "accepted": False}
+    original_sync = os.fsync
+    original_fdopen = os.fdopen
+    observed = []
+    if case == "existing":
+        target.write_bytes(b"original\n")
+    if case in {"file_sync_failure", "before_sync", "directory_sync_failure"}:
+        def sync(fd):
+            is_directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+            if is_directory:
+                observed.append("directory")
+                if case == "directory_sync_failure":
+                    raise OSError("injected directory sync failure")
+            else:
+                observed.append("file")
+                if case == "file_sync_failure":
+                    raise OSError("injected file sync failure")
+                if case == "before_sync":
+                    assert not target.exists(), "published before the complete file was synced"
+            return original_sync(fd)
+        monkeypatch.setattr(os, "fsync", sync)
+    if case == "partial_write":
+        class PartialWriter:
+            def __init__(self, fp):
+                self.fp = fp
+            def __enter__(self):
+                self.fp.__enter__()
+                return self
+            def __exit__(self, *args):
+                return self.fp.__exit__(*args)
+            def write(self, data):
+                self.fp.write(data[:5])
+                raise OSError("injected partial write failure")
+        def fdopen(fd, mode, *args, **kwargs):
+            return PartialWriter(original_fdopen(fd, mode, *args, **kwargs))
+        monkeypatch.setattr(os, "fdopen", fdopen)
+    if case == "existing":
+        with pytest.raises(FileExistsError):
+            immutable_write(target, obj)
+        assert target.read_bytes() == b"original\n"
+    elif case in {"file_sync_failure", "partial_write"}:
+        with pytest.raises(OSError):
+            immutable_write(target, obj)
+        assert not target.exists()
+    elif case == "directory_sync_failure":
+        with pytest.raises(OSError):
+            immutable_write(target, obj)
+        assert json.loads(target.read_bytes()) == obj
+        assert observed == ["file", "directory"]
+    else:
+        digest = immutable_write(target, obj)
+        raw = target.read_bytes()
+        assert raw == (json.dumps(obj, ensure_ascii=False, sort_keys=True,
+                                  indent=2, allow_nan=False) + "\n").encode()
+        assert hashlib.sha256(raw).hexdigest() == digest
+        if os.name == "posix":
+            assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert list(tmp_path.glob(".first-run.json.*.tmp")) == []
