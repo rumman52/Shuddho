@@ -352,16 +352,11 @@ def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SSL_CERT_FILE", "/untrusted/ca.pem")
     client_calls = []
 
-    class FakeResponse:
-        status_code = 200
-
-        def json(self):
-            return runtime(state)
-
     class FakeClient:
         def __init__(self, **kwargs):
             client_calls.append(kwargs)
             assert kwargs.get("trust_env") is False
+            assert kwargs["headers"]["Accept-Encoding"] == "identity"
 
         def __enter__(self):
             return self
@@ -369,9 +364,12 @@ def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def get(self, path):
+        def stream(self, method, path):
+            from contextlib import nullcontext
+
+            assert method == "GET"
             assert path == "/api/v1/runtime-manifest"
-            return FakeResponse()
+            return nullcontext(freeze.httpx.Response(200, json=runtime(state)))
 
     monkeypatch.setattr(freeze.httpx, "Client", FakeClient)
     monkeypatch.setattr(
