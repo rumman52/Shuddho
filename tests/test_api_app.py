@@ -1471,3 +1471,55 @@ def test_cors_origin_parser_accepts_canonical_and_rejects_malformed():
     assert "https://evil.example" not in origins
     assert "https://attacker.example" not in origins
     assert not any("rumman52s-projects.vercel.app" in origin for origin in origins)
+
+
+@pytest.mark.parametrize("invalid_origin", [
+    "https://[broken",
+    "https://bad.example?query",
+    "https://bad.example/#fragment",
+    "https://bad.example/;parameter",
+    "https://bad.example///",
+    "https://user@bad.example",
+    "https://bad.example:invalid",
+    "https://bad.example:65536",
+    "https://bad.example:",
+    "https://bad.exa\tmple",
+    "https://*.example",
+])
+def test_malformed_cors_item_is_ignored_without_losing_valid_origins(invalid_origin):
+    allowed = app_module._parse_allowed_origins(
+        f"{invalid_origin}, https://approved.example:8443/, https://approved.example:8443"
+    )
+    assert allowed == [*app_module.DEFAULT_ALLOWED_ORIGINS, "https://approved.example:8443"]
+
+
+@pytest.mark.parametrize("origin,allowed", [
+    ("https://approved.example:8443", True),
+    ("https://bad.example", False),
+])
+def test_configured_origin_preflight(origin, allowed):
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    probe = FastAPI()
+    probe.add_middleware(
+        CORSMiddleware,
+        allow_origins=app_module._parse_allowed_origins(
+            "https://bad.example?query,https://approved.example:8443/"
+        ),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["content-type", "authorization", "x-request-id", "x-user-id",
+                       "x-tenant-id", "idempotency-key", "last-event-id"],
+    )
+    response = TestClient(probe).options("/api/check", headers={
+        "Origin": origin, "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type",
+    })
+    if allowed:
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+        assert response.headers["access-control-allow-credentials"] == "true"
+    else:
+        assert response.status_code == 400
+        assert "access-control-allow-origin" not in response.headers

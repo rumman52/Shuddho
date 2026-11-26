@@ -282,9 +282,9 @@ class WorkerProvisioningTests(unittest.TestCase):
                 "plan": "0.5c-512mb",
                 "maxShutdownDelaySeconds": 120,
                 "envSpecificDetails": {
-                    "buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker",
-                    "startCommand": "uv run --extra coworker python -m services.coworker.worker",
-                    "preDeployCommand": "uv run --extra coworker python -m services.coworker.migrate --check",
+                    "buildCommand": "pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker",
+                    "startCommand": "uv run --no-sync --extra coworker python -m services.coworker.worker",
+                    "preDeployCommand": "uv run --no-sync --extra coworker python -m services.coworker.migrate --check",
                 },
             },
         )
@@ -314,6 +314,18 @@ class WorkerProvisioningTests(unittest.TestCase):
             {"serviceDetails": reviewed["serviceDetails"] | {
                 "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
                     {"startCommand": "python unsafe_worker.py"}
+            }},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker"}
+            }},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"startCommand": "uv run --extra coworker python -m services.coworker.worker"}
+            }},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"preDeployCommand": "uv run --extra coworker python -m services.coworker.migrate --check"}
             }},
         ):
             with self.subTest(change=change):
@@ -369,6 +381,44 @@ class WorkerProvisioningTests(unittest.TestCase):
         self.assertIn("      - name: Validate staging prerequisites without provisioning", workflow)
         self.assertNotIn("render services create", workflow)
         self.assertNotIn("render services update", workflow)
+
+
+
+class LockedStagingCommandsTests(unittest.TestCase):
+    BUILD = "pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker"
+    WORKER = "uv run --no-sync --extra coworker python -m services.coworker.worker"
+    MIGRATE = "uv run --no-sync --extra coworker python -m services.coworker.migrate --check"
+    API = (
+        MIGRATE + " && uv run --no-sync --extra coworker uvicorn "
+        "services.api.shuddho_api.app:app --host 0.0.0.0 --port $PORT"
+    )
+
+    def test_blueprint_build_and_start_commands_are_locked(self):
+        blueprint = WORKFLOW.parents[2] / "infra/render.staging.yaml"
+        lines = blueprint.read_text().splitlines()
+
+        def commands(field):
+            prefix = field + ": "
+            return [line.strip().split(": ", 1)[1] for line in lines
+                    if line.strip().startswith(prefix)]
+
+        self.assertEqual(commands("buildCommand"), [self.BUILD, self.BUILD])
+        self.assertEqual(commands("startCommand"), [self.API, self.WORKER])
+        self.assertEqual(commands("preDeployCommand"), [self.MIGRATE])
+
+    def test_worker_create_update_and_readback_share_locked_commands(self):
+        workflow = WORKFLOW.read_text()
+        for flag, command, field in (
+            ("build-command", self.BUILD, "buildCommand"),
+            ("start-command", self.WORKER, "startCommand"),
+            ("pre-deploy-command", self.MIGRATE, "preDeployCommand"),
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(workflow.count(f'--{flag} "{command}"'), 2)
+                self.assertEqual(
+                    workflow.count(f'.serviceDetails.envSpecificDetails.{field} == "{command}"'), 1
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
