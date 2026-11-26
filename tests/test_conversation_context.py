@@ -405,3 +405,34 @@ def test_grounding_rejects_malformed_source_markers_even_with_a_valid_citation(b
     check_grounded_citations("Original claim. [[src-1]] Another use. [[src-1]]", allowed)
     with pytest.raises(ValueError, match="Malformed source citation"):
         check_grounded_citations(f"Valid claim. [[src-1]] Unsupported claim. {broken}", allowed)
+
+@pytest.mark.parametrize("marker", ["[[[src-1]]]", "[[src-1]]]", "[[[src-1]]", "[[[[src-2]]]]"])
+@pytest.mark.parametrize("prefix", ["", "Valid statement [[src-1]]. "])
+def test_grounding_rejects_citations_with_surplus_brackets(marker, prefix):
+    from services.coworker.conversation_grounding import check_grounded_citations
+
+    with pytest.raises(ValueError):
+        check_grounded_citations(prefix + marker, {"src-1": {}, "src-2": {}})
+
+
+@pytest.mark.parametrize("answer", [
+    "[[src-1]][[src-2]]",
+    "বাংলা [[src-1]] এবং [[src-1]]।",
+    "[regular link](https://example.test) [[src-1]]",
+])
+def test_grounding_accepts_exact_adjacent_and_repeated_citations(answer):
+    from services.coworker.conversation_grounding import check_grounded_citations
+
+    check_grounded_citations(answer, {"src-1": {}, "src-2": {}})
+
+@pytest.mark.parametrize("resource_type", [[], {}, ["artifact"], {"type": "artifact"}, None, True, 9])
+def test_invalid_resource_type_is_conflict_without_database_access(resource_type):
+    pin = {"resource_type": resource_type, "resource_id": "id", "sha256": "a" * 64}
+    # None is intentional: malformed pins must be rejected before any DB lookup.
+    assert revalidate_selected_sources(None, "owner", [pin]) == {
+        "active": [], "invalidated": [{"index": 0, "reason": "unavailable_or_changed"}],
+    }
+    with pytest.raises(CoworkerError) as error:
+        require_current_selected_sources(None, "owner", [pin])
+    assert error.value.code == "context_sources_changed"
+    assert error.value.status_code == 409

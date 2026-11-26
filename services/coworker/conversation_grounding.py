@@ -20,7 +20,8 @@ from .models import Artifact, Document, DocumentVersion
 
 SUPPORTED_KINDS = frozenset({"pdf", "txt", "docx", "csv", "xlsx", "pptx"})
 # This is data cited by the model, never another system-level instruction.
-CITATION = re.compile(r"\[\[([^\[\]\r\n]{1,80})\]\]")
+# Do not accept a valid-looking citation embedded in surplus brackets.
+CITATION = re.compile(r"(?<!\[)\[\[([^\[\]\r\n]{1,80})\]\](?!\])")
 SOURCE_MARKER_START = re.compile(r"\[\[\s*src", re.IGNORECASE)
 MAX_CHAT_SOURCES = 5
 

@@ -34,7 +34,8 @@ def revalidate_selected_sources(
             invalidated.append(invalid)
             continue
         source_type, resource_id, sha = (source.get("resource_type"), source.get("resource_id"), source.get("sha256"))
-        if (source_type not in {"document_version", "artifact"} or not isinstance(resource_id, str)
+        if (not isinstance(source_type, str) or source_type not in {"document_version", "artifact"}
+            or not isinstance(resource_id, str)
             or not resource_id or not isinstance(sha, str) or not _SHA256.fullmatch(sha)):
             invalidated.append(invalid)
             continue
