@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from datetime import timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from .config import Settings
 from .context_policy import filter_sensitive, is_stale, memory_conflict, relevance_score
@@ -14,7 +14,7 @@ from .errors import CoworkerError
 from .agent_schemas import AgentMemoryProposal
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .models import Account, AgentRun, AuditEvent, Document, DocumentVersion, MemoryFact, MemoryProposal, Workspace, utcnow
-from .repository import aware, iso, not_found
+from .repository import aware, iso, lock_account_reference, not_found
 
 
 def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[dict], settings: Settings) -> list[MemoryFact]:
@@ -39,8 +39,7 @@ def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[di
         Workspace.owner_id == owner,
     )) is None:
         raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
-    now = utcnow()
-    rows, seen = [], set()
+    versions = {}
     for pin in pins:
         if not isinstance(pin, dict):
             raise CoworkerError("memory_pins_changed", "Review and reselect task memories.", 409)
@@ -49,14 +48,25 @@ def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[di
             valid_id = isinstance(fact_id, str) and str(UUID(fact_id)) == fact_id
         except ValueError:
             valid_id = False
-        if not valid_id or type(version) is not int or version < 1 or fact_id in seen:
+        if not valid_id or type(version) is not int or version < 1 or fact_id in versions:
             raise CoworkerError("memory_pins_changed", "Review and reselect task memories.", 409)
-        seen.add(fact_id)
-        row = db.scalar(select(MemoryFact).where(
-            MemoryFact.id == fact_id,
-            MemoryFact.owner_id == owner,
-            MemoryFact.workspace_id == workspace_id,
-        ))
+        versions[fact_id] = version
+    if not lock_account_reference(db, owner):
+        raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
+    # Hold the same row locks used by correction/deletion until the caller's
+    # transaction ends. Acquire them in a stable order, then restore selection
+    # order; concurrent runs may select overlapping facts in different orders.
+    selected = db.scalars(select(MemoryFact).where(
+        MemoryFact.id.in_(versions),
+        MemoryFact.owner_id == owner,
+        MemoryFact.workspace_id == workspace_id,
+    ).order_by(MemoryFact.id).with_for_update().execution_options(populate_existing=True)).all()
+    by_id = {row.id: row for row in selected}
+    # Evaluate time after lock acquisition; a fact may expire while waiting.
+    now = utcnow()
+    rows = []
+    for fact_id, version in versions.items():
+        row = by_id.get(fact_id)
         if (row is None or row.version != version
             or (row.expires_at is not None and aware(row.expires_at) <= now)
             or is_stale(row.updated_at, now=now,
@@ -138,9 +148,19 @@ class MemoryRepository:
             ).order_by(MemoryFact.namespace, MemoryFact.key)).all()
             return [self._dto(row) for row in rows]
 
+    @staticmethod
+    def _lock_owner_for_mutation(db, owner: str) -> None:
+        # Serialize per-owner mutations before fact/proposal locks and audit
+        # FK writes. NO KEY UPDATE is compatible with reference KEY SHARE.
+        if db.scalar(select(Account.id).where(
+            Account.id == owner,
+        ).with_for_update(key_share=True)) is None:
+            raise not_found()
+
     def update(self, owner: str, fact_id: str, request: MemoryFactUpdate) -> dict:
         self._enabled()
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryFact).where(
                 MemoryFact.id == fact_id, MemoryFact.owner_id == owner,
             ).with_for_update())
@@ -162,11 +182,20 @@ class MemoryRepository:
 
     def delete(self, owner: str, fact_id: str) -> dict:
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryFact).where(
                 MemoryFact.id == fact_id, MemoryFact.owner_id == owner,
             ).with_for_update())
             if row is None:
                 raise not_found()
+            # A nullable, non-cascading FK retains the proposal review record.
+            # Detach every same-scope reference before deleting the fact.
+            # Account mutation locking also serializes concurrent acceptance.
+            db.execute(update(MemoryProposal).where(
+                MemoryProposal.accepted_fact_id == row.id,
+                MemoryProposal.owner_id == owner,
+                MemoryProposal.workspace_id == row.workspace_id,
+            ).values(accepted_fact_id=None))
             db.delete(row)
             self._audit(db, owner, fact_id, "memory.deleted")
         return {"deleted": True, "id": fact_id}
@@ -300,18 +329,21 @@ class MemoryRepository:
     def accept_proposal(self, owner: str, proposal_id: str) -> dict:
         self._enabled()
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryProposal).where(
                 MemoryProposal.id == proposal_id,
                 MemoryProposal.owner_id == owner,
             ).with_for_update())
             if row is None:
                 raise not_found()
-            if row.state == "accepted" and row.accepted_fact_id:
+            if row.state == "accepted":
+                # A deleted accepted fact must never be recreated by replay.
                 fact = db.scalar(select(MemoryFact).where(
                     MemoryFact.id == row.accepted_fact_id,
                     MemoryFact.owner_id == owner,
-                ))
-                return {"proposal": self._proposal_dto(row), "fact": self._dto(fact)} if fact else {"proposal": self._proposal_dto(row), "fact": None}
+                    MemoryFact.workspace_id == row.workspace_id,
+                )) if row.accepted_fact_id is not None else None
+                return {"proposal": self._proposal_dto(row), "fact": self._dto(fact) if fact else None}
             if row.state != "proposed" or aware(row.expires_at) <= utcnow():
                 if row.state == "proposed":
                     row.state = "expired"
@@ -353,6 +385,7 @@ class MemoryRepository:
 
     def reject_proposal(self, owner: str, proposal_id: str) -> dict:
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryProposal).where(
                 MemoryProposal.id == proposal_id,
                 MemoryProposal.owner_id == owner,
