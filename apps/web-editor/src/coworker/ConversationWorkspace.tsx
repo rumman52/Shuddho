@@ -60,7 +60,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   const [manifestError, setManifestError] = useState("");
   const [memoryFacts, setMemoryFacts] = useState<MemoryFact[]>([]);
   const [selectedMemoryPins, setSelectedMemoryPins] = useState<MemoryPin[]>([]);
-  const [memoryEnabled, setMemoryEnabled] = useState(false);
+  const [memoryEnabled, setMemoryEnabled] = useState<boolean | null>(null);
   const [memoryError, setMemoryError] = useState("");
   const [editingMemory, setEditingMemory] = useState("");
   const [memoryDraft, setMemoryDraft] = useState("");
@@ -243,6 +243,10 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
 
   useEffect(() => {
     const controller = new AbortController();
+    setMemoryEnabled(null);
+    setMemoryFacts([]);
+    setSelectedMemoryPins([]);
+    setMemoryError("");
     client.memory(controller.signal).then(reply => {
       if (!controller.signal.aborted) {
         setMemoryEnabled(reply.enabled);
@@ -524,8 +528,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     try {
       const preview = await client.previewConversationTaskBrief(
         selected, item.id, item.sequence, briefDraft, projectId,
-        memoryEnabled ? selectedMemoryPins : undefined);
-      if (selectedRef.current === selected) setBriefPreview({ value: preview, explicitMemory: memoryEnabled });
+        explicitMemory ? taskPins : undefined);
+      if (selectedRef.current === selected) setBriefPreview({ value: preview, explicitMemory });
     } catch (cause) {
       setBriefPreview(null);
       setError(cause instanceof Error ? cause.message : "Task brief could not be validated.");
@@ -533,10 +537,13 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
   }
 
   const reviewedPins = briefPreview?.value.memory_pins ?? [];
-  const taskPins = memoryEnabled ? selectedMemoryPins : [];
+  // An unavailable or pending capability is not a confirmed disabled feature.
+  // Bind explicit empty memory rather than falling back to implicit retrieval.
+  const explicitMemory = memoryEnabled !== false;
+  const taskPins = memoryEnabled === true ? selectedMemoryPins : [];
   // The backend distinguishes omitted pins (legacy) from explicit [] (no memory).
   // Equal pin arrays alone do not establish that the digest reviewed this mode.
-  const reviewedDigest = briefPreview && briefPreview.explicitMemory === memoryEnabled
+  const reviewedDigest = briefPreview && briefPreview.explicitMemory === explicitMemory
     && reviewedPins.length === taskPins.length && reviewedPins.every((pin, index) =>
       pin.fact_id === taskPins[index].fact_id && pin.expected_version === taskPins[index].expected_version)
     ? briefPreview.value.canonical_digest : null;
@@ -548,7 +555,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
     try {
       await client.dispatchConversationMessage(
         selected, item.id, item.sequence, projectId,
-        memoryEnabled ? selectedMemoryPins : undefined,
+        explicitMemory ? taskPins : undefined,
         briefDraft, reviewedDigest);
       setBriefMessageId(""); setBriefDraft(null); setBriefPreview(null);
       setSelectedMemoryPins([]);
@@ -863,6 +870,7 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
                 {canDispatch && briefMessageId === item.id && <section className="rukh-task-brief-review" aria-label="Review task brief">
                   <h3>Review task before starting</h3>
                   {briefQuestion && <p role="status">{briefQuestion} Reply in the conversation to clarify.</p>}
+                  {memoryEnabled === null && <p className="rukh-muted" role="status">Saved memory is not available yet. This task will use no saved memory.</p>}
                   {briefDraft && <form className="rukh-steer-form" onSubmit={event => {
                     event.preventDefault();
                     if (reviewedDigest) void dispatch(item);
@@ -1017,7 +1025,8 @@ export default function ConversationWorkspace({ client, openAgent, initialDraft 
       <section>
         <div className="rukh-panel-heading"><div><span className="cw-eyebrow">MEMORY</span><h3>Saved context</h3></div></div>
         {memoryError && <p className="cw-error" role="alert">{memoryError}</p>}
-        {!memoryEnabled ? <p className="rukh-muted">Memory is disabled for this workspace.</p> :
+        {memoryEnabled === null ? <p className="rukh-muted">Saved memory is not available yet. Tasks will use no saved memory.</p> :
+          !memoryEnabled ? <p className="rukh-muted">Memory is disabled for this workspace.</p> :
           <details className="rukh-memory-details">
             <summary>Review saved memory ({memoryFacts.length})</summary>
             <p className="rukh-panel-footnote">Memory is separate from messages and never authorizes external actions.</p>
