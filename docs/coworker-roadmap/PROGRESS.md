@@ -1,6 +1,8 @@
-## 26 November 2026 — Prompt 05 final runtime identity binding
+## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
 
-**SOURCE_IN_PROGRESS / NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests `c9ffaa11c6fe5ee808ed8f224dec727d4d8a7fd9`, `3aec5e34e4c5237190f1c793c4a2a836fb5c64d9`; Day 9 digest `ee4e416568d1405551daf9b4be3b6173930092ac`; Day 10 binding `fc5a09a9875f332f7035478d3444493b5f5e74a3`. Require separately collected final runtime readbacks matching original frozen build/schema/model/registry/flags/budget, and expected canonical typed readback digest; separate approvals must follow final readback. Isolated RED 16 failed/1 passed, GREEN 17 passed; full CI and independent review pending. [Contract](P05_FINAL_RUNTIME_READBACK_BINDING_2026-11-26.md). No release, custody, provider or activation credit.
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
+
+---
 
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
