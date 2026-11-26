@@ -1156,7 +1156,9 @@ def _exact_checkout_revision(root: Path) -> str:
     """Reject observable checkout drift; independent custody remains required."""
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", "--no-optional-locks", *args], cwd=root, text=True,
+            ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+             "-c", "core.ignorestat=false", "-c", "core.untrackedCache=false", *args],
+            cwd=root, text=True, encoding="utf-8", errors="surrogateescape",
             capture_output=True, timeout=10, check=True,
         ).stdout
 
@@ -1164,10 +1166,13 @@ def _exact_checkout_revision(root: Path) -> str:
         head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
         status = git("status", "--porcelain=v1", "-z", "--untracked-files=all",
                      "--ignore-submodules=none")
+        index_entries = git("ls-files", "-v", "-z").split("\0")
         final_head = git("rev-parse", "--verify", "HEAD^{commit}").strip()
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvidenceError("cannot verify exact checkout identity") from exc
-    if not REV.fullmatch(head) or final_head != head or status:
+    # A nominally clean status can hide assume-unchanged or skip-worktree files.
+    if (not REV.fullmatch(head) or final_head != head or status
+            or any(entry and not entry.startswith("H ") for entry in index_entries)):
         raise EvidenceError("qualification requires a clean checkout at one exact revision")
     return head
 
