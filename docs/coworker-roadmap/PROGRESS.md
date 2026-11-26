@@ -1,3 +1,7 @@
+## 26 November 2026 — Prompt 05 exact runtime/canonical rollout parity
+
+**SOURCE_IN_PROGRESS / NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests `5bf7d7eab183b90a921548c6ff52e13c6041d335`; contract `60df23b342b64036ede0132b6f722a55bcafc2ee`; gate `a569a820b8e6d7956b555ff4aa7da22af18fa94f`. Canonical rollout now accepts only explicitly false runtime-only projects, fly_github, conversation_replies and reviewed_research, retaining all existing thresholds and unknown-key rejection. Registry delta pinned. Isolated shape RED 9 failed/4 passed, GREEN 13 passed; real canonical integration CI and independent review pending. Canonical-only suggestion_model_relevance is not in runtime-v2 and needs separate disabled readback. [Contract](P05_RUNTIME_ROLLOUT_CONTRACT_PARITY_2026-11-26.md). No release or activation credit.
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
