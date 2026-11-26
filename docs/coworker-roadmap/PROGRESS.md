@@ -1,6 +1,6 @@
-## 26 November 2026 — Prompt 01 / strict release-evidence Unicode and publication parity
+## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
 
-**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `627703002ac9e90542f3593d45ebcc7ce3c37230`; source `ae050e8427d01fabde100bc7f65d341366bbf9f5`; mandatory CI wiring `be6a0c30a122d6c9eb8cec274fa96dd498032172`. Reject escaped lone surrogates and refuse private evidence that its own strict reader cannot decode before publication. Hash-verified complete modules: RED 12 failed/1 passed; GREEN 13 passed, combined existing/new 28 passed; py_compile and both mandatory JUnit module checks passed, zero skips. Valid Bangla/supplementary Unicode and existing byte format preserved. [Task contract](DAY2_STRICT_EVIDENCE_UNICODE_2026-11-26.md). Full exact-head CI, independent review and hosted receipts outstanding; no hosted operation, production activation or billing.
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
 
 ---
 
