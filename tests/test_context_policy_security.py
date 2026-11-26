@@ -141,3 +141,12 @@ def test_positive_style_precedence_is_preserved():
 ])
 def test_negated_style_directives_do_not_invert_memory_precedence(instruction, memory, expected):
     assert memory_conflict(instruction, "writing.preference", memory) == expected
+
+
+@pytest.mark.parametrize("instruction, memory", [
+    ("Research the role of friendly tone in literature.", "Usually write formally."),
+    ("Do not use formal methods in the study.", "Usually write formally."),
+    ("Do not use formal methods in the study.", "Usually write casually."),
+])
+def test_style_topic_words_do_not_override_saved_preferences(instruction, memory):
+    assert memory_conflict(instruction, "writing.preference", memory) is None
