@@ -305,3 +305,35 @@ def test_fault_evidence_verifier_rejects_non_list_scenarios(tmp_path, bad):
     doc["scenarios"] = bad
     assert "scenarios must be a list" in check(doc)
     assert "scenarios must be a list" in verify_evidence_files(doc, tmp_path)
+
+
+@pytest.mark.parametrize("case", ["valid", "symlink", "oversized", "overflow"])
+def test_cli_fault_manifest_requires_bounded_stable_strict_json(tmp_path, monkeypatch, capsys, case):
+    from scripts.transaction_chaos_matrix import main
+
+    directory = tmp_path / "faults"
+    directory.mkdir()
+    doc = _bundle(directory, evidence())
+    raw = json.dumps(doc).encode()
+    manifest = tmp_path / "manifest.json"
+    if case == "symlink":
+        target = tmp_path / "target.json"
+        target.write_bytes(raw)
+        manifest.symlink_to(target)
+    elif case == "oversized":
+        manifest.write_bytes(raw + b" " * (1024 * 1024))
+    elif case == "overflow":
+        manifest.write_bytes(raw[:-1] + b', "extra": 1e999}')
+    else:
+        manifest.write_bytes(raw)
+    monkeypatch.setattr("sys.argv", ["transaction_chaos_matrix", str(manifest),
+        "--source-revision", "reviewed-head", "--rollout-id", "staging-42",
+        "--evidence-dir", str(directory)])
+    status = main()
+    output = capsys.readouterr().out
+    if case == "valid":
+        assert status == 0
+        assert "independent staging provenance/recovery NOT certified" in output
+    else:
+        assert status == 1
+        assert "NOT QUALIFIED:" in output
