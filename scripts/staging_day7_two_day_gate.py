@@ -205,6 +205,8 @@ def verify_two_day(
             and paused["paused_revision"] > paused["previous_revision"],
             "Pause must follow the accepted schedule revision.")
     schedule, zone = require_daily_calendar(first)
+    # Matching numeric values may have different JSON types (8 == 8.0).
+    require_daily_calendar(second)
     local_dates: list[date] = []
     due_timestamps: list[datetime] = []
     verified_timestamps: list[datetime] = []
