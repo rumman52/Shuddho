@@ -1,12 +1,20 @@
-## 25 November 2026 — Day 2 release-freeze evidence custody (draft source repair)
+## 25 November 2026 — Day 10 same-byte evidence and concurrent release-ledger append ([draft PR #911](https://github.com/rumman52/Shuddho/pull/911))
 
-**IMPLEMENTED_UNVERIFIED / staging NO-GO.** Main base `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. The freeze CLI previously parsed permissive JSON, reopened rollout/provider-policy paths for hashing, and wrote prepared/frozen receipts with ordinary `write_text`. This bounded change reuses the secure snapshot reader and private atomic writer, adds regression tests, and preserves the existing release/rollout/runtime contract. Local isolated excerpt tests: 7 failing assertions before corresponding fixes, 7 passing afterward; not full repository CI. Source implementation head `3e752f5faee2a09563a8ff89d47d648162bd4962`. See [task contract](DAY2_FREEZE_EVIDENCE_CUSTODY_2026-11-25.md). Exact final PR-head mandatory CI and independent review remain required. No live staging or production mutations; no release gate advanced.
+**SOURCE PATCH / controlled pilot NO-GO.** Exact base `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. Two documented residual defects confirmed in [RED CI 45558085273](https://github.com/rumman52/Shuddho/actions/runs/45558085273): **2 failed / 3818 passed / 109 skipped / 6 warnings**, test-only SHA `e47a16c382ab997987a131030aaf3b452ca11f6e`. The signer bound substituted bytes after parsing, and two concurrent successful appends lost an event. Source SHA `f0a7b26208c76fa70488f0264ddeb5eda593659d` reuses strict same-byte parse+digest and a per-append evidence snapshot across all 20 append entry points; a private persistent POSIX sidecar lock protects compare-and-swap of the canonical verified history and existing fsynced atomic replacement. [Source CI 45558319034](https://github.com/rumman52/Shuddho/actions/runs/45558319034) Python step success observed; added process, rollback, linked lock, and write-failure tests at `5235f11f30b55904d33d7defad77ae9d0b9f3d17`. Exact final-head CI and independent review remain mandatory. [Contract and operator limitations](DAY10_LEDGER_SNAPSHOT_CAS_2026-11-25.md).
+
+**Hosted/gate boundary:** main CI [45351544500](https://github.com/rumman52/Shuddho/actions/runs/45351544500) governance and merge gate failed (missing App client-id); rule 27324410 active but zero approving reviews and no required checks. Supabase staging healthy PG17.11, migration ledger `0070`; Render requires explicit workspace selection. No authorized provider cost run, PostHog ingestion, private holdout, 20 operated recoveries, approved freeze or separate Founder/C approval. No deployment, migration, paid provisioning, flags or membership change. Historical credits unchanged; no pilot admission.
 
 ---
 
 ## 25 November 2026 — Prompt 02 research provider input boundary
 
 **SOURCE PATCH ONLY; not release-qualified.** Base `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. Branch `codex/p02-research-provider-input-boundary-20261125`. Test-first `2c0a203de5933be212eec189f2c4db180dd9b070`; source `3642322151e184024fc53277633ca57e7b348259`. Isolated parser probe (copied logic, not repository checkout) RED 4 / GREEN 4. See [task contract and blockers](P02_RESEARCH_PROVIDER_INPUT_BOUNDARY_2026-11-25.md). Full exact-head CI and independent review pending. Main CI #45351544500 failed governance and merge gate, staging API revision is stale and persistent worker is absent. No deployment, provider calls, paid resources, external actions or activation. No change to pilot acceptance credits.
+
+---
+
+## 25 November 2026 — Day 2 release-freeze evidence custody (draft source repair)
+
+**IMPLEMENTED_UNVERIFIED / staging NO-GO.** Main base `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. The freeze CLI previously parsed permissive JSON, reopened rollout/provider-policy paths for hashing, and wrote prepared/frozen receipts with ordinary `write_text`. This bounded change reuses the secure snapshot reader and private atomic writer, adds regression tests, and preserves the existing release/rollout/runtime contract. Local isolated excerpt tests: 7 failing assertions before corresponding fixes, 7 passing afterward; not full repository CI. Source implementation head `3e752f5faee2a09563a8ff89d47d648162bd4962`. See [task contract](DAY2_FREEZE_EVIDENCE_CUSTODY_2026-11-25.md). Exact final PR-head mandatory CI and independent review remain required. No live staging or production mutations; no release gate advanced.
 
 ---
 
