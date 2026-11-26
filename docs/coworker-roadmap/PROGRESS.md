@@ -1,6 +1,6 @@
-## 26 November 2026 — Prompt 03 Day 5 memory review mode and configured cap
+## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
 
-**Source patch; not release-qualified.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `f496326cab381f5628626257f3210abd29438ea5`; implementation `4b1d6a0e53a54257c01b6367e8bee232bb67ce28`. Review binds legacy versus explicit empty selection mode, displays exact fact IDs and versions, rejects stale loaded selections, and honors configured cap. Isolated Node RED 3 failed/1 passed, GREEN 4 passed. React, API and browser CI pending. [Contract](P03_MEMORY_REVIEW_UI_BINDING_2026-11-26.md). No deployment or hosted acceptance.
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
 
 ---
 

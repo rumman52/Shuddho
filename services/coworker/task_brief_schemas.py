@@ -27,7 +27,7 @@ class MemoryPin(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     fact_id: UUID
-    expected_version: int = Field(ge=1)
+    expected_version: int = Field(ge=1, strict=True)
 
 
 class TaskBriefMemorySelection(BaseModel):
