@@ -40,11 +40,13 @@ def evidence():
            "build_digest": "sha256:" + "1" * 64,
            "capabilities": {**capabilities, "grounded_conversation_replies": capabilities["conversation_replies"]},
            "action_providers": [], "reviewed_skills": {},
+           "canonical_only_capabilities": {"suggestion_model_relevance": False},
            "cohort": {"enforced": True, "max_users": 5, "configured_members": 0}}
     worker = {**proof(), "deployment_reference": "worker-image-sha256:abc",
               "schema_version": 2, "environment": "production",
               "build_digest": "sha256:" + "2" * 64,
-              "capabilities": dict(capabilities), "action_providers": []}
+              "capabilities": dict(capabilities), "action_providers": [],
+              "canonical_only_capabilities": {"suggestion_model_relevance": False}}
     schema = {**proof(), "migration_revision": "0069", "api_revision": "0069", "worker_revision": "0069"}
     ci = {**proof(), "required_checks": {name: "success" for name in
           ("test-and-build", "Frontend tests and builds", "coworker", "browser-qualification",
@@ -208,6 +210,45 @@ def evidence():
         denied_resource_types=["documents", "memory", "artifacts", "activity"],
     )
     _bind_first_run_to_heldout_outcomes(artifacts)
+    # Day 9 emits these exact identity/readback fields in the first-run artifact.
+    identity = {
+        "api_source_revision": REV, "worker_source_revision": REV,
+        "api_build_digest": api["build_digest"], "worker_build_digest": worker["build_digest"],
+        "alembic_revision": schema["migration_revision"], "provider_id": "deepseek",
+        "model_id": "model-r", "prompt_registry_sha256": "3" * 64,
+        "tool_registry_sha256": "4" * 64, "context_budget_bytes": 12_288,
+        "runtime_capabilities": dict(capabilities),
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
+    }
+    common = {
+        "release_id": RELEASE, "alembic_revision": identity["alembic_revision"],
+        "provider_id": identity["provider_id"], "model_id": identity["model_id"],
+        "prompt_registry_sha256": identity["prompt_registry_sha256"],
+        "tool_registry_sha256": identity["tool_registry_sha256"],
+        "context_budget_bytes": identity["context_budget_bytes"],
+        "rollout_manifest_sha256": HASH, "runtime_capabilities": dict(capabilities),
+        "canonical_only_capabilities": dict(identity["canonical_only_capabilities"]),
+    }
+    readbacks = {
+        "api": {**common, "source_revision": REV, "build_digest": api["build_digest"]},
+        "worker": {**common, "source_revision": REV, "build_digest": worker["build_digest"]},
+        "schema": {key: schema[key] for key in (
+            "release_id", "source_revision", "rollout_manifest_sha256",
+            "migration_revision", "api_revision", "worker_revision",
+        )},
+    }
+    for role, payload in readbacks.items():
+        digest = hashlib.sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        payload["readback_sha256"] = digest
+        identity[f"{role}_readback_sha256"] = digest
+    first.update(candidate_revision=REV, candidate_model="model-r", generated_at=RESTORED,
+                 candidate_identity=identity, candidate_readbacks=readbacks)
+    artifacts["final_runtime_readbacks"] = {
+        **proof(), "evidence_ref": "sha256:" + "8" * 64,
+        "readbacks": deepcopy(readbacks),
+    }
     # Day 9 embeds the same original recovery object in its first-run report
     # and exports a separate Day 10 recovery file.
     artifacts["day9_first_run"]["day10_recovery"] = deepcopy(recovery)
@@ -1363,3 +1404,126 @@ def test_day10_two_signers_bind_budget_scope_and_expiry(monkeypatch, case):
         assert result["decision"] == "STAGING_ONLY"
         assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
         assert result["pilot_authorization_claim"] is None
+
+
+@pytest.mark.parametrize("case", [
+    "valid", "api_build", "worker_build", "schema", "model", "missing_final",
+    "registry", "budget", "missing_first", "early", "future", "wrong_release",
+    "wrong_provider", "flags", "forged_digest", "unbound_reference",
+])
+def test_day10_final_runtime_readbacks_bind_original_candidate(monkeypatch, case):
+    rollout, artifacts = evidence()
+    first = artifacts["day9_first_run"]
+    final = artifacts["final_runtime_readbacks"]
+    if case == "api_build":
+        artifacts["api"]["build_digest"] = "sha256:" + "9" * 64
+    elif case == "worker_build":
+        artifacts["worker"]["build_digest"] = "sha256:" + "9" * 64
+    elif case == "schema":
+        artifacts["schema"].update(migration_revision="0071", api_revision="0071", worker_revision="0071")
+    elif case == "model":
+        for key in ("model", "quality", "golden"):
+            artifacts[key]["provider_model"] = "other-model"
+    elif case == "missing_final":
+        artifacts.pop("final_runtime_readbacks")
+    elif case == "registry":
+        final["readbacks"]["api"]["prompt_registry_sha256"] = "9" * 64
+    elif case == "budget":
+        final["readbacks"]["worker"]["context_budget_bytes"] = 123
+    elif case == "missing_first":
+        first.pop("candidate_readbacks")
+    elif case == "early":
+        final["verified_at"] = STARTED
+    elif case == "future":
+        final["verified_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    elif case == "wrong_release":
+        final["release_id"] = "other-release"
+    elif case == "wrong_provider":
+        first["candidate_identity"]["provider_id"] = "other-provider"
+        for role in ("api", "worker"):
+            row = first["candidate_readbacks"][role]
+            row["provider_id"] = "other-provider"
+            row["readback_sha256"] = hashlib.sha256(json.dumps(
+                {k: v for k, v in row.items() if k != "readback_sha256"},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")).hexdigest()
+            first["candidate_identity"][f"{role}_readback_sha256"] = row["readback_sha256"]
+        final["readbacks"] = deepcopy(first["candidate_readbacks"])
+    elif case == "flags":
+        for caps in (rollout["capabilities"], artifacts["api"]["capabilities"], artifacts["worker"]["capabilities"]):
+            caps["memory"] = True
+    elif case == "forged_digest":
+        final["readbacks"]["api"]["readback_sha256"] = "9" * 64
+    elif case == "unbound_reference":
+        final["evidence_ref"] = "https://example.test/unbound"
+
+    result = decision(monkeypatch, rollout, artifacts)
+    if case == "valid":
+        assert result["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+        assert result["blockers"] == []
+    else:
+        assert result["decision"] == "SOURCE_ONLY"
+        assert "final_runtime_matches_frozen_day9_identity" in result["blockers"]
+
+
+def test_final_runtime_readback_must_precede_separate_signoffs(monkeypatch):
+    rollout, artifacts = evidence()
+    earlier = (datetime.fromisoformat(NOW) - timedelta(seconds=1)).isoformat()
+    # Make CI/golden/rollback earlier so that only the new final readback is later.
+    for key in ("ci", "golden", "rollback"):
+        artifacts[key]["verified_at"] = earlier
+    for key in ("founder_decision", "owner_c_decision"):
+        artifacts["approval"][key]["verified_at"] = earlier
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "STAGING_ONLY"
+    assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+
+
+def test_day10_deep_evidence_produces_immutable_nogo(tmp_path, monkeypatch, capsys):
+    rollout_path = tmp_path / "rollout.json"
+    output = tmp_path / "first-decision.json"
+    rollout_path.write_text('{"nested":' * 10_000 + "null" + "}" * 10_000, encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("malformed rollout reached release decision")
+
+    monkeypatch.setattr(day10, "decide", forbidden)
+    args = ["--rollout", str(rollout_path), "--source-revision", REV, "--output", str(output)]
+    assert day10.main(args) == 1
+    original = output.read_bytes()
+    receipt = json.loads(original)
+    assert receipt["decision"] == "SOURCE_ONLY"
+    assert receipt["canonical_decision"] == "NO-GO"
+    assert receipt["pilot_activated"] is False
+    assert "EvidenceError" in receipt["blockers"][0]
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert day10.main(args) == 2
+    assert output.read_bytes() == original
+    assert "nested" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("role,blocker", [
+    ("api", "api_runtime_manifest_v2_exact_sha_and_flags"),
+    ("worker", "worker_exact_sha_and_deployment_receipt"),
+])
+@pytest.mark.parametrize("value", [
+    None, {}, {"suggestion_model_relevance": True},
+    {"suggestion_model_relevance": 0},
+    {"suggestion_model_relevance": False, "unknown": False},
+])
+def test_day10_rejects_unreviewed_canonical_only_authority(monkeypatch, role, blocker, value):
+    rollout, artifacts = evidence()
+    artifacts[role]["canonical_only_capabilities"] = value
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert blocker in result["blockers"]
+
+
+def test_day10_final_canonical_only_authority_cannot_drift(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["final_runtime_readbacks"]["readbacks"]["worker"]["canonical_only_capabilities"] = {
+        "suggestion_model_relevance": True,
+    }
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "final_runtime_matches_frozen_day9_identity" in result["blockers"]

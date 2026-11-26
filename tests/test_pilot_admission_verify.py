@@ -274,6 +274,7 @@ def live_runtime(rollout, revision=REV, members=5):
         "environment": "production",
         "capabilities": {**capabilities, "grounded_conversation_replies": capabilities["conversation_replies"]},
         "reviewed_skills": {},
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
         "action_providers": [],
         "cohort": {
             "enforced": True,
@@ -303,6 +304,11 @@ def test_live_runtime_matches_exact_source_flags_and_cohort():
     lambda runtime: runtime["capabilities"].update(grounded_conversation_replies=True),
     lambda runtime: runtime["capabilities"].update(grounded_conversation_replies=0),
     lambda runtime: runtime.update(reviewed_skills=None),
+    lambda runtime: runtime.pop("canonical_only_capabilities"),
+    lambda runtime: runtime.update(canonical_only_capabilities={}),
+    lambda runtime: runtime.update(canonical_only_capabilities={"suggestion_model_relevance": True}),
+    lambda runtime: runtime.update(canonical_only_capabilities={"suggestion_model_relevance": 0}),
+    lambda runtime: runtime.update(canonical_only_capabilities={"suggestion_model_relevance": False, "unknown": False}),
     lambda runtime: runtime.update(action_providers=["google"]),
     lambda runtime: runtime["cohort"].update(enforced=False),
     lambda runtime: runtime["cohort"].update(max_users=10),
@@ -503,3 +509,82 @@ def test_post_admission_expiry_during_probe_cannot_publish_pass(tmp_path, monkey
         "--output", str(output),
     ]) == 1
     assert json.loads(output.read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("mutation", ["same_size", "grow", "truncate", "permissions", "none"])
+def test_private_member_token_capture_rejects_in_place_mutation(tmp_path, monkeypatch, mutation):
+    from contextlib import contextmanager
+
+    tokens = [f"synthetic-token-{i}" for i in range(5)]
+    path = secret_file(tmp_path, tokens)
+    raw = path.read_bytes()
+    original_fdopen = os.fdopen
+
+    @contextmanager
+    def mutate_after_read(fd, mode):
+        with original_fdopen(fd, mode) as stream:
+            class Reader:
+                def fileno(self):
+                    return stream.fileno()
+
+                def read(self, count):
+                    assert count == pilot.MAX_SECRET_FILE_BYTES + 1
+                    content = stream.read(count)
+                    if mutation == "same_size":
+                        path.write_bytes(raw.replace(b"synthetic", b"replaced!"))
+                    elif mutation == "grow":
+                        path.write_bytes(raw + b" " * pilot.MAX_SECRET_FILE_BYTES)
+                    elif mutation == "truncate":
+                        path.write_bytes(b"[]")
+                    elif mutation == "permissions":
+                        path.chmod(0o644)
+                    return content
+
+            yield Reader()
+
+    monkeypatch.setattr(os, "fdopen", mutate_after_read)
+    if mutation == "none":
+        assert pilot.load_member_tokens(path) == tokens
+    else:
+        with pytest.raises(pilot.PilotVerificationFailure, match="Cannot read"):
+            pilot.load_member_tokens(path)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO requires POSIX")
+def test_member_token_fifo_rejected_without_blocking(tmp_path, monkeypatch):
+    path = tmp_path / "private-tokens"
+    os.mkfifo(path, 0o600)
+    original_open = os.open
+
+    def guarded_open(target, flags, *args, **kwargs):
+        if Path(target) == path:
+            assert flags & os.O_NONBLOCK, "token reader attempted blocking FIFO open"
+        return original_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", guarded_open)
+    with pytest.raises(pilot.PilotVerificationFailure, match="Cannot read"):
+        pilot.load_member_tokens(path)
+
+
+def test_member_token_parser_recursion_fails_without_exposing_payload(tmp_path, monkeypatch):
+    path = secret_file(tmp_path, [f"synthetic-token-{i}" for i in range(5)])
+
+    def fail_parser(*args):
+        raise RecursionError("synthetic private parser error")
+
+    monkeypatch.setattr(pilot, "strict_json_loads", fail_parser)
+    with pytest.raises(pilot.PilotVerificationFailure, match="Cannot read") as exc:
+        pilot.load_member_tokens(path)
+    assert "synthetic" not in str(exc.value)
+
+
+def test_member_token_capture_keeps_original_64k_limit(tmp_path):
+    tokens = [f"synthetic-token-{i}" for i in range(5)]
+    path = secret_file(tmp_path, tokens)
+    raw = path.read_bytes()
+    padded = raw + b" " * (pilot.MAX_SECRET_FILE_BYTES - len(raw))
+    path.write_bytes(padded)
+    assert pilot.load_member_tokens(path) == tokens
+    path.write_bytes(padded + b" ")
+    with pytest.raises(pilot.PilotVerificationFailure):
+        pilot.load_member_tokens(path)

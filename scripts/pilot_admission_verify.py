@@ -11,16 +11,15 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import re
-import stat
 
 import httpx
 
 from scripts.cohort_release_gate import validate_rollout
+from scripts.release_contract import pilot_canonical_only_capabilities_disabled
 from scripts.day10_release_decision import pilot_authorization_terms, read_json, read_json_with_sha
-from scripts.ruke_pilot_eval import immutable_write, strict_json_loads
+from scripts.ruke_pilot_eval import _read_evidence_bytes, immutable_write, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
 from scripts.staging_release_freeze import api_runtime_capabilities_match_rollout
 from scripts.staging_cohort_admission import (
@@ -84,26 +83,14 @@ def require_release_decision(rollout_path: Path, decision_path: Path, revision: 
 
 
 def load_member_tokens(path: Path) -> list[str]:
-    """Read only a small owner-private JSON array; reject symlinks and shared permissions."""
-    fd = -1
+    """Read one bounded, stable, owner-private token snapshot."""
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        meta = os.fstat(fd)
-        if (not stat.S_ISREG(meta.st_mode)
-                or not 0 < meta.st_size <= MAX_SECRET_FILE_BYTES
-                or stat.S_IMODE(meta.st_mode) & 0o077):
-            raise PilotVerificationFailure("Pilot token file must be a private regular file (0600).")
-        with os.fdopen(fd, "rb") as handle:
-            fd = -1
-            payload = handle.read(MAX_SECRET_FILE_BYTES + 1)
+        payload, _ = _read_evidence_bytes(
+            path, max_bytes=MAX_SECRET_FILE_BYTES, require_private=True,
+        )
         tokens = strict_json_loads(payload.decode("utf-8"))
-    except (OSError, ValueError, UnicodeError) as exc:
-        if isinstance(exc, PilotVerificationFailure):
-            raise
-        raise PilotVerificationFailure("Cannot read owner-private pilot token file.") from None
-    finally:
-        if fd != -1:
-            os.close(fd)
+    except (OSError, ValueError, RecursionError):
+        raise PilotVerificationFailure("Cannot read owner-private pilot token file (0600).") from None
     if (not isinstance(tokens, list) or not 5 <= len(tokens) <= 10
             or any(not isinstance(token, str) or not token or token != token.strip()
                    for token in tokens)
@@ -188,6 +175,7 @@ def verify_live_runtime(client: httpx.Client, token: str, rollout: dict, revisio
         and runtime.get("source_revision") == revision
         and runtime.get("environment") == rollout.get("environment")
         and api_runtime_capabilities_match_rollout(capabilities, declared)
+        and pilot_canonical_only_capabilities_disabled(runtime.get("canonical_only_capabilities"))
         and isinstance(runtime.get("reviewed_skills"), dict)
         and runtime.get("action_providers") == rollout.get("action_providers", [])
         and isinstance(cohort, dict)
