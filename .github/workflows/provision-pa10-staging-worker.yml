@@ -260,9 +260,9 @@ jobs:
             --repo https://github.com/rumman52/Shuddho
             --branch main
             --runtime python
-            --build-command "pip install uv && uv sync --frozen --no-dev --extra coworker"
-            --start-command "uv run --extra coworker python -m services.coworker.worker"
-            --pre-deploy-command "uv run --extra coworker python -m services.coworker.migrate --check"
+            --build-command "pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker"
+            --start-command "uv run --no-sync --extra coworker python -m services.coworker.worker"
+            --pre-deploy-command "uv run --no-sync --extra coworker python -m services.coworker.migrate --check"
             --plan 0.5c-512mb
             --max-shutdown-delay 120
             --auto-deploy=false
@@ -283,7 +283,7 @@ jobs:
               echo "::error::Existing shuddho-worker-staging has unexpected type '${worker_type}'. Refusing to mutate it."
               exit 1
             fi
-            render services update "${worker_id}"               --branch main               --repo https://github.com/rumman52/Shuddho               --runtime python               --build-command "pip install uv && uv sync --frozen --no-dev --extra coworker"               --start-command "uv run --extra coworker python -m services.coworker.worker"               --pre-deploy-command "uv run --extra coworker python -m services.coworker.migrate --check"               --plan 0.5c-512mb               --max-shutdown-delay 120               --auto-deploy=false               --output json               --confirm >/dev/null
+            render services update "${worker_id}"               --branch main               --repo https://github.com/rumman52/Shuddho               --runtime python               --build-command "pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker"               --start-command "uv run --no-sync --extra coworker python -m services.coworker.worker"               --pre-deploy-command "uv run --no-sync --extra coworker python -m services.coworker.migrate --check"               --plan 0.5c-512mb               --max-shutdown-delay 120               --auto-deploy=false               --output json               --confirm >/dev/null
           fi
 
           if [[ ! "${worker_id}" =~ ^srv-[a-z0-9]+$ ]]; then
@@ -316,9 +316,9 @@ jobs:
               and .serviceDetails.region == "oregon"
               and .serviceDetails.plan == "0.5c-512mb"
               and .serviceDetails.maxShutdownDelaySeconds == 120
-              and .serviceDetails.envSpecificDetails.buildCommand == "pip install uv && uv sync --frozen --no-dev --extra coworker"
-              and .serviceDetails.envSpecificDetails.startCommand == "uv run --extra coworker python -m services.coworker.worker"
-              and .serviceDetails.envSpecificDetails.preDeployCommand == "uv run --extra coworker python -m services.coworker.migrate --check"
+              and .serviceDetails.envSpecificDetails.buildCommand == "pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker"
+              and .serviceDetails.envSpecificDetails.startCommand == "uv run --no-sync --extra coworker python -m services.coworker.worker"
+              and .serviceDetails.envSpecificDetails.preDeployCommand == "uv run --no-sync --extra coworker python -m services.coworker.migrate --check"
             else
               false
             end

@@ -1,6 +1,16 @@
+## 26 November 2026 — Prompt 05 individual CW-02 receipt custody
+
+**SOURCE_IN_PROGRESS / controlled pilot NO-GO.** Extended existing PR #922 on its isolated branch, starting from verified main `f7138e2025f6f5719aea4f4babfcc3549fae324b`; reconciled subsequent main `3bd8fe90213f51b3bd4b6b4398f21b56037399b2` without replacing other owners' work. Test-first `936b36f169e90c2c175ba91830764a1ae12fad82`, strengthened mutation injection `0e3ffa15fba5c8fd10a1dbab482339703a025bc2`; shared reader bound `8f6c0fc8080970f8315ff690c4ae7dd61262e58f`; receipt integration `f4a5e093132b062aad3c37c53530e760c5ff5430`. Local isolated filesystem reproduction: RED 3 failed/3 passed, GREEN 6 passed. Full checkout blocked by DNS; this is not exact full-source CI or operated evidence. Preserve 1 MiB manifest/2 MiB receipt limits, reject symlink substitution, in-place mutation, exponent overflow. Full focused repository tests, mandatory exact-head CI, independent review, authenticated custody and operated recovery remain outstanding. Directory-ancestor trust and post-capture mutation are separate constraints. No production, billing, hosted database or telemetry changes.
+
 ## 26 November 2026 — CW-02 fault manifest custody
 
 **SOURCE PATCH / controlled pilot NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. Test-first `626b3d1930e2c1dde4f3bd8715c9128b8b4b6670`; source `a2663578a66d9f7d703679987943f3eaba841292`. The fault qualification CLI now reuses the bounded, stable no-follow strict JSON reader. Isolated tests against the hash-verified baseline module and copied fixture/reader excerpt: RED 3 failed/1 passed; GREEN 4 passed. Direct/module help succeeded. Full checkout unavailable due DNS; mandatory exact-head CI and independent review pending. See [task contract](CW02_FAULT_MANIFEST_CUSTODY_2026-11-26.md). No live staging, production, billing, or acceptance-credit change.
+
+## 26 November 2026 — Prompt 02 accepted research evidence deduplication
+
+**Source patch; not release-qualified.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; RED test `d9f9f6f69ffe8a38e35a36b922fc0656a56d2a47`, source `67347d8b7a0ccc271e1cc9e6458f4a30ae6d9a67`. Rejected duplicate URL could suppress valid later evidence. Local isolated parser probe 4 failures before / 4 passes after, not full repository suite. [Contract](P02_RESEARCH_VALID_SOURCE_DEDUP_2026-11-26.md). Exact-head CI and independent review pending; no hosted work or activation. Prior PR #910 merged, its CI merge gate failed and no submitted reviews were returned. Prompt 02 exit remains unmet.
+
+---
 
 ## 25 November 2026 — PA-10 expired meeting catch-up admission
 
@@ -13,6 +23,10 @@
 **Hosted/gate boundary:** main CI [45351544500](https://github.com/rumman52/Shuddho/actions/runs/45351544500) governance and merge gate failed (missing App client-id); rule 27324410 active but zero approving reviews and no required checks. Supabase staging healthy PG17.11, migration ledger `0070`; Render requires explicit workspace selection. No authorized provider cost run, PostHog ingestion, private holdout, 20 operated recoveries, approved freeze or separate Founder/C approval. No deployment, migration, paid provisioning, flags or membership change. Historical credits unchanged; no pilot admission.
 
 ---
+
+## 26 November 2026 — Day 9 evidence snapshot stability
+
+**SOURCE PATCH / controlled pilot NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; test-first `fed91d80651df426d30e29306f4ddedf7b8ef720`; source `6cb23f0a3ec76d0d3d5804523e51b5790ff4689f`. The bounded Day 9 evidence reader now fences concurrent same-inode writes and mode changes. Local exact-function reproduction with filesystem tests: RED 4 failed/1 passed; GREEN 5 passed. Full checkout, exact-head CI, independent review and operated holdout/recovery remain unverified. [Task contract](DAY9_EVIDENCE_SNAPSHOT_STABILITY_2026-11-26.md). No staging, production, spending or acceptance-credit change.
 
 ## 25 November 2026 — PA-10 reminder expiry at admission
 
@@ -2993,3 +3007,7 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - **Baseline:** main `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; branch `fix/tx27-handoff-origin-chronology-20261125`. Tests-first commit `21704b5159b789b70d23009e6eaf8459827dd0a8`; source commit `e3dc2cf871abb53f5bdcdda8b5c94dd461cec5dc`. See [task contract and external decision package](TX27_HOSTED_HANDOFF_INTEGRITY_2026-11-25.md).
 - **Proposed implementation:** fail closed on ambiguous hosted URLs, revalidate stored handoff schema/URL/ID and receipt chronology, preserve late observation of timely completion; no new runtime provider or authority. Local DNS blocked checkout and exact-head test verification is pending. Baseline CI #45351544500 failed governance/merge gate because GitHub app token client-id was missing; application/coworker/frontend/browser/PostgreSQL compatibility jobs succeeded.
 - **Qualification:** SOURCE_ONLY / NO-GO. Shopping/travel ActionSpecs remain absent; no selected provider access, independently operated 16-fault receipts, staging identity, provider audit, or security reviewer signoff established. No production deployment, flags, credentials, migration, spending or real provider mutations changed. Next: exact final-head CI and independent review, owner-selected provider contract and authorized isolated staging.
+
+## 26 November 2026 — PA-10 staging locked build and startup
+
+**IMPLEMENTED_UNVERIFIED / staging NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. The checked-in Blueprint and worker provisioning create/update/readback now pin the CI-selected uv 0.7.22 and require no-sync runtime/migration commands. Test-first `6498b8907a057a758495d3c49129e4d6bff0da0d`; implementation `de118cae816cde17bd5b6630a67a5ec68bff5ca3`. Isolated command-excerpt unittest: four failing assertions/subtests RED; two test methods GREEN. Full mocked provisioning and exact-head CI, independent review and hosted build proof remain pending. See [task contract](PA10_STAGING_LOCKED_STARTUP_2026-11-26.md). No Render access/mutation, billing, migration, deployment or activation.

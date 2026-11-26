@@ -1430,3 +1430,43 @@ def test_day9_custody_before_freeze_accepts_timezone_normalization():
         "receipt_sha256": "f" * 64, "verified_at": "2026-11-12T05:59:59+06:00",
     }
     assert custody_receipt_ok(receipt, frozen)
+
+
+@pytest.mark.parametrize("mutation", ["same_size", "grow", "truncate", "permissions", "none"])
+def test_day9_evidence_read_rejects_in_place_change(tmp_path, monkeypatch, mutation):
+    from contextlib import contextmanager
+    import scripts.ruke_pilot_eval as module
+
+    path = tmp_path / "evidence.json"
+    original = b'{"release_id":"frozen"}'
+    path.write_bytes(original)
+    path.chmod(0o600)
+    fdopen = module.os.fdopen
+
+    @contextmanager
+    def mutate_after_read(fd, mode):
+        with fdopen(fd, mode) as stream:
+            class Reader:
+                def fileno(self):
+                    return stream.fileno()
+
+                def read(self, count):
+                    content = stream.read(count)
+                    if mutation == "same_size":
+                        path.write_bytes(b'{"release_id":"edited"}')
+                    elif mutation == "grow":
+                        path.write_bytes(original + b" ")
+                    elif mutation == "truncate":
+                        path.write_bytes(b"{}")
+                    elif mutation == "permissions":
+                        path.chmod(0o644)
+                    return content
+
+            yield Reader()
+
+    monkeypatch.setattr(module.os, "fdopen", mutate_after_read)
+    if mutation == "none":
+        assert module._read_evidence_bytes(path)[0] == original
+    else:
+        with pytest.raises(EvidenceError, match="changed during bounded read"):
+            module._read_evidence_bytes(path)
