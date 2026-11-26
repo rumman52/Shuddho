@@ -107,10 +107,24 @@ def parse_evidence_json(raw: bytes) -> object:
         return number
 
     try:
-        return json.loads(
+        value = json.loads(
             raw.decode("utf-8"), object_pairs_hook=unique_fields,
             parse_constant=reject_constant, parse_float=finite_float,
         )
+        # JSON escapes can produce unpaired surrogates even when the input
+        # bytes are valid UTF-8. Require scalar text in every key and value
+        # before callers canonicalize, hash, or publish the evidence.
+        pending = [value]
+        while pending:
+            item = pending.pop()
+            if isinstance(item, str):
+                item.encode("utf-8")
+            elif isinstance(item, dict):
+                pending.extend(item)
+                pending.extend(item.values())
+            elif isinstance(item, list):
+                pending.extend(item)
+        return value
     except (UnicodeError, ValueError, TypeError, RecursionError) as error:
         raise StagingReleaseEvidenceError(
             f"Invalid rollout manifest: {type(error).__name__}"
@@ -224,10 +238,13 @@ def passed(evidence: str, context: dict, *, now: datetime | None = None) -> dict
 def write_private_json(path: Path, value: dict) -> None:
     """Atomically create a private JSON evidence file without overwriting existing data."""
     try:
-        payload = json.dumps(value, indent=2) + "\n"
-    except (TypeError, ValueError):
+        payload = json.dumps(value, indent=2, allow_nan=False) + "\n"
+        # Validate the actual serialized bytes before creating any file.
+        # This also catches duplicate keys introduced by JSON key coercion.
+        parse_evidence_json(payload.encode("utf-8"))
+    except (TypeError, ValueError, RecursionError, StagingReleaseEvidenceError):
         raise StagingReleaseEvidenceError(
-            "Private evidence must be JSON-serializable."
+            "Private evidence must be JSON-serializable as unambiguous, finite UTF-8 JSON."
         ) from None
 
     try:
