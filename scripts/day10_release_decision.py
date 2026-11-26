@@ -638,6 +638,19 @@ def approval_expiry(value: object, *, now: datetime) -> datetime | None:
         return None
 
 
+def pilot_authorization_terms(value: object, rollout: dict, *, now: datetime) -> tuple[str, int, datetime] | None:
+    """Validate the exact scope, spend and expiry claim without authenticating signers."""
+    if not isinstance(value, dict):
+        return None
+    scope_digest = pilot_scope_sha256(rollout)
+    spend_limit = value.get("max_spend_microusd")
+    expiry = approval_expiry(value.get("expires_at"), now=now)
+    if (scope_digest is None or value.get("scope_sha256") != scope_digest
+            or type(spend_limit) is not int or spend_limit < 0 or expiry is None):
+        return None
+    return scope_digest, spend_limit, expiry
+
+
 def separate_pilot_authorization_ok(
     approval: object, rollback: object, ci: object, golden: object,
     release: str, revision: str, digest: str, cohort_limit: object, *, rollout: dict,
@@ -656,12 +669,9 @@ def separate_pilot_authorization_ok(
             or approval["max_users"] != cohort_limit):
         return False
 
-    scope_digest = pilot_scope_sha256(rollout)
-    spend_limit = approval.get("max_spend_microusd")
     now = datetime.now(timezone.utc)
-    expiry = approval_expiry(approval.get("expires_at"), now=now)
-    if (scope_digest is None or approval.get("scope_sha256") != scope_digest
-            or type(spend_limit) is not int or spend_limit < 0 or expiry is None):
+    terms = pilot_authorization_terms(approval, rollout, now=now)
+    if terms is None:
         return False
 
     founder_id = reviewer_identity(approval.get("founder"))
@@ -700,10 +710,7 @@ def separate_pilot_authorization_ok(
                 or receipt.get("decision") != "approve_controlled_pilot"
                 or type(receipt.get("max_users")) is not int
                 or receipt["max_users"] != cohort_limit
-                or receipt.get("scope_sha256") != scope_digest
-                or type(receipt.get("max_spend_microusd")) is not int
-                or receipt["max_spend_microusd"] != spend_limit
-                or approval_expiry(receipt.get("expires_at"), now=now) != expiry
+                or pilot_authorization_terms(receipt, rollout, now=now) != terms
                 or receipt.get("rollback_owner") != rollback_owner
                 or not isinstance(reference, str)
                 or not reference.startswith("sha256:")
