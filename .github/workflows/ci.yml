@@ -243,6 +243,8 @@ jobs:
             tests/test_staging_preseed_baseline.py \
             tests/test_staging_day2_archive_attestation.py \
             tests/test_staging_object_backup.py \
+            tests/test_staging_release_evidence.py \
+            tests/test_staging_evidence_unicode.py \
             -q -rs --junitxml=/tmp/day2-private-staging.xml
           for module in \
             tests.test_staging_day2_execution \
@@ -253,7 +255,9 @@ jobs:
             tests.test_staging_restored_api_access \
             tests.test_staging_preseed_baseline \
             tests.test_staging_day2_archive_attestation \
-            tests.test_staging_object_backup; do
+            tests.test_staging_object_backup \
+            tests.test_staging_release_evidence \
+            tests.test_staging_evidence_unicode; do
             uv run --extra coworker python -m scripts.mandatory_test_gate \
               /tmp/day2-private-staging.xml --required-module "$module"
           done
