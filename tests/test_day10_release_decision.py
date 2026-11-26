@@ -1473,3 +1473,26 @@ def test_final_runtime_readback_must_precede_separate_signoffs(monkeypatch):
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "STAGING_ONLY"
     assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+
+
+def test_day10_deep_evidence_produces_immutable_nogo(tmp_path, monkeypatch, capsys):
+    rollout_path = tmp_path / "rollout.json"
+    output = tmp_path / "first-decision.json"
+    rollout_path.write_text('{"nested":' * 10_000 + "null" + "}" * 10_000, encoding="utf-8")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("malformed rollout reached release decision")
+
+    monkeypatch.setattr(day10, "decide", forbidden)
+    args = ["--rollout", str(rollout_path), "--source-revision", REV, "--output", str(output)]
+    assert day10.main(args) == 1
+    original = output.read_bytes()
+    receipt = json.loads(original)
+    assert receipt["decision"] == "SOURCE_ONLY"
+    assert receipt["canonical_decision"] == "NO-GO"
+    assert receipt["pilot_activated"] is False
+    assert "EvidenceError" in receipt["blockers"][0]
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert day10.main(args) == 2
+    assert output.read_bytes() == original
+    assert "nested" not in capsys.readouterr().out
