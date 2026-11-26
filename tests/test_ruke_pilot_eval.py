@@ -1578,3 +1578,30 @@ def test_day9_dirty_checkout_blocks_before_holdout_read(synthetic_git_checkout, 
     assert result["qualified"] is False
     assert result["release_authorization"] is False
     assert "clean checkout" in result["error"]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_exact_checkout_rejects_parent_repository_discovery(tmp_path, nested):
+    import subprocess
+    from scripts.ruke_pilot_eval import _exact_checkout_revision
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Synthetic QA")
+    git("config", "user.email", "synthetic@example.invalid")
+    (tmp_path / ".gitignore").write_text("nested/\n", encoding="utf-8")
+    git("add", ".gitignore")
+    git("commit", "-qm", "synthetic parent checkout")
+    child = tmp_path / "nested"
+    child.mkdir()
+    (child / "source.py").write_text("value = 2\n", encoding="utf-8")
+    if nested:
+        with pytest.raises(EvidenceError, match="exact repository root"):
+            _exact_checkout_revision(child)
+    else:
+        assert _exact_checkout_revision(tmp_path) == git("rev-parse", "HEAD")
