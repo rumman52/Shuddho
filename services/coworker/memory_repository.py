@@ -39,8 +39,7 @@ def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[di
         Workspace.owner_id == owner,
     )) is None:
         raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
-    now = utcnow()
-    rows, seen = [], set()
+    versions = {}
     for pin in pins:
         if not isinstance(pin, dict):
             raise CoworkerError("memory_pins_changed", "Review and reselect task memories.", 409)
@@ -49,14 +48,23 @@ def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[di
             valid_id = isinstance(fact_id, str) and str(UUID(fact_id)) == fact_id
         except ValueError:
             valid_id = False
-        if not valid_id or type(version) is not int or version < 1 or fact_id in seen:
+        if not valid_id or type(version) is not int or version < 1 or fact_id in versions:
             raise CoworkerError("memory_pins_changed", "Review and reselect task memories.", 409)
-        seen.add(fact_id)
-        row = db.scalar(select(MemoryFact).where(
-            MemoryFact.id == fact_id,
-            MemoryFact.owner_id == owner,
-            MemoryFact.workspace_id == workspace_id,
-        ))
+        versions[fact_id] = version
+    # Hold the same row locks used by correction/deletion until the caller's
+    # transaction ends. Acquire them in a stable order, then restore selection
+    # order; concurrent runs may select overlapping facts in different orders.
+    selected = db.scalars(select(MemoryFact).where(
+        MemoryFact.id.in_(versions),
+        MemoryFact.owner_id == owner,
+        MemoryFact.workspace_id == workspace_id,
+    ).order_by(MemoryFact.id).with_for_update().execution_options(populate_existing=True)).all()
+    by_id = {row.id: row for row in selected}
+    # Evaluate time after lock acquisition; a fact may expire while waiting.
+    now = utcnow()
+    rows = []
+    for fact_id, version in versions.items():
+        row = by_id.get(fact_id)
         if (row is None or row.version != version
             or (row.expires_at is not None and aware(row.expires_at) <= now)
             or is_stale(row.updated_at, now=now,
