@@ -1,3 +1,9 @@
+## 26 November 2026 — Prompt 03 Day 5 memory review mode and configured cap
+
+**Source patch; not release-qualified.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `f496326cab381f5628626257f3210abd29438ea5`; implementation `4b1d6a0e53a54257c01b6367e8bee232bb67ce28`. Review binds legacy versus explicit empty selection mode, displays exact fact IDs and versions, rejects stale loaded selections, and honors configured cap. Isolated Node RED 3 failed/1 passed, GREEN 4 passed. React, API and browser CI pending. [Contract](P03_MEMORY_REVIEW_UI_BINDING_2026-11-26.md). No deployment or hosted acceptance.
+
+---
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
