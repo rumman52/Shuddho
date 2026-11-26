@@ -83,6 +83,23 @@ def manifest_from_snapshot(value: object) -> CoworkerSkillManifest:
         )
     try:
         limits = value["resource_limits"]
+        tools = value["tool_names"]
+        # Never discard unreviewed fields or coerce malformed JSON into the
+        # same canonical reviewed identity. The in-memory tuple and its JSON
+        # array representation remain equivalent.
+        if (
+            set(value) != set(CoworkerSkillManifest.__dataclass_fields__)
+            or type(limits) is not dict
+            or set(limits) != set(SkillResourceLimits.__dataclass_fields__)
+            or any(type(number) is not int for number in limits.values())
+            or type(tools) not in (list, tuple)
+            or any(type(name) is not str for name in tools)
+            or any(type(value[field]) is not str for field in (
+                "name", "version", "instruction_sha256", "input_schema_sha256",
+                "output_schema_sha256", "tool_contract_sha256", "rollback_version",
+            ))
+        ):
+            raise ValueError("Invalid persisted manifest shape")
         manifest = CoworkerSkillManifest(
             name=value["name"],
             version=value["version"],
@@ -90,7 +107,7 @@ def manifest_from_snapshot(value: object) -> CoworkerSkillManifest:
             input_schema_sha256=value["input_schema_sha256"],
             output_schema_sha256=value["output_schema_sha256"],
             tool_contract_sha256=value["tool_contract_sha256"],
-            tool_names=tuple(value["tool_names"]),
+            tool_names=tuple(tools),
             resource_limits=SkillResourceLimits(
                 max_tool_calls=limits["max_tool_calls"],
                 max_wall_seconds=limits["max_wall_seconds"],
