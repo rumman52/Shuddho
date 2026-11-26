@@ -212,6 +212,11 @@ def test_collect_snapshot_scopes_metrics_to_configured_cohort(tmp_path):
         assert value["provider"]["failure_rate"] == 0.0
         assert value["provider"]["p95_latency_ms"] == 500
         assert value["provider"]["window_tokens"] == 80
+        assert value["dispatch"]["tasks"] == {
+            "admissions": 1, "samples": 0, "unobserved": 1, "invalid_clock": 0,
+            "p50_ms": None, "p95_ms": None,
+        }
+        assert value["workers"]["fresh_running"] == 0
     finally:
         container.repository.sessions.kw["bind"].dispose()
 
