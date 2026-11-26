@@ -344,3 +344,16 @@ def test_snapshot_preserves_read_only_mapping_support():
     from types import MappingProxyType
 
     assert build_operational_event(MappingProxyType(BASE), policy()) == build_operational_event(BASE, policy())
+
+
+def test_sink_introspection_failure_is_isolated_before_any_send():
+    class BrokenSink:
+        def __getattribute__(self, name):
+            if name == "__name__":
+                raise RuntimeError("SYNTHETIC_PRIVATE_INPUT@example.test")
+            return super().__getattribute__(name)
+
+        def __call__(self, *_args):
+            pytest.fail("a broken sink must not be invoked")
+
+    assert emit_operational_event(BASE, policy(), BrokenSink()) is False
