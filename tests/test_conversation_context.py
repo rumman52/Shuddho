@@ -405,3 +405,22 @@ def test_grounding_rejects_malformed_source_markers_even_with_a_valid_citation(b
     check_grounded_citations("Original claim. [[src-1]] Another use. [[src-1]]", allowed)
     with pytest.raises(ValueError, match="Malformed source citation"):
         check_grounded_citations(f"Valid claim. [[src-1]] Unsupported claim. {broken}", allowed)
+
+@pytest.mark.parametrize("marker", ["[[[src-1]]]", "[[src-1]]]", "[[[src-1]]", "[[[[src-2]]]]"])
+@pytest.mark.parametrize("prefix", ["", "Valid statement [[src-1]]. "])
+def test_grounding_rejects_citations_with_surplus_brackets(marker, prefix):
+    from services.coworker.conversation_grounding import check_grounded_citations
+
+    with pytest.raises(ValueError):
+        check_grounded_citations(prefix + marker, {"src-1": {}, "src-2": {}})
+
+
+@pytest.mark.parametrize("answer", [
+    "[[src-1]][[src-2]]",
+    "বাংলা [[src-1]] এবং [[src-1]]।",
+    "[regular link](https://example.test) [[src-1]]",
+])
+def test_grounding_accepts_exact_adjacent_and_repeated_citations(answer):
+    from services.coworker.conversation_grounding import check_grounded_citations
+
+    check_grounded_citations(answer, {"src-1": {}, "src-2": {}})
