@@ -12,6 +12,11 @@ from scripts.release_contract import (
     expected_staging_evidence_keys,
 )
 
+from scripts.staging_release_evidence import (
+    StagingReleaseEvidenceError,
+    _read_rollout_manifest,
+)
+
 
 class ReleaseContractCheckError(ValueError):
     pass
@@ -19,8 +24,8 @@ class ReleaseContractCheckError(ValueError):
 
 def load_json_object(path: Path, label: str) -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        value, _ = _read_rollout_manifest(path)
+    except StagingReleaseEvidenceError as error:
         raise ReleaseContractCheckError(
             f"Could not read {label}: {type(error).__name__}"
         ) from None

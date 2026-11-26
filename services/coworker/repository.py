@@ -58,6 +58,13 @@ def not_found():
     return CoworkerError("not_found", "This item was not found in your workspace.", 404)
 
 
+def lock_account_reference(db, owner: str) -> bool:
+    """Hold the account FK reference before taking subordinate row locks."""
+    return db.scalar(select(Account.id).where(
+        Account.id == owner,
+    ).with_for_update(read=True, key_share=True)) is not None
+
+
 class Repository:
     def __init__(self, sessions, settings: Settings):
         self.sessions = sessions
@@ -1710,23 +1717,64 @@ class Repository:
         if task.state in TERMINAL:
             raise CoworkerError("task_terminal", "This task has already finished.", 409)
 
+    def _lock_task_checkpoint(self, db, task_id, phase):
+        if phase in {"draft", "export", "complete"}:
+            owner = db.scalar(select(Task.owner_id).where(
+                Task.id == task_id, Task.agent_run_id.is_not(None),
+            ))
+            if owner is not None and not lock_account_reference(db, owner):
+                raise not_found()
+        task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
+        if task is None:
+            raise not_found()
+        return task
+
+    def _require_task_memory_pins(self, db, task):
+        if task.agent_run_id is None:
+            return
+        # Do not acquire the parent run lock after the task lock. The parent
+        # binding is immutable; existing reservation/cancellation paths lock
+        # run before task. Selected fact rows serialize against edits here.
+        run = db.scalar(select(AgentRun).where(
+            AgentRun.id == task.agent_run_id,
+            AgentRun.owner_id == task.owner_id,
+            AgentRun.workspace_id == task.workspace_id,
+        ).execution_options(populate_existing=True))
+        if run is None:
+            raise CoworkerError("task_run_scope", "The task's run could not be verified.", 409)
+        context = run.project_context or {}
+        reviewed = run.reviewed_brief or {}
+        if not isinstance(context, dict) or not isinstance(reviewed, dict):
+            raise CoworkerError("context_sources_changed", "The reviewed task context changed. Review again.", 409)
+        from .task_brief_schemas import MEMORY_BOUND_BRIEF_VERSION
+        if "memory_pins" not in context and reviewed.get("schema_version") != MEMORY_BOUND_BRIEF_VERSION:
+            return
+        from .conversation_context import require_admitted_conversation_run_sources
+        from .memory_repository import require_current_memory_pins
+        require_admitted_conversation_run_sources(db, run)
+        require_current_memory_pins(db, task.owner_id, task.workspace_id, context.get("memory_pins"), self.settings)
+
     def begin_phase(self, task_id, phase, message):
         with self.sessions.begin() as db:
-            task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
+            task = self._lock_task_checkpoint(db, task_id, phase)
             self._check_live(task)
             completed = db.get(Step, (task_id, phase))
             if completed is not None:
                 return completed.output
+            if phase in {"draft", "export", "complete"}:
+                self._require_task_memory_pins(db, task)
             if task.phase != phase or task.state != "running":
                 self._event(db, task, "running", phase, message)
             return None
 
     def save_step(self, task_id, phase, output):
         with self.sessions.begin() as db:
-            task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
+            task = self._lock_task_checkpoint(db, task_id, phase)
             self._check_live(task)
             existing = db.get(Step, (task_id, phase))
             if existing is None:
+                if phase in {"draft", "export"}:
+                    self._require_task_memory_pins(db, task)
                 db.add(Step(task_id=task_id, phase=phase, output=output))
             return existing.output if existing else output
 
@@ -1821,6 +1869,7 @@ class Repository:
             self._account(db, owner)
             task = db.scalar(select(Task).where(Task.id == task_id).with_for_update())
             self._check_live(task)
+            self._require_task_memory_pins(db, task)
             if (
                 task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
                 or db.get(Step, (task.id, "reviewed_skill_identity")) is not None
@@ -1922,6 +1971,7 @@ class Repository:
             if task.state in {"completed", "needs_input"}:
                 return
             self._check_live(task)
+            self._require_task_memory_pins(db, task)
             if (
                 task.workflow_version == REVIEWED_RESEARCH_WORKFLOW_VERSION
                 or db.get(Step, (task.id, "reviewed_skill_identity")) is not None

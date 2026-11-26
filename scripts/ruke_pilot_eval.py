@@ -22,6 +22,8 @@ import stat
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
+from scripts.release_contract import pilot_canonical_only_capabilities_disabled
+from scripts.staging_release_evidence import write_private_bytes
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from services.coworker.schemas import parse_draft, source_references
 
@@ -72,10 +74,13 @@ def reviewer_identity(value: object) -> str | None:
     return identity if identity.strip() and len(identity) <= 128 else None
 
 
-def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
+def _read_evidence_bytes(
+    path: Path, *, max_bytes: int = MAX_BYTES, require_private: bool = False,
+) -> tuple[bytes, int]:
     """Read one bounded regular inode without following a final symlink.
 
     Parse and hash the same bytes: a pathname can change between two opens.
+    Secret consumers may retain a smaller bound and reject shared modes before reading.
     """
     if not hasattr(os, "O_NOFOLLOW"):
         raise EvidenceError("no-follow evidence reads are unavailable")
@@ -84,14 +89,16 @@ def _read_evidence_bytes(path: Path) -> tuple[bytes, int]:
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as stream:
             metadata = os.fstat(stream.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
                 raise EvidenceError("missing, linked, or oversized evidence file")
-            content = stream.read(MAX_BYTES + 1)
+            if require_private and (not metadata.st_mode & 0o400 or metadata.st_mode & 0o077):
+                raise EvidenceError("evidence file must be owner-private")
+            content = stream.read(max_bytes + 1)
             final_metadata = os.fstat(stream.fileno())
     except OSError as exc:
         raise EvidenceError("missing, linked, or oversized evidence file") from exc
     # A regular file may grow after fstat, so always cap the actual read.
-    if len(content) > MAX_BYTES:
+    if len(content) > max_bytes:
         raise EvidenceError("missing, linked, or oversized evidence file")
     # Reject a concurrent rewrite, growth, truncation or permission change.
     if (
@@ -119,6 +126,29 @@ def pairs_unique(pairs):
     return value
 
 
+MAX_JSON_DEPTH = 128
+
+
+def _require_bounded_json_nesting(value: object) -> None:
+    """Bound container nesting independently of the Python recursion limit."""
+    sentinel = object()
+    stack = [iter((value,))]
+    while stack:
+        item = next(stack[-1], sentinel)
+        if item is sentinel:
+            stack.pop()
+            continue
+        if isinstance(item, dict):
+            children = iter(item.values())
+        elif isinstance(item, (list, tuple)):
+            children = iter(item)
+        else:
+            continue
+        if len(stack) > MAX_JSON_DEPTH:
+            raise EvidenceError("JSON evidence nesting exceeds 128 levels")
+        stack.append(children)
+
+
 def strict_json_loads(content: str):
     """Reject ambiguous or non-finite JSON in release and holdout evidence."""
     def reject_constant(value: str):
@@ -130,8 +160,13 @@ def strict_json_loads(content: str):
             raise EvidenceError("non-finite JSON number")
         return number
 
-    return json.loads(content, object_pairs_hook=pairs_unique,
-                      parse_constant=reject_constant, parse_float=finite_float)
+    try:
+        value = json.loads(content, object_pairs_hook=pairs_unique,
+                           parse_constant=reject_constant, parse_float=finite_float)
+    except RecursionError:
+        raise EvidenceError("JSON evidence nesting exceeds parser limits") from None
+    _require_bounded_json_nesting(value)
+    return value
 
 
 def _read_json_and_sha256(path: Path) -> tuple[object, str]:
@@ -166,9 +201,10 @@ def read_jsonl(path: Path) -> list[dict]:
 def canonical_sha256(value: dict) -> str:
     """Canonical digest for a release-bound JSON readback object."""
     try:
+        _require_bounded_json_nesting(value)
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True,
                              separators=(",", ":"), allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise EvidenceError("candidate readback is not canonical JSON") from exc
     return hashlib.sha256(encoded).hexdigest()
 
@@ -187,7 +223,7 @@ def validate_candidate_identity(manifest: dict) -> dict:
         "api_source_revision", "worker_source_revision",
         "api_build_digest", "worker_build_digest", "alembic_revision",
         "provider_id", "model_id", "prompt_registry_sha256", "tool_registry_sha256",
-        "context_budget_bytes", "runtime_capabilities",
+        "context_budget_bytes", "runtime_capabilities", "canonical_only_capabilities",
         "api_readback_sha256", "worker_readback_sha256", "schema_readback_sha256",
     }
     if not isinstance(identity, dict) or set(identity) != required:
@@ -224,6 +260,8 @@ def validate_candidate_identity(manifest: dict) -> dict:
             or set(capabilities) != RUNTIME_CAPABILITY_KEYS
             or any(type(value) is not bool for value in capabilities.values())):
         raise EvidenceError("candidate runtime capability inventory must contain exactly 43 boolean keys")
+    if not pilot_canonical_only_capabilities_disabled(identity.get("canonical_only_capabilities")):
+        raise EvidenceError("candidate canonical-only capabilities must be explicitly disabled")
     return identity
 
 
@@ -327,6 +365,7 @@ def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
         "context_budget_bytes": identity["context_budget_bytes"],
         "rollout_manifest_sha256": manifest["rollout_manifest_sha256"],
         "runtime_capabilities": identity["runtime_capabilities"],
+        "canonical_only_capabilities": identity["canonical_only_capabilities"],
     }
     for role in ("api", "worker"):
         row = readbacks.get(role)
@@ -339,7 +378,11 @@ def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
             raise EvidenceError(role + " readback fields are incomplete or unexpected")
         if any(row.get(key) != value for key, value in expected.items()):
             raise EvidenceError(role + " authenticated readback does not match candidate manifest")
-        if row.get("readback_sha256") != identity[f"{role}_readback_sha256"] or _readback_digest(row) != row.get("readback_sha256"):
+        # Python equality aliases True/1 and 12288/12288.0. The expected
+        # canonical bytes must match too, not merely the supplied self-digest.
+        if (row.get("readback_sha256") != identity[f"{role}_readback_sha256"]
+                or _readback_digest(row) != row.get("readback_sha256")
+                or canonical_sha256(expected) != row.get("readback_sha256")):
             raise EvidenceError(role + " readback digest does not match candidate manifest")
     schema = readbacks.get("schema")
     schema_expected = {
@@ -1142,13 +1185,9 @@ def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], comp
     return result
 
 def immutable_write(path: Path, obj: object) -> str:
-    """O_EXCL preserves first-run evidence; reruns require a NEW named path."""
+    """Publish one complete private first-run artifact; reruns need a new path."""
     content = (json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as fp:
-        fp.write(content)
-        fp.flush()
-        os.fsync(fp.fileno())
+    write_private_bytes(path, content)
     return hashlib.sha256(content).hexdigest()
 
 
@@ -1408,7 +1447,7 @@ def main(argv=None) -> int:
         return 0
     except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         failure = {
-            "schema_version": 2 if manifest and manifest.get("schema_version") == 2 else 1,
+            "schema_version": 2 if isinstance(manifest, dict) and manifest.get("schema_version") == 2 else 1,
             "error": str(exc),
             "qualified": False,
             "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
