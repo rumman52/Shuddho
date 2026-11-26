@@ -556,3 +556,27 @@ def test_research_provider_skips_non_utf8_evidence_and_preserves_valid_page(fiel
         TavilyResearchProvider.parse(
             data, ResearchOptions(query="public evidence", time_range="any"))
     assert exc.value.code == "research_no_evidence"
+
+
+@pytest.mark.parametrize("invalid_field, invalid_value", [
+    ("raw_content", "Too short"),
+    ("title", "Invalid title\ud800"),
+    ("raw_content", PAGE_TEXT + "\ud800"),
+    ("published_date", "2000-01-01T00:00:00Z"),
+])
+def test_research_rejected_duplicate_does_not_shadow_valid_source(invalid_field, invalid_value):
+    data = search_data()
+    good = data["results"][0]
+    rejected = dict(good)
+    rejected[invalid_field] = invalid_value
+    data["results"] = [rejected, good, dict(good)]
+    result = TavilyResearchProvider.parse(
+        data, ResearchOptions(query="public evidence", time_range="week"))
+    assert len(result.sources) == 1
+    source = result.sources[0]
+    assert source["id"] == "web-1"
+    assert source["url"] == good["url"]
+    assert source["text"] == good["raw_content"].strip()
+    assert source["sha256"] == hashlib.sha256(source["text"].encode("utf-8")).hexdigest()
+    assert result.metadata["skipped_results"] == 2
+    assert result.credits == 1

@@ -155,7 +155,6 @@ class TavilyResearchProvider:
                 continue
             if url in seen:
                 continue
-            seen.add(url)
             date = source_date(item.get("published_date"))
             if date and date > now + timedelta(days=1):
                 date = None  # Future provider dates cannot establish freshness.
@@ -175,6 +174,8 @@ class TavilyResearchProvider:
                 excerpt_bytes = excerpt.encode("utf-8")
             except UnicodeEncodeError:
                 continue
+            # Deduplicate only accepted evidence; a rejected row must not shadow a valid page.
+            seen.add(url)
             sources.append({"id": f"web-{len(sources) + 1}", "kind": "web", "url": url,
                             "label": label,
                             "text": excerpt, "sha256": hashlib.sha256(excerpt_bytes).hexdigest(),
