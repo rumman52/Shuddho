@@ -372,3 +372,35 @@ def test_memory_selection_schema_rejects_duplicate_ids_and_nonpositive_versions(
             {"fact_id": alice_id, "expected_version": 1},
             {"fact_id": alice_id, "expected_version": 2},
         ])
+
+
+@pytest.mark.parametrize("key", ["AKIA" + "A" * 16, "eyJ" + "a" * 8 + "." + "b" * 8 + "." + "c" * 8])
+@pytest.mark.parametrize("selected", [False, True])
+def test_sensitive_memory_key_never_enters_planner_context(container, key, selected):
+    alice, _, conv, conversations, dispatch, keep, omit, _ = seeded(container)
+    sensitive = container.memory.create(alice, MemoryFactCreate(
+        namespace="project", key=key, value="Public metadata.",
+    ))
+    if selected:
+        msg = message(conversations, alice, conv, "Create a customer report for the project release.")
+        admitted, _ = dispatch.dispatch(
+            alice, conv["id"], msg["id"], expected_sequence=1,
+            memory_pins=[pin(sensitive), pin(keep)],
+        )
+        run_id = admitted["run_id"]
+        expected = {keep["id"]}
+    else:
+        run, _ = container.agent.create(alice, AgentRunCreate(
+            goal="Create a customer report for the project release.",
+            memory_namespaces=["project"],
+        ), "day5-sensitive-memory-key")
+        run_id = run["id"]
+        expected = {keep["id"], omit["id"]}
+    memory = container.memory.context_for_run(alice, run_id)
+    context, _ = container.context.planner_context(alice, run_id)
+    assert key not in str(memory)
+    assert key not in str(context)
+    assert {p["id"] for p in memory["provenance"]} == expected
+    assert {p["id"] for p in context["memory_provenance"]} == expected
+    saved = next(fact for fact in container.memory.list(alice) if fact["id"] == sensitive["id"])
+    assert saved["key"] == key and saved["version"] == sensitive["version"]

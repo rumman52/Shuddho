@@ -1,3 +1,7 @@
+## 26 November 2026 — Prompt 03 Day 5 sensitive memory-key filtering
+
+**Source patch; not release-qualified.** Base `460db9ff97c3f4adcc43beaf4d4db82a3957b097`; test-first `e65f629495ea005092bea0920eb6b1dea74bf06d`, source `747bd6f4edd260ba85841013dd3889909b111a09`. Credential-shaped memory keys previously bypassed the value redaction boundary. Existing filter now suppresses sensitive-key facts before model serialization without modifying stored facts, pin versions or selection digest. Isolated copied context assembly/SQLite synthetic probe RED 4 failed, GREEN 4 passed. Full repository CI and distinct review pending; no staging or provider attestation. [Contract](P03_MEMORY_KEY_REDACTION_2026-11-26.md). No deployment, provider calls, paid provisioning or activation.
+
 ## 26 November 2026 — Prompt 02 accepted research evidence deduplication
 
 **Source patch; not release-qualified.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; RED test `d9f9f6f69ffe8a38e35a36b922fc0656a56d2a47`, source `67347d8b7a0ccc271e1cc9e6458f4a30ae6d9a67`. Rejected duplicate URL could suppress valid later evidence. Local isolated parser probe 4 failures before / 4 passes after, not full repository suite. [Contract](P02_RESEARCH_VALID_SOURCE_DEDUP_2026-11-26.md). Exact-head CI and independent review pending; no hosted work or activation. Prior PR #910 merged, its CI merge gate failed and no submitted reviews were returned. Prompt 02 exit remains unmet.
