@@ -1,3 +1,7 @@
+## 26 November 2026 — Prompt 03 selected-memory persistence fence
+
+**SOURCE PATCH / NOT RELEASE-QUALIFIED.** Base `43d99fd64467492a7da809cda0ae178191e53981`; test-first `4ddd9b916adcfa5d200d361b50a747c465716789`, source `e3496fe15d6c83be114d843d68d878c61eea9c22`, additional deletion regression `04622491071e81a44c976a63ed9d17c173762a9c`. Lock selected owner/workspace fact rows in stable ID order and refresh ORM state before validation; validate expiry after locks. Isolated copied-function SQLite/dialect probe RED 2 failed/1 passed, GREEN 3 passed; PostgreSQL and full CI pending. [Contract](P03_MEMORY_PIN_COMMIT_FENCE_2026-11-26.md). No staging acceptance or deployment, provider, flags or data changes.
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
