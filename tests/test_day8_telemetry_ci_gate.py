@@ -24,3 +24,11 @@ def test_day8_telemetry_privacy_is_part_of_mandatory_suite() -> None:
 def test_only_the_canonical_private_operational_event_module_exists() -> None:
     assert Path("services/coworker/day8_telemetry.py").is_file()
     assert not Path("services/coworker/operational_telemetry.py").exists()
+
+
+def test_day8_dispatch_observability_is_mandatory() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Keep Day 8 economics evidence\n", 1)[0].rsplit("      - name: ", 1)[1]
+    for module in ("cohort_dispatch_observability", "cohort_observability_export"):
+        assert f"tests/test_{module}.py" in step
+        assert f"--required-module tests.test_{module}" in step
