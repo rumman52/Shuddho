@@ -14,7 +14,7 @@ from .errors import CoworkerError
 from .agent_schemas import AgentMemoryProposal
 from .memory_schemas import MemoryFactCreate, MemoryFactUpdate
 from .models import Account, AgentRun, AuditEvent, Document, DocumentVersion, MemoryFact, MemoryProposal, Workspace, utcnow
-from .repository import aware, iso, not_found
+from .repository import aware, iso, lock_account_reference, not_found
 
 
 def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[dict], settings: Settings) -> list[MemoryFact]:
@@ -51,6 +51,8 @@ def require_current_memory_pins(db, owner: str, workspace_id: str, pins: list[di
         if not valid_id or type(version) is not int or version < 1 or fact_id in versions:
             raise CoworkerError("memory_pins_changed", "Review and reselect task memories.", 409)
         versions[fact_id] = version
+    if not lock_account_reference(db, owner):
+        raise CoworkerError("memory_pins_changed", "Selected memories are no longer available.", 409)
     # Hold the same row locks used by correction/deletion until the caller's
     # transaction ends. Acquire them in a stable order, then restore selection
     # order; concurrent runs may select overlapping facts in different orders.
@@ -146,9 +148,19 @@ class MemoryRepository:
             ).order_by(MemoryFact.namespace, MemoryFact.key)).all()
             return [self._dto(row) for row in rows]
 
+    @staticmethod
+    def _lock_owner_for_mutation(db, owner: str) -> None:
+        # Serialize per-owner mutations before fact/proposal locks and audit
+        # FK writes. NO KEY UPDATE is compatible with reference KEY SHARE.
+        if db.scalar(select(Account.id).where(
+            Account.id == owner,
+        ).with_for_update(key_share=True)) is None:
+            raise not_found()
+
     def update(self, owner: str, fact_id: str, request: MemoryFactUpdate) -> dict:
         self._enabled()
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryFact).where(
                 MemoryFact.id == fact_id, MemoryFact.owner_id == owner,
             ).with_for_update())
@@ -170,6 +182,7 @@ class MemoryRepository:
 
     def delete(self, owner: str, fact_id: str) -> dict:
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryFact).where(
                 MemoryFact.id == fact_id, MemoryFact.owner_id == owner,
             ).with_for_update())
@@ -308,6 +321,7 @@ class MemoryRepository:
     def accept_proposal(self, owner: str, proposal_id: str) -> dict:
         self._enabled()
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryProposal).where(
                 MemoryProposal.id == proposal_id,
                 MemoryProposal.owner_id == owner,
@@ -361,6 +375,7 @@ class MemoryRepository:
 
     def reject_proposal(self, owner: str, proposal_id: str) -> dict:
         with self.sessions.begin() as db:
+            self._lock_owner_for_mutation(db, owner)
             row = db.scalar(select(MemoryProposal).where(
                 MemoryProposal.id == proposal_id,
                 MemoryProposal.owner_id == owner,
