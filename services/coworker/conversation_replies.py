@@ -83,10 +83,17 @@ class DeepSeekReplyModel:
         if response.status_code != 200:
             raise ValueError("Provider unavailable")
         data = response.json()
-        choices = data["choices"]
-        if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
+        if not isinstance(data, dict) or data.get("error") is not None:
+            raise ValueError("Malformed provider response")
+        choices = data.get("choices")
+        if not isinstance(choices, list) or len(choices) != 1:
+            raise ValueError("Malformed provider response")
+        choice = choices[0]
+        if not self._valid_choice(choice) or choice.get("finish_reason") != "stop":
             raise ValueError("Incomplete reply")
-        message = choices[0]["message"]
+        message = choice.get("message")
+        if not isinstance(message, dict) or message.get("role") not in (None, "assistant"):
+            raise ValueError("Invalid reply")
         text = message.get("content")
         if (message.get("tool_calls") or message.get("function_call") is not None
             or message.get("refusal") or not isinstance(text, str) or not text.strip()):
@@ -94,6 +101,13 @@ class DeepSeekReplyModel:
         if len(text.encode("utf-8")) > 16000:
             raise ValueError("Reply too long")
         return text.strip()
+
+    @staticmethod
+    def _valid_choice(choice):
+        # An omitted index is supported for legacy text-only adapters/fixtures.
+        return isinstance(choice, dict) and (
+            "index" not in choice or (type(choice["index"]) is int and choice["index"] == 0)
+        )
 
     async def stream(self, messages):
         """Yield validated text deltas from a bounded, tool-free DeepSeek SSE response."""
@@ -106,6 +120,7 @@ class DeepSeekReplyModel:
         response_bytes = 0
         output_bytes = 0
         finished = False
+        usage_seen = False
         done = False
         data_lines = []
         try:
@@ -144,23 +159,32 @@ class DeepSeekReplyModel:
                                 envelope = json.loads(data)
                             except (TypeError, ValueError, UnicodeError) as error:
                                 raise ValueError("Malformed provider stream") from error
-                            if not isinstance(envelope, dict):
+                            if not isinstance(envelope, dict) or envelope.get("error") is not None:
                                 raise ValueError("Malformed provider stream")
                             choices = envelope.get("choices")
                             if not isinstance(choices, list) or len(choices) not in (0, 1):
                                 raise ValueError("Malformed provider stream")
-                            if not choices:  # Optional usage-only frame.
+                            if not choices:
+                                # A single optional usage-only trailer may follow a clean stop.
+                                # Usage is opaque here: never infer token counts from it.
+                                if not finished or usage_seen or not isinstance(envelope.get("usage"), dict):
+                                    raise ValueError("Malformed provider usage trailer")
+                                usage_seen = True
                                 continue
                             if finished:
                                 raise ValueError("Provider emitted content after its terminal choice")
                             choice = choices[0]
-                            if not isinstance(choice, dict):
+                            if not self._valid_choice(choice):
                                 raise ValueError("Malformed provider stream")
                             # Do not turn malformed falsy provider values into valid terminal objects.
                             delta = choice.get("delta")
-                            if (not isinstance(delta, dict) or delta.get("tool_calls")
-                                or delta.get("function_call") is not None or delta.get("refusal")):
+                            if (not isinstance(delta, dict) or delta.get("role") not in (None, "assistant")
+                                or delta.get("tool_calls") or delta.get("function_call") is not None
+                                or delta.get("refusal")):
                                 raise ValueError("Unsafe provider stream")
+                            finish_reason = choice.get("finish_reason")
+                            if finish_reason is not None and finish_reason != "stop":
+                                raise ValueError("Incomplete provider output")
                             content = delta.get("content")
                             if content is not None:
                                 if not isinstance(content, str):
@@ -170,10 +194,7 @@ class DeepSeekReplyModel:
                                     if output_bytes > MAX_OUTPUT_BYTES:
                                         raise ValueError("Provider output too large")
                                     yield content
-                            finish_reason = choice.get("finish_reason")
-                            if finish_reason is not None:
-                                if finish_reason != "stop":
-                                    raise ValueError("Incomplete provider output")
+                            if finish_reason == "stop":
                                 finished = True
         except (TimeoutError, httpx.TimeoutException, httpx.RequestError) as error:
             raise ValueError("Provider unavailable") from error
