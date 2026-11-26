@@ -35,7 +35,7 @@ def evidence():
                     for key in day10.RUNTIME_CAPABILITY_KEYS}
     rollout = {"release_id": RELEASE, "environment": "production", "action_providers": [],
                "capabilities": capabilities,
-               "cohort": {"max_users": 5}}
+               "cohort": {"reference": "synthetic-private-cohort", "max_users": 5}}
     api = {"schema_version": 2, "source_revision": REV, "environment": "production",
            "build_digest": "sha256:" + "1" * 64,
            "capabilities": {**capabilities, "grounded_conversation_replies": capabilities["conversation_replies"]},
@@ -124,17 +124,30 @@ def evidence():
             },
         } for i, (name, targets) in OPERATED.items()],
     }
-    approval = {**proof(), "explicit_separate_authorization": True,
+    # Independently compute the proposed scope digest; this fixture is synthetic.
+    scope = {
+        "environment": rollout["environment"], "cohort": rollout["cohort"],
+        "capabilities": rollout["capabilities"], "action_providers": rollout["action_providers"],
+        "transaction_operations": rollout.get("transaction_operations", []),
+    }
+    terms = {
+        "scope_sha256": hashlib.sha256(json.dumps(
+            scope, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest(),
+        "max_spend_microusd": 1_000_000,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+    }
+    approval = {**proof(), **terms, "explicit_separate_authorization": True,
                 "reference": "founder-C-approved-change", "founder": "founder-signoff",
                 "owner_c": "C-signoff", "max_users": 5,
                 "rollback_owner": "operator-C",
                 # Separate dated, release-bound, privately retained receipt
                 # claims. These synthetic strings do NOT attest real signers.
-                "founder_decision": {**proof(), "signer_id": "founder-signoff",
+                "founder_decision": {**proof(), **terms, "signer_id": "founder-signoff",
                                      "decision": "approve_controlled_pilot",
                                      "evidence_ref": "sha256:" + "6" * 64,
                                      "max_users": 5, "rollback_owner": "operator-C"},
-                "owner_c_decision": {**proof(), "signer_id": "C-signoff",
+                "owner_c_decision": {**proof(), **terms, "signer_id": "C-signoff",
                                      "decision": "approve_controlled_pilot",
                                      "evidence_ref": "sha256:" + "7" * 64,
                                      "max_users": 5, "rollback_owner": "operator-C"}}
@@ -1293,3 +1306,60 @@ def test_day10_cli_writes_new_decision_private_and_exclusive(tmp_path, monkeypat
                        "--output", str(output_path)]) == 1
     assert json.loads(output_path.read_text(encoding="utf-8"))["decision"] == "SOURCE_ONLY"
     assert output_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("case", [
+    "valid", "zero", "timezone", "missing_scope", "wrong_scope", "rollout_scope_drift",
+    "missing_spend", "boolean_spend", "negative_spend", "receipt_spend_drift",
+    "receipt_scope_drift", "missing_expiry", "expired", "naive", "receipt_expiry_drift",
+])
+def test_day10_two_signers_bind_budget_scope_and_expiry(monkeypatch, case):
+    rollout, artifacts = evidence()
+    approval = artifacts["approval"]
+    expires = datetime.fromisoformat(approval["expires_at"])
+    if case == "zero":
+        for row in (approval, approval["founder_decision"], approval["owner_c_decision"]):
+            row["max_spend_microusd"] = 0
+    elif case == "timezone":
+        approval["owner_c_decision"]["expires_at"] = expires.astimezone(
+            timezone(timedelta(hours=6))
+        ).isoformat()
+    elif case == "missing_scope":
+        approval.pop("scope_sha256")
+    elif case == "wrong_scope":
+        approval["scope_sha256"] = "e" * 64
+    elif case == "rollout_scope_drift":
+        rollout["cohort"]["reference"] = "different-private-cohort"
+    elif case == "missing_spend":
+        approval.pop("max_spend_microusd")
+    elif case == "boolean_spend":
+        approval["max_spend_microusd"] = True
+    elif case == "negative_spend":
+        approval["max_spend_microusd"] = -1
+    elif case == "receipt_spend_drift":
+        approval["owner_c_decision"]["max_spend_microusd"] += 1
+    elif case == "receipt_scope_drift":
+        approval["founder_decision"]["scope_sha256"] = "e" * 64
+    elif case == "missing_expiry":
+        approval.pop("expires_at")
+    elif case == "expired":
+        for row in (approval, approval["founder_decision"], approval["owner_c_decision"]):
+            row["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    elif case == "naive":
+        approval["expires_at"] = expires.replace(tzinfo=None).isoformat()
+    elif case == "receipt_expiry_drift":
+        approval["owner_c_decision"]["expires_at"] = (expires + timedelta(seconds=1)).isoformat()
+
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["pilot_activated"] is False
+    if case in {"valid", "zero", "timezone"}:
+        assert result["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+        assert result["pilot_authorization_claim"] == {
+            "scope_sha256": approval["scope_sha256"],
+            "max_spend_microusd": approval["max_spend_microusd"],
+            "expires_at": approval["expires_at"],
+        }
+    else:
+        assert result["decision"] == "STAGING_ONLY"
+        assert result["blockers"] == ["separate_founder_and_C_pilot_authorization"]
+        assert result["pilot_authorization_claim"] is None
