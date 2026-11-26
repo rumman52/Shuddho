@@ -1,3 +1,9 @@
+## 26 November 2026 — Prompt 02 strict DeepSeek reply frames
+
+**Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `46938456f2ee7632d3509f0b71d88a565813c7d2`, source `b62f5bf6102fef1255ef904420e7f015873a778b`. Reject malformed terminal SSE delta types and legacy function-call output without changing ordinary text delivery. Isolated copied adapter probe RED 7 failed/1 passed; GREEN 8 passed. [Contract](P02_CHAT_PROVIDER_STREAM_SHAPE_2026-11-26.md). Full repository CI, independent review and operated staging remain pending. No provider spend or deployment.
+
+---
+
 ## 25 November 2026 — PA-10 expired meeting catch-up admission
 
 **Source correction, not release qualification.** Main inspected: `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. Meeting scan and concrete meeting occurrence previously compared expiry only against the historical scan/admission timestamp. [Test-first commit](https://github.com/rumman52/Shuddho/commit/0be3def01dcaaa15281f057036806a8a183d74b2) adds a regression variant to the existing calendar connector integration fixture: after the scheduled scan but before actual admission the automation expires; scan is suppressed, direct occurrence is skipped, and no new AgentRun or notification exists. [Fix](https://github.com/rumman52/Shuddho/commit/58ebcbdbdb55db492af53582a3544871b46a2fd9) checks both the supplied clock and current UTC clock before admission. Isolated predicate checks reproduced two false expiry decisions and confirmed the corrected comparisons; full integration tests and independent review remain pending. No provider, deployment, production or billing changes. [Task contract](PA10_MEETING_EXPIRY_ADMISSION_2026-11-25.md). Next: exact-head CI, independent review, and controlled staging on an approved worker.
