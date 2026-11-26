@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from temporalio.client import (
     Schedule,
@@ -34,7 +34,20 @@ def temporal_schedule(value: dict, task_queue: str):
     spec = value["schedule"]
     if spec.get("kind") == "event":
         raise ValueError("Connected-event automations do not use a Temporal Schedule.")
-    if spec["kind"] == "meeting":
+    once = spec["kind"] == "once"
+    if once:
+        # Pin the full UTC calendar date and second. A local DST transition
+        # cannot cause a second match or silently move the reviewed instant.
+        instant = datetime.fromisoformat(spec["run_at"].replace("Z", "+00:00")).astimezone(timezone.utc)
+        calendar = ScheduleCalendarSpec(
+            year=[ScheduleRange(start=instant.year)],
+            month=[ScheduleRange(start=instant.month)],
+            day_of_month=[ScheduleRange(start=instant.day)],
+            hour=[ScheduleRange(start=instant.hour)],
+            minute=[ScheduleRange(start=instant.minute)],
+            second=[ScheduleRange(start=instant.second)],
+        )
+    elif spec["kind"] == "meeting":
         # Temporal remains the sole durable wake-up authority. A bounded local-time
         # scan discovers meetings inside their preparation window; PostgreSQL
         # deduplicates each concrete calendar occurrence.
@@ -67,7 +80,7 @@ def temporal_schedule(value: dict, task_queue: str):
         ),
         spec=ScheduleSpec(
             calendars=[calendar],
-            time_zone_name=value["timezone"],
+            time_zone_name="UTC" if once else value["timezone"],
             end_at=datetime.fromisoformat(value["expires_at"].replace("Z", "+00:00")) if value.get("expires_at") else None,
         ),
         policy=SchedulePolicy(
@@ -76,6 +89,8 @@ def temporal_schedule(value: dict, task_queue: str):
         ),
         state=ScheduleState(
             paused=not enabled,
+            limited_actions=once,
+            remaining_actions=1 if once else 0,
             note=f"Shuddho PA-02 automation revision {value['revision']}",
         ),
     )

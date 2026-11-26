@@ -63,7 +63,7 @@ class AutomationActivities:
     async def accept(self, value: dict):
         try:
             due_at = datetime.fromisoformat(str(value["due_at"]).replace("Z", "+00:00"))
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 self.repository.accept_occurrence,
                 str(value["automation_id"]),
                 int(value["revision"]),
@@ -73,6 +73,9 @@ class AutomationActivities:
             raise ApplicationError(error.message, type=error.code, non_retryable=True) from None
         except Exception:
             raise ApplicationError("Could not accept the scheduled occurrence.", type="automation_accept_unavailable") from None
+        if result.get("state") == "suppressed" and result.get("reason") == "not_due":
+            raise ApplicationError("Scheduled occurrence is not due on the admission clock.", type="automation_not_due")
+        return result
 
 
 class Activities:
