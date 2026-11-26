@@ -1,3 +1,7 @@
+## 26 November 2026 — Prompt 05 exact qualification checkout
+
+**SOURCE_IN_PROGRESS / controlled pilot NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests `f31cc0daba8b83fe10883998a418fd9693a2ae7f`, `241c2df253ced520292b380d08431311f89a136b`; source `b9278bbab12318a1a12990fc8d237e50d3bd3753`, `3c76141fdc4809eb17eb81f23864ad01064e874f`. Real disposable Git + synthetic test-command results: RED 7 failed/1 passed; GREEN 8 passed; index-negative RED 2 failed/8 passed, GREEN 10 passed. Require observable clean unchanged checkout before/after preflight and before heldout read/report publication; hidden index flags fail. Full checkout and integrated guard test unexecuted locally; exact-head CI and independent review remain required. [Task contract](P05_EXACT_QUALIFICATION_CHECKOUT_2026-11-26.md). No live evidence or acceptance credit.
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
