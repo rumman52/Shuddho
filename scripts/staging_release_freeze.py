@@ -16,6 +16,7 @@ from scripts.staging_release_evidence import (
     MAX_ROLLOUT_MANIFEST_BYTES,
     StagingReleaseEvidenceError,
     parse_evidence_json,
+    parse_time,
     _read_rollout_manifest,
     write_private_json,
 )
@@ -305,6 +306,55 @@ def canonical_sha256(value: dict) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _validate_declared_scope(cohort: object, providers: object, capabilities: object) -> None:
+    """Apply the same PA-10 admission policy to rollout and prepared evidence."""
+    if (
+        not isinstance(cohort, dict)
+        or set(cohort) != {"reference", "enforced", "max_users"}
+        or not text_ref(cohort.get("reference"))
+        or cohort.get("enforced") is not True
+        or not isinstance(cohort.get("max_users"), int)
+        or isinstance(cohort.get("max_users"), bool)
+        or not 1 <= cohort["max_users"] <= 25
+    ):
+        raise StagingReleaseFreezeError(
+            "PA-10 staging cohort must bind a reference, enforcement expectation and 1-25 user limit."
+        )
+
+    if (
+        not isinstance(providers, list)
+        or any(type(item) is not str or item not in ALLOWED_ACTION_PROVIDERS for item in providers)
+        or len(providers) != len(set(providers))
+    ):
+        raise StagingReleaseFreezeError(
+            "PA-10 staging action_providers are invalid."
+        )
+    if not PA10_REQUIRED_ACTION_PROVIDERS.issubset(providers):
+        raise StagingReleaseFreezeError(
+            "PA-10 full controlled staging requires Google and Microsoft provider availability."
+        )
+
+    if (
+        not isinstance(capabilities, dict)
+        or set(capabilities) != RUNTIME_CAPABILITY_KEYS
+        or any(not isinstance(value, bool) for value in capabilities.values())
+    ):
+        raise StagingReleaseFreezeError(
+            "PA-10 staging capabilities must exactly declare every runtime-manifest capability as a boolean."
+        )
+    missing = sorted(key for key in PA10_REQUIRED_TRUE if capabilities.get(key) is not True)
+    if missing:
+        raise StagingReleaseFreezeError(
+            "PA-10 staging rollout is missing required enabled capabilities: "
+            + ",".join(missing)
+        )
+    unexpected = sorted(key for key in PA10_REQUIRED_FALSE if capabilities.get(key) is not False)
+    if unexpected:
+        raise StagingReleaseFreezeError(
+            "PA-10 staging rollout enables unrelated high-authority capabilities: "
+            + ",".join(unexpected)
+        )
+
 def validate_rollout(rollout: dict) -> None:
     required = {
         "schema_version",
@@ -340,55 +390,9 @@ def validate_rollout(rollout: dict) -> None:
             "PA-10 release freeze requires the exact staging environment."
         )
 
-    cohort = rollout.get("cohort")
-    if (
-        not isinstance(cohort, dict)
-        or set(cohort) != {"reference", "enforced", "max_users"}
-        or not text_ref(cohort.get("reference"))
-        or cohort.get("enforced") is not True
-        or not isinstance(cohort.get("max_users"), int)
-        or isinstance(cohort.get("max_users"), bool)
-        or not 1 <= cohort["max_users"] <= 25
-    ):
-        raise StagingReleaseFreezeError(
-            "PA-10 staging cohort must bind a reference, enforcement expectation and 1-25 user limit."
-        )
-
-    providers = rollout.get("action_providers")
-    if (
-        not isinstance(providers, list)
-        or any(type(item) is not str or item not in ALLOWED_ACTION_PROVIDERS for item in providers)
-        or len(providers) != len(set(providers))
-    ):
-        raise StagingReleaseFreezeError(
-            "PA-10 staging action_providers are invalid."
-        )
-    if not PA10_REQUIRED_ACTION_PROVIDERS.issubset(providers):
-        raise StagingReleaseFreezeError(
-            "PA-10 full controlled staging requires Google and Microsoft provider availability."
-        )
-
-    capabilities = rollout.get("capabilities")
-    if (
-        not isinstance(capabilities, dict)
-        or set(capabilities) != RUNTIME_CAPABILITY_KEYS
-        or any(not isinstance(value, bool) for value in capabilities.values())
-    ):
-        raise StagingReleaseFreezeError(
-            "PA-10 staging capabilities must exactly declare every runtime-manifest capability as a boolean."
-        )
-    missing = sorted(key for key in PA10_REQUIRED_TRUE if capabilities.get(key) is not True)
-    if missing:
-        raise StagingReleaseFreezeError(
-            "PA-10 staging rollout is missing required enabled capabilities: "
-            + ",".join(missing)
-        )
-    unexpected = sorted(key for key in PA10_REQUIRED_FALSE if capabilities.get(key) is not False)
-    if unexpected:
-        raise StagingReleaseFreezeError(
-            "PA-10 staging rollout enables unrelated high-authority capabilities: "
-            + ",".join(unexpected)
-        )
+    _validate_declared_scope(
+        rollout.get("cohort"), rollout.get("action_providers"), rollout.get("capabilities"),
+    )
 
     rollback = rollout.get("rollback")
     if not isinstance(rollback, dict) or set(rollback) != set(EXPECTED_ROLLBACK):
@@ -478,14 +482,54 @@ def prepare_state(
     }
 
 
-def verify_runtime(state: dict, runtime: dict) -> dict:
+PREPARED_STATE_KEYS = frozenset({
+    "schema_version", "evidence_kind", "status", "release_id", "expected_source_revision",
+    "expected_environment", "build_reference", "deployment_reference", "synthetic_account_reference",
+    "rollout_manifest_sha256", "provider_policy_sha256", "declared_capabilities",
+    "declared_action_providers", "declared_cohort", "prepared_at",
+})
+RUNTIME_MANIFEST_KEYS = frozenset({
+    "schema_version", "source_revision", "environment", "capabilities", "reviewed_skills",
+    "action_providers", "cohort",
+})
+
+
+def validate_prepared_state(state: object) -> None:
+    """Reject invalid or out-of-policy prepared evidence before authenticated IO."""
     if (
-        type(state.get("schema_version")) is not int
+        not isinstance(state, dict)
+        or set(state) != PREPARED_STATE_KEYS
+        or type(state.get("schema_version")) is not int
         or state["schema_version"] != SCHEMA_VERSION
-        or state.get("status") != "prepared"
-        or state.get("expected_environment") != "staging"
+        or state["evidence_kind"] != EVIDENCE_KIND
+        or state["status"] != "prepared"
+        or state["expected_environment"] != "staging"
+        or not valid_sha(state["expected_source_revision"])
+        or not text_ref(state["release_id"], maximum=120)
     ):
         raise StagingReleaseFreezeError("Release-freeze state is invalid.")
+    for name in ("build_reference", "deployment_reference", "synthetic_account_reference"):
+        if not text_ref(state[name]):
+            raise StagingReleaseFreezeError(f"Release-freeze state {name} is invalid.")
+    for name in ("rollout_manifest_sha256", "provider_policy_sha256"):
+        digest = state[name]
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise StagingReleaseFreezeError(f"Release-freeze state {name} is invalid.")
+    try:
+        prepared_at = parse_time(state["prepared_at"], "prepared_at")
+    except (StagingReleaseEvidenceError, OverflowError, ValueError):
+        raise StagingReleaseFreezeError("Release-freeze state prepared_at is invalid.") from None
+    if prepared_at > datetime.now(timezone.utc):
+        raise StagingReleaseFreezeError("Release-freeze state prepared_at is in the future.")
+    _validate_declared_scope(
+        state["declared_cohort"], state["declared_action_providers"], state["declared_capabilities"],
+    )
+
+
+def verify_runtime(state: dict, runtime: dict) -> dict:
+    validate_prepared_state(state)
+    if not isinstance(runtime, dict) or set(runtime) != RUNTIME_MANIFEST_KEYS:
+        raise StagingReleaseFreezeError("Runtime manifest must contain exactly the v2 fields including reviewed_skills.")
     if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != RUNTIME_SCHEMA_VERSION:
         raise StagingReleaseFreezeError(
             "Runtime manifest schema_version is unsupported."
@@ -526,8 +570,8 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
 
     cohort = runtime.get("cohort")
     declared_cohort = state.get("declared_cohort")
-    if not isinstance(cohort, dict) or not isinstance(declared_cohort, dict):
-        raise StagingReleaseFreezeError("Runtime cohort manifest is missing.")
+    if not isinstance(cohort, dict) or set(cohort) != {"enforced", "configured_members", "max_users"}:
+        raise StagingReleaseFreezeError("Runtime cohort manifest has an unexpected schema.")
     if (
         declared_cohort.get("enforced") is not True
         or cohort.get("enforced") is not True
@@ -646,6 +690,7 @@ def main() -> None:
             return
 
         state = load_json(args.state, "release-freeze state")
+        validate_prepared_state(state)
         base_url = clean_origin(env("SHUDDHO_STAGING_API_BASE_URL"))
         token = env("SHUDDHO_STAGING_TOKEN_A")
         with httpx.Client(
