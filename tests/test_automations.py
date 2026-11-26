@@ -3116,7 +3116,7 @@ def test_one_time_reminder_has_one_utc_calendar_instant_and_no_agent(
     assert edit_error.value.code == "one_time_schedule_elapsed"
 
 
-@pytest.mark.parametrize("case", ["past", "naive", "fractional", "wrong_profile", "expiry_at_due"])
+@pytest.mark.parametrize("case", ["past", "naive", "fractional", "overflow", "wrong_profile", "expiry_at_due", "tool_scope"])
 def test_one_time_reminder_rejects_unsafe_schedule_inputs(automation_client, case):
     client, headers = automation_client
     auth = headers()
@@ -3138,10 +3138,27 @@ def test_one_time_reminder_rejects_unsafe_schedule_inputs(automation_client, cas
         body["run_profile"] = "goal"
     elif case == "expiry_at_due":
         body["expires_at"] = due.isoformat()
-    body["schedule"] = {"kind": "once", "run_at": run_at.isoformat()}
+    elif case == "tool_scope":
+        body["tool_allowlist"] = ["report.create"]
+    body["schedule"] = {"kind": "once", "run_at": "9999-12-31T23:59:59-12:00" if case == "overflow" else run_at.isoformat()}
     response = client.post(
         "/api/v1/automations",
         headers=auth | {"Idempotency-Key": "once-invalid"},
         json=body,
     )
-    assert response.status_code == (422 if case in {"naive", "fractional"} else 409), response.text
+    assert response.status_code == (422 if case in {"naive", "fractional", "overflow"} else 409), response.text
+
+
+def test_one_time_early_worker_admission_is_retryable():
+    import asyncio
+    from types import SimpleNamespace
+    from temporalio.exceptions import ApplicationError
+    from services.coworker.worker import AutomationActivities
+
+    activity = AutomationActivities(SimpleNamespace(accept_occurrence=lambda *_: {
+        "state": "suppressed", "reason": "not_due", "run_id": None,
+    }))
+    with pytest.raises(ApplicationError) as error:
+        asyncio.run(activity.accept({"automation_id": str(uuid4()), "revision": 1, "due_at": utcnow().isoformat()}))
+    assert error.value.type == "automation_not_due"
+    assert error.value.non_retryable is False
