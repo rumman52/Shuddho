@@ -22,6 +22,7 @@ import stat
 import unicodedata
 
 from scripts.pilot_workflow_eval import load_suite
+from scripts.staging_release_evidence import write_private_bytes
 from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 from services.coworker.schemas import parse_draft, source_references
 
@@ -1142,13 +1143,9 @@ def prepare_blind(cases: list[dict], manifest: dict, candidate: list[dict], comp
     return result
 
 def immutable_write(path: Path, obj: object) -> str:
-    """O_EXCL preserves first-run evidence; reruns require a NEW named path."""
+    """Publish one complete private first-run artifact; reruns need a new path."""
     content = (json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as fp:
-        fp.write(content)
-        fp.flush()
-        os.fsync(fp.fileno())
+    write_private_bytes(path, content)
     return hashlib.sha256(content).hexdigest()
 
 
