@@ -1,3 +1,7 @@
+## 26 November 2026 — Prompt 05 private pilot token capture
+
+**SOURCE_IN_PROGRESS / NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; test `06aba94ab21b20aba5cfc7bc455d9bd463727caf`; shared reader `1b5d61af9805d7c932bccf4fb444de1ba5f17c3c`; consumer `91166dfaf80d0de8f585ef16a667cfa4b05822b7`. Existing stable reader now supports smaller private captures, original 64KiB limit preserved, rejects mutation, FIFO and parser recursion. Isolated RED 6 failed/5 passed; GREEN 11 passed. Repository CI and independent review pending. [Contract](P05_PRIVATE_PILOT_TOKEN_CAPTURE_2026-11-26.md). No live credentials, qualification or activation.
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
