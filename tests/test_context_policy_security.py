@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.coworker.context_policy import filter_sensitive
+from services.coworker.context_policy import filter_sensitive, memory_conflict
 
 
 @pytest.mark.parametrize(
@@ -94,3 +94,30 @@ def test_unterminated_low_high_and_guillemet_quotes_fail_closed(assignment, expe
     redacted, reasons = filter_sensitive(f"Before {assignment}\nPublic following line.")
     assert redacted == f"Before {expected}\nPublic following line."
     assert "secret_assignment" in reasons
+
+
+@pytest.mark.parametrize("instruction, remembered", [
+    ("Do not reformulate this passage.", "reform"),
+    ("Undo not archive.", "archive"),
+    ("Don't shortlist candidates.", "short"),
+])
+def test_explicit_negation_requires_complete_words(instruction, remembered):
+    assert memory_conflict(instruction, "project.note", remembered) is None
+
+
+def test_explicit_negation_checks_all_bounded_memory_terms():
+    words = "archive redact export publish annotate upload preserve review verify redactable compile compare summarize revise translate reconcile".split()
+    remembered = " ".join(words)
+    assert len(set(words)) > 12
+    for word in words:
+        assert memory_conflict(f"Do not {word}.", "project.note", remembered) == "explicit_negation", word
+
+
+@pytest.mark.parametrize("instruction", ["Do not archive.", "Don't archive.", "DON’T archive."])
+def test_explicit_negation_suppresses_matching_term(instruction):
+    assert memory_conflict(instruction, "project.note", "Always archive records.") == "explicit_negation"
+
+
+def test_positive_style_precedence_is_preserved():
+    assert memory_conflict("Make it casual and conversational.", "writing.tone", "Usually write formally.") == "formality"
+    assert memory_conflict("Research the casual dining market.", "writing.tone", "Usually write formally.") is None
