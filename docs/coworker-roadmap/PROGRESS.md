@@ -1,3 +1,9 @@
+## 26 November 2026 — Prompt 01 / full staging source CI evidence
+
+**SOURCE_IN_PROGRESS / NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; regression commit `9c775ea5403a14b1b60ab09861edb9e41f72e728`; source commit `a3631afe261aaf169b65d1fa73e46b62a7ed4670`. Source gate now independently requires all seven main push jobs and exact job/run/SHA binding with unambiguous IDs/counts. Isolated full source/test modules matched Git blobs; network dependency stubbed. RED 21 failures (including one existing subtest), GREEN 30 tests +14 subtests, zero skips; py_compile passed. [Task contract](PA10_FULL_CI_EVIDENCE_BINDING_2026-11-26.md). Full CI, distinct review and actual governance enforcement pending. No hosted operations, billing, deployment, migration, telemetry or production changes.
+
+---
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
