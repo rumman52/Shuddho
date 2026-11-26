@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .task_brief_schemas import TaskBrief
 
 from .goal_schemas import _safe_text
-from .task_brief_schemas import MemoryPin
+from .task_brief_schemas import MAX_TASK_MEMORY_PINS, MemoryPin
 
 
 class ConversationCreate(BaseModel):
@@ -63,7 +63,7 @@ class ConversationDispatchCreate(BaseModel):
             raise ValueError("Reviewed dispatch requires both brief and digest")
         return self
     # None: legacy dispatch; []: reviewed brief with no memory.
-    memory_pins: list[MemoryPin] | None = Field(default=None, max_length=20)
+    memory_pins: list[MemoryPin] | None = Field(default=None, max_length=MAX_TASK_MEMORY_PINS)
 
 
 class ConversationSteerRequest(BaseModel):

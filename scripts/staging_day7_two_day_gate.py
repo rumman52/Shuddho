@@ -49,23 +49,49 @@ def strings(value: object, field: str) -> list[str]:
     return value
 
 
-def next_paused_opportunity(first: dict, second: dict) -> datetime:
-    """Compute the next *local calendar* due time after Day 8, including DST."""
-    schedule = first.get("schedule")
-    require(isinstance(schedule, dict)
-            and type(schedule.get("hour")) is int
-            and type(schedule.get("minute")) is int
-            and 0 <= schedule["hour"] <= 23 and 0 <= schedule["minute"] <= 59,
-            "Cannot calculate the next paused schedule opportunity.")
-    require(first.get("overlap_policy") == "skip",
+def require_daily_calendar(profile: dict) -> tuple[dict, ZoneInfo]:
+    """Validate the exact Day 7 pilot policy, not general automation settings."""
+    require(isinstance(profile, dict), "Daily briefing requires a policy object.")
+    schedule = profile.get("schedule")
+    require(isinstance(schedule, dict) and schedule.get("kind") == "daily"
+            and type(schedule.get("hour")) is int and 0 <= schedule["hour"] <= 23
+            and type(schedule.get("minute")) is int and 0 <= schedule["minute"] <= 59,
+            "Expected an explicit daily calendar time.")
+    # A matching first/second schedule is not a valid daily schedule if it
+    # could not have been accepted by AutomationSchedule. For kind=daily the
+    # runtime schema requires an explicit *empty* weekdays array.
+    require(type(schedule.get("weekdays")) is list and schedule["weekdays"] == [],
+            "Day 7 daily schedule requires an empty weekdays list.")
+    require(set(schedule) == {"kind", "hour", "minute", "weekdays"},
+            "Day 7 daily schedule contains unexpected fields.")
+    # The owner-approved quiet-hours policy must be a real QuietHours value,
+    # not just an arbitrary matching object copied between two probe files.
+    quiet_hours = profile.get("quiet_hours")
+    require(isinstance(quiet_hours, dict)
+            and set(quiet_hours) == {"start", "end"}
+            and all(type(quiet_hours[field]) is str
+                    and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", quiet_hours[field])
+                    for field in ("start", "end"))
+            and quiet_hours["start"] != quiet_hours["end"],
+            "Day 7 quiet hours must have distinct valid HH:MM start/end values.")
+    require(profile.get("overlap_policy") == "skip",
             "Daily briefing must use the approved skip overlap policy.")
-    catchup = first.get("catchup_window_seconds")
+    catchup = profile.get("catchup_window_seconds")
     require(type(catchup) is int and catchup == 3600,
             "Daily briefing requires an explicit bounded catch-up window of exactly 3600 seconds.")
+    zone_name = profile.get("timezone")
+    require(type(zone_name) is str and 1 <= len(zone_name) <= 64,
+            "Timezone must be a valid IANA zone.")
     try:
-        zone = ZoneInfo(str(first.get("timezone", "")))
+        zone = ZoneInfo(zone_name)
     except (ZoneInfoNotFoundError, ValueError, TypeError) as error:
-        raise GateFailure("Cannot calculate a paused opportunity without a valid timezone.") from error
+        raise GateFailure("Timezone must be a valid IANA zone.") from error
+    return schedule, zone
+
+
+def next_paused_opportunity(first: dict, second: dict) -> datetime:
+    """Compute the next *local calendar* due time after Day 8, including DST."""
+    schedule, zone = require_daily_calendar(first)
     next_local_date = timestamp(second.get("due_at"), "Day 8 due_at").astimezone(zone).date() + timedelta(days=1)
     local_due = datetime.combine(next_local_date,
                                  time(schedule["hour"], schedule["minute"]), tzinfo=zone)
@@ -178,30 +204,9 @@ def verify_two_day(
             and type(paused.get("paused_revision")) is int
             and paused["paused_revision"] > paused["previous_revision"],
             "Pause must follow the accepted schedule revision.")
-    schedule = first.get("schedule")
-    require(isinstance(schedule, dict) and schedule.get("kind") == "daily"
-            and type(schedule.get("hour")) is int and 0 <= schedule["hour"] <= 23
-            and type(schedule.get("minute")) is int and 0 <= schedule["minute"] <= 59,
-            "Expected an explicit daily calendar time.")
-    # A matching first/second schedule is not a valid daily schedule if it
-    # could not have been accepted by AutomationSchedule. For kind=daily the
-    # runtime schema requires an explicit *empty* weekdays array.
-    require(type(schedule.get("weekdays")) is list and schedule["weekdays"] == [],
-            "Day 7 daily schedule requires an empty weekdays list.")
-    # The owner-approved quiet-hours policy must be a real QuietHours value,
-    # not just an arbitrary matching object copied between two probe files.
-    quiet_hours = first.get("quiet_hours")
-    require(isinstance(quiet_hours, dict)
-            and set(quiet_hours) == {"start", "end"}
-            and all(type(quiet_hours[field]) is str
-                    and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", quiet_hours[field])
-                    for field in ("start", "end"))
-            and quiet_hours["start"] != quiet_hours["end"],
-            "Day 7 quiet hours must have distinct valid HH:MM start/end values.")
-    try:
-        zone = ZoneInfo(str(first.get("timezone", "")))
-    except (ZoneInfoNotFoundError, ValueError, TypeError) as error:
-        raise GateFailure("Timezone must be a valid IANA zone.") from error
+    schedule, zone = require_daily_calendar(first)
+    # Matching numeric values may have different JSON types (8 == 8.0).
+    require_daily_calendar(second)
     local_dates: list[date] = []
     due_timestamps: list[datetime] = []
     verified_timestamps: list[datetime] = []
@@ -279,9 +284,7 @@ def verify_two_day(
     require(timestamp(first.get("expires_at"), "expires_at") > paused_at,
             "The approved schedule expiry must remain after the Day 8 pause.")
     post_due = next_paused_opportunity(first, second)
-    catchup = first.get("catchup_window_seconds")
-    require(type(catchup) is int and catchup == 3600,
-            "Daily briefing requires an explicit bounded catch-up window of exactly 3600 seconds.")
+    catchup = first["catchup_window_seconds"]
     require(verified_timestamps[1] < paused_at < post_due,
             "Pause must occur after Day 8 verification and before the next scheduled opportunity.")
     require(timestamp(first.get("expires_at"), "expires_at")
