@@ -46,6 +46,35 @@ def task_brief_messages(body: str) -> list[dict[str, str]]:
     return [{"role": "system", "content": system}, {"role": "user", "content": body}]
 
 
+def _reported_token_count(data: object, name: str) -> int | None:
+    """Keep unknown or malformed usage unknown so reservation accounting stays conservative."""
+    usage = data.get("usage") if isinstance(data, dict) else None
+    value = usage.get(name) if isinstance(usage, dict) else None
+    return value if type(value) is int and value >= 0 else None
+
+
+def _single_text_completion(data: object) -> str:
+    """Accept only a completed, single assistant text response, not a tool call."""
+    if not isinstance(data, dict) or data.get("error") is not None:
+        raise ValueError("Malformed provider result")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or len(choices) != 1:
+        raise ValueError("Incomplete provider result")
+    choice = choices[0]
+    if (not isinstance(choice, dict) or choice.get("finish_reason") != "stop"
+            or ("index" in choice and (type(choice["index"]) is not int or choice["index"] != 0))):
+        raise ValueError("Incomplete provider result")
+    message = choice.get("message")
+    if (not isinstance(message, dict) or message.get("role") not in (None, "assistant")
+            or message.get("tool_calls") or message.get("function_call") is not None
+            or message.get("refusal")):
+        raise ValueError("Unsafe provider output")
+    content = message.get("content")
+    if not isinstance(content, str):
+        raise ValueError("Malformed provider content")
+    return content
+
+
 class PlannerFailure(CoworkerError):
     def __init__(
         self,
@@ -161,24 +190,10 @@ class DeepSeekAgentPlanner:
         output_tokens = None
         try:
             data = response.json()
-            usage = data.get("usage")
-            if not isinstance(usage, dict):
-                usage = {}
-
-            def token_count(name: str) -> int | None:
-                value = usage.get(name)
-                return value if type(value) is int and value >= 0 else None
-
-            total_tokens = token_count("total_tokens")
-            input_tokens = token_count("prompt_tokens")
-            output_tokens = token_count("completion_tokens")
-            choices = data["choices"]
-            if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
-                raise ValueError()
-            message = choices[0]["message"]
-            if message.get("tool_calls") or message.get("refusal"):
-                raise ValueError()
-            decision = AgentV3Decision.model_validate_json(message["content"])
+            total_tokens = _reported_token_count(data, "total_tokens")
+            input_tokens = _reported_token_count(data, "prompt_tokens")
+            output_tokens = _reported_token_count(data, "completion_tokens")
+            decision = AgentV3Decision.model_validate_json(_single_text_completion(data))
             if decision.tool is not None and decision.tool not in set(tools):
                 raise ValueError()
         except (ValueError, TypeError, KeyError, IndexError, AttributeError, ValidationError):
@@ -228,29 +243,9 @@ class DeepSeekAgentPlanner:
         tokens = None
         try:
             data = response.json()
-            if not isinstance(data, dict):
-                raise ValueError("Malformed provider result")
-            usage = data.get("usage")
-            reported = usage.get("total_tokens") if isinstance(usage, dict) else None
-            # Unknown/invalid usage retains the conservative provider reservation.
-            if type(reported) is int and reported >= 0:
-                tokens = reported
-            if data.get("error") is not None:
-                raise ValueError("Malformed provider result")
-            choices = data.get("choices")
-            if not isinstance(choices, list) or len(choices) != 1:
-                raise ValueError("Incomplete provider result")
-            choice = choices[0]
-            if (not isinstance(choice, dict) or choice.get("finish_reason") != "stop"
-                    or ("index" in choice and (type(choice["index"]) is not int or choice["index"] != 0))):
-                raise ValueError("Incomplete provider result")
-            message = choice.get("message")
-            if (not isinstance(message, dict) or message.get("role") not in (None, "assistant")
-                    or message.get("tool_calls") or message.get("function_call") is not None
-                    or message.get("refusal")):
-                raise ValueError("Unsafe provider output")
-            raw = message["content"]
-            if not isinstance(raw, str) or len(raw.encode("utf-8")) > 12000:
+            tokens = _reported_token_count(data, "total_tokens")
+            raw = _single_text_completion(data)
+            if len(raw.encode("utf-8")) > 12000:
                 raise ValueError("Oversized provider output")
             suggestion = TaskBriefSuggestion.model_validate_json(raw)
         except (ValueError, TypeError, KeyError, IndexError, AttributeError, ValidationError):
@@ -312,16 +307,8 @@ class DeepSeekAgentPlanner:
         usage_tokens = None
         try:
             data = response.json()
-            usage = data.get("usage") or {}
-            if isinstance(usage.get("total_tokens"), int) and not isinstance(usage.get("total_tokens"), bool):
-                usage_tokens = max(0, usage["total_tokens"])
-            choices = data["choices"]
-            if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
-                raise ValueError()
-            message = choices[0]["message"]
-            if message.get("tool_calls") or message.get("refusal"):
-                raise ValueError()
-            generated = json.loads(message["content"])
+            usage_tokens = _reported_token_count(data, "total_tokens")
+            generated = json.loads(_single_text_completion(data))
             if (
                 not isinstance(generated, dict)
                 or set(generated) != {"source"}
@@ -414,16 +401,8 @@ class DeepSeekAgentPlanner:
         usage_tokens = None
         try:
             data = response.json()
-            usage = data.get("usage") or {}
-            if isinstance(usage.get("total_tokens"), int) and not isinstance(usage.get("total_tokens"), bool):
-                usage_tokens = max(0, usage["total_tokens"])
-            choices = data["choices"]
-            if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
-                raise ValueError()
-            message = choices[0]["message"]
-            if message.get("tool_calls") or message.get("refusal"):
-                raise ValueError()
-            output = FlyPatchModelOutput.model_validate_json(message["content"])
+            usage_tokens = _reported_token_count(data, "total_tokens")
+            output = FlyPatchModelOutput.model_validate_json(_single_text_completion(data))
         except (ValueError, TypeError, KeyError, IndexError, AttributeError, ValidationError):
             raise PlannerFailure(
                 "invalid_fly_patch",
@@ -496,16 +475,8 @@ class DeepSeekAgentPlanner:
         total_tokens = None
         try:
             data = response.json()
-            usage = data.get("usage") or {}
-            if isinstance(usage.get("total_tokens"), int) and not isinstance(usage.get("total_tokens"), bool):
-                total_tokens = max(0, usage["total_tokens"])
-            choices = data["choices"]
-            if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
-                raise ValueError()
-            message = choices[0]["message"]
-            if message.get("tool_calls") or message.get("refusal"):
-                raise ValueError()
-            proposal = AgentPlannerProposal.model_validate_json(message["content"])
+            total_tokens = _reported_token_count(data, "total_tokens")
+            proposal = AgentPlannerProposal.model_validate_json(_single_text_completion(data))
             assert_model_action_proposals(
                 proposal.action_proposals,
                 allow_action_proposals=allow_action_proposals,
