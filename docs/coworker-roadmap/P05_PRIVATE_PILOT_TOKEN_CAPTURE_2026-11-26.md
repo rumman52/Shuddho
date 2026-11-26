@@ -1,0 +1,9 @@
+# Prompt 05 — private pilot token capture
+
+Scope D10.T09. Base 43d99fd64467492a7da809cda0ae178191e53981. Existing post-admission token loader used a final no-follow flag only where available, could block on a FIFO, and did not compare post-read inode metadata or actual read length. A concurrent rewrite, growth, truncation or permission change could leave stale private tokens accepted. Recursion failures escaped the normal rejection boundary.
+
+Tests-first 06aba94ab21b20aba5cfc7bc455d9bd463727caf; shared reader 1b5d61af9805d7c932bccf4fb444de1ba5f17c3c; consumer 91166dfaf80d0de8f585ef16a667cfa4b05822b7. Reuse existing stable no-follow reader with caller-specific 65536-byte cap and private-mode precheck; existing 4MB default and callers unchanged. Reject nonregular files without blocking, symlink/no-follow unavailable, concurrent metadata/content change and malformed/recursive input. Preserve 5–10 distinct trimmed token check. Sanitized error, no raw token or path printed.
+
+Isolated exact reader excerpts with synthetic tokens and filesystem operations RED 6 failed/5 passed; GREEN 11 passed. Parser depth error injected; real FIFO opened only nonblocking. Repository tests also assert exact size boundary. Full clone DNS-blocked, no local full repository execution. Exact-head CI and distinct review required. Overlaps #940 in pilot admission module/tests and #936/#943 in Day 9 module; changes are distinct functions/tests and must be reconciled without replacing another branch's work. Trusted ancestor custody still required; no runtime activation or real credential read.
+
+Verification: uv run --locked --extra coworker pytest -q tests/test_pilot_admission_verify.py tests/test_ruke_pilot_eval.py -rs. No holdout, live API or approved pilot evidence. SOURCE_IN_PROGRESS / SOURCE_ONLY / NO-GO.

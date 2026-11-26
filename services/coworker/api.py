@@ -1382,6 +1382,11 @@ def runtime_manifest(
         "source_revision": settings.source_revision,
         "environment": settings.environment,
         "capabilities": capabilities,
+        # Separate configured authority outside the fixed 43 runtime-v2 flags.
+        # Report the actual setting, even if another dependency blocks its use.
+        "canonical_only_capabilities": {
+            "suggestion_model_relevance": settings.suggestion_model_relevance_enabled,
+        },
         "reviewed_skills": services.repository.reviewed_skill_runtime_manifest(),
         "action_providers": providers,
         "cohort": {

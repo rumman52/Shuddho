@@ -153,3 +153,8 @@ These tests are explicitly mandatory with **zero skips** in the existing Coworke
 pilot users, operate fault scenarios, call a model or close any day. A fresh
 exact-PR-head CI and independent review are still required; this document
 must not be cited as a live acceptance result.
+
+
+## 26 November 2026 — exact canonical-only capability follow-up
+
+The pilot verifier requires the authenticated runtime-v2 API to report the separate `canonical_only_capabilities` object with exactly `{"suggestion_model_relevance": false}`. The existing 43 authority flags and one derived UI indicator are unchanged. A missing, enabled, unknown, or non-boolean setting blocks credit. The API exposes the actual configured boolean; this is readback only, not activation. Old receipts lacking the new required evidence remain archival.
