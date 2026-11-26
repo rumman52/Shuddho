@@ -1111,3 +1111,94 @@ def test_deepseek_nonstream_reply_rejects_legacy_function_call(container):
         httpx.MockTransport(lambda request: httpx.Response(200, json=body)))
     with pytest.raises(ValueError):
         asyncio.run(model.generate([{"role": "user", "content": "Hi"}]))
+
+
+def _deepseek_frame_test_model(container, frames):
+    import httpx
+    import json
+    from services.coworker.conversation_replies import DeepSeekReplyModel
+
+    body = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n"
+    return DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(lambda request: httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=body)))
+
+
+_P02_START_FRAME = {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "বাংলা "}, "finish_reason": None}]}
+_P02_STOP_FRAME = {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+_P02_USAGE_FRAME = {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}}
+
+
+@pytest.mark.parametrize("bad", [
+    {"choices": [{"index": 0, "delta": {"role": "user", "content": "wrong"}, "finish_reason": None}]},
+    {"choices": [{"index": 1, "delta": {"content": "wrong"}, "finish_reason": None}]},
+    {"choices": [{"index": False, "delta": {"content": "wrong"}, "finish_reason": None}]},
+    {"choices": [], "usage": {"total_tokens": 7}},
+    {"choices": [], "error": {"message": "synthetic error"}},
+])
+def test_deepseek_rejects_invalid_intermediate_frame(container, bad):
+    model = _deepseek_frame_test_model(container, [_P02_START_FRAME, bad, _P02_STOP_FRAME])
+
+    async def collect():
+        return [part async for part in model.stream([{"role": "user", "content": "Hi"}])]
+
+    with pytest.raises(ValueError):
+        asyncio.run(collect())
+
+
+@pytest.mark.parametrize("bad", [
+    {"choices": []}, {"choices": [], "usage": False},
+    {"choices": [], "usage": {}, "error": {"message": "synthetic error"}},
+    _P02_USAGE_FRAME,
+])
+def test_deepseek_rejects_invalid_or_duplicate_usage_frame(container, bad):
+    frames = [_P02_START_FRAME, _P02_STOP_FRAME]
+    if bad is _P02_USAGE_FRAME:
+        frames.append(_P02_USAGE_FRAME)
+    model = _deepseek_frame_test_model(container, frames + [bad])
+
+    async def collect():
+        return [part async for part in model.stream([{"role": "user", "content": "Hi"}])]
+
+    with pytest.raises(ValueError):
+        asyncio.run(collect())
+
+
+@pytest.mark.parametrize("choice", [
+    {"index": 0, "message": {"role": "user", "content": "wrong"}, "finish_reason": "stop"},
+    {"index": 1, "message": {"role": "assistant", "content": "wrong"}, "finish_reason": "stop"},
+    {"index": False, "message": {"content": "wrong"}, "finish_reason": "stop"},
+])
+def test_deepseek_nonstream_rejects_wrong_role_or_index(container, choice):
+    import httpx
+    from services.coworker.conversation_replies import DeepSeekReplyModel
+
+    model = DeepSeekReplyModel(replace(container.settings, deepseek_api_key="test-only"),
+        httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": [choice]})))
+    with pytest.raises(ValueError):
+        asyncio.run(model.generate([{"role": "user", "content": "Hi"}]))
+
+
+def test_deepseek_rejects_truncation_before_yielding_that_frame(container):
+    model = _deepseek_frame_test_model(container, [
+        {"choices": [{"delta": {"content": "truncated"}, "finish_reason": "length"}]},
+    ])
+
+    async def collect():
+        stream = model.stream([{"role": "user", "content": "Hi"}])
+        try:
+            with pytest.raises(ValueError):
+                await anext(stream)
+        finally:
+            await stream.aclose()
+
+    asyncio.run(collect())
+
+
+def test_deepseek_accepts_one_usage_trailer_and_bangla_assistant_text(container):
+    model = _deepseek_frame_test_model(container, [_P02_START_FRAME, _P02_STOP_FRAME, _P02_USAGE_FRAME])
+
+    async def collect():
+        return [part async for part in model.stream([{"role": "user", "content": "Hi"}])]
+
+    assert asyncio.run(collect()) == ["বাংলা "]
