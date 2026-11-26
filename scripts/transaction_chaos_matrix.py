@@ -6,7 +6,6 @@ injection and independent verification are separate release requirements.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -107,18 +106,11 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
             problems.append(f"{name}: evidence file missing or unsafe")
             continue
         try:
-            if path.stat().st_size > MAX_EVIDENCE_BYTES:
-                problems.append(f"{name}: evidence file too large")
-                continue
-            raw = path.read_bytes()
-            if len(raw) > MAX_EVIDENCE_BYTES:
-                problems.append(f"{name}: evidence file too large")
-                continue
-            if hashlib.sha256(raw).hexdigest() != entry.get("evidence_sha256"):
+            record, observed_digest = _read_rollout_manifest(path, max_bytes=MAX_EVIDENCE_BYTES)
+            if observed_digest != entry.get("evidence_sha256"):
                 problems.append(f"{name}: evidence hash mismatch")
                 continue
-            record = _strict_json_loads(raw)
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, ValueError, UnicodeError, StagingReleaseEvidenceError, RecursionError):
             problems.append(f"{name}: unreadable evidence JSON")
             continue
         if not isinstance(record, dict):
