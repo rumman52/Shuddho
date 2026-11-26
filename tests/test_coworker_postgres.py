@@ -1608,3 +1608,37 @@ def test_postgres_memory_pin_validation_refreshes_cached_version(repository):
             )
         assert denied.value.code == "memory_pins_changed"
         assert cached.version == 2
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_postgres_memory_mutation_locks_owner_before_fact(repository, operation):
+    from services.coworker.memory_repository import MemoryRepository
+    from services.coworker.memory_schemas import MemoryFactCreate, MemoryFactUpdate
+
+    settings = replace(repository.settings, agent_memory_enabled=True)
+    identity = owner(repository)
+    memory = MemoryRepository(repository.sessions, settings)
+    fact = memory.create(identity, MemoryFactCreate(
+        namespace="project", key="lock-order", value="Synthetic fact.",
+    ))
+    statements = []
+    engine = repository.sessions.kw["bind"]
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "FOR " in statement.upper():
+            statements.append(statement.upper())
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        if operation == "update":
+            assert memory.update(identity, fact["id"], MemoryFactUpdate(
+                expected_version=1, value="Corrected synthetic fact.",
+            ))["version"] == 2
+        else:
+            assert memory.delete(identity, fact["id"])["deleted"] is True
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert len(statements) >= 2
+    assert "CW_ACCOUNTS" in statements[0] and "FOR NO KEY UPDATE" in statements[0]
+    assert "CW_MEMORY_FACTS" in statements[1] and "FOR UPDATE" in statements[1]
