@@ -1428,7 +1428,7 @@ class AutomationRepository:
                 or automation.state != "active"
                 or (
                     automation.expires_at is not None
-                    and aware(automation.expires_at) <= scan_at
+                    and aware(automation.expires_at) <= max(utcnow(), scan_at)
                 )
             ):
                 return {"state": "suppressed", "reason": "automation_inactive", "meetings": []}
@@ -1558,7 +1558,7 @@ class AutomationRepository:
                 reason = reason or "stale_revision"
             elif automation.state != "active":
                 reason = reason or "not_active"
-            elif automation.expires_at is not None and aware(automation.expires_at) <= admitted_at:
+            elif automation.expires_at is not None and aware(automation.expires_at) <= max(utcnow(), admitted_at):
                 reason = reason or "expired"
             elif (
                 snapshot is None
