@@ -1,6 +1,6 @@
-## 26 November 2026 — Prompt 02 strict DeepSeek reply frames
+## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
-**Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `46938456f2ee7632d3509f0b71d88a565813c7d2`, source `b62f5bf6102fef1255ef904420e7f015873a778b`. Reject malformed terminal SSE delta types and legacy function-call output without changing ordinary text delivery. Isolated copied adapter probe RED 7 failed/1 passed; GREEN 8 passed. [Contract](P02_CHAT_PROVIDER_STREAM_SHAPE_2026-11-26.md). Full repository CI, independent review and operated staging remain pending. No provider spend or deployment.
+**Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
 
 ---
 

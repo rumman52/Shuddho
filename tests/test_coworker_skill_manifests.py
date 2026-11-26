@@ -236,3 +236,39 @@ def test_returned_manifest_limits_mutation_cannot_widen_review():
     from services.coworker import skill_manifests as reviewed
     assert reviewed._REVIEWED_PILOT_MANIFEST.resource_limits.max_tool_calls == 1
     assert reviewed._REVIEWED_PILOT_MANIFEST.resource_limits is not another.resource_limits
+
+
+@pytest.mark.parametrize("mutation", [
+    "extra_manifest_field", "extra_limit_field", "object_tool_names", "bool_limit", "float_limit",
+])
+def test_persisted_reviewed_manifest_rejects_lossy_snapshot_reconstruction(mutation):
+    from dataclasses import asdict
+    from services.coworker.reviewed_skill_registry import manifest_from_snapshot
+
+    snapshot = asdict(pilot_skill_manifest())
+    if mutation == "extra_manifest_field":
+        snapshot["provider_override"] = "unreviewed"
+    elif mutation == "extra_limit_field":
+        snapshot["resource_limits"]["network_access"] = True
+    elif mutation == "object_tool_names":
+        snapshot["tool_names"] = {"research.search": "unreviewed"}
+    elif mutation == "bool_limit":
+        snapshot["resource_limits"]["max_tool_calls"] = True
+    elif mutation == "float_limit":
+        snapshot["resource_limits"]["max_tool_calls"] = 1.0
+    with pytest.raises(CoworkerError) as exc:
+        manifest_from_snapshot(snapshot)
+    assert exc.value.code == "skill_publication_untrusted"
+
+
+def test_persisted_reviewed_manifest_accepts_exact_json_and_in_memory_snapshots():
+    from dataclasses import asdict
+    import json
+    from services.coworker.reviewed_skill_registry import manifest_from_snapshot
+
+    manifest = pilot_skill_manifest()
+    for snapshot in (asdict(manifest), json.loads(json.dumps(asdict(manifest)))):
+        restored = manifest_from_snapshot(snapshot)
+        assert restored == manifest
+        assert restored.review_sha256() == manifest.review_sha256()
+        validate_manifest(restored, GRANT)
