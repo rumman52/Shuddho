@@ -1370,7 +1370,7 @@ def main(argv=None) -> int:
         return 0
     except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         failure = {
-            "schema_version": 2 if manifest and manifest.get("schema_version") == 2 else 1,
+            "schema_version": 2 if isinstance(manifest, dict) and manifest.get("schema_version") == 2 else 1,
             "error": str(exc),
             "qualified": False,
             "result_kind": "regression_validation" if args.regression_rerun else "operator_submitted_first_run",
