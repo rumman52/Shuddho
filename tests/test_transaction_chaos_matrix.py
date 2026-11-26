@@ -305,3 +305,96 @@ def test_fault_evidence_verifier_rejects_non_list_scenarios(tmp_path, bad):
     doc["scenarios"] = bad
     assert "scenarios must be a list" in check(doc)
     assert "scenarios must be a list" in verify_evidence_files(doc, tmp_path)
+
+
+@pytest.mark.parametrize("case", ["valid", "symlink", "oversized", "overflow"])
+def test_cli_fault_manifest_requires_bounded_stable_strict_json(tmp_path, monkeypatch, capsys, case):
+    from scripts.transaction_chaos_matrix import main
+
+    directory = tmp_path / "faults"
+    directory.mkdir()
+    doc = _bundle(directory, evidence())
+    raw = json.dumps(doc).encode()
+    manifest = tmp_path / "manifest.json"
+    if case == "symlink":
+        target = tmp_path / "target.json"
+        target.write_bytes(raw)
+        manifest.symlink_to(target)
+    elif case == "oversized":
+        manifest.write_bytes(raw + b" " * (1024 * 1024))
+    elif case == "overflow":
+        manifest.write_bytes(raw[:-1] + b', "extra": 1e999}')
+    else:
+        manifest.write_bytes(raw)
+    monkeypatch.setattr("sys.argv", ["transaction_chaos_matrix", str(manifest),
+        "--source-revision", "reviewed-head", "--rollout-id", "staging-42",
+        "--evidence-dir", str(directory)])
+    status = main()
+    output = capsys.readouterr().out
+    if case == "valid":
+        assert status == 0
+        assert "independent staging provenance/recovery NOT certified" in output
+    else:
+        assert status == 1
+        assert "NOT QUALIFIED:" in output
+
+
+@pytest.mark.parametrize("case", ["valid", "large_valid", "overflow", "symlink_swap", "in_place", "oversized"])
+def test_fault_receipt_requires_bounded_stable_strict_json(tmp_path, monkeypatch, case):
+    import os
+    from pathlib import Path
+
+    directory = tmp_path / "faults"
+    directory.mkdir()
+    doc = _bundle(directory, evidence())
+    target = directory / "lost_provider_response.json"
+    row = next(item for item in doc["scenarios"] if item["id"] == "lost_provider_response")
+    raw = target.read_bytes()
+    if case == "overflow":
+        raw = raw[:-1] + b', "extra": 1e999}'
+    elif case == "large_valid":
+        raw += b" " * (1024 * 1024)
+    elif case == "oversized":
+        raw += b" " * (2 * 1024 * 1024)
+    target.write_bytes(raw)
+    row["evidence_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    if case == "symlink_swap":
+        alternate = tmp_path / "alternate.json"
+        alternate.write_bytes(raw)
+        resolve = Path.resolve
+
+        def swap_after_resolve(path, *args, **kwargs):
+            result = resolve(path, *args, **kwargs)
+            if path == target and not path.is_symlink():
+                path.unlink()
+                path.symlink_to(alternate)
+            return result
+
+        monkeypatch.setattr(Path, "resolve", swap_after_resolve)
+    elif case == "in_place":
+        read = os.read
+        target_inode = target.stat().st_ino
+
+        def mutate_after_read(fd, count):
+            data = read(fd, count)
+            if data and os.fstat(fd).st_ino == target_inode:
+                target.write_bytes(raw + b" ")
+            return data
+
+        monkeypatch.setattr(os, "read", mutate_after_read)
+        read_bytes = Path.read_bytes
+
+        def mutate_after_read_bytes(path):
+            data = read_bytes(path)
+            if path == target:
+                target.write_bytes(raw + b" ")
+            return data
+
+        monkeypatch.setattr(Path, "read_bytes", mutate_after_read_bytes)
+
+    reasons = verify_evidence_files(doc, directory)
+    if case in ("valid", "large_valid"):
+        assert reasons == []
+    else:
+        assert any("lost_provider_response:" in reason for reason in reasons)

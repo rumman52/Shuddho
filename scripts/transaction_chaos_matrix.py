@@ -6,10 +6,15 @@ injection and independent verification are separate release requirements.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
+
+# Support both ``python -m scripts.transaction_chaos_matrix`` and direct execution.
+if __package__:
+    from .staging_release_evidence import StagingReleaseEvidenceError, _read_rollout_manifest
+else:
+    from staging_release_evidence import StagingReleaseEvidenceError, _read_rollout_manifest
 
 SCENARIOS = (
     "model_429", "model_500", "model_timeout", "provider_401",
@@ -101,18 +106,11 @@ def verify_evidence_files(document: dict, directory: Path) -> list[str]:
             problems.append(f"{name}: evidence file missing or unsafe")
             continue
         try:
-            if path.stat().st_size > MAX_EVIDENCE_BYTES:
-                problems.append(f"{name}: evidence file too large")
-                continue
-            raw = path.read_bytes()
-            if len(raw) > MAX_EVIDENCE_BYTES:
-                problems.append(f"{name}: evidence file too large")
-                continue
-            if hashlib.sha256(raw).hexdigest() != entry.get("evidence_sha256"):
+            record, observed_digest = _read_rollout_manifest(path, max_bytes=MAX_EVIDENCE_BYTES)
+            if observed_digest != entry.get("evidence_sha256"):
                 problems.append(f"{name}: evidence hash mismatch")
                 continue
-            record = _strict_json_loads(raw)
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, ValueError, UnicodeError, StagingReleaseEvidenceError, RecursionError):
             problems.append(f"{name}: unreadable evidence JSON")
             continue
         if not isinstance(record, dict):
@@ -234,12 +232,12 @@ def main() -> int:
                         help="Directory containing one checksummed staging evidence JSON per scenario")
     args = parser.parse_args()
     try:
-        document = _strict_json_loads(args.evidence.read_text(encoding="utf-8"))
+        document, _ = _read_rollout_manifest(args.evidence)
         if not isinstance(document, dict):
             raise ValueError("evidence must be a JSON object")
         problems = qualify(document, expected_revision=args.source_revision, expected_rollout=args.rollout_id)
         problems.extend(verify_evidence_files(document, args.evidence_dir))
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, StagingReleaseEvidenceError, RecursionError) as error:
         problems = [str(error)]
     if problems:
         for problem in problems:
