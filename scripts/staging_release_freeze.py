@@ -13,7 +13,9 @@ from urllib.parse import urlparse
 import httpx
 
 from scripts.staging_release_evidence import (
+    MAX_ROLLOUT_MANIFEST_BYTES,
     StagingReleaseEvidenceError,
+    parse_evidence_json,
     _read_rollout_manifest,
     write_private_json,
 )
@@ -576,10 +578,17 @@ def json_object(response: httpx.Response, label: str) -> dict:
         raise StagingReleaseFreezeError(
             f"{label} returned HTTP {response.status_code}; expected 200."
         )
+    if response.headers.get("content-encoding", "identity").lower().strip() != "identity":
+        raise StagingReleaseFreezeError(f"{label} returned an unsupported content encoding.")
+    raw = bytearray()
     try:
-        value = response.json()
-    except ValueError:
-        raise StagingReleaseFreezeError(f"{label} did not return JSON.") from None
+        for chunk in response.iter_bytes(chunk_size=65536):
+            if len(raw) + len(chunk) > MAX_ROLLOUT_MANIFEST_BYTES:
+                raise StagingReleaseFreezeError(f"{label} exceeds the evidence byte bound.")
+            raw.extend(chunk)
+        value = parse_evidence_json(bytes(raw))
+    except (StagingReleaseEvidenceError, httpx.HTTPError) as error:
+        raise StagingReleaseFreezeError(f"{label} did not return valid evidence JSON: {type(error).__name__}.") from None
     if not isinstance(value, dict):
         raise StagingReleaseFreezeError(f"{label} returned an unexpected shape.")
     return value
@@ -645,12 +654,10 @@ def main() -> None:
             follow_redirects=False,
             # Never inherit proxy or alternate CA roots when sending a staging bearer token.
             trust_env=False,
-            headers={"Authorization": "Bearer " + token},
+            headers={"Authorization": "Bearer " + token, "Accept-Encoding": "identity"},
         ) as client:
-            runtime = json_object(
-                client.get("/api/v1/runtime-manifest"),
-                "runtime manifest",
-            )
+            with client.stream("GET", "/api/v1/runtime-manifest") as response:
+                runtime = json_object(response, "runtime manifest")
         evidence = verify_runtime(state, runtime)
         write_private_json(args.output, evidence)
         print(json.dumps({

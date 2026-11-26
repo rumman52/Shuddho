@@ -352,16 +352,11 @@ def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SSL_CERT_FILE", "/untrusted/ca.pem")
     client_calls = []
 
-    class FakeResponse:
-        status_code = 200
-
-        def json(self):
-            return runtime(state)
-
     class FakeClient:
         def __init__(self, **kwargs):
             client_calls.append(kwargs)
             assert kwargs.get("trust_env") is False
+            assert kwargs["headers"]["Accept-Encoding"] == "identity"
 
         def __enter__(self):
             return self
@@ -369,9 +364,12 @@ def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def get(self, path):
+        def stream(self, method, path):
+            from contextlib import nullcontext
+
+            assert method == "GET"
             assert path == "/api/v1/runtime-manifest"
-            return FakeResponse()
+            return nullcontext(freeze.httpx.Response(200, json=runtime(state)))
 
     monkeypatch.setattr(freeze.httpx, "Client", FakeClient)
     monkeypatch.setattr(
@@ -566,3 +564,62 @@ def test_freeze_prepare_publishes_private_receipt_without_overwrite(tmp_path, mo
         freeze.main()
     assert exc.value.code == 1
     assert state_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"environment":"production","environment":"staging"}',
+    b'{"capabilities":{"actions":true,"actions":false}}',
+    b'{"reviewed_skills":{"n":NaN}}',
+    b'{"reviewed_skills":{"n":Infinity}}',
+    b'{"reviewed_skills":{"n":-Infinity}}',
+    b'{"reviewed_skills":{"n":1e999}}',
+    b'{"padding":"' + b'x' * 1_048_576 + b'"}',
+    '{"environment":"staging"}'.encode('utf-16'),
+], ids=["duplicate-root", "duplicate-nested", "nan", "infinity", "negative-infinity",
+        "overflow", "oversized", "utf16"])
+def test_runtime_http_json_rejects_ambiguous_or_oversized_bytes(raw):
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.json_object(freeze.httpx.Response(200, content=raw), "runtime manifest")
+
+
+@pytest.mark.parametrize("status,raw", [(403,b'{}'),(200,b'[]'),(200,b'{'),(200,b'\xff')])
+def test_runtime_http_json_preserves_existing_negative_controls(status,raw):
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.json_object(freeze.httpx.Response(status, content=raw), "runtime manifest")
+
+
+def test_runtime_http_json_accepts_valid_utf8_object():
+    expected = {"environment": "staging", "reviewed_skills": {"name": "বাংলা", "n": 1.5}}
+    assert freeze.json_object(freeze.httpx.Response(200, json=expected), "runtime manifest") == expected
+
+
+def test_runtime_http_json_rejects_unexpected_content_encoding():
+    response = freeze.httpx.Response(200, content=b'{}')
+    response.headers['content-encoding'] = 'gzip'
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.json_object(response, "runtime manifest")
+
+
+def test_runtime_http_stream_stops_at_bound_and_closes_response():
+    class OversizedStream(freeze.httpx.SyncByteStream):
+        chunks = 0
+        closed = False
+
+        def __iter__(self):
+            for _ in range(100):
+                self.chunks += 1
+                yield b'x' * 65536
+
+        def close(self):
+            self.closed = True
+
+    stream = OversizedStream()
+    transport = freeze.httpx.MockTransport(
+        lambda _: freeze.httpx.Response(200, stream=stream)
+    )
+    with freeze.httpx.Client(transport=transport) as client:
+        with pytest.raises(freeze.StagingReleaseFreezeError, match="byte bound"):
+            with client.stream("GET", "https://stage.example.test/runtime") as response:
+                freeze.json_object(response, "runtime manifest")
+    assert stream.chunks == 17
+    assert stream.closed

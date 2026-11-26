@@ -84,6 +84,11 @@ def _read_rollout_manifest(
     ):
         raise StagingReleaseEvidenceError("Rollout manifest changed during bounded read")
 
+    return parse_evidence_json(raw), hashlib.sha256(raw).hexdigest()
+
+
+def parse_evidence_json(raw: bytes) -> object:
+    """Parse one UTF-8 evidence snapshot without ambiguous or non-finite values."""
     def unique_fields(pairs: list[tuple[str, object]]) -> dict:
         out = {}
         for key, value in pairs:
@@ -102,15 +107,14 @@ def _read_rollout_manifest(
         return number
 
     try:
-        rollout = json.loads(
+        return json.loads(
             raw.decode("utf-8"), object_pairs_hook=unique_fields,
             parse_constant=reject_constant, parse_float=finite_float,
         )
-    except (UnicodeError, ValueError, TypeError) as error:
+    except (UnicodeError, ValueError, TypeError, RecursionError) as error:
         raise StagingReleaseEvidenceError(
             f"Invalid rollout manifest: {type(error).__name__}"
         ) from None
-    return rollout, hashlib.sha256(raw).hexdigest()
 
 
 def release_context(settings, rollout_path: Path) -> dict:
