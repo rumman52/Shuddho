@@ -1470,3 +1470,20 @@ def test_day9_evidence_read_rejects_in_place_change(tmp_path, monkeypatch, mutat
     else:
         with pytest.raises(EvidenceError, match="changed during bounded read"):
             module._read_evidence_bytes(path)
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+@pytest.mark.parametrize("field", ["runtime_capabilities", "context_budget_bytes"])
+def test_candidate_readback_digest_cannot_relabel_numeric_aliases_as_exact(role, field):
+    value = manifest()
+    readbacks = candidate_readbacks(value)
+    row = readbacks[role]
+    if field == "runtime_capabilities":
+        row[field] = {key: int(enabled) for key, enabled in row[field].items()}
+    else:
+        row[field] = float(row[field])
+    # A digest of the wrong types is still not a digest of the frozen identity.
+    row["readback_sha256"] = canonical_sha256({k: v for k, v in row.items() if k != "readback_sha256"})
+    value["candidate_identity"][f"{role}_readback_sha256"] = row["readback_sha256"]
+    with pytest.raises(EvidenceError, match="readback"):
+        validate_candidate_readbacks(value, readbacks)
