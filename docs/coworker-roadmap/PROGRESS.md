@@ -5,6 +5,8 @@
 
 **Extension:** Child draft/export checkpoint and artifact publication revalidate selected memory in their persistence transactions; model reservation and phase entry also checked. Account reference/mutation lock ordering aligned. Test commits `31664a1288e716e2086b1c77dbf4b79032b6e0dd`, `404cf67a90e25b17170f9ec65531cd2fdc32fcca`; source `72feee2a78a89b925341a1e0eaf744a0a75101ec`. Isolated child persistence probe RED 6 failed/1 passed, GREEN 7 passed; full CI and actual PostgreSQL/hosted evidence pending. [PR #950](https://github.com/rumman52/Shuddho/pull/950).
 
+**Accepted proposal deletion:** nullable FK links now detached atomically before owner-scoped fact deletion; accepted-history replay never recreates or rebinds deleted facts. Tests `82e5910c16906393abda845b928b73cca5e23225`, source `eb1f8656015946cfdacb5d6c32dd182ad156a6c4`. Isolated FK-enabled SQLite RED 2 failed/1 passed, GREEN 3 passed. Exact repository regression and CI pending. No migration or change to historical proposal retention.
+
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
 **Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
