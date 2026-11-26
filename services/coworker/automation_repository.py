@@ -85,6 +85,24 @@ class AutomationRepository:
                 409,
             )
 
+    @staticmethod
+    def _validate_one_time_schedule(schedule: dict, run_profile: str, expires_at: datetime | None) -> None:
+        if schedule.get("kind") != "once":
+            return
+        if run_profile != "reminder":
+            raise CoworkerError(
+                "one_time_profile_scope", "One-time schedules are limited to simple reminders.", 409,
+            )
+        instant = datetime.fromisoformat(schedule["run_at"].replace("Z", "+00:00"))
+        if instant <= utcnow():
+            raise CoworkerError(
+                "one_time_schedule_elapsed", "Choose a future instant for a one-time reminder.", 409,
+            )
+        if expires_at is not None and aware(expires_at) <= instant:
+            raise CoworkerError(
+                "one_time_schedule_expiry", "One-time reminder expiry must be after its scheduled instant.", 409,
+            )
+
     def _validate_reminder_profile(
         self,
         schedule: dict,
@@ -94,10 +112,10 @@ class AutomationRepository:
     ) -> None:
         if run_profile != "reminder":
             return
-        if schedule.get("kind") not in {"daily", "weekly"}:
+        if schedule.get("kind") not in {"daily", "weekly", "once"}:
             raise CoworkerError(
                 "reminder_trigger_scope",
-                "Simple reminders require a reviewed daily or weekly Temporal schedule.",
+                "Simple reminders require a reviewed one-time, daily or weekly Temporal schedule.",
                 409,
             )
         if connector_read_grant_ids or tool_allowlist:
@@ -697,6 +715,7 @@ class AutomationRepository:
                 raise CoworkerError("automation_expired", "Automation expiry must be in the future.", 409)
             connector_read_grant_ids = [str(value) for value in request.connector_read_grant_ids]
             tool_allowlist = list(request.tool_allowlist)
+            self._validate_one_time_schedule(payload["schedule"], request.run_profile, request.expires_at)
             self._validate_reminder_profile(
                 payload["schedule"], request.run_profile, connector_read_grant_ids, tool_allowlist
             )
@@ -818,6 +837,9 @@ class AutomationRepository:
             self._check_revision(row, request.expected_revision)
             if row.state == "cancelled":
                 raise CoworkerError("automation_not_editable", "Cancelled automations cannot be edited.", 409)
+            # A new revision after the single due instant could replay an
+            # already admitted reminder. Require a new explicit automation instead.
+            self._validate_one_time_schedule(dict(row.schedule), row.run_profile, row.expires_at)
             fields = request.model_fields_set - {"expected_revision"}
             for field in {"timezone", "run_profile", "output_language", "overlap_policy", "catchup_window_seconds", "expires_at"} & fields:
                 setattr(row, field, getattr(request, field))
@@ -829,6 +851,7 @@ class AutomationRepository:
                 row.schedule = request.schedule.model_dump(mode="json")
             if "quiet_hours" in fields:
                 row.quiet_hours = request.quiet_hours.model_dump(mode="json") if request.quiet_hours else None
+            self._validate_one_time_schedule(dict(row.schedule), row.run_profile, row.expires_at)
             self._validate_reminder_profile(
                 dict(row.schedule),
                 row.run_profile,
@@ -885,6 +908,8 @@ class AutomationRepository:
             self._check_revision(row, expected)
             if row.state not in allowed:
                 raise CoworkerError("invalid_automation_transition", f"Automation state {row.state!r} cannot transition to {target!r}.", 409)
+            if target == "active":
+                self._validate_one_time_schedule(dict(row.schedule), row.run_profile, row.expires_at)
             row.state = target; row.revision += 1; row.updated_at = utcnow(); row.schedule_error_code = None
             db.add(AutomationRevision(automation_id=row.id, revision=row.revision, owner_id=owner, snapshot=self._snapshot(row)))
             self._queue_reconcile(db, row)
@@ -2040,6 +2065,18 @@ class AutomationRepository:
                     "The scheduled automation no longer exists.",
                     404,
                 )
+            if (
+                row.schedule.get("kind") == "once"
+                and row.revision == revision
+                and row.run_profile == "reminder"
+                and row.state == "active"
+            ):
+                instant = datetime.fromisoformat(row.schedule["run_at"].replace("Z", "+00:00"))
+                if due_at != instant:
+                    return {"state": "suppressed", "reason": "not_scheduled", "run_id": None}
+                if utcnow() < instant:
+                    # Do not persist an early claim: the actual occurrence remains admissible.
+                    return {"state": "suppressed", "reason": "not_due", "run_id": None}
             key = self.occurrence_key(row.owner_id, row.id, revision, due_at)
             previous = db.scalar(select(AutomationOccurrence).where(
                 AutomationOccurrence.automation_id == row.id,
