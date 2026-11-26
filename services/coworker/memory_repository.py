@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from datetime import timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from .config import Settings
 from .context_policy import filter_sensitive, is_stale, memory_conflict, relevance_score
@@ -188,6 +188,14 @@ class MemoryRepository:
             ).with_for_update())
             if row is None:
                 raise not_found()
+            # A nullable, non-cascading FK retains the proposal review record.
+            # Detach every same-scope reference before deleting the fact.
+            # Account mutation locking also serializes concurrent acceptance.
+            db.execute(update(MemoryProposal).where(
+                MemoryProposal.accepted_fact_id == row.id,
+                MemoryProposal.owner_id == owner,
+                MemoryProposal.workspace_id == row.workspace_id,
+            ).values(accepted_fact_id=None))
             db.delete(row)
             self._audit(db, owner, fact_id, "memory.deleted")
         return {"deleted": True, "id": fact_id}
@@ -328,12 +336,14 @@ class MemoryRepository:
             ).with_for_update())
             if row is None:
                 raise not_found()
-            if row.state == "accepted" and row.accepted_fact_id:
+            if row.state == "accepted":
+                # A deleted accepted fact must never be recreated by replay.
                 fact = db.scalar(select(MemoryFact).where(
                     MemoryFact.id == row.accepted_fact_id,
                     MemoryFact.owner_id == owner,
-                ))
-                return {"proposal": self._proposal_dto(row), "fact": self._dto(fact)} if fact else {"proposal": self._proposal_dto(row), "fact": None}
+                    MemoryFact.workspace_id == row.workspace_id,
+                )) if row.accepted_fact_id is not None else None
+                return {"proposal": self._proposal_dto(row), "fact": self._dto(fact) if fact else None}
             if row.state != "proposed" or aware(row.expires_at) <= utcnow():
                 if row.state == "proposed":
                     row.state = "expired"
