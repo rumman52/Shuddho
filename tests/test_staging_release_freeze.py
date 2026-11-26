@@ -566,3 +566,37 @@ def test_freeze_prepare_publishes_private_receipt_without_overwrite(tmp_path, mo
         freeze.main()
     assert exc.value.code == 1
     assert state_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"environment":"production","environment":"staging"}',
+    b'{"capabilities":{"actions":true,"actions":false}}',
+    b'{"reviewed_skills":{"n":NaN}}',
+    b'{"reviewed_skills":{"n":Infinity}}',
+    b'{"reviewed_skills":{"n":-Infinity}}',
+    b'{"reviewed_skills":{"n":1e999}}',
+    b'{"padding":"' + b'x' * 1_048_576 + b'"}',
+    '{"environment":"staging"}'.encode('utf-16'),
+], ids=["duplicate-root", "duplicate-nested", "nan", "infinity", "negative-infinity",
+        "overflow", "oversized", "utf16"])
+def test_runtime_http_json_rejects_ambiguous_or_oversized_bytes(raw):
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.json_object(freeze.httpx.Response(200, content=raw), "runtime manifest")
+
+
+@pytest.mark.parametrize("status,raw", [(403,b'{}'),(200,b'[]'),(200,b'{'),(200,b'\xff')])
+def test_runtime_http_json_preserves_existing_negative_controls(status,raw):
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.json_object(freeze.httpx.Response(status, content=raw), "runtime manifest")
+
+
+def test_runtime_http_json_accepts_valid_utf8_object():
+    expected = {"environment": "staging", "reviewed_skills": {"name": "বাংলা", "n": 1.5}}
+    assert freeze.json_object(freeze.httpx.Response(200, json=expected), "runtime manifest") == expected
+
+
+def test_runtime_http_json_rejects_unexpected_content_encoding():
+    response = freeze.httpx.Response(200, content=b'{}')
+    response.headers['content-encoding'] = 'gzip'
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.json_object(response, "runtime manifest")
