@@ -346,14 +346,32 @@ def test_snapshot_preserves_read_only_mapping_support():
     assert build_operational_event(MappingProxyType(BASE), policy()) == build_operational_event(BASE, policy())
 
 
-def test_sink_introspection_failure_is_isolated_before_any_send():
-    class BrokenSink:
-        def __getattribute__(self, name):
-            if name == "__name__":
-                raise RuntimeError("SYNTHETIC_PRIVATE_INPUT@example.test")
-            return super().__getattribute__(name)
+def test_sink_introspection_failure_is_isolated_before_any_send(monkeypatch):
+    from services.coworker import day8_telemetry as telemetry
 
-        def __call__(self, *_args):
-            pytest.fail("a broken sink must not be invoked")
+    def broken_inspection(_sink):
+        raise RuntimeError("SYNTHETIC_PRIVATE_INPUT@example.test")
 
-    assert emit_operational_event(BASE, policy(), BrokenSink()) is False
+    monkeypatch.setattr(telemetry.inspect, "iscoroutinefunction", broken_inspection)
+    received = []
+    assert emit_operational_event(BASE, policy(), lambda *args: received.append(args)) is False
+    assert received == []
+
+
+def test_denied_policy_never_touches_the_sink(monkeypatch):
+    from services.coworker import day8_telemetry as telemetry
+
+    inspected = []
+    received = []
+    monkeypatch.setattr(telemetry.inspect, "iscoroutinefunction",
+                        lambda sink: inspected.append(sink))
+    assert emit_operational_event(BASE, EventPolicy(), lambda *args: received.append(args)) is False
+    assert inspected == received == []
+
+
+@pytest.mark.parametrize("field", ["workflow", "model", "error_category", "input_tokens", "latency_ms"])
+def test_nested_payload_does_not_reach_sink(field):
+    raw = {**BASE, field: {"secret": ["SYNTHETIC_PRIVATE_INPUT@example.test"]}}
+    received = []
+    assert emit_operational_event(raw, policy(), lambda *args: received.append(args)) is False
+    assert received == []
