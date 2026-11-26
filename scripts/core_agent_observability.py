@@ -584,7 +584,12 @@ def _day8_cases(
     report: dict, expected: dict, expected_lineage: dict, label: str,
 ) -> tuple[dict, dict, bool, bool]:
     schema_version = report.get("schema_version") if isinstance(report, dict) else None
-    if not isinstance(report, dict) or schema_version not in {1, 2} or report.get("split") != "development":
+    if (
+        not isinstance(report, dict)
+        or type(schema_version) is not int
+        or schema_version not in {1, 2}
+        or report.get("split") != "development"
+    ):
         raise ValueError(f"{label}: require development-only schema v1 or v2")
     config = report.get("configuration")
     if not isinstance(config, dict) or config.get("profile") not in DAY8_PROFILES:
@@ -647,7 +652,10 @@ def _day8_cases(
             raise ValueError(f"{label}: results must contain explicitly identified first-run attempts only")
         run_id = row.get("run_id")
         if run_id is not None:
-            if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
+            if (
+                not isinstance(run_id, str) or not run_id.strip()
+                or run_id != run_id.strip() or len(run_id) > 128
+            ):
                 raise ValueError(f"{label}: malformed run identity")
             if run_id in seen_run_ids:
                 raise ValueError(f"{label}: reused run identity across attempts")
@@ -751,7 +759,10 @@ def _day8_cases(
                 raise ValueError(f"{label}: duplicated rerun attempt number for a development task")
             attempts.add(attempt_number)
             run_id = row.get("run_id")
-            if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
+            if (
+                not isinstance(run_id, str) or not run_id.strip()
+                or run_id != run_id.strip() or len(run_id) > 128
+            ):
                 raise ValueError(f"{label}: malformed rerun identity")
             if run_id in seen_run_ids:
                 raise ValueError(f"{label}: reused run identity across attempts")
@@ -814,8 +825,11 @@ def _day8_cases(
                             raise ValueError(f"{label}: reused accepted artifact across attempts")
                         seen_accepted_artifact_refs.add(artifact_ref)
             reruns_by_id.setdefault(case_id, []).append(row)
-        for case_id, attempts in attempts_by_case.items():
-            if sorted(attempts) != list(range(2, max(attempts) + 1)):
+        for attempts in attempts_by_case.values():
+            # Ordinals are distinct integers >= 2. A set of n such ordinals
+            # is consecutive from 2 iff its maximum is n + 1. Never allocate
+            # a list sized by an untrusted ordinal from a receipt.
+            if max(attempts) != len(attempts) + 1:
                 raise ValueError(f"{label}: rerun attempt numbers must be consecutive from two")
     return by_id, reruns_by_id, attempt_provenance_complete, case_source_bindings_complete
 

@@ -4,6 +4,7 @@ import json
 import re
 from uuid import uuid4
 from sqlalchemy import select
+from pydantic import ValidationError
 from .agent_planning_model import (
     TASK_BRIEF_MAX_CONTEXT_BYTES,
     TASK_BRIEF_MAX_OUTPUT_TOKENS,
@@ -192,6 +193,14 @@ class ConversationTaskBriefService:
             constraints.append("Use British English")
         if constraints != brief.constraints:
             brief = brief.model_copy(update={"constraints": constraints})
-        brief = TaskBrief.model_validate(brief.model_dump(mode="json"))
+        try:
+            brief = TaskBrief.model_validate(brief.model_dump(mode="json"))
+        except ValidationError as error:
+            if all(item["loc"] == ("constraints",) and item["type"] == "too_long"
+                   for item in error.errors(include_input=False)):
+                return {"state": "needs_input",
+                        "question": "Retaining your earlier requirements would exceed the task brief constraint limit. Which constraints should be combined or removed?",
+                        "brief": None, "canonical_digest": None}
+            raise
         return {**self.validate(owner, conversation_id, message_id,
                  expected_sequence=expected_sequence, brief=brief, project_id=project_id), "question": None}

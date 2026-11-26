@@ -1,6 +1,8 @@
-## 26 November 2026 — Prompt 05 private pilot token capture
+## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
 
-**SOURCE_IN_PROGRESS / NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; test `06aba94ab21b20aba5cfc7bc455d9bd463727caf`; shared reader `1b5d61af9805d7c932bccf4fb444de1ba5f17c3c`; consumer `91166dfaf80d0de8f585ef16a667cfa4b05822b7`. Existing stable reader now supports smaller private captures, original 64KiB limit preserved, rejects mutation, FIFO and parser recursion. Isolated RED 6 failed/5 passed; GREEN 11 passed. Repository CI and independent review pending. [Contract](P05_PRIVATE_PILOT_TOKEN_CAPTURE_2026-11-26.md). No live credentials, qualification or activation.
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
+
+---
 
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
