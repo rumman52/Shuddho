@@ -1404,3 +1404,46 @@ def test_day8_measured_exact_deadline_is_allowed():
     assert bounded["deadline_gate_passed"] is True
     assert result["selected_least_cost_qualified_profile"] == "bounded_context_compact_observations"
 
+
+
+@pytest.mark.parametrize("raw", [b'{"cost":1e999}', b'{"cost":-1e999}', b'{"cost":NaN}', b'{"cost":1,"cost":2}', b'[]'])
+def test_day8_input_rejects_ambiguous_or_nonfinite_json(tmp_path, raw):
+    from scripts.core_agent_observability import _read_day8_input
+    path = tmp_path / "receipt.json"
+    path.write_bytes(raw)
+    with pytest.raises(ValueError):
+        _read_day8_input(path)
+
+
+def test_day8_input_does_not_reopen_checked_path(tmp_path, monkeypatch):
+    from pathlib import Path
+    from scripts.core_agent_observability import _read_day8_input
+    path = tmp_path / "receipt.json"
+    path.write_text('{"cost":1}', encoding="utf-8")
+    replacement = tmp_path / "replacement.json"
+    replacement.write_text('{"cost":2}', encoding="utf-8")
+    original_stat = Path.stat
+    swapped = False
+
+    def swap_after_stat(self, *args, **kwargs):
+        nonlocal swapped
+        result = original_stat(self, *args, **kwargs)
+        if self == path and kwargs.get("follow_symlinks", True) and not swapped:
+            swapped = True
+            path.unlink()
+            path.symlink_to(replacement)
+        return result
+
+    monkeypatch.setattr(Path, "stat", swap_after_stat)
+    assert _read_day8_input(path) == {"cost": 1}
+
+
+def test_day8_input_preserves_two_megabyte_limit(tmp_path):
+    from scripts.core_agent_observability import _read_day8_input
+    path = tmp_path / "receipt.json"
+    path.write_bytes(b'{}' + b' ' * 1_999_998)
+    assert _read_day8_input(path) == {}
+    with path.open("ab") as stream:
+        stream.write(b' ')
+    with pytest.raises(ValueError):
+        _read_day8_input(path)
