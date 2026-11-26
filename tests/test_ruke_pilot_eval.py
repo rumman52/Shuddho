@@ -1470,3 +1470,108 @@ def test_day9_evidence_read_rejects_in_place_change(tmp_path, monkeypatch, mutat
     else:
         with pytest.raises(EvidenceError, match="changed during bounded read"):
             module._read_evidence_bytes(path)
+
+
+@pytest.fixture
+def synthetic_git_checkout(tmp_path, monkeypatch):
+    import subprocess
+    import scripts.ruke_pilot_eval as module
+
+    real_run = subprocess.run
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+
+    def git(*args):
+        return real_run(["git", *args], cwd=repo, check=True,
+                        capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Synthetic QA")
+    git("config", "user.email", "synthetic@example.invalid")
+    (repo / "source.py").write_text("value = 1\n", encoding="utf-8")
+    git("add", "source.py")
+    git("commit", "-qm", "synthetic frozen source")
+    monkeypatch.setattr(module, "ROOT", repo)
+    return repo, git, real_run
+
+
+@pytest.mark.parametrize("case", [
+    "clean", "modified", "staged", "untracked", "head_changed",
+    "dirty_during", "timeout", "no_git",
+])
+def test_preflight_requires_one_clean_exact_checkout(synthetic_git_checkout, monkeypatch, case):
+    import subprocess
+    import sys
+    from scripts.ruke_pilot_eval import preflight
+
+    repo, git, real_run = synthetic_git_checkout
+    revision = git("rev-parse", "HEAD")
+    source = repo / "source.py"
+    if case in {"modified", "staged"}:
+        source.write_text("value = 2\n", encoding="utf-8")
+        if case == "staged":
+            git("add", "source.py")
+    elif case == "untracked":
+        (repo / "new_module.py").write_text("value = 2\n", encoding="utf-8")
+    elif case == "no_git":
+        (repo / ".git").rename(repo / "git-metadata")
+
+    checks_started = 0
+
+    def run(command, *args, **kwargs):
+        nonlocal checks_started
+        if command[0] != sys.executable:
+            return real_run(command, *args, **kwargs)
+        checks_started += 1
+        if case == "timeout":
+            raise subprocess.TimeoutExpired(command, 600)
+        if case == "dirty_during" and checks_started == 1:
+            source.write_text("value = 3\n", encoding="utf-8")
+        if case == "head_changed" and checks_started == 1:
+            source.write_text("value = 3\n", encoding="utf-8")
+            git("add", "source.py")
+            git("commit", "-qm", "synthetic new revision")
+        return subprocess.CompletedProcess(command, 0, "synthetic check", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if case == "clean":
+        result = preflight()
+        assert result["passed"] is True
+        assert result["candidate_revision"] == revision
+        assert checks_started == 2
+    else:
+        with pytest.raises(EvidenceError):
+            preflight()
+        if case in {"modified", "staged", "untracked", "no_git"}:
+            assert checks_started == 0
+
+
+def test_day9_dirty_checkout_blocks_before_holdout_read(synthetic_git_checkout, external_dir, monkeypatch, capsys):
+    import scripts.ruke_pilot_eval as module
+
+    repo, git, _ = synthetic_git_checkout
+    manifest_path = external_dir / "manifest.json"
+    manifest_path.write_text(json.dumps({"candidate_revision": git("rev-parse", "HEAD")}), encoding="utf-8")
+    evidence_path = external_dir / "evidence.json"
+    evidence_path.write_text(json.dumps({
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "custody": {},
+    }), encoding="utf-8")
+    # Isolate the checkout gate: no real custody or qualification is asserted.
+    monkeypatch.setattr(module, "custody_receipt_ok", lambda *args: True)
+    monkeypatch.setattr(module, "validate_candidate_readbacks", lambda *args: {"consistent": True})
+    monkeypatch.setattr(module, "source_checks_ok", lambda *args: True)
+
+    def forbidden_read(*args, **kwargs):
+        pytest.fail("holdout gate reached from dirty checkout")
+
+    monkeypatch.setattr(module, "validate_manifest", forbidden_read)
+    (repo / "source.py").write_text("value = 2\n", encoding="utf-8")
+    assert module.main([
+        "evaluate", "--manifest", str(manifest_path), "--heldout", str(external_dir / "never-read.jsonl"),
+        "--evidence", str(evidence_path),
+    ]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["qualified"] is False
+    assert result["release_authorization"] is False
+    assert "clean checkout" in result["error"]
