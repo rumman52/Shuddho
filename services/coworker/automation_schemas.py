@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -62,6 +62,37 @@ class AutomationSchedule(AutomationModel):
         return self
 
 
+class AutomationOnceTrigger(AutomationModel):
+    """One explicitly reviewed UTC instant, never a recurring local calendar."""
+
+    kind: Literal["once"]
+    run_at: datetime
+
+    @field_validator("run_at", mode="before")
+    @classmethod
+    def explicit_timestamp(cls, value):
+        if not isinstance(value, (str, datetime)):
+            raise ValueError("Use an ISO 8601 timestamp with an explicit timezone offset")
+        if isinstance(value, str) and "T" not in value:
+            raise ValueError("Use an ISO 8601 timestamp with an explicit timezone offset")
+        return value
+
+    @field_validator("run_at")
+    @classmethod
+    def exact_instant(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("One-time reminders require an explicit timezone offset")
+        try:
+            value = value.astimezone(timezone.utc)
+        except (OverflowError, ValueError) as error:
+            raise ValueError("One-time reminder timestamp is outside the supported range") from error
+        if value.microsecond:
+            raise ValueError("One-time reminders require whole-second precision")
+        if not 1970 <= value.year <= 2199:
+            raise ValueError("One-time reminders require a year within Temporal's calendar range")
+        return value
+
+
 class AutomationEventTrigger(AutomationModel):
     """One explicit connected-read event source for bounded Agent wake-up."""
 
@@ -78,7 +109,7 @@ class AutomationMeetingTrigger(AutomationModel):
     scan_interval_minutes: Literal[5, 10, 15, 30, 60] = 15
 
 
-AutomationTrigger = AutomationSchedule | AutomationEventTrigger | AutomationMeetingTrigger
+AutomationTrigger = AutomationSchedule | AutomationOnceTrigger | AutomationEventTrigger | AutomationMeetingTrigger
 
 
 class QuietHours(AutomationModel):
