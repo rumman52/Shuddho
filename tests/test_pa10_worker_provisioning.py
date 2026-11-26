@@ -282,9 +282,9 @@ class WorkerProvisioningTests(unittest.TestCase):
                 "plan": "0.5c-512mb",
                 "maxShutdownDelaySeconds": 120,
                 "envSpecificDetails": {
-                    "buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker",
-                    "startCommand": "uv run --extra coworker python -m services.coworker.worker",
-                    "preDeployCommand": "uv run --extra coworker python -m services.coworker.migrate --check",
+                    "buildCommand": "pip install uv==0.7.22 && uv sync --frozen --no-dev --extra coworker",
+                    "startCommand": "uv run --no-sync --extra coworker python -m services.coworker.worker",
+                    "preDeployCommand": "uv run --no-sync --extra coworker python -m services.coworker.migrate --check",
                 },
             },
         )
@@ -314,6 +314,18 @@ class WorkerProvisioningTests(unittest.TestCase):
             {"serviceDetails": reviewed["serviceDetails"] | {
                 "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
                     {"startCommand": "python unsafe_worker.py"}
+            }},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"buildCommand": "pip install uv && uv sync --frozen --no-dev --extra coworker"}
+            }},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"startCommand": "uv run --extra coworker python -m services.coworker.worker"}
+            }},
+            {"serviceDetails": reviewed["serviceDetails"] | {
+                "envSpecificDetails": reviewed["serviceDetails"]["envSpecificDetails"] |
+                    {"preDeployCommand": "uv run --extra coworker python -m services.coworker.migrate --check"}
             }},
         ):
             with self.subTest(change=change):
