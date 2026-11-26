@@ -339,7 +339,11 @@ def validate_candidate_readbacks(manifest: dict, readbacks: object) -> dict:
             raise EvidenceError(role + " readback fields are incomplete or unexpected")
         if any(row.get(key) != value for key, value in expected.items()):
             raise EvidenceError(role + " authenticated readback does not match candidate manifest")
-        if row.get("readback_sha256") != identity[f"{role}_readback_sha256"] or _readback_digest(row) != row.get("readback_sha256"):
+        # Python equality aliases True/1 and 12288/12288.0. The expected
+        # canonical bytes must match too, not merely the supplied self-digest.
+        if (row.get("readback_sha256") != identity[f"{role}_readback_sha256"]
+                or _readback_digest(row) != row.get("readback_sha256")
+                or canonical_sha256(expected) != row.get("readback_sha256")):
             raise EvidenceError(role + " readback digest does not match candidate manifest")
     schema = readbacks.get("schema")
     schema_expected = {
