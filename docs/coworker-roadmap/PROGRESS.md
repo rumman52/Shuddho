@@ -1,6 +1,8 @@
-## 26 November 2026 — Prompt 05 exact qualification checkout
+## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
 
-**SOURCE_IN_PROGRESS / controlled pilot NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests `f31cc0daba8b83fe10883998a418fd9693a2ae7f`, `241c2df253ced520292b380d08431311f89a136b`; source `b9278bbab12318a1a12990fc8d237e50d3bd3753`, `3c76141fdc4809eb17eb81f23864ad01064e874f`. Real disposable Git + synthetic test-command results: RED 7 failed/1 passed; GREEN 8 passed; index-negative RED 2 failed/8 passed, GREEN 10 passed. Require observable clean unchanged checkout before/after preflight and before heldout read/report publication; hidden index flags fail. Full checkout and integrated guard test unexecuted locally; exact-head CI and independent review remain required. [Task contract](P05_EXACT_QUALIFICATION_CHECKOUT_2026-11-26.md). No live evidence or acceptance credit.
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
+
+---
 
 ## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
