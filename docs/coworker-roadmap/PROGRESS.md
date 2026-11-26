@@ -1,6 +1,6 @@
-## 26 November 2026 — PA-10 one-time reminder ([draft PR #924](https://github.com/rumman52/Shuddho/pull/924))
+## 26 November 2026 — Prompt 02 CW-11 persisted manifest shape
 
-**SOURCE PATCH / release NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. Adds explicit offset-aware one-time reminder schedule, one UTC calendar action, exact admission identity, early-admission retry, existing notification/outbox reuse and typed UI. No Agent/connector authority, no duplicate notification on replay. Test-first `ee513fff53318a2ef3c28baf449e7baeb56eda09`; initial implementation `5b93b282b5680ccec0d3be61a566c2942aae5c57`; additional edge tests `3af2cae3977201d8418f6e66fe2851f59c43a954`. Test-only CI cancelled; full final-head CI and independent review not established. [Contract](PA10_ONCE_REMINDER_2026-11-26.md). Render persistent staging worker absent; Supabase public schema probe returned no coworker/Alembic tables, so database identity must be confirmed. No staging or production activation, paid provisioning, migration or provider activity. No live acceptance credit.
+**Source patch only.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`; tests-first `da59d38dd317ddaca7c361a20d423a0b96127d64`, source `c44c95852d972137a75ffae3078d1e01a85c6393`. Manifest decoder no longer drops unreviewed fields or coerces mappings/numeric types. Isolated copied decoder RED 5 failed/1 passed, GREEN 6 passed; exact repository tests and CI pending. [Contract](P02_CW11_STRICT_MANIFEST_SNAPSHOT_2026-11-26.md). No new authority or production activation. Persistent worker, hosted publisher/revocation/drain evidence and independent review remain outstanding.
 
 ---
 
@@ -3013,3 +3013,11 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 ## 26 November 2026 — PA-10 staging locked build and startup
 
 **IMPLEMENTED_UNVERIFIED / staging NO-GO.** Base `f7138e2025f6f5719aea4f4babfcc3549fae324b`. The checked-in Blueprint and worker provisioning create/update/readback now pin the CI-selected uv 0.7.22 and require no-sync runtime/migration commands. Test-first `6498b8907a057a758495d3c49129e4d6bff0da0d`; implementation `de118cae816cde17bd5b6630a67a5ec68bff5ca3`. Isolated command-excerpt unittest: four failing assertions/subtests RED; two test methods GREEN. Full mocked provisioning and exact-head CI, independent review and hosted build proof remain pending. See [task contract](PA10_STAGING_LOCKED_STARTUP_2026-11-26.md). No Render access/mutation, billing, migration, deployment or activation.
+
+
+### 2026-11-26 — Prompt 04 / D07 exact briefing evidence (draft PR #928)
+
+- Status: SOURCE_IN_PROGRESS; operational and independent acceptance BLOCKED_EXTERNAL.
+- Isolated from main `8970492aa11b39fdcb4072713323791e5e4bf75d`; test-first `34c5e35118f4d37a74af66cb6fef889d23051646`; implementation `5d98eb145ed8198f0bd58795015d677be525d36c`.
+- Two defects: catch-up bounds permitted values other than exactly 3600; due-time comparison ignored fractional microseconds. Regression coverage added. Isolated predicate RED 6 failed/4 passed; GREEN 10 passed. Full repository CI and independent review pending; no operated receipts.
+- [Task contract and continuation](DAY7_EXACT_BRIEFING_EVIDENCE_2026-11-26.md). No deployment, billing, telemetry activation or merge.
