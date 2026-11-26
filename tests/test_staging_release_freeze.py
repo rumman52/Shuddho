@@ -623,3 +623,95 @@ def test_runtime_http_stream_stops_at_bound_and_closes_response():
                 freeze.json_object(response, "runtime manifest")
     assert stream.chunks == 17
     assert stream.closed
+
+
+@pytest.mark.parametrize("field,value", [
+    ("evidence_kind", "other-evidence"),
+    ("release_id", " "),
+    ("build_reference", None),
+    ("deployment_reference", {}),
+    ("synthetic_account_reference", ""),
+    ("rollout_manifest_sha256", "z" * 64),
+    ("provider_policy_sha256", "A" * 64),
+    ("prepared_at", "2026-11-12T00:00:00"),
+    ("prepared_at", "9999-12-31T00:00:00+00:00"),
+    ("prepared_at", "0001-01-01T00:00:00+01:00"),
+    ("unreviewed_field", True),
+])
+def test_verify_rejects_malformed_prepared_receipt_fields(tmp_path, field, value):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    state[field] = value
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("field", ["evidence_kind", "deployment_reference", "prepared_at"])
+def test_verify_rejects_missing_prepared_receipt_fields(tmp_path, field):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    del state[field]
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
+
+
+@pytest.mark.parametrize("flag,value", [("automations", False), ("code_execution", True)])
+def test_verify_rechecks_prepared_capability_policy_even_when_runtime_matches(tmp_path, flag, value):
+    state = prepared(tmp_path)
+    state["declared_capabilities"][flag] = value
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="capabilit"):
+        freeze.verify_runtime(state, runtime(state))
+
+
+@pytest.mark.parametrize("providers", [[], ["google", "microsoft", "google"], ["google", "microsoft", "unknown"]])
+def test_verify_rechecks_prepared_provider_policy_even_when_runtime_matches(tmp_path, providers):
+    state = prepared(tmp_path)
+    state["declared_action_providers"] = providers
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="provider"):
+        freeze.verify_runtime(state, runtime(state))
+
+
+def test_verify_rejects_missing_prepared_cohort_reference(tmp_path):
+    state = prepared(tmp_path)
+    del state["declared_cohort"]["reference"]
+    with pytest.raises(freeze.StagingReleaseFreezeError, match="cohort"):
+        freeze.verify_runtime(state, runtime(state))
+
+
+@pytest.mark.parametrize("where", ["runtime", "cohort"])
+def test_verify_rejects_unreviewed_runtime_manifest_fields(tmp_path, where):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    target = observed if where == "runtime" else observed["cohort"]
+    target["unreviewed_field"] = False
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
+
+
+def test_verify_rejects_invalid_prepared_state_before_credentialed_http(tmp_path, monkeypatch):
+    state = prepared(tmp_path)
+    state["provider_policy_sha256"] = "not-a-digest"
+    state_path = write_json(tmp_path / "state.json", state)
+    output = tmp_path / "frozen.json"
+    monkeypatch.setenv("SHUDDHO_STAGING_ALLOW_RELEASE_FREEZE", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_SYNTHETIC_ACCOUNT", "true")
+    monkeypatch.setenv("SHUDDHO_STAGING_API_BASE_URL", "https://stage.example.test")
+    monkeypatch.setenv("SHUDDHO_STAGING_TOKEN_A", "synthetic-test-token")
+    monkeypatch.setattr("sys.argv", ["staging_release_freeze", "verify", "--state", str(state_path), "--output", str(output)])
+
+    def deny_client(**kwargs):
+        pytest.fail("Invalid prepared state must be rejected before HTTP client creation")
+
+    monkeypatch.setattr(freeze.httpx, "Client", deny_client)
+    with pytest.raises(SystemExit) as exc:
+        freeze.main()
+    assert exc.value.code == 1
+    assert not output.exists()
+
+
+def test_prepare_then_verify_accepts_valid_current_receipt(tmp_path):
+    state = prepared(tmp_path)
+    evidence = freeze.verify_runtime(state, runtime(state))
+    assert evidence["status"] == "frozen"
+    assert evidence["release"]["provider_policy_sha256"] == state["provider_policy_sha256"]
+    assert evidence["release"]["rollout_manifest_sha256"] == state["rollout_manifest_sha256"]

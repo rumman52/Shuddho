@@ -1,0 +1,11 @@
+# Prompt 05 runtime-v2 / canonical rollout parity
+
+Scope: D09.T01, D10.T01/T02. Base 43d99fd64467492a7da809cda0ae178191e53981.
+
+The canonical activation registry has 40 keys; runtime-v2 has 43. Runtime-only keys are projects, fly_github, conversation_replies, reviewed_research. Canonical-only suggestion_model_relevance has an existing separate activation contract but no runtime-v2 readback. The canonical validator previously rejected the four runtime-only declarations even when false, making an exact Day 10 rollout impossible.
+
+Accept only explicit boolean false for these four names (legacy generic rollout manifests may still omit them). True requires separate activation design/review; unknown names still fail. Existing required base/optional gates and thresholds are unchanged. No new enabled authority. The generic template remains unchanged: when preparing the **exact** Day 10 rollout, replace its capability object with the 43-key runtime inventory (four new declarations false, remove canonical-only suggestion_model_relevance). Independently verify that the separately configured suggestion-model-relevance capability is disabled; the 43-field runtime readback alone cannot prove it. Do not remove that capability's existing separate activation/rollback contract.
+
+Tests-first 5bf7d7eab183b90a921548c6ff52e13c6041d335; contract 60df23b342b64036ede0132b6f722a55bcafc2ee; gate a569a820b8e6d7956b555ff4aa7da22af18fa94f; registry regression 3c9009495965090b7e1845fadefcbb7f8f4b33ee. Isolated copied capability shape branch RED 9 failed/4 passed, GREEN 13 passed. Full canonical gate tests added, including exact 43-key synthetic positive and unknown, true, non-boolean negative controls. Full repository local clone blocked by DNS; actual exact-head CI and independent review required.
+
+Verify: uv run --locked --extra coworker pytest -q tests/test_cohort_release_gate.py tests/test_release_contract.py tests/test_day10_release_decision.py tests/test_staging_release_freeze.py -rs; uv run --locked python -m scripts.release_contract_check. These are next commands, not local full-repository results. No holdout, operated evidence, or release approval is claimed. SOURCE_IN_PROGRESS / SOURCE_ONLY / NO-GO.
