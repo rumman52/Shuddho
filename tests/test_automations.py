@@ -2896,6 +2896,49 @@ def test_simple_reminder_dedupes_across_restart_without_agent_run(
         assert notice is not None and notice.state == "delivered"
 
 
+@pytest.mark.parametrize("expiry_offset", [-1, 0])
+def test_simple_reminder_rejects_catchup_at_or_after_expiry(
+    automation_client, automation_container, monkeypatch, expiry_offset,
+):
+    """A historical due time cannot authorize a new outbox record after expiry."""
+    client, headers = automation_client
+    _goal, reminder = create_goal_and_reminder(client, headers(), "expired-catchup")
+    admission_time = utcnow().replace(microsecond=0)
+    expires_at = admission_time + timedelta(seconds=expiry_offset)
+    due_at = expires_at - timedelta(seconds=10)
+    with automation_container.repository.sessions.begin() as db:
+        db.get(Automation, reminder["id"]).expires_at = expires_at
+
+    monkeypatch.setattr(
+        "services.coworker.automation_repository.utcnow", lambda: admission_time,
+    )
+    result = automation_container.automations.accept_occurrence(
+        reminder["id"], reminder["revision"], due_at,
+    )
+    assert result["state"] == "skipped"
+    assert result["reason"] == "expired"
+    assert result["run_id"] is None
+    assert result["notification_id"] is None
+
+    replay = automation_container.automations.accept_occurrence(
+        reminder["id"], reminder["revision"], due_at,
+    )
+    assert replay["replayed"] is True
+    assert replay["occurrence_id"] == result["occurrence_id"]
+    assert replay["state"] == "skipped"
+    assert replay["reason"] == "expired"
+    with automation_container.repository.sessions() as db:
+        assert db.scalars(select(Notification).where(
+            Notification.automation_id == reminder["id"]
+        )).all() == []
+        assert db.scalars(select(AgentRun)).all() == []
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == reminder["id"]
+        )).all()
+        assert len(occurrences) == 1
+        assert occurrences[0].state == "skipped"
+
+
 def test_simple_reminder_pause_resume_cancel_and_stale_revision_fail_closed(
     automation_client,
     automation_container,

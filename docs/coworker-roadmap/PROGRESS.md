@@ -6,6 +6,12 @@
 
 ---
 
+## 25 November 2026 — PA-10 reminder expiry at admission
+
+**Source correction; staging qualification remains blocked.** Inspected main `67d187f972c8069e4369ebc9fdb28dae55c40e3f`; [baseline CI](https://github.com/rumman52/Shuddho/actions/runs/45351544500) reports application and coworker success but governance-audit and ci-merge-gate failure. On `fix/pa10-reminder-expiry-admission-20261125`, [test-first commit](https://github.com/rumman52/Shuddho/commit/cd8869f1a0ff7b23371b3845ca36f4b7a7a045b3) adds two parameterized SQLite/API regression cases for a reminder due before expiry but admitted at or after expiry, including stable replay and zero notifications/runs. [Source commit](https://github.com/rumman52/Shuddho/commit/4c1661a5b010717350470c90d5beba88f39084d9) uses one fresh admission timestamp and rejects expiry at the later of admission and due time, consistent with ordinary scheduled Agent admission.
+
+Isolated Python predicate reproduction: two failing subcases before; two test methods (four cases) passed after. Full integrated pytest and exact-head CI are not yet verified; local clone failed DNS resolution. No staging scenario has been qualified by these tests. No production flags, deployment or billing changed. Render inventory contains no persistent staging worker; Supabase staging is healthy but this alone is not application qualification. Issue #291 requires fresh billing authorization and approved credentials. Next: review PR, run exact-head CI and independently qualify frozen staging before activation. See [bounded task contract](PA10_REMINDER_EXPIRY_ADMISSION_2026-11-25.md).
+
 ## 25 November 2026 — Prompt 02 research provider input boundary
 
 **SOURCE PATCH ONLY; not release-qualified.** Base `67d187f972c8069e4369ebc9fdb28dae55c40e3f`. Branch `codex/p02-research-provider-input-boundary-20261125`. Test-first `2c0a203de5933be212eec189f2c4db180dd9b070`; source `3642322151e184024fc53277633ca57e7b348259`. Isolated parser probe (copied logic, not repository checkout) RED 4 / GREEN 4. See [task contract and blockers](P02_RESEARCH_PROVIDER_INPUT_BOUNDARY_2026-11-25.md). Full exact-head CI and independent review pending. Main CI #45351544500 failed governance and merge gate, staging API revision is stale and persistent worker is absent. No deployment, provider calls, paid resources, external actions or activation. No change to pilot acceptance credits.
