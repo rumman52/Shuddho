@@ -351,7 +351,8 @@ def test_duplicate_and_older_snapshot_updates_do_not_overwrite(container):
     grant = create_grant(container, owner, connection)
     asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
 
-    cursor = container.connector_reads.repo.cursor(owner, grant["id"])["cursor"]
+    cursor_state = container.connector_reads.repo.cursor(owner, grant["id"])
+    cursor = cursor_state["cursor"]
     duplicate = {
         "cursor": "102",
         "changes": [{
@@ -366,6 +367,7 @@ def test_duplicate_and_older_snapshot_updates_do_not_overwrite(container):
         grant["id"],
         cursor,
         duplicate,
+        expected_generation=cursor_state["generation"],
     )
     assert summary["ignored"] == 1
 
@@ -383,6 +385,7 @@ def test_duplicate_and_older_snapshot_updates_do_not_overwrite(container):
         grant["id"],
         "102",
         older,
+        expected_generation=cursor_state["generation"],
     )
     assert summary["ignored"] == 1
     assert container.connector_reads.repo.snapshots(owner, grant["id"])[0]["payload"]["subject"] == "Project update"
@@ -473,7 +476,8 @@ def test_apply_sync_rechecks_current_connection_authority_before_persisting_prov
     connection = connect_read(container, owner)
     grant = create_grant(container, owner, connection)
     repo = container.connector_reads.repo
-    expected_cursor = repo.cursor(owner, grant["id"])["cursor"]
+    cursor_state = repo.cursor(owner, grant["id"])
+    expected_cursor = cursor_state["cursor"]
 
     with container.repository.sessions.begin() as db:
         current_connection = db.scalar(select(Connection).where(
@@ -500,6 +504,7 @@ def test_apply_sync_rechecks_current_connection_authority_before_persisting_prov
                     "payload": {"subject": "must not be persisted"},
                 }],
             },
+            expected_generation=cursor_state["generation"],
         )
     assert rejected.value.code == expected_code
 
@@ -537,7 +542,10 @@ def test_revoked_grant_cannot_reset_its_cursor(container):
 
     repo.revoke(owner, grant["id"])
     with pytest.raises(CoworkerError) as rejected:
-        repo.reset_cursor(owner, grant["id"])
+        repo.reset_cursor(
+            owner, grant["id"], expected_cursor=old_cursor,
+            expected_generation=old_generation,
+        )
     assert rejected.value.code == "connector_read_revoked"
 
     with container.repository.sessions() as db:

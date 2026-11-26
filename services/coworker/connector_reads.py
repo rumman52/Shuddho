@@ -268,7 +268,10 @@ class ConnectorReadRepository:
                 "state": row.state,
             }
 
-    def reset_cursor(self, owner: str, grant_id: str) -> None:
+    def reset_cursor(
+        self, owner: str, grant_id: str, *,
+        expected_cursor: str | None, expected_generation: int,
+    ) -> dict:
         with self.sessions.begin() as db:
             self.permission_gateway.validate_read_grant_in_session(
                 db, owner, grant_id, audience=CONNECTOR_READ_AUDIENCE
@@ -279,6 +282,12 @@ class ConnectorReadRepository:
             ).with_for_update())
             if row is None:
                 raise not_found()
+            if row.cursor != expected_cursor or row.generation != expected_generation:
+                raise CoworkerError(
+                    "connector_sync_conflict",
+                    "A newer connector sync already advanced this cursor.",
+                    409,
+                )
             row.cursor = None
             row.generation += 1
             row.state = "recovering"
@@ -289,6 +298,7 @@ class ConnectorReadRepository:
                 resource_id=grant_id,
                 action="connector_read_cursor.reset",
             ))
+            return {"cursor": row.cursor, "generation": row.generation, "state": row.state}
 
     def apply_sync(
         self,
@@ -296,6 +306,8 @@ class ConnectorReadRepository:
         grant_id: str,
         expected_cursor: str | None,
         result: dict,
+        *,
+        expected_generation: int,
     ) -> dict:
         next_cursor = result.get("cursor")
         changes = result.get("changes")
@@ -321,7 +333,9 @@ class ConnectorReadRepository:
             ).with_for_update())
             if grant is None or cursor is None:
                 raise not_found()
-            if cursor.cursor != expected_cursor:
+            # The same cursor value (especially None) can recur after reset.
+            # A provider response may only commit to the generation it read.
+            if cursor.cursor != expected_cursor or cursor.generation != expected_generation:
                 raise CoworkerError(
                     "connector_sync_conflict",
                     "A newer connector sync already advanced this cursor.",
@@ -1252,8 +1266,11 @@ class ConnectorReadService:
             )
         cursor_state = await asyncio.to_thread(self.repo.cursor, owner, grant_id)
         if force_full and cursor_state["cursor"] is not None:
-            await asyncio.to_thread(self.repo.reset_cursor, owner, grant_id)
-            cursor_state = await asyncio.to_thread(self.repo.cursor, owner, grant_id)
+            cursor_state = await asyncio.to_thread(
+                self.repo.reset_cursor, owner, grant_id,
+                expected_cursor=cursor_state["cursor"],
+                expected_generation=cursor_state["generation"],
+            )
         cursor = cursor_state["cursor"]
         recovered = False
         try:
@@ -1270,9 +1287,13 @@ class ConnectorReadService:
                     "The connected service could not be synchronized.",
                     503,
                 ) from None
-            await asyncio.to_thread(self.repo.reset_cursor, owner, grant_id)
+            cursor_state = await asyncio.to_thread(
+                self.repo.reset_cursor, owner, grant_id,
+                expected_cursor=cursor,
+                expected_generation=cursor_state["generation"],
+            )
             recovered = True
-            cursor = None
+            cursor = cursor_state["cursor"]
             result = await adapter.read_connected(
                 grant["capability"],
                 token,
@@ -1285,6 +1306,7 @@ class ConnectorReadService:
             grant_id,
             cursor,
             result,
+            expected_generation=cursor_state["generation"],
         )
         return summary | {
             "provider": grant["provider"],
