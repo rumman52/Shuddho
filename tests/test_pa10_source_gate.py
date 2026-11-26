@@ -5,12 +5,17 @@ import copy
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 from scripts.pa10_source_gate import SourceGateError, inspect_source, require_qualified_source
 
 SHA = "a" * 40
 RUN_ID = 204
 ROOT = "https://api.github.com/repos/rumman52/Shuddho"
-NAMES = ("test-and-build", "coworker", "governance-audit", "ci-merge-gate")
+NAMES = (
+    "test-and-build", "coworker", "governance-audit", "ci-merge-gate",
+    "Frontend tests and builds", "browser-qualification", "PostgreSQL 18 staging compatibility",
+)
 
 
 def fixture():
@@ -18,7 +23,11 @@ def fixture():
     runs = {"total_count": 1, "workflow_runs": [{"id": RUN_ID, "head_sha": SHA,
         "head_branch": "main", "event": "push", "path": ".github/workflows/ci.yml",
         "status": "completed", "conclusion": "success"}]}
-    jobs = {"total_count": 4, "jobs": [{"name": x, "status": "completed", "conclusion": "success"} for x in NAMES]}
+    jobs = {"total_count": len(NAMES), "jobs": [
+        {"id": i, "run_id": RUN_ID, "head_sha": SHA, "name": name,
+         "status": "completed", "conclusion": "success"}
+        for i, name in enumerate(NAMES, start=1)
+    ]}
     return branch, runs, jobs
 
 
@@ -101,6 +110,56 @@ class GateTests(unittest.TestCase):
             with patch("scripts.pa10_source_gate.inspect_repository") as probe:
                 with self.assertRaises(SourceGateError): inspect_source(repo,sha,token)
                 probe.assert_not_called()
+
+
+@pytest.mark.parametrize("name", NAMES[4:])
+@pytest.mark.parametrize("conclusion", ["missing", "skipped", "failure"])
+def test_source_gate_requires_each_individual_main_job(name, conclusion):
+    branch, runs, jobs = fixture()
+    row = next(row for row in jobs["jobs"] if row["name"] == name)
+    if conclusion == "missing":
+        jobs["jobs"].remove(row)
+        jobs["total_count"] -= 1
+    else:
+        row["conclusion"] = conclusion
+    with pytest.raises(SourceGateError, match=name):
+        require_qualified_source(branch, runs, jobs, SHA)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("run_id", RUN_ID + 1), ("run_id", None), ("run_id", float(RUN_ID)),
+    ("head_sha", "b" * 40), ("head_sha", None),
+    ("id", 0), ("id", True), ("id", 2),
+])
+def test_source_gate_rejects_unbound_or_ambiguous_job_records(field, value):
+    branch, runs, jobs = fixture()
+    jobs["jobs"][0][field] = value
+    with pytest.raises(SourceGateError, match="job"):
+        require_qualified_source(branch, runs, jobs, SHA)
+
+
+@pytest.mark.parametrize("kind", ["extra", "duplicate", "invalid_id"])
+def test_source_gate_rejects_ambiguous_workflow_run_lists(kind):
+    branch, runs, jobs = fixture()
+    row = copy.deepcopy(runs["workflow_runs"][0])
+    if kind == "extra":
+        row["head_sha"] = "b" * 40
+    else:
+        runs["total_count"] += 1
+        if kind == "invalid_id":
+            row["id"] = False
+    runs["workflow_runs"].append(row)
+    with pytest.raises(SourceGateError, match="CI workflow"):
+        require_qualified_source(branch, runs, jobs, SHA)
+
+
+def test_main_source_gate_allows_skipped_pr_only_ancestry():
+    branch, runs, jobs = fixture()
+    jobs["jobs"].append({"id": 100, "run_id": RUN_ID, "head_sha": SHA,
+                         "name": "PR head ancestry", "status": "completed",
+                         "conclusion": "skipped"})
+    jobs["total_count"] += 1
+    assert require_qualified_source(branch, runs, jobs, SHA) == RUN_ID
 
 
 if __name__=="__main__":unittest.main()
