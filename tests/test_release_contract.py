@@ -540,11 +540,11 @@ def test_template_loader_normalizes_parser_recursion_failure(tmp_path, monkeypat
 
 
 def test_frozen_runtime_registry_reconciles_canonical_activation_contract():
-    from scripts.release_contract import FROZEN_DISABLED_RUNTIME_KEYS
+    from scripts.release_contract import FROZEN_DISABLED_RUNTIME_KEYS, PILOT_CANONICAL_ONLY_KEYS
     from scripts.staging_release_freeze import RUNTIME_CAPABILITY_KEYS
 
     canonical = expected_rollout_capability_keys()
     # Deliberate, reviewed differences rather than accepting arbitrary keys.
     assert RUNTIME_CAPABILITY_KEYS - canonical == FROZEN_DISABLED_RUNTIME_KEYS
-    assert canonical - RUNTIME_CAPABILITY_KEYS == {"suggestion_model_relevance"}
+    assert canonical - RUNTIME_CAPABILITY_KEYS == PILOT_CANONICAL_ONLY_KEYS == {"suggestion_model_relevance"}
     assert not FROZEN_DISABLED_RUNTIME_KEYS & OPTIONAL_CAPABILITY_KEYS
