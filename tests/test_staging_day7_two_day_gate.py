@@ -1002,3 +1002,43 @@ def test_two_day_gate_rejects_numeric_type_drift_in_second_receipt(field):
     target[field] = float(target[field])
     with pytest.raises(GateFailure, match="calendar time|3600"):
         verify_two_day(first, second, paused)
+
+
+@pytest.mark.parametrize(("receipt", "field", "value"), [
+    ("first", "schema_version", 2.0),
+    ("second", "schema_version", 2.0),
+    ("first", "schedule_applied_revision", True),
+    ("first", "schedule_applied_revision", 1.0),
+    ("second", "schedule_applied_revision", True),
+    ("second", "schedule_applied_revision", 1.0),
+    ("second", "goal_revision", True),
+    ("second", "goal_revision", 1.0),
+    ("pause", "goal_revision", True),
+    ("pause", "goal_revision", 1.0),
+    ("pause", "schedule_applied_revision", 2.0),
+    ("observation", "schedule_applied_revision", 2.0),
+])
+def test_two_day_gate_rejects_equal_but_noninteger_receipt_revision(receipt, field, value):
+    first, second, paused = valid_pair()
+    target = {
+        "first": first, "second": second, "pause": paused,
+        "observation": paused["post_pause_observation"],
+    }[receipt]
+    target[field] = value
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
+    if receipt != "observation":
+        with pytest.raises(GateFailure):
+            verify_two_day(first, second, paused, require_paused_opportunity=False)
+
+
+@pytest.mark.parametrize("day_index", [0, 1])
+@pytest.mark.parametrize("field", ["occurrence_id", "run_id", "completion_notification_id"])
+@pytest.mark.parametrize("invalid", [True, 123, ["id"], " ", " padded-id ", "id\n"])
+def test_two_day_preflight_rejects_noncanonical_admission_and_delivery_ids(day_index, field, invalid):
+    first, second, paused = valid_pair()
+    (first, second)[day_index][field] = invalid
+    # This path guards the staging pause POST, before baseline identity lists
+    # exist. A truthy non-string or a whitespace alias is not a durable ID.
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused, require_paused_opportunity=False)
