@@ -227,7 +227,8 @@ def load_authorized_daily_scope(client: httpx.Client, token: str, automation: di
         raise ScheduledProfileProbeFailure("Day 7 permits document-only reads, not connector grants.")
     goal = json_object(client.get(f"/api/v1/goals/{goal_id}", headers=auth(token)),
                        "owner-approved daily briefing goal")
-    if (goal.get("id") != goal_id or goal.get("revision") != revision
+    if (goal.get("id") != goal_id or type(goal.get("revision")) is not int
+            or goal["revision"] != revision
             or goal.get("state") != "active"):
         raise ScheduledProfileProbeFailure("Owner-approved goal identity/revision/state changed.")
     project_id = goal.get("project_id")
@@ -708,6 +709,8 @@ def pause_two_day(args: argparse.Namespace) -> dict:
 
     require_guard()
     state = load_json(args.state, "Day 8 scheduled-profile state")
+    if type(state.get("schema_version")) is not int or state["schema_version"] != STATE_SCHEMA_VERSION:
+        raise ScheduledProfileProbeFailure("Two-day pause requires the exact prepared-state schema.")
     if state.get("scenario") != "daily_coworker":
         raise ScheduledProfileProbeFailure("Two-day pause requires the daily_coworker profile.")
     case_ref = args.operator_case_reference.strip()
@@ -715,7 +718,12 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         raise ScheduledProfileProbeFailure("A durable operator case reference is required.")
     first = load_json(args.first_evidence, "Day 7 passed evidence")
     second = load_json(args.second_evidence, "Day 8 passed evidence")
-    revision = int(state["automation_revision"])
+    revision = state.get("automation_revision")
+    if (type(revision) is not int or revision < 1
+            or type(state.get("schedule_applied_revision")) is not int
+            or state["schedule_applied_revision"] != revision
+            or state.get("schedule_applied_enabled") is not True):
+        raise ScheduledProfileProbeFailure("Prepared active automation revision is invalid.")
     base_url = clean_origin(env("SHUDDHO_STAGING_API_BASE_URL"))
     token = env("SHUDDHO_STAGING_TOKEN_A")
     with httpx.Client(base_url=base_url, timeout=20, follow_redirects=False) as client:
@@ -723,8 +731,13 @@ def pause_two_day(args: argparse.Namespace) -> dict:
         if release != state.get("release"):
             raise ScheduledProfileProbeFailure("Release changed before two-day pause.")
         current = load_owned(client, token, str(state["automation_id"]), "daily_coworker")
+        automation = current["automation"]
         if (current["owner_id"] != state.get("owner_id")
-                or int(current["automation"]["revision"]) != revision):
+                or type(automation.get("revision")) is not int
+                or automation["revision"] != revision
+                or type(automation.get("schedule_applied_revision")) is not int
+                or automation["schedule_applied_revision"] != revision
+                or automation.get("schedule_applied_enabled") is not True):
             raise ScheduledProfileProbeFailure("Owner or revision changed before two-day pause.")
         # The pause itself is a state mutation. Before POSTing, prove the
         # live schedule/delivery policy still matches *both* dated receipts
@@ -733,13 +746,15 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             require_prepared_daily_profile(prepared, current["automation"])
         daily_scope = current["daily_scope"]
         if (not daily_scope
+                or type(daily_scope.get("goal_revision")) is not int
+                or any(type(item.get("goal_revision")) is not int for item in (state, first, second))
                 or any(item.get(field) != daily_scope.get(field)
                        for item in (state, first, second)
                        for field in ("goal_id", "goal_revision", "project_id", "authorized_document_ids"))
                 or any(item.get("expires_at") != current["automation"].get("expires_at")
                        for item in (state, first, second))):
             raise ScheduledProfileProbeFailure(
-                "Live owner-approved goal scope changed before two-day pause."
+                "Live owner-approved goal scope or revision changed before two-day pause."
             )
         evidence = {
             **daily_scope,
@@ -769,9 +784,10 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             ), "pause synthetic automation",
         )
         if (paused.get("state") != "paused"
-                or int(paused.get("revision", -1)) <= revision):
+                or type(paused.get("revision")) is not int
+                or paused["revision"] != revision + 1):
             raise ScheduledProfileProbeFailure(
-                "Pause did not persist the expected synthetic automation transition."
+                "Pause did not persist the exact next synthetic automation revision."
             )
         observed = None
         deadline = time.monotonic() + 60
@@ -780,10 +796,13 @@ def pause_two_day(args: argparse.Namespace) -> dict:
                 client.get(f'/api/v1/automations/{state["automation_id"]}', headers=auth(token)),
                 "read back paused automation",
             )
+            if (type(observed.get("revision")) is not int
+                    or observed["revision"] != revision + 1):
+                raise ScheduledProfileProbeFailure("Paused automation revision changed before readback.")
             if (
                 observed.get("state") == "paused"
-                and int(observed.get("revision", -1)) > revision
-                and observed.get("schedule_applied_revision") == observed.get("revision")
+                and type(observed.get("schedule_applied_revision")) is int
+                and observed["schedule_applied_revision"] == revision + 1
                 and observed.get("schedule_applied_enabled") is False
                 and not observed.get("schedule_error_code")
                 and observed.get("id") == state["automation_id"]
@@ -794,14 +813,14 @@ def pause_two_day(args: argparse.Namespace) -> dict:
             raise ScheduledProfileProbeFailure(
                 "Temporal worker did not apply the paused automation revision before timeout."
             )
-        if int(paused.get("revision", -1)) != int(observed.get("revision", -2)):
+        if paused["revision"] != observed["revision"]:
             raise ScheduledProfileProbeFailure("Pause response and readback revisions disagree.")
         # Do not certify an applied pause if its readback quietly changed
         # owner-approved timing, quiet hours or briefing delivery settings.
         require_prepared_daily_profile(state, observed)
         evidence["schedule_applied_revision"] = observed.get("schedule_applied_revision")
         evidence["schedule_applied_enabled"] = observed.get("schedule_applied_enabled")
-        evidence["paused_revision"] = int(observed["revision"])
+        evidence["paused_revision"] = observed["revision"]
         evidence["paused_at"] = utcnow_iso()
         # Baseline only after the pause is applied, so a later read-only check
         # can compare the *same owner's* stored occurrence/run/notice identities.

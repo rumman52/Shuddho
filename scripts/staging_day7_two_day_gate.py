@@ -216,7 +216,7 @@ def verify_two_day(
     require(type(paused.get("previous_revision")) is int
             and paused["previous_revision"] == first["automation_revision"]
             and type(paused.get("paused_revision")) is int
-            and paused["paused_revision"] > paused["previous_revision"],
+            and paused["paused_revision"] == paused["previous_revision"] + 1,
             "Pause must follow the accepted schedule revision.")
     schedule, zone = require_daily_calendar(first)
     # Matching numeric values may have different JSON types (8 == 8.0).
