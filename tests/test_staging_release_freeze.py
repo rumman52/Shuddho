@@ -59,6 +59,10 @@ def prepared(tmp_path: Path):
         rollout_path=rollout_path,
         provider_policy_path=policy_path,
         expected_source_revision="a" * 40,
+        expected_build_digest="b" * 64,
+        expected_model_provider="deepseek",
+        expected_model_id="deepseek-flash",
+        expected_task_queue="shuddho-documents-v1",
         build_reference="registry.example/shuddho@sha256:abc",
         deployment_reference="render:staging-deploy-123",
         synthetic_account_reference="synthetic-cohort-1",
@@ -66,21 +70,49 @@ def prepared(tmp_path: Path):
 
 
 def runtime(state):
-    return {
-        "schema_version": 2,
+    identity = {
+        "schema_version": 3,
         "source_revision": state["expected_source_revision"],
         "environment": state["expected_environment"],
+        "build_digest": state["expected_build_digest"],
+        "schema_revision": state["expected_schema_revision"],
+        "model_provider": state["expected_model_provider"],
+        "model_id": state["expected_model_id"],
+        "task_queue": state["expected_task_queue"],
         "capabilities": {
             **state["declared_capabilities"],
             "grounded_conversation_replies": state["declared_capabilities"]["conversation_replies"],
         },
-        "reviewed_skills": {"research": {"state": "unselected"}},
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
+        "reviewed_skills": {"research": {
+            "state": "unselected", "publication_version": None,
+            "publication_sha256": None, "review_sha256": None,
+            "source_revision": None, "task_workflow_version": None,
+            "generation": None,
+        }},
         "action_providers": state["declared_action_providers"],
         "cohort": {
             "enforced": state["declared_cohort"]["enforced"],
             "configured_members": 2,
             "max_users": state["declared_cohort"]["max_users"],
         },
+    }
+    identity["runtime_identity_sha256"] = freeze.canonical_sha256(identity)
+    worker = [{
+        "task_queue": identity["task_queue"],
+        "source_revision": identity["source_revision"],
+        "build_digest": identity["build_digest"],
+        "schema_revision": identity["schema_revision"],
+        "model_provider": identity["model_provider"],
+        "model_id": identity["model_id"],
+        "runtime_identity_sha256": identity["runtime_identity_sha256"],
+    }]
+    return {
+        **identity,
+        "worker_fleet_ready": True,
+        "blocked_worker_count": 0,
+        "worker_inventory": worker,
+        "worker_inventory_sha256": freeze.canonical_sha256(worker),
     }
 
 
@@ -151,6 +183,10 @@ def test_prepare_rejects_provider_policy_from_another_release(tmp_path):
             rollout_path=rollout_path,
             provider_policy_path=policy_path,
             expected_source_revision="a" * 40,
+            expected_build_digest="b" * 64,
+            expected_model_provider="deepseek",
+            expected_model_id="deepseek-flash",
+            expected_task_queue="shuddho-documents-v1",
             build_reference="build-1",
             deployment_reference="deploy-1",
             synthetic_account_reference="synthetic-1",
@@ -167,6 +203,76 @@ def test_verify_freezes_exact_runtime_identity(tmp_path):
     assert evidence["cohort"]["configured_members"] == 2
     assert len(evidence["runtime_manifest_sha256"]) == 64
     assert len(evidence["reviewed_skills_sha256"]) == 64
+
+
+
+def test_prepare_binds_build_digest_schema_model_and_queue(tmp_path):
+    state = prepared(tmp_path)
+    assert state["expected_build_digest"] == "b" * 64
+    assert state["expected_schema_revision"] == "0073_worker_runtime_identity"
+    assert state["expected_model_provider"] == "deepseek"
+    assert state["expected_model_id"] == "deepseek-flash"
+    assert state["expected_task_queue"] == "shuddho-documents-v1"
+
+
+def test_verify_freezes_api_and_worker_build_identity(tmp_path):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    evidence = freeze.verify_runtime(state, observed)
+    release = evidence["release"]
+    assert release["build_digest"] == state["expected_build_digest"]
+    assert release["schema_revision"] == state["expected_schema_revision"]
+    assert release["model_provider"] == state["expected_model_provider"]
+    assert release["model_id"] == state["expected_model_id"]
+    assert release["task_queue"] == state["expected_task_queue"]
+    assert evidence["worker_inventory_sha256"] == observed["worker_inventory_sha256"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("build_digest", "f" * 64),
+    ("schema_revision", "0072_merge_0071_heads"),
+    ("model_provider", "gemma"),
+    ("model_id", "another-model"),
+    ("task_queue", "unreviewed-queue"),
+])
+def test_verify_rejects_api_build_schema_model_or_queue_drift(tmp_path, field, value):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed[field] = value
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
+
+
+def test_verify_rejects_worker_build_identity_drift(tmp_path):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["worker_inventory"][0]["build_digest"] = "f" * 64
+    observed["worker_inventory_sha256"] = freeze.canonical_sha256(observed["worker_inventory"])
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
+
+
+def test_verify_rejects_unready_or_empty_worker_fleet(tmp_path):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["worker_fleet_ready"] = False
+    observed["blocked_worker_count"] = 1
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
+
+    observed = runtime(state)
+    observed["worker_inventory"] = []
+    observed["worker_inventory_sha256"] = freeze.canonical_sha256([])
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
+
+
+def test_verify_rejects_legacy_runtime_manifest_v2(tmp_path):
+    state = prepared(tmp_path)
+    observed = runtime(state)
+    observed["schema_version"] = 2
+    with pytest.raises(freeze.StagingReleaseFreezeError):
+        freeze.verify_runtime(state, observed)
 
 
 @pytest.mark.parametrize(
