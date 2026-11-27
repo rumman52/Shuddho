@@ -465,9 +465,6 @@ def verify(args: argparse.Namespace) -> dict:
         raise ScheduledProfileProbeFailure(
             "Scheduled-profile state has an unexpected schema."
         )
-    revision = state.get("automation_revision")
-    if type(revision) is not int or revision < 1:
-        raise ScheduledProfileProbeFailure("Prepared automation revision is invalid.")
     scenario = str(state.get("scenario") or "")
     if scenario not in SCENARIOS:
         raise ScheduledProfileProbeFailure("Scheduled-profile scenario is unsupported.")
@@ -483,6 +480,9 @@ def verify(args: argparse.Namespace) -> dict:
         raise ScheduledProfileProbeFailure(
             "A source-edit receipt is permitted only for a second daily briefing verification."
         )
+    revision = state.get("automation_revision")
+    if type(revision) is not int or revision < 1:
+        raise ScheduledProfileProbeFailure("Prepared automation revision is invalid.")
     source_edit = (load_json(source_edit_path, "authorized source-edit receipt")
                    if source_edit_path is not None else None)
     old_occurrences = set(state.get("baseline_occurrence_ids") or [])
