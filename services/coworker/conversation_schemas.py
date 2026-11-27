@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .task_brief_schemas import TaskBrief
 
 from .goal_schemas import _safe_text
-from .task_brief_schemas import MAX_TASK_MEMORY_PINS, MemoryPin
+from .task_brief_schemas import MAX_TASK_MEMORY_PINS, MemoryPin, require_unique_memory_pins
 
 
 class ConversationCreate(BaseModel):
@@ -51,7 +51,7 @@ class MessageCreate(BaseModel):
 class ConversationDispatchCreate(BaseModel):
     """Optimistic revision binding; no action IDs or approval authority."""
     model_config = ConfigDict(extra="forbid")
-    expected_sequence: int = Field(ge=1)
+    expected_sequence: int = Field(ge=1, strict=True)
     output_language: str = Field(default="auto", max_length=35, pattern=r"^(auto|[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)$")
     project_id: UUID | None = None
     reviewed_brief: TaskBrief | None = None
@@ -61,6 +61,8 @@ class ConversationDispatchCreate(BaseModel):
     def reviewed_pair(self):
         if (self.reviewed_brief is None) != (self.expected_digest is None):
             raise ValueError("Reviewed dispatch requires both brief and digest")
+        if self.memory_pins is not None:
+            require_unique_memory_pins(self.memory_pins)
         return self
     # None: legacy dispatch; []: reviewed brief with no memory.
     memory_pins: list[MemoryPin] | None = Field(default=None, max_length=MAX_TASK_MEMORY_PINS)
@@ -69,8 +71,8 @@ class ConversationDispatchCreate(BaseModel):
 class ConversationSteerRequest(BaseModel):
     """A bounded user instruction for one active Runtime v3 run."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    expected_sequence: int = Field(ge=1)
-    expected_steering_revision: int = Field(ge=0)
+    expected_sequence: int = Field(ge=1, strict=True)
+    expected_steering_revision: int = Field(ge=0, strict=True)
     instruction: str = Field(min_length=1, max_length=4000)
 
     @field_validator("instruction")
@@ -82,8 +84,8 @@ class ConversationSteerRequest(BaseModel):
 class ConversationCancelRequest(BaseModel):
     """Exact owner-visible message and Agent progress revisions."""
     model_config = ConfigDict(extra="forbid")
-    expected_sequence: int = Field(ge=1)
-    expected_event_sequence: int = Field(ge=0)
+    expected_sequence: int = Field(ge=1, strict=True)
+    expected_event_sequence: int = Field(ge=0, strict=True)
 
 
 class ConversationReplyCreate(BaseModel):
@@ -92,5 +94,5 @@ class ConversationReplyCreate(BaseModel):
     No new file IDs, citations or action authority may be supplied here.
     """
     model_config = ConfigDict(extra="forbid")
-    expected_sequence: int = Field(ge=1)
+    expected_sequence: int = Field(ge=1, strict=True)
     project_id: UUID | None = None
