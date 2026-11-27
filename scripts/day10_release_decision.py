@@ -21,6 +21,7 @@ from scripts.cohort_release_gate import evaluate_release  # noqa: E402
 from scripts.release_contract import pilot_canonical_only_capabilities_disabled  # noqa: E402
 from scripts.ruke_pilot_eval import (  # noqa: E402
     BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, canonical_sha256, operated_trace_ok,
+    comparison_evidence_recorded,
     validate_candidate_readbacks,
     _read_json_and_sha256 as read_bounded_json_with_sha,
     immutable_write, reviewer_identity, sha256 as sha256_bounded,
@@ -450,6 +451,31 @@ def golden_ok(value: object, release: str, revision: str, digest: str) -> bool:
 
 
 
+def day9_original_evidence_gate_ok(first_run: object, holdout: object) -> bool:
+    """A later decision must not reverse a preserved first-run qualification veto.
+
+    Reconcile the existing Day 9 claims, not new self-attestations. The
+    independently authenticated original bytes remain an operator prerequisite.
+    """
+    if not isinstance(first_run, dict) or not isinstance(holdout, dict):
+        return False
+    if any(first_run.get(field) is not True for field in (
+        "operator_evidence_gate", "candidate_readback_consistency_pass",
+        "repository_checks_reported_pass", "custody_claim_submitted",
+        "generation_identity_verified",
+    )):
+        return False
+    findings = first_run.get("unresolved_high_severity_failures")
+    receipt = first_run.get("generation_identity_receipt_sha256")
+    return (
+        isinstance(findings, list) and not findings
+        and isinstance(receipt, str) and DIGEST.fullmatch(receipt) is not None
+        and holdout.get("generation_identity_verified") is True
+        and holdout.get("generation_identity_receipt_sha256") == receipt
+        and comparison_evidence_recorded(first_run.get("comparison"))
+    )
+
+
 def first_run_matches_holdout(
     first_run: object, holdout: object, release: str, revision: str, rollout_hash: str,
 ) -> bool:
@@ -836,6 +862,7 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and isinstance(model, dict) and isinstance(model.get("provider_model"), str)
          and golden.get("provider_model") == model["provider_model"])
     first_run = artifacts.get("day9_first_run")
+    need("day9_original_evidence_gate", day9_original_evidence_gate_ok(first_run, artifacts.get("holdout")))
     final_readbacks = artifacts.get("final_runtime_readbacks")
     need("final_runtime_matches_frozen_day9_identity", final_runtime_matches_frozen_day9(
         first_run, final_readbacks, api, worker, schema, model, artifacts.get("quality"),

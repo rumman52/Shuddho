@@ -5,6 +5,7 @@ tests do not constitute a pilot admission or independently operated evidence.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -163,9 +164,12 @@ class Response:
     def __init__(self, status, body=None):
         self.status_code = status
         self.body = body
+        self.headers = {}
 
-    def json(self):
-        return self.body
+    def iter_bytes(self, chunk_size=65536):
+        raw = json.dumps(self.body).encode('utf-8')
+        for offset in range(0, len(raw), chunk_size):
+            yield raw[offset:offset + chunk_size]
 
 
 class Client:
@@ -173,10 +177,13 @@ class Client:
         self.responses = iter(responses)
         self.headers = []
 
-    def get(self, path, headers):
+    @contextmanager
+    def stream(self, method, path, headers):
+        assert method == "GET"
         assert path in {"/api/v1/me", "/api/v1/runtime-manifest"}
+        assert headers["Accept-Encoding"] == "identity"
         self.headers.append(headers["Authorization"])
-        return next(self.responses)
+        yield next(self.responses)
 
 
 def test_all_five_members_probed_then_nonmember_denied():
@@ -242,8 +249,8 @@ def test_duplicate_or_incomplete_expected_member_identity_list_is_denied():
 
 def test_member_http_200_with_malformed_json_fails_closed():
     class InvalidJSON(Response):
-        def json(self):
-            raise ValueError("response has no parseable JSON")
+        def iter_bytes(self, chunk_size=65536):
+            yield b'not valid JSON'
 
     members = [f"account-{i}" for i in range(5)]
     client = Client([InvalidJSON(200)])
@@ -588,3 +595,94 @@ def test_member_token_capture_keeps_original_64k_limit(tmp_path):
     path.write_bytes(padded + b" ")
     with pytest.raises(pilot.PilotVerificationFailure):
         pilot.load_member_tokens(path)
+
+
+@pytest.mark.parametrize("target", ["runtime", "member", "nonmember"])
+@pytest.mark.parametrize("variant", ["duplicate", "nested_duplicate", "nonfinite", "oversized", "gzip", "valid"])
+def test_pilot_live_evidence_is_strict_bounded_and_streamed(target, variant):
+    """Real HTTPX transport/stream; no network, actual users, or provider calls."""
+    import gzip
+    import httpx
+    from scripts.staging_release_evidence import MAX_ROLLOUT_MANIFEST_BYTES
+
+    rollout = {"cohort": {"max_users": 5}}
+    runtime = live_runtime(rollout)
+    members = [f"synthetic-account-{i}" for i in range(5)]
+    tokens = [f"synthetic-token-{i}" for i in range(5)]
+    denied_token = "synthetic-denied"
+    status, obj = {
+        "runtime": (200, runtime),
+        "member": (200, {"account_id": members[0]}),
+        "nonmember": (403, {"error": {"code": "cohort_not_enabled"}}),
+    }[target]
+    raw = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if variant == "duplicate":
+        prefix = {
+            "runtime": b'"schema_version":1,',
+            "member": b'"account_id":"wrong",',
+            "nonmember": b'"error":{"code":"wrong"},',
+        }[target]
+        raw = b"{" + prefix + raw[1:]
+    elif variant == "nested_duplicate":
+        raw = raw[:-1] + b',"extra":{"v":false,"v":true}}'
+    elif variant == "nonfinite":
+        raw = raw[:-1] + b',"extra":1e999}'
+    elif variant == "oversized":
+        raw = raw[:-1] + b',"padding":"' + b"x" * (MAX_ROLLOUT_MANIFEST_BYTES + 131_072) + b'"}'
+    elif variant == "gzip":
+        raw = gzip.compress(raw)
+        headers["Content-Encoding"] = "gzip"
+
+    class ObservedStream(httpx.SyncByteStream):
+        def __init__(self, data):
+            self.data = data
+            self.consumed = 0
+            self.closed = False
+
+        def __iter__(self):
+            for offset in range(0, len(self.data), 65536):
+                chunk = self.data[offset:offset + 65536]
+                self.consumed += len(chunk)
+                yield chunk
+
+        def close(self):
+            self.closed = True
+
+    selected = ObservedStream(raw)
+    selected_requests = []
+
+    def handler(request):
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        is_selected = (
+            (target == "runtime" and request.url.path == "/api/v1/runtime-manifest")
+            or (target == "member" and token == tokens[0])
+            or (target == "nonmember" and token == denied_token)
+        )
+        if is_selected:
+            selected_requests.append(request)
+            return httpx.Response(status, headers=headers, stream=selected)
+        if token == denied_token:
+            return httpx.Response(403, json={"error": {"code": "cohort_not_enabled"}})
+        return httpx.Response(200, json={"account_id": members[tokens.index(token)]})
+
+    with httpx.Client(base_url="https://synthetic.invalid", transport=httpx.MockTransport(handler)) as client:
+        def verify():
+            if target == "runtime":
+                pilot.verify_live_runtime(client, tokens[0], rollout, REV, len(tokens))
+            else:
+                pilot.probe_access(client, tokens, denied_token, members)
+
+        if variant == "valid":
+            verify()
+        else:
+            with pytest.raises(pilot.PilotVerificationFailure):
+                verify()
+    assert len(selected_requests) == 1
+    assert selected_requests[0].headers["Accept-Encoding"] == "identity"
+    assert selected.closed
+    if variant == "gzip":
+        assert selected.consumed == 0
+    elif variant == "oversized":
+        assert selected.consumed <= MAX_ROLLOUT_MANIFEST_BYTES + 65536
+        assert selected.consumed < len(raw)

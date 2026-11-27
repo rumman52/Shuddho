@@ -344,6 +344,11 @@ class ConversationReplyService:
             self.conversations._audit(db, owner, message_id, "conversation.reply_" + result["state"])
             return result
 
+    @staticmethod
+    def interrupted_reply(claim):
+        return {**claim, "state": "interrupted", "text": "", "sources": [],
+                "error": "The reply was interrupted. Send a new message to try again."}
+
     async def prepare_stream(self, owner, conversation_id, message_id, expected_sequence, project_id=None):
         """Claim and start the producer before HTTP headers or client reads can race it."""
         claim_result, messages = await run_in_threadpool(
@@ -361,6 +366,7 @@ class ConversationReplyService:
             # source revalidation/commit succeed. Text-only replies still stream.
             buffer_source_deltas = bool(claim_result.get("sources"))
             text = ""
+            cancelled = None
             try:
                 if buffer_source_deltas:
                     # Catch revocation between claim/source extraction and provider start.
@@ -398,6 +404,9 @@ class ConversationReplyService:
                     **claim_result, "state": "completed", "text": text,
                     "completed_at": iso(utcnow()),
                 }
+            except asyncio.CancelledError as error:
+                cancelled = error
+                result = self.interrupted_reply(claim_result)
             except Exception:
                 # Provider diagnostics may contain private input or credentials.
                 result = {
@@ -410,20 +419,24 @@ class ConversationReplyService:
                 except Exception:
                     pass
             try:
-                stored = await run_in_threadpool(
-                    self.finish, owner, conversation_id, message_id, result,
-                )
-            except CoworkerError:
-                await queue.put(("error", {"error": "This conversation is no longer available."}))
-                return
-            except Exception:
-                await queue.put(("error", {"error": "The AI reply could not be saved. Reload the conversation."}))
-                return
-            if buffer_source_deltas and stored.get("state") == "completed":
-                # finish() has validated citations and rechecked the source pins
-                # under the owner lock before any grounded text becomes visible.
-                await queue.put(("delta", {"delta": stored["text"]}))
-            await queue.put(("final", stored))
+                try:
+                    stored = await run_in_threadpool(
+                        self.finish, owner, conversation_id, message_id, result,
+                    )
+                except CoworkerError:
+                    await queue.put(("error", {"error": "This conversation is no longer available."}))
+                    return
+                except Exception:
+                    await queue.put(("error", {"error": "The AI reply could not be saved. Reload the conversation."}))
+                    return
+                if buffer_source_deltas and stored.get("state") == "completed":
+                    # finish() has validated citations and rechecked the source pins
+                    # under the owner lock before any grounded text becomes visible.
+                    await queue.put(("delta", {"delta": stored["text"]}))
+                await queue.put(("final", stored))
+            finally:
+                if cancelled is not None:
+                    raise cancelled
 
         producer_task = asyncio.create_task(produce())
         self._stream_tasks.add(producer_task)
@@ -453,6 +466,7 @@ class ConversationReplyService:
             self.claim, owner, conversation_id, message_id, expected_sequence, project_id,
         )
         if messages is None: return result
+        cancelled = None
         try:
             if result.get("sources"):
                 # Recheck immediately before non-streaming inference as well.
@@ -460,10 +474,21 @@ class ConversationReplyService:
             text = await self.model.generate(messages)
             self.validate_grounded_text(text, result)
             result = {**result, "state": "completed", "text": text, "completed_at": iso(utcnow())}
+        except asyncio.CancelledError as error:
+            cancelled = error
+            result = self.interrupted_reply(result)
         except Exception:
             # Provider diagnostics may contain private input or credentials.
             result = {**result, "state": "failed", "text": "", "sources": [],
                 "error": "The AI reply could not be completed. Check the selected source context and send a new message to try again."}
         finally:
-            await run_in_threadpool(self.release, message_id)
-        return await run_in_threadpool(self.finish, owner, conversation_id, message_id, result)
+            try:
+                await run_in_threadpool(self.release, message_id)
+            except Exception:
+                if cancelled is None:
+                    raise
+        try:
+            return await run_in_threadpool(self.finish, owner, conversation_id, message_id, result)
+        finally:
+            if cancelled is not None:
+                raise cancelled

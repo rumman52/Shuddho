@@ -328,6 +328,9 @@ def test_day7_preflight_does_not_invent_post_pause_observation_offset():
     "policy_catchup_window_seconds",
     "after_pause_run_profile", "after_pause_output_language",
     "after_pause_quiet_hours",
+    "revision_prepared_float", "revision_prepared_bool", "revision_prepared_schema",
+    "revision_live_float", "revision_live_bool", "revision_live_applied_float",
+    "revision_live_goal_bool", "revision_pause_response_float", "revision_pause_response_jump",
 ])
 def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tmp_path, unexpected):
     import argparse
@@ -339,9 +342,11 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
     first_path.write_text(json.dumps(first))
     second_path.write_text(json.dumps(second))
     state_path.write_text(json.dumps({
+        "schema_version": 1.0 if unexpected == "revision_prepared_schema" else 1,
         "scenario": "daily_coworker", "release": RELEASE,
         "owner_id": "owner-1", "automation_id": "automation-1",
-        "automation_revision": 1,
+        "automation_revision": {"revision_prepared_float": 1.9, "revision_prepared_bool": True}.get(unexpected, 1),
+        "schedule_applied_revision": 1, "schedule_applied_enabled": True,
         "synthetic_account_label": "stage-day7-synthetic",
         "goal_id": "goal-1", "goal_revision": 1,
         "authorized_document_ids": ["doc-1"], "project_id": "project-1",
@@ -381,10 +386,12 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
     monkeypatch.setattr(probe, "load_owned", lambda *_args: {
         "owner_id": "owner-1", "automation": {
             **live_profile,
-            "revision": 1, "expires_at": "2026-11-15T02:00:00+00:00",
-            "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+            "revision": {"revision_live_float": 1.9, "revision_live_bool": True}.get(unexpected, 1),
+            "expires_at": "2026-11-15T02:00:00+00:00",
+            "schedule_applied_revision": 1.0 if unexpected == "revision_live_applied_float" else 1,
+            "schedule_applied_enabled": True,
         },
-        "daily_scope": {"goal_id": "goal-1", "goal_revision": 1,
+        "daily_scope": {"goal_id": "goal-1", "goal_revision": True if unexpected == "revision_live_goal_bool" else 1,
                         "authorized_document_ids": ["doc-1"], "project_id": "project-1"},
     })
 
@@ -406,8 +413,10 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
                     "quiet_hours": {"start": "23:00", "end": "07:00"},
                 }[field]
             return {
-                "id": "automation-1", "state": "paused", "revision": 2,
-                "schedule_applied_revision": 2, "schedule_applied_enabled": False,
+                "id": "automation-1", "state": "paused",
+                "revision": {"revision_pause_response_float": 2.0, "revision_pause_response_jump": 3}.get(unexpected, 2),
+                "schedule_applied_revision": {"revision_pause_response_float": 2.0, "revision_pause_response_jump": 3}.get(unexpected, 2),
+                "schedule_applied_enabled": False,
                 "schedule_error_code": None, **policy,
             }
 
@@ -450,6 +459,13 @@ def test_pause_two_day_verifies_evidence_before_mutating_staging(monkeypatch, tm
 
     client = Client()
     monkeypatch.setattr(probe.httpx, "Client", lambda **_args: client)
+    if unexpected and unexpected.startswith("revision_"):
+        with pytest.raises(probe.ScheduledProfileProbeFailure, match="[Rr]evision|schema"):
+            probe.pause_two_day(args)
+        expected_posts = [("/api/v1/automations/automation-1/pause", {"expected_revision": 1})] if unexpected.startswith("revision_pause_response_") else []
+        assert client.posts == expected_posts
+        assert not args.output.exists()
+        return
     if unexpected and unexpected.startswith("policy_"):
         with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
             probe.pause_two_day(args)
@@ -634,6 +650,7 @@ def test_two_day_gate_rejects_unproven_paused_opportunity(defect):
 
 @pytest.mark.parametrize("policy_drift", [
     None, "run_profile", "output_language", "quiet_hours",
+    "revision", "schedule_applied_revision", "goal_revision",
 ])
 def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activity(
     monkeypatch, tmp_path, policy_drift,
@@ -672,7 +689,7 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
         "timezone", "schedule", "run_profile", "output_language",
         "quiet_hours", "overlap_policy", "catchup_window_seconds",
     )}
-    if policy_drift:
+    if policy_drift and policy_drift not in {"revision", "schedule_applied_revision", "goal_revision"}:
         changed = {
             "run_profile": "deadline",
             "output_language": "bn",
@@ -702,11 +719,13 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
                 return Response({"account_id": "owner-1"})
             if path == "/api/v1/automations/automation-1":
                 return Response({
-                    "id": "automation-1", "state": "paused", "revision": 2,
-                    "schedule_applied_revision": 2, "schedule_applied_enabled": False,
+                    "id": "automation-1", "state": "paused",
+                    "revision": 2.0 if policy_drift == "revision" else 2,
+                    "schedule_applied_revision": 2.0 if policy_drift == "schedule_applied_revision" else 2,
+                    "schedule_applied_enabled": False,
                     "schedule_error_code": None, **live_profile,
                     "expires_at": first["expires_at"], "goal_id": first["goal_id"],
-                    "goal_revision": first["goal_revision"],
+                    "goal_revision": True if policy_drift == "goal_revision" else first["goal_revision"],
                 })
             if path == "/api/v1/automations/automation-1/history":
                 return Response({"history": history})
@@ -726,7 +745,7 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
     previous_umask = os.umask(0o022)
     try:
         if policy_drift:
-            with pytest.raises(check.ScheduledProfileProbeFailure, match="prepared|drift"):
+            with pytest.raises(check.ScheduledProfileProbeFailure, match="prepared|drift|differs"):
                 check.collect_paused_opportunity(args)
             assert not args.output.exists()
             assert paths_read == ["/api/v1/me", "/api/v1/automations/automation-1"]
@@ -1002,3 +1021,56 @@ def test_two_day_gate_rejects_numeric_type_drift_in_second_receipt(field):
     target[field] = float(target[field])
     with pytest.raises(GateFailure, match="calendar time|3600"):
         verify_two_day(first, second, paused)
+
+
+@pytest.mark.parametrize(("receipt", "field", "value"), [
+    ("first", "schema_version", 2.0),
+    ("second", "schema_version", 2.0),
+    ("first", "schedule_applied_revision", True),
+    ("first", "schedule_applied_revision", 1.0),
+    ("second", "schedule_applied_revision", True),
+    ("second", "schedule_applied_revision", 1.0),
+    ("second", "goal_revision", True),
+    ("second", "goal_revision", 1.0),
+    ("pause", "goal_revision", True),
+    ("pause", "goal_revision", 1.0),
+    ("pause", "schedule_applied_revision", 2.0),
+    ("observation", "schedule_applied_revision", 2.0),
+])
+def test_two_day_gate_rejects_equal_but_noninteger_receipt_revision(receipt, field, value):
+    first, second, paused = valid_pair()
+    target = {
+        "first": first, "second": second, "pause": paused,
+        "observation": paused["post_pause_observation"],
+    }[receipt]
+    target[field] = value
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused)
+    if receipt != "observation":
+        with pytest.raises(GateFailure):
+            verify_two_day(first, second, paused, require_paused_opportunity=False)
+
+
+@pytest.mark.parametrize("day_index", [0, 1])
+@pytest.mark.parametrize("field", ["occurrence_id", "run_id", "completion_notification_id"])
+@pytest.mark.parametrize("invalid", [True, 123, ["id"], " ", " padded-id ", "id\n"])
+def test_two_day_preflight_rejects_noncanonical_admission_and_delivery_ids(day_index, field, invalid):
+    first, second, paused = valid_pair()
+    (first, second)[day_index][field] = invalid
+    # This path guards the staging pause POST, before baseline identity lists
+    # exist. A truthy non-string or a whitespace alias is not a durable ID.
+    with pytest.raises(GateFailure):
+        verify_two_day(first, second, paused, require_paused_opportunity=False)
+
+
+
+def test_two_day_gate_rejects_skipped_pause_revision():
+    first, second, paused = valid_pair()
+    # A pause advances the exact accepted revision once; a later matching
+    # applied revision could instead be an unrelated owner edit.
+    paused["paused_revision"] = paused["schedule_applied_revision"] = 3
+    paused["post_pause_observation"]["schedule_applied_revision"] = 3
+    with pytest.raises(GateFailure, match="Pause must follow"):
+        verify_two_day(first, second, paused)
+    with pytest.raises(GateFailure, match="Pause must follow"):
+        verify_two_day(first, second, paused, require_paused_opportunity=False)

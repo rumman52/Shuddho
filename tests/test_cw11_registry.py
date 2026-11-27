@@ -1037,3 +1037,29 @@ def test_worker_heartbeat_and_drain_do_not_rehabilitate_uncertain_state(containe
     row = container.repository.worker_inventory()[0]
     assert row["state"] == state
     assert row["drained_at"] is None
+
+
+def test_worker_registration_persists_complete_release_identity(container):
+    worker_id = container.repository.register_worker(
+        task_queue=container.settings.task_queue,
+        source_revision=container.settings.source_revision,
+    )
+    row = next(
+        item for item in container.repository.worker_inventory(task_queue=container.settings.task_queue)
+        if item["id"] == worker_id
+    )
+    assert len(row["build_digest"]) == 64
+    assert row["schema_revision"] == "0073_worker_runtime_identity"
+    assert row["model_provider"] == container.settings.chat_provider
+    assert row["model_id"] == container.settings.deepseek_model
+    assert len(row["runtime_identity_sha256"]) == 64
+
+
+def test_worker_cannot_attest_another_source_revision_on_a_different_queue(container):
+    from services.coworker.errors import CoworkerError
+
+    with pytest.raises(CoworkerError, match="source revision"):
+        container.repository.register_worker(
+            task_queue="unreviewed-secondary-queue",
+            source_revision="b" * 40,
+        )
