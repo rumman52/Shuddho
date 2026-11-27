@@ -1609,3 +1609,46 @@ def test_day10_independent_custodian_may_also_review_if_distinct_from_developer_
     artifacts["day9_first_run"]["day10_holdout"] = deepcopy(holdout)
     assert day10.holdout_ok(holdout, RELEASE, REV, HASH)
     assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+
+
+@pytest.mark.parametrize("field", ["workflow", "language"])
+@pytest.mark.parametrize("bad", [[], {}, ["untrusted"], {"unexpected": "value"}])
+def test_day10_malformed_holdout_cell_rejects_without_exception(monkeypatch, field, bad):
+    rollout, artifacts = evidence()
+    holdout = artifacts["holdout"]
+    holdout["cases"][0][field] = bad
+    first = artifacts["day9_first_run"]
+    first["day10_holdout"] = deepcopy(holdout)
+    first["scores"]["cases"][0][field] = bad
+    assert day10.holdout_ok(holdout, RELEASE, REV, HASH) is False
+    assert day10.first_run_matches_holdout(first, holdout, RELEASE, REV, HASH) is False
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+    assert "preserved_day9_first_run" in result["blockers"]
+
+
+@pytest.mark.parametrize("field,bad", [("workflow", []), ("language", {"invalid": True})])
+def test_day10_cli_malformed_holdout_writes_private_nogo(tmp_path, field, bad, capsys):
+    rollout, artifacts = evidence()
+    rollout_path = tmp_path / "rollout.json"
+    rollout_path.write_text(json.dumps(rollout), encoding="utf-8")
+    digest = hashlib.sha256(rollout_path.read_bytes()).hexdigest()
+    holdout = artifacts["holdout"]
+    holdout["rollout_manifest_sha256"] = digest
+    holdout["custody_receipt"]["rollout_manifest_sha256"] = digest
+    holdout["cases"][0][field] = bad
+    holdout_path = tmp_path / "holdout.json"
+    holdout_path.write_text(json.dumps(holdout), encoding="utf-8")
+    output_path = tmp_path / "decision.json"
+    args = ["--rollout", str(rollout_path), "--source-revision", REV,
+            "--holdout", str(holdout_path), "--output", str(output_path)]
+    assert day10.main(args) == 1
+    original = output_path.read_bytes()
+    result = json.loads(original)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert result["pilot_activated"] is False
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+    assert day10.main(args) == 2
+    assert output_path.read_bytes() == original
+    assert "Traceback" not in capsys.readouterr().err
