@@ -1975,3 +1975,26 @@ def test_gmail_incremental_sync_rejects_missing_label_membership(container):
     with pytest.raises(GoogleFailure) as rejected:
         asyncio.run(adapter.read_email("read-access-token", "101", 30))
     assert rejected.value.code == "provider_response_invalid"
+
+
+def test_google_calendar_incremental_sync_preserves_query_contract(container):
+    fake = enable_reads(container)
+    owner = account(container)
+    connection = connect_read(container, owner, "calendar_read")
+    grant = create_grant(container, owner, connection)
+
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    asyncio.run(container.connector_reads.sync(owner, grant["id"]))
+
+    requests = [
+        request for request in fake.requests
+        if request.method == "GET"
+        and str(request.url).split("?", 1)[0] == EVENTS_URL
+    ]
+    assert len(requests) == 2
+    initial = parse_qs(urlparse(str(requests[0].url)).query)
+    incremental = parse_qs(urlparse(str(requests[1].url)).query)
+    assert initial["singleEvents"] == ["true"]
+    assert incremental["singleEvents"] == ["true"]
+    assert incremental["showDeleted"] == ["true"]
+    assert incremental["syncToken"] == ["sync-1"]
