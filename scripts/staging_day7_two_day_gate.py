@@ -148,7 +148,8 @@ def verify_two_day(
                          "catchup_window_seconds", "schedule_applied_revision",
                          "schedule_applied_enabled")
     for index, item in enumerate((first, second), start=1):
-        require(item.get("schema_version") == 2
+        require(type(item.get("schema_version")) is int
+                and item["schema_version"] == 2
                 and item.get("evidence_kind") == "pa10_scheduled_profile"
                 and item.get("scenario") == "daily_coworker"
                 and item.get("status") == "passed"
@@ -169,10 +170,20 @@ def verify_two_day(
                                                  "completion_notification_id", "operator_case_reference"))
                 and "started_notification_id" not in item,
                 f"Day {index} is missing one-run/one-completion-notice evidence.")
+        # Truthy numbers, containers and whitespace aliases are not durable IDs.
+        # Check before the preflight can authorize a pause POST, not only when
+        # the final receipt supplies baseline identity lists.
+        require(all(type(item.get(field)) is str and bool(item[field].strip())
+                    and item[field] == item[field].strip()
+                    for field in ("occurrence_id", "run_id", "completion_notification_id")),
+                f"Day {index} requires canonical nonblank occurrence/run/completion IDs.")
+        require(type(item.get("goal_revision")) is int and item["goal_revision"] == goal_revision,
+                f"Day {index} changed the owner-approved goal revision.")
         revision = item.get("automation_revision")
         require(type(revision) is int and revision >= 1,
                 f"Day {index} must identify a valid accepted automation revision.")
-        require(item.get("schedule_applied_revision") == revision
+        require(type(item.get("schedule_applied_revision")) is int
+                and item["schedule_applied_revision"] == revision
                 and item.get("schedule_applied_enabled") is True,
                 f"Day {index} must prove the current Temporal schedule revision is active.")
         expiry = timestamp(item.get("expires_at"), f"Day {index} expires_at")
@@ -191,18 +202,21 @@ def verify_two_day(
             and second.get("operator_case_reference") == case_reference
             and paused.get("operator_case_reference") == case_reference,
             "Both natural-day probes and pause must link the same operator case.")
+    require(type(paused.get("goal_revision")) is int and paused["goal_revision"] == goal_revision,
+            "Pause evidence changed goal_revision.")
     for field in identity:
         require(paused.get(field) == first.get(field), f"Pause evidence changed {field}.")
     require(paused.get("status") == "paused"
             and bool(paused.get("operator_case_reference")),
             "Pause evidence must confirm a paused synthetic automation.")
-    require(paused.get("schedule_applied_revision") == paused.get("paused_revision")
+    require(type(paused.get("schedule_applied_revision")) is int
+            and paused["schedule_applied_revision"] == paused.get("paused_revision")
             and paused.get("schedule_applied_enabled") is False,
             "Pause evidence must prove Temporal applied the paused revision.")
     require(type(paused.get("previous_revision")) is int
             and paused["previous_revision"] == first["automation_revision"]
             and type(paused.get("paused_revision")) is int
-            and paused["paused_revision"] > paused["previous_revision"],
+            and paused["paused_revision"] == paused["previous_revision"] + 1,
             "Pause must follow the accepted schedule revision.")
     schedule, zone = require_daily_calendar(first)
     # Matching numeric values may have different JSON types (8 == 8.0).
@@ -311,7 +325,8 @@ def verify_two_day(
         require(post_due + timedelta(seconds=catchup) <= observed_at <= now,
                 "Post-pause observation must follow the entire catch-up window and precede now.")
         require(observation.get("automation_state") == "paused"
-                and observation.get("schedule_applied_revision") == paused["paused_revision"]
+                and type(observation.get("schedule_applied_revision")) is int
+                and observation["schedule_applied_revision"] == paused["paused_revision"]
                 and observation.get("schedule_applied_enabled") is False
                 and observation.get("owner_id") == first["owner_id"]
                 and observation.get("automation_id") == first["automation_id"]

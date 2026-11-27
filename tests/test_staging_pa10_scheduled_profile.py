@@ -144,7 +144,7 @@ class _ScopeResponse:
 
 
 @pytest.mark.parametrize("change", [
-    "connector", "memory", "stale_revision", "empty_documents", "wrong_goal",
+    "connector", "memory", "stale_revision", "float_revision", "empty_documents", "wrong_goal",
     "missing_project", "unlinked_project_document",
 ])
 def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
@@ -163,6 +163,8 @@ def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
         goal["authorized_resources"].append({"kind": "memory_namespace", "reference": "private"})
     elif change == "stale_revision":
         goal["revision"] = 3
+    elif change == "float_revision":
+        goal["revision"] = 2.0
     elif change == "empty_documents":
         goal["authorized_resources"] = []
     elif change == "wrong_goal":
@@ -567,8 +569,9 @@ def test_daily_prepared_profile_rejects_incomplete_runtime_or_evidence_scope(mis
         probe.require_prepared_daily_profile(state, automation)
 
 
-def test_day7_verify_invokes_prepared_profile_readback_gate(monkeypatch, tmp_path):
-    """A changed timezone must block an otherwise valid owner/run/notice receipt."""
+@pytest.mark.parametrize("defect", ["timezone", "state_schema", "state_revision", "live_revision", "live_applied", "state_goal", "live_goal"])
+def test_day7_verify_invokes_prepared_profile_readback_gate(monkeypatch, tmp_path, defect):
+    """A changed policy or malformed numeric identity must block an otherwise valid receipt."""
     from argparse import Namespace
     from copy import deepcopy
     import json
@@ -593,7 +596,7 @@ def test_day7_verify_invokes_prepared_profile_readback_gate(monkeypatch, tmp_pat
         "owner_id": "owner-1",
         "automation": {
             **deepcopy(PREPARED_DAILY_PROFILE),
-            "timezone": "UTC",  # runtime drift, but revision stays unchanged
+            "timezone": "UTC" if defect == "timezone" else PREPARED_DAILY_PROFILE["timezone"],
             "revision": 1,
             "expires_at": "2030-01-01T00:00:00+00:00",
             "schedule_applied_revision": 1, "schedule_applied_enabled": True,
@@ -612,6 +615,20 @@ def test_day7_verify_invokes_prepared_profile_readback_gate(monkeypatch, tmp_pat
             "occurrence_id": "occ-1", "kind": "automation_completed",
         }],
     }
+
+    if defect == "state_schema":
+        state["schema_version"] = True
+    elif defect == "state_revision":
+        state["automation_revision"] = 1.9
+    elif defect == "live_revision":
+        current["automation"]["revision"] = 1.9
+    elif defect == "live_applied":
+        current["automation"]["schedule_applied_revision"] = 1.0
+    elif defect == "state_goal":
+        state["goal_revision"] = True
+    elif defect == "live_goal":
+        current["daily_scope"]["goal_revision"] = 1.0
+    state_path.write_text(json.dumps(state), encoding="utf-8")
 
     class Client:
         def __enter__(self):
@@ -643,7 +660,7 @@ def test_day7_verify_invokes_prepared_profile_readback_gate(monkeypatch, tmp_pat
         output=tmp_path / "verified.json", prior_evidence=None,
         operator_case_reference="CASE-7", timeout=1, poll_interval=1,
     )
-    with pytest.raises(probe.ScheduledProfileProbeFailure, match="prepared|drift"):
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="[Rr]evision|schema|prepared|drift|Temporal applied"):
         probe.verify(args)
     assert not args.output.exists()
 
@@ -726,3 +743,23 @@ def test_prepare_rejects_noncontract_daily_policy_before_writing_state(monkeypat
     with pytest.raises(probe.ScheduledProfileProbeFailure, match="Daily briefing"):
         probe.prepare(args)
     assert not state.exists()
+
+
+
+@pytest.mark.parametrize(("field", "invalid"), [("revision", True), ("revision", 1.0), ("schedule_applied_revision", True), ("schedule_applied_revision", 1.0), ("revision", None)])
+def test_load_owned_rejects_untyped_active_schedule_revision_before_goal_read(field, invalid):
+    automation = {**PREPARED_DAILY_PROFILE, "id": "automation-1", "state": "active",
+                  "revision": 1, "schedule_applied_revision": 1, "schedule_applied_enabled": True,
+                  "expires_at": "2030-01-01T00:00:00+00:00"}
+    automation[field] = invalid
+
+    class Client:
+        def get(self, path, **kwargs):
+            if path == "/api/v1/me":
+                return _ScopeResponse({"account_id": "owner-1"})
+            if path == "/api/v1/automations":
+                return _ScopeResponse({"enabled": True, "automations": [automation]})
+            raise AssertionError("Malformed revision must block before reading goal or history")
+
+    with pytest.raises(probe.ScheduledProfileProbeFailure, match="revision"):
+        probe.load_owned(Client(), "synthetic-token", "automation-1", "daily_coworker")

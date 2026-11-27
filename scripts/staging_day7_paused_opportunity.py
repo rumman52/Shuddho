@@ -116,8 +116,10 @@ def collect_paused_opportunity(args: argparse.Namespace) -> dict:
         require_prepared_daily_profile(first, current)
         if (current.get("id") != automation_id
                 or current.get("state") != "paused"
-                or current.get("revision") != paused["paused_revision"]
-                or current.get("schedule_applied_revision") != paused["paused_revision"]
+                or type(current.get("revision")) is not int
+                or current["revision"] != paused["paused_revision"]
+                or type(current.get("schedule_applied_revision")) is not int
+                or current["schedule_applied_revision"] != paused["paused_revision"]
                 or current.get("schedule_applied_enabled") is not False
                 or current.get("schedule_error_code")
                 or current.get("schedule") != first["schedule"]
@@ -126,7 +128,8 @@ def collect_paused_opportunity(args: argparse.Namespace) -> dict:
                 or current.get("catchup_window_seconds") != catchup
                 or current.get("expires_at") != first["expires_at"]
                 or current.get("goal_id") != first["goal_id"]
-                or current.get("goal_revision") != first["goal_revision"]):
+                or type(current.get("goal_revision")) is not int
+                or current["goal_revision"] != first["goal_revision"]):
             raise ScheduledProfileProbeFailure(
                 "Paused automation state/schedule/goal differs from approved Day 7 identity."
             )
