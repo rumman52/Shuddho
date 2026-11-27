@@ -1,0 +1,9 @@
+# Prompt 02 D03.T07 / D04.T02 / D04.T06 — exact conversation admission
+
+Base `8821f1151b95ded7c7ccb67a145ce8e49ab5e764`. Tests `d834334a8d8015e9b8d38b9a05a0ca091598a1bb`, `fb83e4ad16e474887a49bc89e5cc82b82ec1f058`; fixes `7bae308b40c3f5864350f240d31f5a77db77c6d3`, `aec70ec8acfa9e3c16fc5bee8b0f5b1a6764e30c`.
+
+Dispatch previously admitted coerced revision values (`true`, `"1"`, `1.0`); duplicate fact IDs passed HTTP schema validation then raised Pydantic ValidationError inside dispatch, returning 500. Require strict integer request revision identities across reply, propose, preview, dispatch, steer and cancel. Reuse one duplicate-pin check at request validation and retain service-side validation. Omitted/null pins, explicit [] and valid pinned selections retain existing semantics; digest serialization and stored/replayed history are unchanged. JSON string/float/bool revision inputs are intentionally rejected; supported web clients send integer revisions.
+
+Isolated FastAPI TestClient projection of pinned schema and service selection expression: `python -m pytest -q --tb=short test_probe.py` RED 5 failed (two 500 responses, three coerced 200 responses), 3 passed. GREEN 8 passed in 0.27s. `python -m py_compile probe.py test_probe.py red_probe.py` exit 0. This probe is not full repository execution. Repository tests in existing mandatory Day 4/dispatch modules cover all request schemas, unchanged valid paths and no DB effects before valid admission. Exact-head CI and independent reviewer required. No hosted mutation, model calls, paid provisioning or activation.
+
+Shared progress file intentionally left unchanged until parallel changes reconcile. Source in progress; operated staging and independent acceptance blocked. Next: read exact-head CI, review compatibility and run authorized synthetic staging acceptance.
