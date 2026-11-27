@@ -692,3 +692,51 @@ def test_retained_constraints_respect_brief_bound_without_silent_loss(container,
         assert db.scalar(select(func.count()).select_from(AgentRun)) == 0
         assert db.scalar(select(func.count()).select_from(AgentOutbox)) == 0
         assert db.scalar(select(func.count()).select_from(ProviderLease)) == 0
+
+
+@pytest.mark.parametrize("value", [True, "1", 1.0])
+def test_conversation_request_revision_requires_exact_integer(value):
+    from services.coworker.conversation_schemas import (
+        ConversationDispatchCreate, ConversationReplyCreate, ConversationCancelRequest, ConversationSteerRequest,
+    )
+    from services.coworker.task_brief_schemas import TaskBriefProposeRequest, TaskBriefPreviewRequest
+
+    for schema, extra in (
+        (ConversationDispatchCreate, {}),
+        (ConversationReplyCreate, {}),
+        (ConversationCancelRequest, {"expected_event_sequence": 0}),
+        (ConversationSteerRequest, {"expected_steering_revision": 0, "instruction": "Use English."}),
+        (TaskBriefProposeRequest, {}),
+        (TaskBriefPreviewRequest, {"brief": brief().model_dump(mode="json")}),
+    ):
+        with pytest.raises(ValidationError):
+            schema.model_validate({"expected_sequence": value, **extra})
+        assert schema.model_validate({"expected_sequence": 1, **extra}).expected_sequence == 1
+
+
+@pytest.mark.parametrize("value", [False, "0", 0.0])
+def test_conversation_progress_revision_requires_exact_integer(value):
+    from services.coworker.conversation_schemas import ConversationCancelRequest, ConversationSteerRequest
+
+    with pytest.raises(ValidationError):
+        ConversationCancelRequest.model_validate({"expected_sequence": 1, "expected_event_sequence": value})
+    with pytest.raises(ValidationError):
+        ConversationSteerRequest.model_validate({"expected_sequence": 1, "expected_steering_revision": value,
+                                                 "instruction": "Use English."})
+
+
+@pytest.mark.parametrize("versions", [(1, 1), (1, 2)])
+def test_duplicate_memory_pins_fail_at_request_boundary(versions):
+    from services.coworker.conversation_schemas import ConversationDispatchCreate
+    from services.coworker.task_brief_schemas import TaskBriefPreviewRequest
+
+    fact = str(uuid4())
+    pins = [{"fact_id": fact, "expected_version": version} for version in versions]
+    for schema, extra in (
+        (ConversationDispatchCreate, {}),
+        (TaskBriefPreviewRequest, {"brief": brief().model_dump(mode="json")}),
+    ):
+        with pytest.raises(ValidationError, match="Select each memory fact only once"):
+            schema.model_validate({"expected_sequence": 1, "memory_pins": pins, **extra})
+    assert ConversationDispatchCreate(expected_sequence=1).memory_pins is None
+    assert ConversationDispatchCreate(expected_sequence=1, memory_pins=[]).memory_pins == []

@@ -194,6 +194,22 @@ def test_http_conversation_dispatch_and_activity_contract(container, signed_clie
     assert added.status_code == 201, added.text
     msg = added.json()
     endpoint = path + "/messages/" + msg["id"] + "/dispatch"
+    # Malformed identities must be denied before any admission or replay.
+    fact = "00000000-0000-4000-8000-000000000001"
+    for invalid in (
+        {"expected_sequence": True},
+        {"expected_sequence": "1"},
+        {"expected_sequence": 1.0},
+        {"expected_sequence": 1, "memory_pins": [
+            {"fact_id": fact, "expected_version": 1},
+            {"fact_id": fact, "expected_version": 2},
+        ]},
+    ):
+        rejected = client.post(endpoint, json=invalid, headers=headers())
+        assert rejected.status_code == 422, rejected.text
+    with container.repository.sessions() as db:
+        assert db.scalars(select(AgentRun)).all() == []
+        assert db.scalars(select(AgentOutbox)).all() == []
     admitted = client.post(endpoint, json={"expected_sequence": 1}, headers=headers())
     assert admitted.status_code == 202, admitted.text
     assert admitted.json()["run_id"]
