@@ -650,6 +650,7 @@ def test_two_day_gate_rejects_unproven_paused_opportunity(defect):
 
 @pytest.mark.parametrize("policy_drift", [
     None, "run_profile", "output_language", "quiet_hours",
+    "revision", "schedule_applied_revision", "goal_revision",
 ])
 def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activity(
     monkeypatch, tmp_path, policy_drift,
@@ -688,7 +689,7 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
         "timezone", "schedule", "run_profile", "output_language",
         "quiet_hours", "overlap_policy", "catchup_window_seconds",
     )}
-    if policy_drift:
+    if policy_drift and policy_drift not in {"revision", "schedule_applied_revision", "goal_revision"}:
         changed = {
             "run_profile": "deadline",
             "output_language": "bn",
@@ -718,11 +719,13 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
                 return Response({"account_id": "owner-1"})
             if path == "/api/v1/automations/automation-1":
                 return Response({
-                    "id": "automation-1", "state": "paused", "revision": 2,
-                    "schedule_applied_revision": 2, "schedule_applied_enabled": False,
+                    "id": "automation-1", "state": "paused",
+                    "revision": 2.0 if policy_drift == "revision" else 2,
+                    "schedule_applied_revision": 2.0 if policy_drift == "schedule_applied_revision" else 2,
+                    "schedule_applied_enabled": False,
                     "schedule_error_code": None, **live_profile,
                     "expires_at": first["expires_at"], "goal_id": first["goal_id"],
-                    "goal_revision": first["goal_revision"],
+                    "goal_revision": True if policy_drift == "goal_revision" else first["goal_revision"],
                 })
             if path == "/api/v1/automations/automation-1/history":
                 return Response({"history": history})
@@ -742,7 +745,7 @@ def test_read_only_paused_opportunity_collector_proves_zero_or_rejects_new_activ
     previous_umask = os.umask(0o022)
     try:
         if policy_drift:
-            with pytest.raises(check.ScheduledProfileProbeFailure, match="prepared|drift"):
+            with pytest.raises(check.ScheduledProfileProbeFailure, match="prepared|drift|differs"):
                 check.collect_paused_opportunity(args)
             assert not args.output.exists()
             assert paths_read == ["/api/v1/me", "/api/v1/automations/automation-1"]
