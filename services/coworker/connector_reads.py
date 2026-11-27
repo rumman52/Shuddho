@@ -368,6 +368,12 @@ class ConnectorReadRepository:
                     ConnectorSnapshot.grant_id == grant_id,
                     ConnectorSnapshot.provider_resource_id == resource_id,
                 ).with_for_update())
+                # A deletion for a resource that was never admitted to this
+                # owner's snapshot must not create a tombstone containing an
+                # unrelated provider resource ID (for example, Sent mail).
+                if current is None and state == "deleted":
+                    ignored += 1
+                    continue
                 payload_hash = _digest(payload)
                 if current is None:
                     current = ConnectorSnapshot(
