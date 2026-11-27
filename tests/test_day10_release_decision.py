@@ -70,6 +70,15 @@ def evidence():
              "corpus_sha256": "0" * 64,
              "answer_key_sha256": "1" * 64,
              "rubric_sha256": "2" * 64,
+             "operator_evidence_gate": True,
+             "candidate_readback_consistency_pass": True,
+             "repository_checks_reported_pass": True,
+             "custody_claim_submitted": True,
+             "generation_identity_verified": True,
+             "generation_identity_receipt_sha256": HASH,
+             "unresolved_high_severity_failures": [],
+             "comparison": {"complete": False, "gap_reason": "competitor_access_unavailable",
+                            "comparison_gap": "Synthetic fixture has no comparator access"},
              "scores": {}}
     cells = [(w, l) for w, l in sorted(day10.CELLS)]
     holdout = {**proof(), "mode": "independent_human_holdout", "custody_established": True,
@@ -1527,3 +1536,51 @@ def test_day10_final_canonical_only_authority_cannot_drift(monkeypatch):
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "final_runtime_matches_frozen_day9_identity" in result["blockers"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("operator_evidence_gate", False),
+    ("operator_evidence_gate", 1),
+    ("operator_evidence_gate", None),
+    ("candidate_readback_consistency_pass", False),
+    ("repository_checks_reported_pass", False),
+    ("custody_claim_submitted", False),
+    ("generation_identity_verified", False),
+    ("generation_identity_receipt_sha256", "9" * 64),
+    ("unresolved_high_severity_failures", ["synthetic critical owner-isolation finding"]),
+    ("unresolved_high_severity_failures", {}),
+    ("unresolved_high_severity_failures", None),
+    ("comparison", {"complete": False}),
+    ("comparison", {"complete": 1}),
+    ("comparison", {"gap_reason": "competitor_access_unavailable", "comparison_gap": "  "}),
+])
+def test_day10_preserves_original_day9_evidence_veto(monkeypatch, field, value):
+    rollout, artifacts = evidence()
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    artifacts["day9_first_run"][field] = value
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "day9_original_evidence_gate" in result["blockers"]
+    assert result["pilot_activated"] is False
+
+
+@pytest.mark.parametrize("field", [
+    "operator_evidence_gate", "candidate_readback_consistency_pass",
+    "repository_checks_reported_pass", "custody_claim_submitted",
+    "generation_identity_verified", "generation_identity_receipt_sha256",
+    "unresolved_high_severity_failures", "comparison",
+])
+def test_day10_missing_original_day9_gate_evidence_fails_closed(monkeypatch, field):
+    rollout, artifacts = evidence()
+    artifacts["day9_first_run"].pop(field)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "day9_original_evidence_gate" in result["blockers"]
+
+
+def test_day10_accepts_completed_comparison_and_no_high_severity_findings(monkeypatch):
+    rollout, artifacts = evidence()
+    artifacts["day9_first_run"]["comparison"] = {"complete": True}
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
+    assert result["blockers"] == []
