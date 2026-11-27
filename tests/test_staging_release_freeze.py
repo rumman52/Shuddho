@@ -371,7 +371,11 @@ def test_runtime_rejects_boolean_cohort_user_limit(tmp_path):
         rollout_path=path,
         provider_policy_path=policy_path,
         expected_source_revision="a" * 40,
-        build_reference="build-1",
+        expected_build_digest="b" * 64,
+        expected_model_provider="deepseek",
+        expected_model_id="deepseek-flash",
+        expected_task_queue="shuddho-documents-v1",
+        build_reference="build-1@sha256:" + "b" * 64,
         deployment_reference="deploy-1",
         synthetic_account_reference="synthetic-1",
     )
@@ -476,7 +480,7 @@ def test_release_verification_blocks_proxy_and_ca_env(tmp_path, monkeypatch):
             from contextlib import nullcontext
 
             assert method == "GET"
-            assert path == "/api/v1/runtime-manifest"
+            assert path == "/api/v1/runtime-manifest/v3"
             return nullcontext(freeze.httpx.Response(200, json=runtime(state)))
 
     monkeypatch.setattr(freeze.httpx, "Client", FakeClient)
@@ -513,7 +517,7 @@ def test_new_runtime_flags_are_declared_and_fail_closed(tmp_path, capability):
         freeze.verify_runtime(state, observed)
 
 
-def test_runtime_v2_rejects_missing_reviewed_skills(tmp_path):
+def test_runtime_v3_rejects_missing_reviewed_skills(tmp_path):
     state = prepared(tmp_path)
     observed = runtime(state)
     del observed["reviewed_skills"]
@@ -522,12 +526,12 @@ def test_runtime_v2_rejects_missing_reviewed_skills(tmp_path):
 
 
 def test_api_manifest_source_exact_43_plus_one_derived_ui_field():
-    # Parse the actual backend handler, not a separate handwritten mock.
-    api_path = Path(__file__).resolve().parents[1] / "services/coworker/api.py"
-    module = ast.parse(api_path.read_text(encoding="utf-8"))
+    # Parse the shared API/worker source of truth, not a handwritten mock.
+    identity_path = Path(__file__).resolve().parents[1] / "services/coworker/runtime_identity.py"
+    module = ast.parse(identity_path.read_text(encoding="utf-8"))
     handler = next(
         node for node in module.body
-        if isinstance(node, ast.FunctionDef) and node.name == "runtime_manifest"
+        if isinstance(node, ast.FunctionDef) and node.name == "runtime_manifest_payload"
     )
     assignment = next(
         node for node in handler.body
@@ -660,7 +664,11 @@ def test_freeze_prepare_publishes_private_receipt_without_overwrite(tmp_path, mo
         "--rollout", str(rollout_path),
         "--provider-policy-plan", str(policy_path),
         "--expected-source-revision", "a" * 40,
-        "--build-reference", "build-1",
+        "--expected-build-digest", "b" * 64,
+        "--expected-model-provider", "deepseek",
+        "--expected-model-id", "deepseek-flash",
+        "--expected-task-queue", "shuddho-documents-v1",
+        "--build-reference", "build-1@sha256:" + "b" * 64,
         "--deployment-reference", "deploy-1",
         "--synthetic-account-reference", "synthetic-1",
         "--state", str(state_path),
