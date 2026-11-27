@@ -1,0 +1,7 @@
+# Prompt 02 — CW-10 sandbox worker evidence types
+
+Base `8821f1151b95ded7c7ccb67a145ce8e49ab5e764`; RED test commit `8dddd850c70ec10ad76554d22806c328ff9fe115`; source `8bc47c2a3669d9cbdc670d23b15fd57959b04cf9`, `27f6975b37a677accb54142fcf64bfa0600d1566`.
+
+The Pydantic Literal[True] validator coerced numeric 1/1.0 to true before the repository's exact boolean isolation/teardown checks. Lax integers similarly converted booleans, strings and floats into exit codes, elapsed times and declared artifact byte counts. Require literal boolean true before schema coercion and strict integer fields; enforce exact integer type again at direct repository admission. Existing valid worker receipts, expected policy, artifact digest/length, lease/revocation and teardown requirements are preserved. No new execution authority or worker deployment.
+
+Isolated ASGI projection of pinned schema declarations and model_dump boundary: `python -m pytest -q --tb=no test_probe.py` RED 19 failed/6 passed (malformed receipts returned 200); GREEN `python -m pytest -q --tb=short test_probe.py` 25 passed in 0.29s; `python -m py_compile probe.py test_probe.py red_probe.py` exit 0. This is schema-level evidence, not actual isolation/teardown evidence. Repository regressions cover exact attestations/metadata, invalid HTTP receipts leaving the active claim intact, direct repository denial and subsequent valid completion. Full CI and independent review pending. No hosted mutation/activation or provider spend. Shared progress reconciliation deferred pending parallel branch integration.

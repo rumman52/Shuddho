@@ -1450,3 +1450,78 @@ def test_sandbox_subprocess_accepts_explicit_control_continue_and_reports_result
     assert completion[0]["exit_code"] == 0
     assert completion[0]["sandbox_destroyed"] is True
     assert completion[0]["network_isolated"] is True
+
+
+@pytest.mark.parametrize("field", ["sandbox_destroyed", "network_isolated", "filesystem_isolated", "environment_sanitized"])
+@pytest.mark.parametrize("value", [1, 1.0, False])
+def test_sandbox_completion_schema_requires_literal_boolean_attestation(field, value):
+    from pydantic import ValidationError
+    from services.coworker.sandbox_schemas import SandboxWorkerCompletion
+
+    with pytest.raises(ValidationError):
+        SandboxWorkerCompletion.model_validate({
+            **completion_observation(), "worker_id": "worker-a", field: value,
+        })
+
+
+@pytest.mark.parametrize("field", ["exit_code", "elapsed_ms"])
+@pytest.mark.parametrize("value", [False, 0.0, "0"])
+def test_sandbox_completion_schema_requires_exact_integer_metadata(field, value):
+    from pydantic import ValidationError
+    from services.coworker.sandbox_schemas import SandboxWorkerCompletion
+
+    with pytest.raises(ValidationError):
+        SandboxWorkerCompletion.model_validate({
+            **completion_observation(), "worker_id": "worker-a", field: value,
+        })
+
+
+@pytest.mark.parametrize("value", [1, 1.0, False])
+def test_sandbox_failure_schema_requires_literal_teardown_attestation(value):
+    from pydantic import ValidationError
+    from services.coworker.sandbox_schemas import SandboxWorkerFailure
+
+    with pytest.raises(ValidationError):
+        SandboxWorkerFailure(worker_id="worker-a", error_code="sandbox_timeout", sandbox_destroyed=value)
+
+
+@pytest.mark.parametrize("value", [True, 1.0, "1"])
+def test_sandbox_artifact_schema_requires_exact_byte_count(value):
+    from pydantic import ValidationError
+    from services.coworker.sandbox_schemas import SandboxWorkerCompletion
+
+    body = completion_observation(b"a")
+    body["artifact"]["byte_size"] = value
+    with pytest.raises(ValidationError):
+        SandboxWorkerCompletion.model_validate({**body, "worker_id": "worker-a"})
+
+
+def test_sandbox_http_rejects_coerced_worker_evidence_without_losing_claim(container, signed_client):
+    settings = enable_sandbox(container)
+    owner = account(container)
+    session = create_session(container, owner, "sandbox-exact-evidence")
+    prepared = container.sandbox.prepare_execution(
+        owner, session["id"], SandboxExecutionCreate(source="print(1)"),
+    )
+    worker = "sandbox-worker-exact"
+    assert container.sandbox.claim_executions(worker)[0]["id"] == prepared["id"]
+    client, _ = signed_client
+    headers = {"X-Shuddho-Sandbox-Worker-Token": settings.sandbox_worker_token}
+    endpoint = f'/api/v1/internal/sandbox-worker/executions/{prepared["id"]}'
+    body = {**completion_observation(), "worker_id": worker}
+    for invalid in ({"network_isolated": 1}, {"sandbox_destroyed": 1.0}, {"exit_code": False}, {"elapsed_ms": "12"}):
+        response = client.post(endpoint + "/complete", json={**body, **invalid}, headers=headers)
+        assert response.status_code == 422, response.text
+    response = client.post(endpoint + "/fail", json={"worker_id": worker, "error_code": "sandbox_timeout",
+        "sandbox_destroyed": 1}, headers=headers)
+    assert response.status_code == 422, response.text
+    with container.repository.sessions() as db:
+        row = db.get(SandboxExecution, prepared["id"])
+        assert row.state == "running" and row.claimed_by == worker and row.lease_until is not None
+        assert row.result is None or not row.result
+    # The direct repository boundary also rejects bool-as-int metadata.
+    with pytest.raises(CoworkerError, match="metadata is invalid"):
+        container.sandbox.complete_execution(worker, prepared["id"], {**body, "exit_code": False})
+    valid = client.post(endpoint + "/complete", json=body, headers=headers)
+    assert valid.status_code == 200, valid.text
+    assert valid.json()["state"] == "succeeded"
