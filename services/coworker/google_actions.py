@@ -34,6 +34,7 @@ USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 GMAIL_MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 GMAIL_HISTORY_URL = "https://gmail.googleapis.com/gmail/v1/users/me/history"
+MAX_GMAIL_HISTORY_CHANGES = 100
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_WATCH_URL = "https://gmail.googleapis.com/gmail/v1/users/me/watch"
 GMAIL_STOP_URL = "https://gmail.googleapis.com/gmail/v1/users/me/stop"
@@ -395,7 +396,7 @@ class GoogleActions:
                 "GET",
                 GMAIL_HISTORY_URL,
                 token=access_token,
-                params={"startHistoryId": cursor, "maxResults": "100"},
+                params={"startHistoryId": cursor, "maxResults": str(MAX_GMAIL_HISTORY_CHANGES)},
             )
             next_cursor = listing.get("historyId") or cursor
             if (
@@ -438,14 +439,20 @@ class GoogleActions:
                                 ids.add(message_id)
                                 if field == "labelsRemoved":
                                     inbox_removed.add(message_id)
-            if listing.get("nextPageToken") or len(ids | deleted) > max_items:
-                # Never advance a history cursor while omitting unread changes.
+            if (
+                listing.get("nextPageToken")
+                or len(ids | deleted) > MAX_GMAIL_HISTORY_CHANGES
+            ):
+                # Bound provider lookups while tolerating unrelated SENT/DRAFT
+                # traffic between Inbox notifications.
                 raise GoogleFailure("provider_snapshot_limit", definitive=True)
             ids.difference_update(deleted)
+        active_count = 0
         for message_id in sorted(ids):
             change = await self._gmail_message(access_token, message_id)
             if change is not None:
                 changes.append(change)
+                active_count += 1
             elif cursor is not None and message_id in inbox_removed:
                 # Remove archived/trash messages without persisting new SENT/DRAFT IDs.
                 changes.append({
@@ -454,6 +461,9 @@ class GoogleActions:
                     "state": "deleted",
                     "payload": {"kind": "email", "message_id": message_id},
                 })
+        if active_count > max_items:
+            # Do not advance a cursor while omitting admitted Inbox messages.
+            raise GoogleFailure("provider_snapshot_limit", definitive=True)
         for message_id in sorted(deleted):
             changes.append({
                 "resource_id": message_id,
