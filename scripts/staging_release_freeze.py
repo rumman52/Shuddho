@@ -617,10 +617,10 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
     }
 
 
-def json_object(response: httpx.Response, label: str) -> dict:
-    if response.status_code != 200:
+def json_object(response: httpx.Response, label: str, *, expected_status: int = 200) -> dict:
+    if response.status_code != expected_status:
         raise StagingReleaseFreezeError(
-            f"{label} returned HTTP {response.status_code}; expected 200."
+            f"{label} returned HTTP {response.status_code}; expected {expected_status}."
         )
     if response.headers.get("content-encoding", "identity").lower().strip() != "identity":
         raise StagingReleaseFreezeError(f"{label} returned an unsupported content encoding.")

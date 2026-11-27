@@ -21,7 +21,9 @@ from scripts.release_contract import pilot_canonical_only_capabilities_disabled
 from scripts.day10_release_decision import pilot_authorization_terms, read_json, read_json_with_sha
 from scripts.ruke_pilot_eval import _read_evidence_bytes, immutable_write, strict_json_loads
 from scripts.staging_api_exercise import env_secret, require_https_base
-from scripts.staging_release_freeze import api_runtime_capabilities_match_rollout
+from scripts.staging_release_freeze import (
+    StagingReleaseFreezeError, api_runtime_capabilities_match_rollout, json_object,
+)
 from scripts.staging_cohort_admission import (
     CohortAdmissionFailure,
     assert_denied_unprovisioned,
@@ -120,6 +122,20 @@ def require_exact_pilot_members(settings: Settings, tokens: list[str],
     return member_ids, denied_id
 
 
+def read_live_json(client: httpx.Client, path: str, token: str, *,
+                   expected_status: int, label: str) -> dict:
+    """Use the same bounded, strict JSON reader as the staging release freeze."""
+    try:
+        with client.stream(
+            "GET", path,
+            headers={"Authorization": "Bearer " + token, "Accept-Encoding": "identity"},
+        ) as response:
+            return json_object(response, label, expected_status=expected_status)
+    except (StagingReleaseFreezeError, httpx.HTTPError):
+        # Never expose response bytes, token, or a transport exception.
+        raise PilotVerificationFailure(label + " was not verified.") from None
+
+
 def probe_access(client: httpx.Client, member_tokens: list[str], denied_token: str,
                  member_ids: list[str]) -> None:
     """Bind each successful live account read to its prevalidated member token."""
@@ -129,22 +145,14 @@ def probe_access(client: httpx.Client, member_tokens: list[str], denied_token: s
             or len(set(member_ids)) != len(member_ids)):
         raise PilotVerificationFailure("Pilot member identity list was not verified.")
     for token, expected_id in zip(member_tokens, member_ids):
-        response = client.get("/api/v1/me", headers={"Authorization": "Bearer " + token})
-        if response.status_code != 200:
-            raise PilotVerificationFailure("A pilot member was not admitted by the live API.")
-        try:
-            account = response.json()
-        except ValueError:
-            raise PilotVerificationFailure("Pilot member identity was not verified.") from None
+        account = read_live_json(
+            client, "/api/v1/me", token, expected_status=200, label="Pilot member identity",
+        )
         if not isinstance(account, dict) or account.get("account_id") != expected_id:
             raise PilotVerificationFailure("Pilot member identity was not verified.")
-    denied = client.get("/api/v1/me", headers={"Authorization": "Bearer " + denied_token})
-    if denied.status_code != 403:
-        raise PilotVerificationFailure("The live API did not deny the nonmember with HTTP 403.")
-    try:
-        body = denied.json()
-    except ValueError:
-        raise PilotVerificationFailure("Nonmember denial did not return JSON.") from None
+    body = read_live_json(
+        client, "/api/v1/me", denied_token, expected_status=403, label="Nonmember denial",
+    )
     if not isinstance(body, dict) or not isinstance(body.get("error"), dict) or (
             body["error"].get("code") != "cohort_not_enabled"):
         raise PilotVerificationFailure("Nonmember denial did not return cohort_not_enabled.")
@@ -154,17 +162,9 @@ def probe_access(client: httpx.Client, member_tokens: list[str], denied_token: s
 def verify_live_runtime(client: httpx.Client, token: str, rollout: dict, revision: str,
                         members_checked: int) -> None:
     """Pin the admitted API to the exact reviewed source, full flags and cohort."""
-    response = client.get(
-        "/api/v1/runtime-manifest", headers={"Authorization": "Bearer " + token},
+    runtime = read_live_json(
+        client, "/api/v1/runtime-manifest", token, expected_status=200, label="Live API identity",
     )
-    if response.status_code != 200:
-        raise PilotVerificationFailure("The authenticated runtime manifest was not available.")
-    try:
-        runtime = response.json()
-    except ValueError:
-        raise PilotVerificationFailure("The runtime manifest was not valid JSON.") from None
-    if not isinstance(runtime, dict):
-        raise PilotVerificationFailure("The runtime manifest was not an object.")
     capabilities = runtime.get("capabilities")
     declared = rollout.get("capabilities")
     cohort = runtime.get("cohort")
