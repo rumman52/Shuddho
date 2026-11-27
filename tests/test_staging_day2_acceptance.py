@@ -19,11 +19,18 @@ def proofs():
                     'environment': 'staging', 'rollout_manifest_sha256': '3' * 64,
                     'provider_policy_sha256': 'e' * 64,
                     'build_reference': 'sha256:immutable-staging-api-worker-build',
-                    'deployment_reference': 'render-staging-change-ticket-123'},
+                    'deployment_reference': 'render-staging-change-ticket-123',
+                    'build_digest': '4' * 64, 'schema_revision': '0073_worker_runtime_identity',
+                    'model_provider': 'deepseek', 'model_id': 'deepseek-flash',
+                    'task_queue': 'shuddho-documents-v1',
+                    'runtime_identity_sha256': '5' * 64},
     }
     run = {
         'status': 'passed', 'release_id': 'day2-001', 'source_revision': SHA,
         'runtime_manifest_sha256': DIGEST,
+        'build_digest': '4' * 64, 'schema_revision': '0073_worker_runtime_identity',
+        'model_provider': 'deepseek', 'model_id': 'deepseek-flash',
+        'task_queue': 'shuddho-documents-v1', 'runtime_identity_sha256': '5' * 64,
         'document_id': 'doc-a', 'document_version_id': 'ver-a', 'document_sha256': '1' * 64,
         'task_id': 'task-a', 'workflow_id': 'shuddho-task-task-a',
         'artifact_id': 'artifact-a', 'artifact_sha256': '2' * 64, 'artifact_bytes': 220,
@@ -81,7 +88,10 @@ def proofs():
         'content_anchor_verification': 'passed',
         'document_outbox': {'task_id': 'task-a', 'effect_count': 1,
                             'delivered': True, 'dispatch_attempts': 1},
-        'worker': {'id': 'worker-a', 'task_queue': 'staging-temporal', 'source_revision': SHA,
+        'worker': {'id': 'worker-a', 'task_queue': 'shuddho-documents-v1', 'source_revision': SHA,
+                   'build_digest': '4' * 64, 'schema_revision': '0073_worker_runtime_identity',
+                   'model_provider': 'deepseek', 'model_id': 'deepseek-flash',
+                   'runtime_identity_sha256': '5' * 64,
                    'heartbeat_before': '2026-11-12T11:00:00+00:00',
                    'heartbeat_after': '2026-11-12T11:01:00+00:00'},
     }
@@ -826,4 +836,35 @@ def test_day2_acceptance_requires_model_receipt_carried_unchanged_into_restore()
     proof_set = list(proofs())
     proof_set[3]["model_evidence"]["model"] = "different-model"
     with pytest.raises(gate.Day2AcceptanceFailure, match="model_evidence"):
+        check(*proof_set)
+
+
+def test_day2_acceptance_rejects_model_identity_different_from_frozen_release():
+    proof_set = list(proofs())
+    proof_set[1]["model_evidence"]["model"] = "different-model"
+    proof_set[2]["model_evidence"]["model"] = "different-model"
+    proof_set[3]["model_evidence"]["model"] = "different-model"
+    with pytest.raises(gate.Day2AcceptanceFailure, match="model"):
+        check(*proof_set)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("build_digest", "f" * 64),
+    ("schema_revision", "0072_merge_0071_heads"),
+    ("model_provider", "gemma"),
+    ("model_id", "different-model"),
+    ("task_queue", "unreviewed-queue"),
+    ("runtime_identity_sha256", "0" * 64),
+])
+def test_day2_acceptance_rejects_worker_identity_drift(field, value):
+    proof_set = list(proofs())
+    proof_set[1]["worker"][field] = value
+    with pytest.raises(gate.Day2AcceptanceFailure, match="worker|identity|runtime"):
+        check(*proof_set)
+
+
+def test_day2_acceptance_requires_release_build_and_schema_identity():
+    proof_set = list(proofs())
+    del proof_set[0]["release"]["build_digest"]
+    with pytest.raises(gate.Day2AcceptanceFailure, match="build|identity"):
         check(*proof_set)
