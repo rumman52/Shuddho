@@ -655,6 +655,8 @@ def test_pilot_live_evidence_is_strict_bounded_and_streamed(target, variant):
         if is_selected:
             selected_requests.append(request)
             return httpx.Response(status, headers=headers, stream=selected)
+        if token == denied_token:
+            return httpx.Response(403, json={"error": {"code": "cohort_not_enabled"}})
         return httpx.Response(200, json={"account_id": members[tokens.index(token)]})
 
     with httpx.Client(base_url="https://synthetic.invalid", transport=httpx.MockTransport(handler)) as client:
