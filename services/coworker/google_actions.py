@@ -22,6 +22,9 @@ SCOPES = {
     "email": "https://www.googleapis.com/auth/gmail.send",
     "calendar": "https://www.googleapis.com/auth/calendar.events.owned",
     "drive": "https://www.googleapis.com/auth/drive.file",
+    # Gmail's metadata scope cannot be combined with messages.list labelIds.
+    # The initial Inbox-only bootstrap requires gmail.readonly; message.get
+    # still requests format=metadata and only Inbox-labelled items are stored.
     "email_read": "https://www.googleapis.com/auth/gmail.readonly",
     "calendar_read": "https://www.googleapis.com/auth/calendar.readonly",
 }
@@ -299,7 +302,10 @@ class GoogleActions:
         text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
         return re.sub(r"\s+", " ", text).strip()[:limit]
 
-    async def _gmail_message(self, access_token: str, message_id: str) -> dict:
+    async def _gmail_message(self, access_token: str, message_id: str) -> dict | None:
+        # Validate the provider resource ID before interpolating it into a URL.
+        if not isinstance(message_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", message_id):
+            raise GoogleFailure("provider_response_invalid", definitive=True)
         value = await self.request(
             "GET",
             GMAIL_MESSAGES_URL + "/" + message_id,
@@ -309,6 +315,21 @@ class GoogleActions:
                 "metadataHeaders": ["From", "To", "Cc", "Subject", "Date"],
             },
         )
+        resource_id = value.get("id")
+        history_id = value.get("historyId")
+        label_ids = value.get("labelIds")
+        if (
+            resource_id != message_id
+            or not isinstance(history_id, str)
+            or not history_id.isdecimal()
+            or not isinstance(label_ids, list)
+            or any(not isinstance(label, str) or not label for label in label_ids)
+        ):
+            raise GoogleFailure("provider_response_invalid", definitive=True)
+        # The connected-read contract is Inbox-only. A messagesAdded event
+        # can describe SENT/DRAFT mail as well as Inbox.
+        if "INBOX" not in label_ids:
+            return None
         headers = self._header_map(value.get("payload") or {})
         internal = value.get("internalDate")
         try:
@@ -318,15 +339,6 @@ class GoogleActions:
             ).isoformat()
         except (TypeError, ValueError, OverflowError):
             received_at = None
-        resource_id = value.get("id")
-        history_id = value.get("historyId") or "0"
-        if (
-            not isinstance(resource_id, str)
-            or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", resource_id)
-            or not isinstance(history_id, str)
-            or not history_id.isdecimal()
-        ):
-            raise GoogleFailure("provider_response_invalid", definitive=True)
         return {
             "resource_id": resource_id,
             "provider_version": history_id,
@@ -361,13 +373,24 @@ class GoogleActions:
                 token=access_token,
                 params={"maxResults": str(max_items), "labelIds": "INBOX"},
             )
-            ids = [
-                item["id"] for item in listing.get("messages", [])
-                if isinstance(item, dict)
-                and isinstance(item.get("id"), str)
-                and re.fullmatch(r"[A-Za-z0-9_-]{1,256}", item["id"])
-            ][:max_items]
+            messages = listing.get("messages", [])
+            if not isinstance(messages, list):
+                raise GoogleFailure("provider_response_invalid", definitive=True)
+            if listing.get("nextPageToken") or len(messages) > max_items:
+                # Do not commit a cursor for a partial Inbox bootstrap.
+                raise GoogleFailure("provider_snapshot_limit", definitive=True)
+            ids = []
+            for item in messages:
+                message_id = item.get("id") if isinstance(item, dict) else None
+                if not isinstance(message_id, str) or not re.fullmatch(
+                    r"[A-Za-z0-9_-]{1,256}", message_id
+                ):
+                    raise GoogleFailure("provider_response_invalid", definitive=True)
+                ids.append(message_id)
+            ids = sorted(set(ids))
         else:
+            if not isinstance(cursor, str) or not cursor.isdecimal():
+                raise GoogleFailure("provider_response_invalid", definitive=True)
             listing = await self.request(
                 "GET",
                 GMAIL_HISTORY_URL,
@@ -375,26 +398,62 @@ class GoogleActions:
                 params={"startHistoryId": cursor, "maxResults": "100"},
             )
             next_cursor = listing.get("historyId") or cursor
-            if not isinstance(next_cursor, str) or not next_cursor.isdecimal():
+            if (
+                not isinstance(next_cursor, str)
+                or not next_cursor.isdecimal()
+                or int(next_cursor) < int(cursor)
+            ):
                 raise GoogleFailure("provider_response_invalid", definitive=True)
-            ids = []
-            for history in listing.get("history", []):
+            history_items = listing.get("history", [])
+            if not isinstance(history_items, list):
+                raise GoogleFailure("provider_response_invalid", definitive=True)
+            ids: set[str] = set()
+            inbox_removed: set[str] = set()
+            for history in history_items:
                 if not isinstance(history, dict):
-                    continue
-                for entry in history.get("messagesAdded", []):
-                    message = entry.get("message") if isinstance(entry, dict) else None
-                    if isinstance(message, dict) and isinstance(message.get("id"), str):
-                        ids.append(message["id"])
-                for entry in history.get("messagesDeleted", []):
-                    message = entry.get("message") if isinstance(entry, dict) else None
-                    if isinstance(message, dict) and isinstance(message.get("id"), str):
-                        deleted.add(message["id"])
-            ids = list(dict.fromkeys(ids))
-            if listing.get("nextPageToken") or len(ids) + len(deleted) > max_items:
+                    raise GoogleFailure("provider_response_invalid", definitive=True)
+                for field in ("messagesAdded", "messagesDeleted", "labelsAdded", "labelsRemoved"):
+                    entries = history.get(field, [])
+                    if not isinstance(entries, list):
+                        raise GoogleFailure("provider_response_invalid", definitive=True)
+                    for entry in entries:
+                        message = entry.get("message") if isinstance(entry, dict) else None
+                        message_id = message.get("id") if isinstance(message, dict) else None
+                        if not isinstance(message_id, str) or not re.fullmatch(
+                            r"[A-Za-z0-9_-]{1,256}", message_id
+                        ):
+                            raise GoogleFailure("provider_response_invalid", definitive=True)
+                        if field == "messagesDeleted":
+                            deleted.add(message_id)
+                        elif field == "messagesAdded":
+                            ids.add(message_id)
+                        else:
+                            label_ids = entry.get("labelIds")
+                            if (
+                                not isinstance(label_ids, list)
+                                or any(not isinstance(label, str) or not label for label in label_ids)
+                            ):
+                                raise GoogleFailure("provider_response_invalid", definitive=True)
+                            if "INBOX" in label_ids:
+                                ids.add(message_id)
+                                if field == "labelsRemoved":
+                                    inbox_removed.add(message_id)
+            if listing.get("nextPageToken") or len(ids | deleted) > max_items:
                 # Never advance a history cursor while omitting unread changes.
                 raise GoogleFailure("provider_snapshot_limit", definitive=True)
-        for message_id in ids:
-            changes.append(await self._gmail_message(access_token, message_id))
+            ids.difference_update(deleted)
+        for message_id in sorted(ids):
+            change = await self._gmail_message(access_token, message_id)
+            if change is not None:
+                changes.append(change)
+            elif cursor is not None and message_id in inbox_removed:
+                # Remove archived/trash messages without persisting new SENT/DRAFT IDs.
+                changes.append({
+                    "resource_id": message_id,
+                    "provider_version": next_cursor,
+                    "state": "deleted",
+                    "payload": {"kind": "email", "message_id": message_id},
+                })
         for message_id in sorted(deleted):
             changes.append({
                 "resource_id": message_id,
@@ -412,11 +471,8 @@ class GoogleActions:
             "showDeleted": "true",
         }
         if cursor is not None:
-            params = {
-                "maxResults": str(max_items),
-                "showDeleted": "true",
-                "syncToken": cursor,
-            }
+            # Preserve the initial sync query when applying the delta token.
+            params["syncToken"] = cursor
         result = await self.request(
             "GET",
             EVENTS_URL,
@@ -426,8 +482,11 @@ class GoogleActions:
         next_cursor = result.get("nextSyncToken")
         if not isinstance(next_cursor, str) or not next_cursor or result.get("nextPageToken"):
             raise GoogleFailure("provider_snapshot_limit", definitive=True)
+        items = result.get("items", [])
+        if not isinstance(items, list) or len(items) > max_items:
+            raise GoogleFailure("provider_response_invalid", definitive=True)
         changes = []
-        for item in result.get("items", [])[:max_items]:
+        for item in items:
             if not isinstance(item, dict):
                 continue
             resource_id = item.get("id")
