@@ -141,6 +141,15 @@ def first_attempt_identity_ok(row: object) -> bool:
     return False
 
 
+def holdout_cell(row: dict) -> tuple[str, str] | None:
+    """Type-check untrusted JSON before using a cell as a hash key."""
+    workflow, language = row.get("workflow"), row.get("language")
+    if not isinstance(workflow, str) or not isinstance(language, str):
+        return None
+    cell = (workflow, language)
+    return cell if cell in CELLS else None
+
+
 def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if not bound(value, release, revision, digest) or value.get("custody_established") is not True:
         return False
@@ -185,8 +194,8 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
         if (row["attempt_status"] != "succeeded"
                 and (row.get("accepted") is not False or row.get("deterministic_pass") is not False)):
             return False
-        cell = (row.get("workflow"), row.get("language"))
-        if cell not in CELLS or type(row.get("accepted")) is not bool:
+        cell = holdout_cell(row)
+        if cell is None or type(row.get("accepted")) is not bool:
             return False
         # Security is an absolute NO-GO across all 40 cases, even when an
         # unsafe case is already rejected on human-acceptance quality.
@@ -557,7 +566,7 @@ def first_run_matches_holdout(
         for row in rows:
             if (not isinstance(row, dict) or not isinstance(row.get("id"), str)
                     or not row["id"] or row["id"] in indexed
-                    or (row.get("workflow"), row.get("language")) not in CELLS):
+                    or holdout_cell(row) is None):
                 return False
             indexed[row["id"]] = row
     if set(first_by_id) != set(holdout_by_id):
