@@ -166,7 +166,9 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if not isinstance(reviewers, list) or len(reviewers) != 2:
         return False
     identities = {reviewer_identity(reviewer) for reviewer in reviewers}
-    if None in identities or len(identities) != 2:
+    # D may review if independent; the developer and corpus author may not.
+    excluded = set(custody_identities[1:])
+    if None in identities or len(identities) != 2 or not identities.isdisjoint(excluded):
         return False
     rows = value.get("cases")
     if not isinstance(rows, list) or len(rows) != 40:
@@ -256,7 +258,7 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
             adjudicator = reviewer_identity(final["adjudicator_id"])
             digest = final["evidence_note_sha256"]
             adjudicated_at = timestamp(final["adjudicated_at"])
-            if (adjudicator is None or adjudicator in identities
+            if (adjudicator is None or adjudicator in identities or adjudicator in excluded
                     or not isinstance(digest, str) or DIGEST.fullmatch(digest) is None
                     or adjudicated_at is None
                     or any(adjudicated_at <= observed for observed in review_times.values())):
