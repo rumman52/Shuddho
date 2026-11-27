@@ -336,6 +336,32 @@ def custody_receipt_ok(custody: object, manifest: dict | None = None) -> bool:
         return False
     return True
 
+def require_review_role_separation(evidence: dict, custody: dict) -> None:
+    """Reject known conflicts in claimed identities before protected corpus access.
+
+    D may participate as an independent reviewer, but neither a developer nor
+    the corpus author can score or adjudicate the candidate or comparator.
+    This mechanical check cannot authenticate the real people.
+    """
+    excluded = {reviewer_identity(custody.get(role))
+                for role in ("developer_id", "corpus_author_id")}
+    if None in excluded or len(excluded) != 2:
+        raise EvidenceError("reviewer role conflict: invalid custody role identities")
+    for section, field in (
+        ("reviews", "reviewer_id"), ("adjudications", "adjudicator_id"),
+        ("comparisons", "reviewer_id"), ("comparison_adjudications", "adjudicator_id"),
+    ):
+        rows = evidence.get(section)
+        if rows is None:
+            continue
+        if not isinstance(rows, list):
+            raise EvidenceError("reviewer role conflict: invalid review records")
+        for row in rows:
+            identity = reviewer_identity(row.get(field)) if isinstance(row, dict) else None
+            if identity is None or identity in excluded:
+                raise EvidenceError("reviewer role conflict: development or corpus author cannot review")
+
+
 def validate_evidence_binding(evidence: object, manifest_sha256: str) -> dict:
     """Bind the complete evidence JSON envelope to the exact frozen manifest."""
     if not isinstance(evidence, dict):
@@ -1299,6 +1325,8 @@ def main(argv=None) -> int:
             head = _exact_checkout_revision(ROOT)
             if manifest.get("candidate_revision") != head:
                 raise EvidenceError("manifest revision differs from exact checkout head; heldout corpus was not read")
+            if args.action == "evaluate":
+                require_review_role_separation(evidence, evidence["custody"])
             cases = validate_manifest(manifest, args.heldout, custody_verified=True)
             if args.action == "prepare-blind":
                 if not args.candidate or not args.competitor_outputs or not args.blinding_key:

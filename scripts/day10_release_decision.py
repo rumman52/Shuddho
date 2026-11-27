@@ -21,6 +21,7 @@ from scripts.cohort_release_gate import evaluate_release  # noqa: E402
 from scripts.release_contract import pilot_canonical_only_capabilities_disabled  # noqa: E402
 from scripts.ruke_pilot_eval import (  # noqa: E402
     BUILD_DIGEST, OPERATED, REQUIRED_DAY9_CI, RUBRIC, canonical_sha256, operated_trace_ok,
+    comparison_evidence_recorded,
     validate_candidate_readbacks,
     _read_json_and_sha256 as read_bounded_json_with_sha,
     immutable_write, reviewer_identity, sha256 as sha256_bounded,
@@ -166,7 +167,9 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
     if not isinstance(reviewers, list) or len(reviewers) != 2:
         return False
     identities = {reviewer_identity(reviewer) for reviewer in reviewers}
-    if None in identities or len(identities) != 2:
+    # D may review if independent; the developer and corpus author may not.
+    excluded = set(custody_identities[1:])
+    if None in identities or len(identities) != 2 or not identities.isdisjoint(excluded):
         return False
     rows = value.get("cases")
     if not isinstance(rows, list) or len(rows) != 40:
@@ -256,7 +259,7 @@ def holdout_ok(value: object, release: str, revision: str, digest: str) -> bool:
             adjudicator = reviewer_identity(final["adjudicator_id"])
             digest = final["evidence_note_sha256"]
             adjudicated_at = timestamp(final["adjudicated_at"])
-            if (adjudicator is None or adjudicator in identities
+            if (adjudicator is None or adjudicator in identities or adjudicator in excluded
                     or not isinstance(digest, str) or DIGEST.fullmatch(digest) is None
                     or adjudicated_at is None
                     or any(adjudicated_at <= observed for observed in review_times.values())):
@@ -446,6 +449,31 @@ def golden_ok(value: object, release: str, revision: str, digest: str) -> bool:
             and value.get("owner_isolation_checked") is True)
 
 
+
+
+def day9_original_evidence_gate_ok(first_run: object, holdout: object) -> bool:
+    """A later decision must not reverse a preserved first-run qualification veto.
+
+    Reconcile the existing Day 9 claims, not new self-attestations. The
+    independently authenticated original bytes remain an operator prerequisite.
+    """
+    if not isinstance(first_run, dict) or not isinstance(holdout, dict):
+        return False
+    if any(first_run.get(field) is not True for field in (
+        "operator_evidence_gate", "candidate_readback_consistency_pass",
+        "repository_checks_reported_pass", "custody_claim_submitted",
+        "generation_identity_verified",
+    )):
+        return False
+    findings = first_run.get("unresolved_high_severity_failures")
+    receipt = first_run.get("generation_identity_receipt_sha256")
+    return (
+        isinstance(findings, list) and not findings
+        and isinstance(receipt, str) and DIGEST.fullmatch(receipt) is not None
+        and holdout.get("generation_identity_verified") is True
+        and holdout.get("generation_identity_receipt_sha256") == receipt
+        and comparison_evidence_recorded(first_run.get("comparison"))
+    )
 
 
 def first_run_matches_holdout(
@@ -834,6 +862,7 @@ def decide(rollout: dict, rollout_hash: str, *, revision: str, artifacts: dict[s
          and isinstance(model, dict) and isinstance(model.get("provider_model"), str)
          and golden.get("provider_model") == model["provider_model"])
     first_run = artifacts.get("day9_first_run")
+    need("day9_original_evidence_gate", day9_original_evidence_gate_ok(first_run, artifacts.get("holdout")))
     final_readbacks = artifacts.get("final_runtime_readbacks")
     need("final_runtime_matches_frozen_day9_identity", final_runtime_matches_frozen_day9(
         first_run, final_readbacks, api, worker, schema, model, artifacts.get("quality"),
