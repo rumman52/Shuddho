@@ -371,7 +371,10 @@ def load_owned(
     if scenario in {"daily_coworker", "weekly_coworker"}:
         require_future_expiry(automation.get("expires_at"))
         if (
-            automation.get("schedule_applied_revision") != automation.get("revision")
+            type(automation.get("revision")) is not int
+            or automation["revision"] < 1
+            or type(automation.get("schedule_applied_revision")) is not int
+            or automation["schedule_applied_revision"] != automation["revision"]
             or automation.get("schedule_applied_enabled") is not True
             or automation.get("schedule_error_code")
         ):
@@ -412,6 +415,9 @@ def prepare(args: argparse.Namespace) -> dict:
             client, token, args.rollout, args.provider_policy_plan
         )
         current = load_owned(client, token, args.automation_id, args.scenario)
+    revision = current["automation"].get("revision")
+    if type(revision) is not int or revision < 1:
+        raise ScheduledProfileProbeFailure("Active automation revision is invalid.")
     if args.scenario == "daily_coworker":
         require_daily_policy(current["automation"])
     state = {
@@ -424,7 +430,7 @@ def prepare(args: argparse.Namespace) -> dict:
         ).strip(),
         "owner_id": current["owner_id"],
         "automation_id": args.automation_id,
-        "automation_revision": int(current["automation"]["revision"]),
+        "automation_revision": revision,
         "timezone": current["automation"]["timezone"],
         "schedule": current["automation"]["schedule"],
         "run_profile": current["automation"]["run_profile"],
@@ -455,10 +461,13 @@ def prepare(args: argparse.Namespace) -> dict:
 def verify(args: argparse.Namespace) -> dict:
     require_guard()
     state = load_json(args.state, "scheduled-profile state")
-    if state.get("schema_version") != STATE_SCHEMA_VERSION:
+    if type(state.get("schema_version")) is not int or state["schema_version"] != STATE_SCHEMA_VERSION:
         raise ScheduledProfileProbeFailure(
             "Scheduled-profile state has an unexpected schema."
         )
+    revision = state.get("automation_revision")
+    if type(revision) is not int or revision < 1:
+        raise ScheduledProfileProbeFailure("Prepared automation revision is invalid.")
     scenario = str(state.get("scenario") or "")
     if scenario not in SCENARIOS:
         raise ScheduledProfileProbeFailure("Scheduled-profile scenario is unsupported.")
@@ -501,21 +510,27 @@ def verify(args: argparse.Namespace) -> dict:
                 daily_scope = current["daily_scope"] if scenario == "daily_coworker" else {}
                 if scenario == "daily_coworker":
                     if (not daily_scope
+                            or type(state.get("goal_revision")) is not int
+                            or type(daily_scope.get("goal_revision")) is not int
                             or any(state.get(field) != daily_scope.get(field) for field in (
                                 "goal_id", "goal_revision", "project_id", "authorized_document_ids"
                             ))):
                         raise ScheduledProfileProbeFailure(
-                            "Owner-approved goal or selected document scope changed since preparation."
+                            "Owner-approved goal revision or selected document scope changed since preparation."
                         )
                 if scenario == "daily_coworker":
                     require_prepared_daily_profile(state, current["automation"])
-                if int(current["automation"]["revision"]) != int(state["automation_revision"]):
+                if (type(current["automation"].get("revision")) is not int
+                        or current["automation"]["revision"] != revision):
                     raise ScheduledProfileProbeFailure(
                         "Automation revision changed during the scenario."
                     )
                 if (
                     current["automation"].get("expires_at") != state.get("expires_at")
-                    or current["automation"].get("schedule_applied_revision") != state.get("schedule_applied_revision")
+                    or type(state.get("schedule_applied_revision")) is not int
+                    or state["schedule_applied_revision"] != revision
+                    or type(current["automation"].get("schedule_applied_revision")) is not int
+                    or current["automation"]["schedule_applied_revision"] != revision
                     or current["automation"].get("schedule_applied_enabled") is not True
                 ):
                     raise ScheduledProfileProbeFailure(
