@@ -1273,3 +1273,62 @@ def test_followup_after_source_revocation_does_not_resend_old_grounded_answer(co
         assert db.get(ConversationMessage, data[4]["id"]).assistant_reply["text"] == "OLD PRIVATE FACT [[src-1]]"
         assert db.scalar(select(AgentRun)) is None
         assert db.scalar(select(AgentOutbox)) is None
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("grounded", [False, True])
+def test_cancelled_provider_persists_interrupted_reply_without_readmission(container, streaming, grounded):
+    from services.coworker.models import AgentOutbox, AgentRun
+
+    data = setup(container)
+    service, _, owner, conversation, message = data
+    if grounded:
+        _attached_chat_source(container, data, b"Renewal date: 17 March 2027.")
+
+    class BlockingModel:
+        def __init__(self):
+            self.entered = asyncio.Event()
+            self.calls = 0
+
+        async def generate(self, _messages):
+            self.calls += 1
+            self.entered.set()
+            await asyncio.Event().wait()
+
+        async def stream(self, _messages):
+            self.calls += 1
+            yield "Uncommitted reply. [[src-1]]" if grounded else "Uncommitted reply."
+            self.entered.set()
+            await asyncio.Event().wait()
+
+    async def exercise():
+        model = BlockingModel()
+        service.model = model
+        args = (owner, conversation["id"], message["id"], 1)
+        if streaming:
+            claim, queue = await service.prepare_stream(*args)
+            task = next(iter(service._stream_tasks))
+        else:
+            task = asyncio.create_task(service.reply(*args))
+        await asyncio.wait_for(model.entered.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with service.sessions() as db:
+            saved = db.get(ConversationMessage, message["id"]).assistant_reply
+            assert db.scalar(select(ProviderLease)) is None
+            assert db.scalar(select(AgentRun)) is None
+            assert db.scalar(select(AgentOutbox)) is None
+        assert saved["state"] == "interrupted"
+        assert saved["text"] == "" and not saved.get("sources")
+        assert await service.reply(*args) == saved
+        assert model.calls == 1
+        if streaming:
+            events = []
+            while not queue.empty():
+                events.append(queue.get_nowait())
+            assert events[-1] == ("final", saved)
+            if grounded:
+                assert all(event != "delta" for event, _ in events)
+
+    asyncio.run(exercise())
