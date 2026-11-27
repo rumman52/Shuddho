@@ -5,6 +5,7 @@ tests do not constitute a pilot admission or independently operated evidence.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -163,9 +164,12 @@ class Response:
     def __init__(self, status, body=None):
         self.status_code = status
         self.body = body
+        self.headers = {}
 
-    def json(self):
-        return self.body
+    def iter_bytes(self, chunk_size=65536):
+        raw = json.dumps(self.body).encode('utf-8')
+        for offset in range(0, len(raw), chunk_size):
+            yield raw[offset:offset + chunk_size]
 
 
 class Client:
@@ -173,10 +177,13 @@ class Client:
         self.responses = iter(responses)
         self.headers = []
 
-    def get(self, path, headers):
+    @contextmanager
+    def stream(self, method, path, headers):
+        assert method == "GET"
         assert path in {"/api/v1/me", "/api/v1/runtime-manifest"}
+        assert headers["Accept-Encoding"] == "identity"
         self.headers.append(headers["Authorization"])
-        return next(self.responses)
+        yield next(self.responses)
 
 
 def test_all_five_members_probed_then_nonmember_denied():
@@ -242,8 +249,8 @@ def test_duplicate_or_incomplete_expected_member_identity_list_is_denied():
 
 def test_member_http_200_with_malformed_json_fails_closed():
     class InvalidJSON(Response):
-        def json(self):
-            raise ValueError("response has no parseable JSON")
+        def iter_bytes(self, chunk_size=65536):
+            yield b'not valid JSON'
 
     members = [f"account-{i}" for i in range(5)]
     client = Client([InvalidJSON(200)])
