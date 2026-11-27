@@ -63,6 +63,7 @@ class ReadGoogle:
         self.gmail_watch_calls = 0
         self.message_labels = {"m1": ["INBOX"]}
         self.message_versions = {}
+        self.message_response_ids = {}
         self.history_response = None
         self.message_list_response = None
 
@@ -111,7 +112,7 @@ class ReadGoogle:
         if request.method == "GET" and url.startswith(GMAIL_MESSAGES_URL + "/"):
             message_id = url.rsplit("/", 1)[-1]
             return httpx.Response(200, json={
-                "id": message_id,
+                "id": self.message_response_ids.get(message_id, message_id),
                 "threadId": "t1",
                 "historyId": self.message_versions.get(message_id, "101"),
                 "internalDate": "1790000000000",
@@ -1831,6 +1832,7 @@ def test_stale_full_sync_cannot_cross_cursor_reset_generation(container, monkeyp
 
 def test_stale_invalid_cursor_cannot_reset_newer_cursor(container, monkeypatch):
     from services.coworker.connector_actions import ConnectorFailure
+from services.coworker.errors import CoworkerError
 
     enable_reads(container)
     owner = account(container)
@@ -2040,6 +2042,38 @@ def test_gmail_history_cursor_never_regresses(container):
     fake = enable_reads(container)
     adapter = container.credentials.provider_for("google")
     fake.history_response = {"historyId": "100", "history": []}
+
+    with pytest.raises(GoogleFailure) as rejected:
+        asyncio.run(adapter.read_email("read-access-token", "101", 30))
+    assert rejected.value.code == "provider_response_invalid"
+
+
+def test_gmail_bootstrap_overflow_never_commits_a_partial_cursor(container):
+    fake = enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    fake.message_list_response = {
+        "messages": [{"id": "m1"}],
+        "nextPageToken": "page-2",
+    }
+
+    with pytest.raises(CoworkerError) as rejected:
+        asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    assert rejected.value.code == "connector_read_failed"
+    assert container.connector_reads.repo.cursor(owner, grant["id"])["cursor"] is None
+
+
+def test_gmail_message_response_must_match_requested_resource_id(container):
+    fake = enable_reads(container)
+    adapter = container.credentials.provider_for("google")
+    fake.message_response_ids["m1"] = "m2"
+    fake.history_response = {
+        "historyId": "102",
+        "history": [{
+            "id": "102",
+            "messagesAdded": [{"message": {"id": "m1"}}],
+        }],
+    }
 
     with pytest.raises(GoogleFailure) as rejected:
         asyncio.run(adapter.read_email("read-access-token", "101", 30))
