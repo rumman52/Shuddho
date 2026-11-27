@@ -21,3 +21,5 @@
 | Activated | No |
 
 Next: finish exact-head CI, address failures without weakening gates, obtain independent review and operational prerequisites. Do not merge sibling alternatives concurrently.
+
+Additional integrated defect: JSON array/object workflow or language cells were used as hash keys, causing an uncaught TypeError and preventing a durable NO-GO decision. Test-first head `e36726e0cbe4d8e2be3cbb566eb785c8a13aace3`, [CI 46060638989](https://github.com/rumman52/Shuddho/actions/runs/46060638989): 10 intended failures, 4394 passed, 110 skipped, 6 warnings. A shared typed cell validator rejects malformed/unknown cells in both holdout and first-run binding. CLI tests require a write-once SOURCE_ONLY decision. New exact-head GREEN CI required.
