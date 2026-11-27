@@ -495,3 +495,47 @@ def test_postgres_claim_commit_serializes_with_drain_and_blocks_false_completion
                 # Preserve the primary regression failure; a failed cleanup is
                 # visible through the test's primary assertion/transaction.
                 pass
+
+
+def test_postgres_rejects_worker_insert_without_runtime_identity_context(repository):
+    """The source-revision GUC alone cannot authorize a legacy worker insert."""
+    from sqlalchemy import text
+
+    engine = repository.sessions.kw["bind"]
+    if engine.dialect.name != "postgresql":
+        pytest.skip("The worker identity trigger is a PostgreSQL production guard")
+
+    worker_id = str(uuid4())
+    queue = "cw11-unattested-identity-" + uuid4().hex
+    with pytest.raises(IntegrityError, match="deployment-attested runtime identity"):
+        with repository.sessions.begin() as db:
+            db.execute(text("SELECT set_config('shuddho.worker_source_revision', :revision, true)"), {"revision": REVISION})
+            db.add(WorkerInstance(
+                id=worker_id,
+                task_queue=queue,
+                source_revision=REVISION,
+                build_digest="a" * 64,
+                schema_revision="0073_worker_runtime_identity",
+                model_provider="deepseek",
+                model_id="deepseek-flash",
+                runtime_identity_sha256="b" * 64,
+                state="starting",
+            ))
+
+    with repository.sessions() as db:
+        assert db.get(WorkerInstance, worker_id) is None
+
+
+def test_postgres_rejects_worker_runtime_identity_mutation(repository):
+    from sqlalchemy import select
+    from services.coworker.errors import CoworkerError
+
+    engine = repository.sessions.kw["bind"]
+    if engine.dialect.name != "postgresql":
+        pytest.skip("The immutable worker identity trigger is a PostgreSQL production guard")
+
+    worker_id = repository.register_worker(task_queue=repository.settings.task_queue, source_revision=REVISION)
+    with pytest.raises(IntegrityError, match="runtime identity is immutable"):
+        with repository.sessions.begin() as db:
+            row = db.scalar(select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update())
+            row.build_digest = "f" * 64
