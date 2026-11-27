@@ -2078,3 +2078,42 @@ def test_gmail_message_response_must_match_requested_resource_id(container):
     with pytest.raises(GoogleFailure) as rejected:
         asyncio.run(adapter.read_email("read-access-token", "101", 30))
     assert rejected.value.code == "provider_response_invalid"
+
+
+def test_gmail_sent_mail_changes_do_not_block_or_persist_outside_inbox(container):
+    fake = enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+
+    sent_added = [f"sent-added-{index:02d}" for index in range(31)]
+    sent_deleted = [f"sent-deleted-{index:02d}" for index in range(31)]
+    fake.message_labels.update({message_id: ["SENT"] for message_id in sent_added})
+    fake.message_versions.update({message_id: "105" for message_id in sent_added})
+    fake.history_response = {
+        "historyId": "105",
+        "history": [
+            {"id": "102", "messagesAdded": [
+                {"message": {"id": message_id}} for message_id in sent_added
+            ]},
+            {"id": "103", "messagesDeleted": [
+                {"message": {"id": message_id}} for message_id in sent_deleted
+            ]},
+            {"id": "104", "labelsAdded": [
+                {"message": {"id": "m-inbox"}, "labelIds": ["INBOX"]}
+            ]},
+        ],
+    }
+
+    result = asyncio.run(container.connector_reads.sync(owner, grant["id"]))
+    assert result["cursor_recovered"] is False
+    assert result["deleted"] == 0
+    assert result["ignored"] == len(sent_deleted)
+    assert container.connector_reads.repo.cursor(owner, grant["id"])["cursor"] == "105"
+    with container.repository.sessions() as db:
+        rows = db.scalars(
+            select(ConnectorSnapshot).where(ConnectorSnapshot.grant_id == grant["id"])
+        ).all()
+        message_ids = {row.provider_resource_id for row in rows}
+    assert "m-inbox" in message_ids
+    assert not (set(sent_added) | set(sent_deleted)) & message_ids
