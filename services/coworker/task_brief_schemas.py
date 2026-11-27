@@ -30,6 +30,12 @@ class MemoryPin(BaseModel):
     expected_version: int = Field(ge=1, strict=True)
 
 
+def require_unique_memory_pins(pins: list[MemoryPin]) -> None:
+    ids = [pin.fact_id for pin in pins]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Select each memory fact only once")
+
+
 class TaskBriefMemorySelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -37,9 +43,7 @@ class TaskBriefMemorySelection(BaseModel):
 
     @model_validator(mode="after")
     def unique_memory_ids(self):
-        ids = [pin.fact_id for pin in self.memory_pins]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Select each memory fact only once")
+        require_unique_memory_pins(self.memory_pins)
         return self
 
 
@@ -92,7 +96,7 @@ class TaskBriefSuggestion(BaseModel):
 
 class TaskBriefProposeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    expected_sequence: int = Field(ge=1)
+    expected_sequence: int = Field(ge=1, strict=True)
     project_id: UUID | None = None
 
 class TaskBriefPreviewRequest(TaskBriefProposeRequest, TaskBriefMemorySelection):
