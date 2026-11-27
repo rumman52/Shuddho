@@ -1814,3 +1814,70 @@ def test_canonical_only_readback_cannot_differ_even_if_rehashed(role, value):
     frozen["candidate_identity"][f"{role}_readback_sha256"] = row["readback_sha256"]
     with pytest.raises(EvidenceError, match="readback"):
         validate_candidate_readbacks(frozen, rows)
+
+
+@pytest.mark.parametrize("section,field", [
+    ("reviews", "reviewer_id"),
+    ("adjudications", "adjudicator_id"),
+    ("comparisons", "reviewer_id"),
+    ("comparison_adjudications", "adjudicator_id"),
+])
+@pytest.mark.parametrize("claimed_identity", [
+    "developer-A", "DEVELOPER-A", "ｄｅｖｅｌｏｐｅｒ－Ａ",
+    "corpus-author-B", "CORPUS-AUTHOR-B",
+    "independent-D", "another-independent-reviewer",
+])
+def test_day9_conflicted_reviewer_roles_block_before_holdout(
+    external_dir, monkeypatch, capsys, section, field, claimed_identity,
+):
+    import scripts.ruke_pilot_eval as module
+
+    frozen = manifest()
+    manifest_path = external_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(frozen), encoding="utf-8")
+    receipt = {
+        "custodian_id": "independent-D", "developer_id": "developer-A",
+        "corpus_author_id": "corpus-author-B",
+        "independent_operator_review": "verified",
+        "custodian_positive_read_test": "allowed",
+        "developer_negative_read_test": "denied",
+        "exposure_history_reviewed": True,
+        "replacement_of_exposed_cases": True,
+        "frozen_inputs_sha256": frozen["corpus_sha256"],
+        "frozen_answers_sha256": frozen["answer_key_sha256"],
+        "rubric_sha256": frozen["rubric_sha256"],
+        "exposure_history_sha256": "d" * 64,
+        "access_log_sha256": "e" * 64,
+        "receipt_sha256": "f" * 64,
+        "verified_at": "2026-11-11T23:59:00Z",
+    }
+    assert custody_receipt_ok(receipt, frozen)
+    evidence_path = external_dir / "evidence.json"
+    evidence_path.write_text(json.dumps({
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "custody": receipt,
+        "candidate_readbacks": candidate_readbacks(frozen),
+        section: [{field: claimed_identity}],
+    }), encoding="utf-8")
+    # No actual repository qualification or holdout bytes are used here.
+    monkeypatch.setattr(module, "source_checks_ok", lambda *args: True)
+    monkeypatch.setattr(module, "_exact_checkout_revision", lambda *args: frozen["candidate_revision"])
+    accessed = []
+
+    def stop_before_read(*args, **kwargs):
+        accessed.append(True)
+        raise EvidenceError("synthetic stop before protected read")
+
+    monkeypatch.setattr(module, "validate_manifest", stop_before_read)
+    assert module.main([
+        "evaluate", "--manifest", str(manifest_path),
+        "--heldout", str(external_dir / "never-read.jsonl"), "--evidence", str(evidence_path),
+    ]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["release_authorization"] is False
+    if claimed_identity in {"independent-D", "another-independent-reviewer"}:
+        assert accessed == [True]
+        assert result["error"] == "synthetic stop before protected read"
+    else:
+        assert accessed == []
+        assert "reviewer role conflict" in result["error"]

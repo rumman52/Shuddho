@@ -1527,3 +1527,28 @@ def test_day10_final_canonical_only_authority_cannot_drift(monkeypatch):
     result = decision(monkeypatch, rollout, artifacts)
     assert result["decision"] == "SOURCE_ONLY"
     assert "final_runtime_matches_frozen_day9_identity" in result["blockers"]
+
+
+@pytest.mark.parametrize("role", ["developer_id", "corpus_author_id"])
+@pytest.mark.parametrize("alias", ["human-D1", "HUMAN-D2", "ｈｕｍａｎ－Ｄ１", "human-d3", "HUMAN-D３"])
+def test_day10_holdout_excludes_developer_and_corpus_author_from_review_roles(
+    monkeypatch, role, alias,
+):
+    rollout, artifacts = evidence()
+    holdout = artifacts["holdout"]
+    assert day10.holdout_ok(holdout, RELEASE, REV, HASH)
+    holdout["custody_receipt"][role] = alias
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(holdout)
+    assert not day10.holdout_ok(holdout, RELEASE, REV, HASH)
+    result = decision(monkeypatch, rollout, artifacts)
+    assert result["decision"] == "SOURCE_ONLY"
+    assert "independent_day9_holdout_36_of_40" in result["blockers"]
+
+
+def test_day10_independent_custodian_may_also_review_if_distinct_from_developer_and_author(monkeypatch):
+    rollout, artifacts = evidence()
+    holdout = artifacts["holdout"]
+    holdout["custody_receipt"]["custodian_id"] = "HUMAN-D1"
+    artifacts["day9_first_run"]["day10_holdout"] = deepcopy(holdout)
+    assert day10.holdout_ok(holdout, RELEASE, REV, HASH)
+    assert decision(monkeypatch, rollout, artifacts)["decision"] == "READY_FOR_OWNER_CONTROLLED_PILOT"
