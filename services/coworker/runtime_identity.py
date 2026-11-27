@@ -211,7 +211,7 @@ def runtime_manifest_payload(settings: Settings, repository) -> dict:
                 ):
                     providers.append(provider)
     return {
-        "source_revision": settings.source_revision or "unknown",
+        "source_revision": settings.source_revision,
         "environment": settings.environment,
         "capabilities": capabilities,
         "canonical_only_capabilities": {
