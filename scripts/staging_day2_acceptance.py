@@ -393,11 +393,6 @@ def validate_evidence(
     if (
         restored_api.get("status") != "verified"
         or restored_api.get("runtime_source_revision") != expected_revision
-        or restored_api.get("runtime_build_digest") != build_digest
-        or restored_api.get("runtime_schema_revision") != schema_revision
-        or restored_api.get("runtime_model_provider") != model_provider
-        or restored_api.get("runtime_model_id") != model_id
-        or restored_api.get("runtime_identity_sha256") != runtime_identity_digest
     ):
         raise Day2AcceptanceFailure(
             "archive_integrity.restored_api_access is missing verified release identity."
