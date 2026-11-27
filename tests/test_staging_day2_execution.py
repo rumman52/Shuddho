@@ -56,29 +56,83 @@ TOKEN_A = make_test_token("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 TOKEN_B = make_test_token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 
-def runtime():
+def _prepared_state(task_queue="shuddho-documents-v1"):
+    capabilities = {key: False for key in freeze.RUNTIME_CAPABILITY_KEYS}
+    for name in freeze.PA10_REQUIRED_TRUE:
+        capabilities[name] = True
     return {
-        "schema_version": 2,
-        "source_revision": SHA,
-        "environment": "staging",
+        "schema_version": freeze.SCHEMA_VERSION,
+        "evidence_kind": freeze.EVIDENCE_KIND,
+        "status": "prepared",
+        "release_id": "stage-day2-001",
+        "expected_source_revision": SHA,
+        "expected_environment": "staging",
+        "expected_build_digest": "b" * 64,
+        "expected_schema_revision": freeze.current_migration_head(),
+        "expected_model_provider": "deepseek",
+        "expected_model_id": "deepseek-flash",
+        "expected_task_queue": task_queue,
+        "build_reference": "shuddho-build@sha256:" + "b" * 64,
+        "deployment_reference": "render:staging-deploy-123",
+        "synthetic_account_reference": "synthetic-cohort",
+        "rollout_manifest_sha256": "1" * 64,
+        "provider_policy_sha256": "2" * 64,
+        "declared_capabilities": capabilities,
+        "declared_action_providers": ["google", "microsoft"],
+        "declared_cohort": {"reference": "synthetic-cohort", "enforced": True, "max_users": 5},
+        "prepared_at": "2026-11-12T00:00:00+00:00",
+    }
+
+
+def runtime(state=None):
+    state = state or _prepared_state()
+    identity = {
+        "schema_version": 3,
+        "source_revision": state["expected_source_revision"],
+        "environment": state["expected_environment"],
         "capabilities": {
-            **{key: False for key in freeze.RUNTIME_CAPABILITY_KEYS},
-            **{key: False for key in day2.NEW_RUNTIME_CAPABILITIES},
-            "coworker": True,
-            "grounded_conversation_replies": False,
+            **state["declared_capabilities"],
+            "grounded_conversation_replies": state["declared_capabilities"]["conversation_replies"],
         },
-        "reviewed_skills": {"research": {"state": "unselected"}},
-        "action_providers": [],
-        "cohort": {"enforced": False, "configured_members": 0, "max_users": 5},
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
+        "reviewed_skills": {"research": {
+            "state": "unselected", "publication_version": None,
+            "publication_sha256": None, "review_sha256": None,
+            "source_revision": None, "task_workflow_version": None,
+            "generation": None,
+        }},
+        "action_providers": state["declared_action_providers"],
+        "cohort": {"enforced": True, "configured_members": 2, "max_users": 5},
+        "build_digest": state["expected_build_digest"],
+        "schema_revision": state["expected_schema_revision"],
+        "model_provider": state["expected_model_provider"],
+        "model_id": state["expected_model_id"],
+        "task_queue": state["expected_task_queue"],
+    }
+    identity["runtime_identity_sha256"] = freeze.canonical_sha256(identity)
+    workers = [{
+        "task_queue": identity["task_queue"],
+        "source_revision": identity["source_revision"],
+        "build_digest": identity["build_digest"],
+        "schema_revision": identity["schema_revision"],
+        "model_provider": identity["model_provider"],
+        "model_id": identity["model_id"],
+        "runtime_identity_sha256": identity["runtime_identity_sha256"],
+        "state": "running",
+        "heartbeat_fresh": True,
+    }]
+    return {
+        **identity,
+        "worker_fleet_ready": True,
+        "blocked_worker_count": 0,
+        "worker_inventory": workers,
+        "worker_inventory_sha256": freeze.canonical_sha256(workers),
     }
 
 
 def frozen(manifest=None):
-    return {
-        "status": "frozen",
-        "release": {"release_id": "stage-day2-001", "environment": "staging", "source_revision": SHA},
-        "runtime_manifest_sha256": freeze.canonical_sha256(manifest or runtime()),
-    }
+    state = _prepared_state()
+    return freeze.verify_runtime(state, manifest or runtime(state))
 
 
 class Day2API:
@@ -102,7 +156,7 @@ class Day2API:
         self.calls.append((method, path, user))
         def res(code, value=None, content=None):
             return httpx.Response(code, json=value, request=request) if content is None else httpx.Response(code, content=content, request=request)
-        if method == "GET" and path == "/api/v1/runtime-manifest":
+        if method == "GET" and path == "/api/v1/runtime-manifest/v3":
             return res(200, self.manifest)
         if method == "GET" and path == "/api/v1/me":
             claims = decode_test_token_claims(user)
@@ -408,32 +462,16 @@ def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
     assert not any(method == "POST" for method, _, _ in api.calls)
 
 
-def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
-    manifest = runtime()
-    caps = {**manifest["capabilities"]}
-    for name in freeze.PA10_REQUIRED_TRUE:
-        caps[name] = True
-    state = {
-        "schema_version": 1, "evidence_kind": freeze.EVIDENCE_KIND,
-        "status": "prepared", "release_id": "stage-day2-001",
-        "expected_environment": "staging", "expected_source_revision": SHA,
-        # The reviewed rollout/worker declares 43 controls. The API response
-        # adds one separately checked UI-derived field.
-        "declared_capabilities": {key: caps[key] for key in freeze.RUNTIME_CAPABILITY_KEYS},
-        "declared_action_providers": ["google", "microsoft"],
-        "declared_cohort": {"reference": "synthetic-cohort", "enforced": True, "max_users": 5},
-        "build_reference": "image@sha256:test", "deployment_reference": "deploy-001",
-        "rollout_manifest_sha256": "1" * 64, "provider_policy_sha256": "2" * 64,
-        "synthetic_account_reference": "synthetic-owners-ref", "prepared_at": "2026-11-12T00:00:00+00:00",
-    }
-    # The runtime's additional v2 capability names must be explicit false,
-    # rather than silently ignored by the release-freeze verifier.
-    manifest["capabilities"] = caps
-    manifest["action_providers"] = ["google", "microsoft"]
-    manifest["cohort"] = {"enforced": True, "max_users": 5, "configured_members": 2}
+def test_runtime_manifest_v3_freezes_build_schema_model_and_worker_authority():
+    state = _prepared_state()
+    manifest = runtime(state)
     result = freeze.verify_runtime(state, manifest)
     assert result["status"] == "frozen"
-    assert result["runtime_manifest_sha256"] == freeze.canonical_sha256(manifest)
+    assert result["release"]["build_digest"] == state["expected_build_digest"]
+    assert result["release"]["schema_revision"] == state["expected_schema_revision"]
+    assert result["release"]["model_provider"] == state["expected_model_provider"]
+    assert result["release"]["model_id"] == state["expected_model_id"]
+    assert result["worker_inventory_sha256"] == manifest["worker_inventory_sha256"]
     manifest["capabilities"]["agent_browser_read"] = True
     with pytest.raises(freeze.StagingReleaseFreezeError):
         freeze.verify_runtime(state, manifest)
@@ -963,37 +1001,44 @@ def _staging_worker_snapshot():
     from types import SimpleNamespace
 
     now = datetime.now(timezone.utc)
-    task_queue = "day2-worker-evidence"
+    state = _prepared_state(task_queue="day2-worker-evidence")
+    manifest = runtime(state)
+    release = freeze.verify_runtime(state, manifest)["release"]
     worker = {
         "id": "worker-identity-1",
-        "task_queue": task_queue,
-        "source_revision": SHA,
+        "task_queue": release["task_queue"],
+        "source_revision": release["source_revision"],
+        "build_digest": release["build_digest"],
+        "schema_revision": release["schema_revision"],
+        "model_provider": release["model_provider"],
+        "model_id": release["model_id"],
+        "runtime_identity_sha256": release["runtime_identity_sha256"],
         "state": "running",
         "heartbeat_fresh": True,
         "started_at": (now - timedelta(minutes=2)).isoformat(),
         "heartbeat_at": (now - timedelta(seconds=5)).isoformat(),
     }
     container = SimpleNamespace(
-        settings=SimpleNamespace(task_queue=task_queue),
+        settings=SimpleNamespace(task_queue=release["task_queue"]),
         repository=SimpleNamespace(worker_inventory=lambda **_: [worker]),
     )
-    return now, worker, container
+    return now, worker, container, release
 
 
 def test_day2_active_worker_accepts_actual_fresh_utc_registration():
-    now, worker, container = _staging_worker_snapshot()
-    assert day2.active_worker(container, SHA)["id"] == worker["id"]
+    now, worker, container, release = _staging_worker_snapshot()
+    assert day2.active_worker(container, release)["id"] == worker["id"]
 
 
 @pytest.mark.parametrize("tamper", [
     "future_heartbeat", "stale_heartbeat", "heartbeat_before_registration",
     "future_registration", "naive_heartbeat", "non_iso_heartbeat",
-    "missing_worker_id",
+    "missing_worker_id", "wrong_build_digest",
 ])
 def test_day2_active_worker_rejects_untrustworthy_registry_freshness(tamper):
     from datetime import timedelta
 
-    now, worker, container = _staging_worker_snapshot()
+    now, worker, container, release = _staging_worker_snapshot()
     if tamper == "future_heartbeat":
         worker["heartbeat_at"] = (now + timedelta(seconds=45)).isoformat()
     elif tamper == "stale_heartbeat":
@@ -1008,14 +1053,16 @@ def test_day2_active_worker_rejects_untrustworthy_registry_freshness(tamper):
         worker["heartbeat_at"] = "undated"
     elif tamper == "missing_worker_id":
         worker["id"] = ""
+    elif tamper == "wrong_build_digest":
+        worker["build_digest"] = "f" * 64
     with pytest.raises(day2.Day2Failure, match="worker|Worker|heartbeat|Heartbeat"):
-        day2.active_worker(container, SHA)
+        day2.active_worker(container, release)
 
 
-def _rechecked_worker(monkeypatch, before, after, task_queue):
+def _rechecked_worker(monkeypatch, before, after, release):
     from types import SimpleNamespace
 
-    # Exhaust the existing 15-second retry window deterministically.
+    # Exhaust the existing retry window deterministically.
     times = iter((100.0, 200.0))
     monkeypatch.setattr(
         day2, "time", SimpleNamespace(
@@ -1024,36 +1071,34 @@ def _rechecked_worker(monkeypatch, before, after, task_queue):
         ),
     )
     container = SimpleNamespace(
-        settings=SimpleNamespace(task_queue=task_queue),
+        settings=SimpleNamespace(task_queue=release["task_queue"]),
         repository=SimpleNamespace(worker_inventory=lambda **_: [after]),
     )
-    return day2.heartbeat_advanced(container, before, SHA)
+    return day2.heartbeat_advanced(container, before, release)
 
 
 def test_day2_worker_heartbeat_accepts_newer_actual_utc_instant(monkeypatch):
     from datetime import timedelta, timezone
 
-    now, before, container = _staging_worker_snapshot()
+    now, before, container, release = _staging_worker_snapshot()
     after = dict(before)
     after["heartbeat_at"] = (
         now - timedelta(seconds=1)
     ).astimezone(timezone(timedelta(hours=3))).isoformat()
-    assert _rechecked_worker(monkeypatch, before, after, before["task_queue"])["id"] == before["id"]
+    assert _rechecked_worker(monkeypatch, before, after, release)["id"] == before["id"]
 
 
 @pytest.mark.parametrize("tamper", [
     "offset_lexical_reversal", "future_heartbeat", "worker_registration_changed",
-    "wrong_queue", "missing_worker_id", "stale_heartbeat",
+    "wrong_queue", "missing_worker_id", "stale_heartbeat", "identity_changed",
 ])
 def test_day2_worker_heartbeat_rejects_false_advancement(monkeypatch, tamper):
     from datetime import timedelta, timezone
 
-    now, before, container = _staging_worker_snapshot()
+    now, before, container, release = _staging_worker_snapshot()
     after = dict(before)
     after["heartbeat_at"] = (now - timedelta(seconds=1)).isoformat()
     if tamper == "offset_lexical_reversal":
-        # Lexicographically greater: UTC hour 10 becomes offset hour 13;
-        # chronologically OLDER than the original heartbeat.
         after["heartbeat_at"] = (
             now - timedelta(seconds=8)
         ).astimezone(timezone(timedelta(hours=3))).isoformat()
@@ -1070,5 +1115,7 @@ def test_day2_worker_heartbeat_rejects_false_advancement(monkeypatch, tamper):
         after["heartbeat_at"] = (
             now - timedelta(seconds=80)
         ).astimezone(timezone(timedelta(hours=3))).isoformat()
+    elif tamper == "identity_changed":
+        after["runtime_identity_sha256"] = "0" * 64
     with pytest.raises(day2.Day2Failure, match="worker|Worker|heartbeat|Heartbeat"):
-        _rechecked_worker(monkeypatch, before, after, before["task_queue"])
+        _rechecked_worker(monkeypatch, before, after, release)
