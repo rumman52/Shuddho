@@ -24,7 +24,15 @@ import httpx
 
 from scripts.staging_release_evidence import write_private_json
 from scripts.staging_prerequisite_preflight import EXPECTED_AUTH_ISSUER, EXPECTED_S3_ENDPOINT
-from scripts.staging_release_freeze import canonical_sha256, clean_origin, valid_sha
+from scripts.staging_release_freeze import (
+    EVIDENCE_KIND,
+    SCHEMA_VERSION,
+    canonical_sha256,
+    clean_origin,
+    state_from_freeze_evidence,
+    valid_sha,
+    verify_runtime,
+)
 from services.coworker.config import Settings
 from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 
@@ -71,20 +79,25 @@ def require_approved_staging_destinations(
 
 
 def check_release(freeze: object) -> dict:
-    if not isinstance(freeze, dict) or freeze.get("status") != "frozen":
-        raise Day2Failure("A verified frozen staging release is required.")
-    release = freeze.get("release")
+    try:
+        state_from_freeze_evidence(freeze)
+    except Exception as exc:
+        if isinstance(exc, Day2Failure):
+            raise
+        raise Day2Failure("A schema-v2 frozen staging release with exact build identity is required.") from None
     if (
-        not isinstance(release, dict)
-        or release.get("environment") != "staging"
-        or not isinstance(release.get("release_id"), str)
-        or not release["release_id"].strip()
-        or not valid_sha(release.get("source_revision"))
+        not isinstance(freeze, dict)
+        or freeze.get("schema_version") != SCHEMA_VERSION
+        or freeze.get("evidence_kind") != EVIDENCE_KIND
+        or freeze.get("status") != "frozen"
     ):
-        raise Day2Failure("Frozen release must have staging identity and a full source SHA.")
+        raise Day2Failure("A verified schema-v2 frozen staging release is required.")
+    release = freeze["release"]
     digest = freeze.get("runtime_manifest_sha256")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise Day2Failure("Frozen release is missing an exact runtime-manifest digest.")
+    if not isinstance(freeze.get("worker_inventory_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", freeze["worker_inventory_sha256"]):
+        raise Day2Failure("Frozen release is missing its exact worker-inventory digest.")
     return release
 
 
@@ -110,17 +123,20 @@ def bearer(token: str) -> dict[str, str]:
 
 def attest_runtime(client: httpx.Client, token: str, freeze: dict) -> dict:
     release = check_release(freeze)
-    runtime = obj(checked(client.get("/api/v1/runtime-manifest", headers=bearer(token)),
-                          200, "staging runtime-manifest"), "staging runtime-manifest")
+    state = state_from_freeze_evidence(freeze)
+    runtime = obj(checked(
+        client.get("/api/v1/runtime-manifest/v3", headers=bearer(token)),
+        200, "staging runtime-manifest v3",
+    ), "staging runtime-manifest v3")
+    try:
+        verify_runtime(state, runtime)
+    except Exception:
+        raise Day2Failure("Staging runtime manifest failed exact frozen build and worker identity verification.") from None
     if (
-        runtime.get("schema_version") != 2
-        or runtime.get("environment") != "staging"
-        or runtime.get("source_revision") != release["source_revision"]
-        or canonical_sha256(runtime) != freeze["runtime_manifest_sha256"]
-        or not isinstance(runtime.get("capabilities"), dict)
-        or runtime["capabilities"].get("coworker") is not True
+        canonical_sha256(runtime) != freeze["runtime_manifest_sha256"]
+        or runtime["worker_inventory_sha256"] != freeze["worker_inventory_sha256"]
     ):
-        raise Day2Failure("Staging runtime manifest does not match the frozen candidate.")
+        raise Day2Failure("Staging runtime or worker inventory changed after release freeze.")
     return release
 
 
@@ -694,6 +710,13 @@ def run_probe(
         "release_id": release["release_id"],
         "source_revision": release["source_revision"],
         "runtime_manifest_sha256": freeze["runtime_manifest_sha256"],
+        "worker_inventory_sha256": freeze["worker_inventory_sha256"],
+        "build_digest": release["build_digest"],
+        "schema_revision": release["schema_revision"],
+        "model_provider": release["model_provider"],
+        "model_id": release["model_id"],
+        "task_queue": release["task_queue"],
+        "runtime_identity_sha256": release["runtime_identity_sha256"],
         "document_id": document_id, "document_version_id": source_version_id,
         "document_sha256": source_sha,
         "task_id": task_id, "workflow_id": "shuddho-task-" + task_id,
@@ -878,39 +901,56 @@ def _checked_worker_observation(
     return started_at, heartbeat_at
 
 
-def active_worker(container: Container, revision: str) -> dict:
-    workers = container.repository.worker_inventory(task_queue=container.settings.task_queue)
+def active_worker(container: Container, release: dict) -> dict:
+    task_queue = release["task_queue"]
+    workers = container.repository.worker_inventory(task_queue=task_queue)
+    identity_fields = (
+        "source_revision", "build_digest", "schema_revision",
+        "model_provider", "model_id", "runtime_identity_sha256",
+    )
     active = [w for w in workers if (
-        w.get("task_queue") == container.settings.task_queue
-        and w.get("source_revision") == revision
+        w.get("task_queue") == task_queue
+        and all(w.get(field) == release[field] for field in identity_fields)
         and w.get("state") == "running" and w.get("heartbeat_fresh") is True
     )]
     if not active:
-        raise Day2Failure("No fresh running Temporal worker matches the reviewed source SHA.")
+        raise Day2Failure("No fresh running Temporal worker matches the frozen build, schema, model and runtime identity.")
     if any(
         w.get("state") == "running" and w.get("heartbeat_fresh") is True
-        and w.get("source_revision") != revision for w in workers
+        and (
+            w.get("task_queue") != task_queue
+            or any(w.get(field) != release[field] for field in identity_fields)
+        )
+        for w in workers
     ):
-        raise Day2Failure("A live worker with a different source SHA is polling the task queue.")
+        raise Day2Failure("A live worker with a different frozen runtime identity is polling the task queue.")
     _checked_worker_observation(
-        active[0], revision=revision,
-        task_queue=container.settings.task_queue, require_fresh=True,
+        active[0], revision=release["source_revision"],
+        task_queue=task_queue, require_fresh=True,
     )
     return active[0]
 
 
-def heartbeat_advanced(container: Container, before: dict, revision: str) -> dict:
-    task_queue = container.settings.task_queue
+def heartbeat_advanced(container: Container, before: dict, release: dict) -> dict:
+    task_queue = release["task_queue"]
     before_started_at, before_heartbeat_at = _checked_worker_observation(
-        before, revision=revision, task_queue=task_queue, require_fresh=False,
+        before, revision=release["source_revision"], task_queue=task_queue, require_fresh=False,
+    )
+    identity_fields = (
+        "source_revision", "build_digest", "schema_revision",
+        "model_provider", "model_id", "runtime_identity_sha256",
     )
     deadline = time.monotonic() + WORKER_HEARTBEAT_TTL_SECONDS
     while True:
         workers = container.repository.worker_inventory(task_queue=task_queue)
         current = next((w for w in workers if w.get("id") == before["id"]), None)
         if current:
+            if current.get("task_queue") != task_queue or any(
+                current.get(field) != release[field] for field in identity_fields
+            ):
+                raise Day2Failure("Worker immutable runtime identity changed during execution.")
             started_at, heartbeat_at = _checked_worker_observation(
-                current, revision=revision, task_queue=task_queue,
+                current, revision=release["source_revision"], task_queue=task_queue,
                 require_fresh=True,
             )
             if started_at != before_started_at:
@@ -993,6 +1033,9 @@ def main() -> None:
             # DeepSeekDraftModel, regardless of other Chat API provider support.
             # Do not charge a task when the operator only configured Gemma.
             or settings.chat_provider != "deepseek"
+            or settings.chat_provider != release["model_provider"]
+            or settings.deepseek_model != release["model_id"]
+            or settings.task_queue != release["task_queue"]
             or not settings.deepseek_api_key
         ):
             raise Day2Failure("Operator runtime does not match staging source, private S3 or the reviewed DeepSeek draft provider.")
@@ -1017,7 +1060,7 @@ def main() -> None:
         if endpoint.scheme != "https" or not endpoint.hostname:
             raise Day2Failure("Live Day 2 requires a reviewed HTTPS private S3 endpoint.")
         container = Container.create(settings)
-        before = active_worker(container, release["source_revision"])
+        before = active_worker(container, release)
         with httpx.Client(base_url=origin, timeout=20, follow_redirects=False) as client:
             result = run_probe(
                 client, token_a, token_b, freeze, source,
@@ -1036,10 +1079,15 @@ def main() -> None:
             expected_accounted_tokens=result["accounted_tokens"],
         )
         result["document_outbox"] = persisted_document_outbox(container, result["task_id"])
-        after = heartbeat_advanced(container, before, release["source_revision"])
+        after = heartbeat_advanced(container, before, release)
         result["worker"] = {
             "id": before["id"], "task_queue": settings.task_queue,
             "source_revision": release["source_revision"],
+            "build_digest": before["build_digest"],
+            "schema_revision": before["schema_revision"],
+            "model_provider": before["model_provider"],
+            "model_id": before["model_id"],
+            "runtime_identity_sha256": before["runtime_identity_sha256"],
             "heartbeat_before": before["heartbeat_at"],
             "heartbeat_after": after["heartbeat_at"],
         }

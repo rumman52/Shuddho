@@ -11,6 +11,13 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+from services.coworker.runtime_identity import (
+    canonical_json,
+    canonical_sha256 as runtime_canonical_sha256,
+)
 
 from scripts.staging_release_evidence import (
     MAX_ROLLOUT_MANIFEST_BYTES,
@@ -22,9 +29,10 @@ from scripts.staging_release_evidence import (
 )
 
 
-SCHEMA_VERSION = 1  # PA-10 rollout / freeze evidence version
-RUNTIME_SCHEMA_VERSION = 2  # /api/v1/runtime-manifest
-EVIDENCE_KIND = "pa10_staging_release_freeze"
+ROLLOUT_SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # prepared state and freeze evidence v2
+RUNTIME_SCHEMA_VERSION = 3  # /api/v1/runtime-manifest/v3
+EVIDENCE_KIND = "pa10_staging_release_freeze_v2"
 PRODUCTION_ENVIRONMENTS = {"prod", "production"}
 ALLOWED_ACTION_PROVIDERS = {"google", "microsoft", "linkedin", "opentable"}
 
@@ -296,14 +304,21 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def canonical_sha256(value: dict) -> str:
-    payload = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+def canonical_sha256(value: object) -> str:
+    return runtime_canonical_sha256(value)
+
+
+def current_migration_head() -> str:
+    """Return the sole source-controlled Alembic head; never infer from the live DB."""
+    config_path = Path(__file__).resolve().parents[1] / "alembic.ini"
+    try:
+        script = ScriptDirectory.from_config(Config(str(config_path)))
+        heads = script.get_heads()
+    except Exception:
+        raise StagingReleaseFreezeError("The source migration graph could not be verified.") from None
+    if len(heads) != 1:
+        raise StagingReleaseFreezeError("The source migration graph must have exactly one head.")
+    return heads[0]
 
 
 def _validate_declared_scope(cohort: object, providers: object, capabilities: object) -> None:
@@ -371,7 +386,7 @@ def validate_rollout(rollout: dict) -> None:
         raise StagingReleaseFreezeError(
             "PA-10 staging rollout must use the exact reviewed schema."
         )
-    if type(rollout.get("schema_version")) is not int or rollout["schema_version"] != SCHEMA_VERSION:
+    if type(rollout.get("schema_version")) is not int or rollout["schema_version"] != ROLLOUT_SCHEMA_VERSION:
         raise StagingReleaseFreezeError(
             "PA-10 staging rollout has an unexpected schema_version."
         )
@@ -443,6 +458,10 @@ def prepare_state(
     rollout_path: Path,
     provider_policy_path: Path,
     expected_source_revision: str,
+    expected_build_digest: str,
+    expected_model_provider: str,
+    expected_model_id: str,
+    expected_task_queue: str,
     build_reference: str,
     deployment_reference: str,
     synthetic_account_reference: str,
@@ -455,6 +474,14 @@ def prepare_state(
         raise StagingReleaseFreezeError(
             "Expected source revision must be a full lowercase Git SHA-1."
         )
+    if not isinstance(expected_build_digest, str) or re.fullmatch(r"[0-9a-f]{64}", expected_build_digest) is None:
+        raise StagingReleaseFreezeError("Expected build digest must be a full lowercase SHA-256.")
+    if expected_model_provider not in {"deepseek", "gemma"}:
+        raise StagingReleaseFreezeError("Expected model provider is unsupported.")
+    if not isinstance(expected_model_id, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,159}", expected_model_id) is None:
+        raise StagingReleaseFreezeError("Expected model identity is invalid.")
+    if not isinstance(expected_task_queue, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", expected_task_queue) is None:
+        raise StagingReleaseFreezeError("Expected task queue identity is invalid.")
     for label, value in (
         ("build reference", build_reference),
         ("deployment reference", deployment_reference),
@@ -462,6 +489,8 @@ def prepare_state(
     ):
         if not text_ref(value):
             raise StagingReleaseFreezeError(f"{label.capitalize()} is required.")
+    if f"sha256:{expected_build_digest}" not in build_reference:
+        raise StagingReleaseFreezeError("Build reference must bind the exact expected build digest.")
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -470,6 +499,11 @@ def prepare_state(
         "release_id": rollout["release_id"],
         "expected_source_revision": expected_source_revision,
         "expected_environment": rollout["environment"],
+        "expected_build_digest": expected_build_digest,
+        "expected_schema_revision": current_migration_head(),
+        "expected_model_provider": expected_model_provider,
+        "expected_model_id": expected_model_id,
+        "expected_task_queue": expected_task_queue,
         "build_reference": build_reference.strip(),
         "deployment_reference": deployment_reference.strip(),
         "synthetic_account_reference": synthetic_account_reference.strip(),
@@ -484,13 +518,24 @@ def prepare_state(
 
 PREPARED_STATE_KEYS = frozenset({
     "schema_version", "evidence_kind", "status", "release_id", "expected_source_revision",
-    "expected_environment", "build_reference", "deployment_reference", "synthetic_account_reference",
+    "expected_environment", "expected_build_digest", "expected_schema_revision",
+    "expected_model_provider", "expected_model_id", "expected_task_queue",
+    "build_reference", "deployment_reference", "synthetic_account_reference",
     "rollout_manifest_sha256", "provider_policy_sha256", "declared_capabilities",
     "declared_action_providers", "declared_cohort", "prepared_at",
 })
+RUNTIME_IDENTITY_FIELDS = (
+    "schema_version", "source_revision", "environment", "capabilities",
+    "canonical_only_capabilities", "reviewed_skills", "action_providers", "cohort",
+    "build_digest", "schema_revision", "model_provider", "model_id", "task_queue",
+)
+WORKER_INVENTORY_KEYS = frozenset({
+    "task_queue", "source_revision", "build_digest", "schema_revision",
+    "model_provider", "model_id", "runtime_identity_sha256", "state", "heartbeat_fresh",
+})
 RUNTIME_MANIFEST_KEYS = frozenset({
-    "schema_version", "source_revision", "environment", "capabilities", "reviewed_skills",
-    "action_providers", "cohort",
+    *RUNTIME_IDENTITY_FIELDS, "runtime_identity_sha256", "worker_fleet_ready",
+    "blocked_worker_count", "worker_inventory", "worker_inventory_sha256",
 })
 
 
@@ -508,9 +553,21 @@ def validate_prepared_state(state: object) -> None:
         or not text_ref(state["release_id"], maximum=120)
     ):
         raise StagingReleaseFreezeError("Release-freeze state is invalid.")
+    if not isinstance(state["expected_build_digest"], str) or re.fullmatch(r"[0-9a-f]{64}", state["expected_build_digest"]) is None:
+        raise StagingReleaseFreezeError("Release-freeze state expected_build_digest is invalid.")
+    if state["expected_schema_revision"] != current_migration_head():
+        raise StagingReleaseFreezeError("Release-freeze state schema revision is not the current source migration head.")
+    if state["expected_model_provider"] not in {"deepseek", "gemma"}:
+        raise StagingReleaseFreezeError("Release-freeze state model provider is invalid.")
+    if not isinstance(state["expected_model_id"], str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,159}", state["expected_model_id"]) is None:
+        raise StagingReleaseFreezeError("Release-freeze state model identity is invalid.")
+    if not isinstance(state["expected_task_queue"], str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", state["expected_task_queue"]) is None:
+        raise StagingReleaseFreezeError("Release-freeze state task queue is invalid.")
     for name in ("build_reference", "deployment_reference", "synthetic_account_reference"):
         if not text_ref(state[name]):
             raise StagingReleaseFreezeError(f"Release-freeze state {name} is invalid.")
+    if f"sha256:{state['expected_build_digest']}" not in state["build_reference"]:
+        raise StagingReleaseFreezeError("Release-freeze state build reference does not bind its build digest.")
     for name in ("rollout_manifest_sha256", "provider_policy_sha256"):
         digest = state[name]
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
@@ -529,44 +586,45 @@ def validate_prepared_state(state: object) -> None:
 def verify_runtime(state: dict, runtime: dict) -> dict:
     validate_prepared_state(state)
     if not isinstance(runtime, dict) or set(runtime) != RUNTIME_MANIFEST_KEYS:
-        raise StagingReleaseFreezeError("Runtime manifest must contain exactly the v2 fields including reviewed_skills.")
+        raise StagingReleaseFreezeError("Runtime manifest must contain exactly the reviewed v3 identity and worker-fleet fields.")
     if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != RUNTIME_SCHEMA_VERSION:
-        raise StagingReleaseFreezeError(
-            "Runtime manifest schema_version is unsupported."
-        )
-    if runtime.get("environment") != state.get("expected_environment"):
-        raise StagingReleaseFreezeError(
-            "Deployed runtime environment does not match the frozen staging candidate."
-        )
-    if str(runtime.get("environment") or "").lower() in PRODUCTION_ENVIRONMENTS:
-        raise StagingReleaseFreezeError(
-            "Controlled-staging freeze rejects a production runtime."
-        )
-    if runtime.get("source_revision") != state.get("expected_source_revision"):
-        raise StagingReleaseFreezeError(
-            "Deployed source revision does not match the frozen staging candidate."
-        )
-    if not valid_sha(runtime.get("source_revision")):
-        raise StagingReleaseFreezeError(
-            "Runtime manifest source_revision must be a full lowercase Git SHA-1."
-        )
+        raise StagingReleaseFreezeError("Runtime manifest schema_version is unsupported.")
+    if runtime.get("environment") != state.get("expected_environment") or runtime.get("environment") != "staging":
+        raise StagingReleaseFreezeError("Deployed runtime environment does not match the frozen staging candidate.")
+    if runtime.get("source_revision") != state.get("expected_source_revision") or not valid_sha(runtime.get("source_revision")):
+        raise StagingReleaseFreezeError("Deployed source revision does not match the frozen staging candidate.")
+    for runtime_field, state_field in (
+        ("build_digest", "expected_build_digest"),
+        ("schema_revision", "expected_schema_revision"),
+        ("model_provider", "expected_model_provider"),
+        ("model_id", "expected_model_id"),
+        ("task_queue", "expected_task_queue"),
+    ):
+        if runtime.get(runtime_field) != state.get(state_field):
+            raise StagingReleaseFreezeError(f"Deployed runtime {runtime_field} does not match the frozen candidate.")
+    if not isinstance(runtime.get("build_digest"), str) or re.fullmatch(r"[0-9a-f]{64}", runtime["build_digest"]) is None:
+        raise StagingReleaseFreezeError("Runtime build_digest must be a full lowercase SHA-256.")
+    if not isinstance(runtime.get("schema_revision"), str) or re.fullmatch(r"[A-Za-z0-9_]{1,128}", runtime["schema_revision"]) is None:
+        raise StagingReleaseFreezeError("Runtime schema_revision is invalid.")
+    if runtime.get("model_provider") not in {"deepseek", "gemma"}:
+        raise StagingReleaseFreezeError("Runtime model_provider is invalid.")
+    if not isinstance(runtime.get("model_id"), str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/+-]{0,159}", runtime["model_id"]) is None:
+        raise StagingReleaseFreezeError("Runtime model_id is invalid.")
+    if not isinstance(runtime.get("task_queue"), str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", runtime["task_queue"]) is None:
+        raise StagingReleaseFreezeError("Runtime task_queue is invalid.")
 
     capabilities = runtime.get("capabilities")
-    if not api_runtime_capabilities_match_rollout(
-        capabilities, state.get("declared_capabilities"),
-    ):
-        raise StagingReleaseFreezeError(
-            "Deployed capability set does not exactly match the reviewed staging rollout."
-        )
-    if not isinstance(runtime.get("reviewed_skills"), dict):
-        raise StagingReleaseFreezeError(
-            "Runtime v2 reviewed_skills manifest must be an object."
-        )
+    if not api_runtime_capabilities_match_rollout(capabilities, state.get("declared_capabilities")):
+        raise StagingReleaseFreezeError("Deployed capability set does not exactly match the reviewed staging rollout.")
+    canonical_only = runtime.get("canonical_only_capabilities")
+    if not isinstance(canonical_only, dict) or set(canonical_only) != {"suggestion_model_relevance"} or canonical_only["suggestion_model_relevance"] is not False:
+        raise StagingReleaseFreezeError("Runtime canonical-only capabilities must remain exactly disabled for PA-10.")
+    reviewed_skills = runtime.get("reviewed_skills")
+    if not isinstance(reviewed_skills, dict) or set(reviewed_skills) != {"research"} or not isinstance(reviewed_skills["research"], dict) or reviewed_skills["research"].get("state") != "unselected":
+        raise StagingReleaseFreezeError("Runtime reviewed-skill state must remain explicitly unselected for PA-10.")
     providers = runtime.get("action_providers")
     if providers != state.get("declared_action_providers"):
-        raise StagingReleaseFreezeError(
-            "Deployed action-provider set does not exactly match the reviewed staging rollout."
-        )
+        raise StagingReleaseFreezeError("Deployed action-provider set does not exactly match the reviewed staging rollout.")
 
     cohort = runtime.get("cohort")
     declared_cohort = state.get("declared_cohort")
@@ -581,16 +639,44 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         or cohort.get("max_users") != declared_cohort.get("max_users")
         or not isinstance(cohort.get("configured_members"), int)
         or isinstance(cohort.get("configured_members"), bool)
-        or cohort.get("configured_members") < 0
+        or cohort.get("configured_members") < 1
         or cohort.get("configured_members") > cohort.get("max_users")
     ):
-        raise StagingReleaseFreezeError(
-            "Deployed cohort controls do not match the reviewed staging rollout."
-        )
-    if declared_cohort.get("enforced") is True and cohort.get("configured_members") < 1:
-        raise StagingReleaseFreezeError(
-            "Cohort-enforced staging must contain at least one configured synthetic member."
-        )
+        raise StagingReleaseFreezeError("Deployed cohort controls do not match the reviewed staging rollout.")
+
+    identity_payload = {key: runtime[key] for key in RUNTIME_IDENTITY_FIELDS}
+    identity_digest = runtime.get("runtime_identity_sha256")
+    if not isinstance(identity_digest, str) or re.fullmatch(r"[0-9a-f]{64}", identity_digest) is None or identity_digest != canonical_sha256(identity_payload):
+        raise StagingReleaseFreezeError("Runtime identity digest does not bind its exact build, schema, model and capability manifest.")
+
+    workers = runtime.get("worker_inventory")
+    if (
+        runtime.get("worker_fleet_ready") is not True
+        or type(runtime.get("blocked_worker_count")) is not int
+        or runtime["blocked_worker_count"] != 0
+        or not isinstance(workers, list)
+        or not workers
+        or len(workers) > 32
+    ):
+        raise StagingReleaseFreezeError("The staging worker fleet is not fully ready or has no active workers.")
+    if any(not isinstance(worker, dict) or set(worker) != WORKER_INVENTORY_KEYS for worker in workers):
+        raise StagingReleaseFreezeError("Worker inventory must use the exact non-sensitive runtime identity schema.")
+    if workers != sorted(workers, key=canonical_json):
+        raise StagingReleaseFreezeError("Worker inventory must be canonically ordered.")
+    for worker in workers:
+        if (
+            worker.get("state") != "running"
+            or worker.get("heartbeat_fresh") is not True
+            or worker.get("task_queue") != runtime["task_queue"]
+            or any(worker.get(field) != runtime.get(field) for field in (
+                "source_revision", "build_digest", "schema_revision",
+                "model_provider", "model_id", "runtime_identity_sha256",
+            ))
+        ):
+            raise StagingReleaseFreezeError("An active worker does not match the frozen API build, schema, model and capability identity.")
+    worker_digest = runtime.get("worker_inventory_sha256")
+    if not isinstance(worker_digest, str) or re.fullmatch(r"[0-9a-f]{64}", worker_digest) is None or worker_digest != canonical_sha256(workers):
+        raise StagingReleaseFreezeError("Worker inventory digest does not bind the exact active fleet.")
 
     verified_at = utcnow_iso()
     return {
@@ -603,6 +689,12 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
             "environment": state["expected_environment"],
             "build_reference": state["build_reference"],
             "deployment_reference": state["deployment_reference"],
+            "build_digest": state["expected_build_digest"],
+            "schema_revision": state["expected_schema_revision"],
+            "model_provider": state["expected_model_provider"],
+            "model_id": state["expected_model_id"],
+            "task_queue": state["expected_task_queue"],
+            "runtime_identity_sha256": identity_digest,
             "rollout_manifest_sha256": state["rollout_manifest_sha256"],
             "provider_policy_sha256": state["provider_policy_sha256"],
         },
@@ -611,10 +703,78 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         "action_providers": providers,
         "cohort": cohort,
         "runtime_manifest_sha256": canonical_sha256(runtime),
-        "reviewed_skills_sha256": canonical_sha256(runtime["reviewed_skills"]),
+        "worker_inventory_sha256": worker_digest,
+        "worker_count": len(workers),
+        "reviewed_skills_sha256": canonical_sha256(reviewed_skills),
         "prepared_at": state["prepared_at"],
         "verified_at": verified_at,
     }
+
+
+FREEZE_RELEASE_KEYS = frozenset({
+    "release_id", "source_revision", "environment", "build_reference",
+    "deployment_reference", "build_digest", "schema_revision", "model_provider",
+    "model_id", "task_queue", "runtime_identity_sha256",
+    "rollout_manifest_sha256", "provider_policy_sha256",
+})
+FREEZE_EVIDENCE_KEYS = frozenset({
+    "schema_version", "evidence_kind", "status", "release",
+    "synthetic_account_reference", "capabilities", "action_providers", "cohort",
+    "runtime_manifest_sha256", "worker_inventory_sha256", "worker_count",
+    "reviewed_skills_sha256", "prepared_at", "verified_at",
+})
+
+
+def state_from_freeze_evidence(evidence: object) -> dict:
+    """Reconstruct and revalidate the exact prepared-state contract from a freeze receipt."""
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != FREEZE_EVIDENCE_KEYS
+        or type(evidence.get("schema_version")) is not int
+        or evidence["schema_version"] != SCHEMA_VERSION
+        or evidence.get("evidence_kind") != EVIDENCE_KIND
+        or evidence.get("status") != "frozen"
+    ):
+        raise StagingReleaseFreezeError("Frozen release evidence has an unsupported schema.")
+    release = evidence.get("release")
+    if not isinstance(release, dict) or set(release) != FREEZE_RELEASE_KEYS:
+        raise StagingReleaseFreezeError("Frozen release identity has an unexpected schema.")
+    for name in ("runtime_manifest_sha256", "worker_inventory_sha256", "reviewed_skills_sha256"):
+        if not isinstance(evidence.get(name), str) or re.fullmatch(r"[0-9a-f]{64}", evidence[name]) is None:
+            raise StagingReleaseFreezeError(f"Frozen release {name} is invalid.")
+    if type(evidence.get("worker_count")) is not int or not 1 <= evidence["worker_count"] <= 32:
+        raise StagingReleaseFreezeError("Frozen release worker_count is invalid.")
+    try:
+        prepared_at = parse_time(evidence["prepared_at"], "prepared_at")
+        verified_at = parse_time(evidence["verified_at"], "verified_at")
+    except (StagingReleaseEvidenceError, OverflowError, ValueError):
+        raise StagingReleaseFreezeError("Frozen release timestamps are invalid.") from None
+    if verified_at < prepared_at:
+        raise StagingReleaseFreezeError("Frozen release verification predates preparation.")
+    state = {
+        "schema_version": SCHEMA_VERSION,
+        "evidence_kind": EVIDENCE_KIND,
+        "status": "prepared",
+        "release_id": release.get("release_id"),
+        "expected_source_revision": release.get("source_revision"),
+        "expected_environment": release.get("environment"),
+        "expected_build_digest": release.get("build_digest"),
+        "expected_schema_revision": release.get("schema_revision"),
+        "expected_model_provider": release.get("model_provider"),
+        "expected_model_id": release.get("model_id"),
+        "expected_task_queue": release.get("task_queue"),
+        "build_reference": release.get("build_reference"),
+        "deployment_reference": release.get("deployment_reference"),
+        "synthetic_account_reference": evidence.get("synthetic_account_reference"),
+        "rollout_manifest_sha256": release.get("rollout_manifest_sha256"),
+        "provider_policy_sha256": release.get("provider_policy_sha256"),
+        "declared_capabilities": evidence.get("capabilities"),
+        "declared_action_providers": evidence.get("action_providers"),
+        "declared_cohort": evidence.get("cohort"),
+        "prepared_at": evidence.get("prepared_at"),
+    }
+    validate_prepared_state(state)
+    return state
 
 
 def json_object(response: httpx.Response, label: str, *, expected_status: int = 200) -> dict:
@@ -652,6 +812,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--rollout", type=Path, required=True)
     prepare.add_argument("--provider-policy-plan", type=Path, required=True)
     prepare.add_argument("--expected-source-revision", required=True)
+    prepare.add_argument("--expected-build-digest", required=True)
+    prepare.add_argument("--expected-model-provider", required=True, choices=("deepseek", "gemma"))
+    prepare.add_argument("--expected-model-id", required=True)
+    prepare.add_argument("--expected-task-queue", required=True)
     prepare.add_argument("--build-reference", required=True)
     prepare.add_argument("--deployment-reference", required=True)
     prepare.add_argument("--synthetic-account-reference", required=True)
@@ -672,6 +836,10 @@ def main() -> None:
                 rollout_path=args.rollout,
                 provider_policy_path=args.provider_policy_plan,
                 expected_source_revision=args.expected_source_revision,
+                expected_build_digest=args.expected_build_digest,
+                expected_model_provider=args.expected_model_provider,
+                expected_model_id=args.expected_model_id,
+                expected_task_queue=args.expected_task_queue,
                 build_reference=args.build_reference,
                 deployment_reference=args.deployment_reference,
                 synthetic_account_reference=args.synthetic_account_reference,
@@ -701,7 +869,7 @@ def main() -> None:
             trust_env=False,
             headers={"Authorization": "Bearer " + token, "Accept-Encoding": "identity"},
         ) as client:
-            with client.stream("GET", "/api/v1/runtime-manifest") as response:
+            with client.stream("GET", "/api/v1/runtime-manifest/v3") as response:
                 runtime = json_object(response, "runtime manifest")
         evidence = verify_runtime(state, runtime)
         write_private_json(args.output, evidence)
@@ -710,6 +878,9 @@ def main() -> None:
             "output": str(args.output),
             "release": evidence["release"],
             "runtime_manifest_sha256": evidence["runtime_manifest_sha256"],
+            "worker_inventory_sha256": evidence["worker_inventory_sha256"],
+            "build_digest": evidence["release"]["build_digest"],
+            "schema_revision": evidence["release"]["schema_revision"],
         }, indent=2))
     except (OSError, httpx.HTTPError, StagingReleaseFreezeError, StagingReleaseEvidenceError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, indent=2))

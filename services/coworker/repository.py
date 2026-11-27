@@ -5,11 +5,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from .auth import Principal
 from .config import Settings
+from .runtime_identity import build_runtime_identity
 from .errors import CoworkerError
 from .models import (
     Account, AgentOutbox, AgentRun, AgentStep, Artifact, AuditEvent, DailyUsage, Document,
@@ -631,23 +632,58 @@ class Repository:
             )
         }}
 
+    def current_schema_revision(self) -> str:
+        """Return the single applied Alembic head visible to this runtime."""
+        try:
+            with self.sessions() as db:
+                heads = db.execute(
+                    text("SELECT version_num FROM cw_alembic_version ORDER BY version_num")
+                ).scalars().all()
+        except SQLAlchemyError:
+            if self.settings.environment == "development":
+                return "unknown"
+            raise CoworkerError(
+                "schema_revision_unavailable",
+                "The applied database schema revision could not be established.",
+                503,
+            ) from None
+        if len(heads) != 1 or not isinstance(heads[0], str) or not heads[0]:
+            if self.settings.environment == "development" and not heads:
+                return "unknown"
+            raise CoworkerError(
+                "schema_revision_unavailable",
+                "The database must have exactly one applied Alembic head.",
+                503,
+            )
+        return heads[0]
+
     def register_worker(self, *, task_queue: str, source_revision: str | None) -> str:
         worker_id = str(uuid4())
         worker_revision = source_revision or "unknown"
+        runtime_revision = self.settings.source_revision or "unknown"
+        if worker_revision != runtime_revision:
+            raise CoworkerError(
+                "worker_fleet_incompatible",
+                "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
+                409,
+            )
+        try:
+            identity = build_runtime_identity(self.settings, self, task_queue=task_queue)
+        except (ValueError, CoworkerError):
+            raise CoworkerError(
+                "worker_identity_unavailable",
+                "Worker registration is blocked because immutable runtime identity is unavailable.",
+                503,
+            ) from None
+        if identity["source_revision"] != worker_revision:
+            raise CoworkerError(
+                "worker_fleet_incompatible",
+                "Worker registration is blocked because its runtime identity does not match the running source revision.",
+                409,
+            )
         with self.sessions.begin() as db:
             self._lock_worker_queue_membership(db, task_queue=task_queue)
-            runtime_revision = self.settings.source_revision or "unknown"
             if task_queue == self.settings.task_queue:
-                # The row's revision must describe this running deployment, not
-                # an operator-supplied or stale value. Candidate code may join
-                # while an older publication remains selected; selection itself
-                # still blocks until the active fleet matches the candidate.
-                if worker_revision != runtime_revision:
-                    raise CoworkerError(
-                        "worker_fleet_incompatible",
-                        "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
-                        409,
-                    )
                 selection = db.scalar(select(ReviewedSkillSelection).where(
                     ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
                 ))
@@ -664,20 +700,29 @@ class Repository:
                             409,
                         )
             if db.get_bind().dialect.name == "postgresql":
-                # The database trigger also rejects inserts from legacy
-                # binaries that do not set this transaction-local attestation.
-                attested_revision = (
-                    runtime_revision if task_queue == self.settings.task_queue
-                    else worker_revision
-                )
-                db.execute(select(func.set_config(
-                    "shuddho.worker_source_revision",
-                    attested_revision,
-                    True,
-                )))
+                # Each transaction-local setting is checked by the INSERT
+                # trigger. Older binaries cannot register without the full
+                # deployment-attested identity.
+                attestations = {
+                    "shuddho.worker_source_revision": worker_revision,
+                    "shuddho.worker_task_queue": task_queue,
+                    "shuddho.worker_build_digest": identity["build_digest"],
+                    "shuddho.worker_schema_revision": identity["schema_revision"],
+                    "shuddho.worker_model_provider": identity["model_provider"],
+                    "shuddho.worker_model_id": identity["model_id"],
+                    "shuddho.worker_runtime_identity_sha256": identity["runtime_identity_sha256"],
+                }
+                for setting, value in attestations.items():
+                    db.execute(select(func.set_config(setting, value, True)))
             db.add(WorkerInstance(
-                id=worker_id, task_queue=task_queue,
+                id=worker_id,
+                task_queue=task_queue,
                 source_revision=worker_revision,
+                build_digest=identity["build_digest"],
+                schema_revision=identity["schema_revision"],
+                model_provider=identity["model_provider"],
+                model_id=identity["model_id"],
+                runtime_identity_sha256=identity["runtime_identity_sha256"],
                 state="starting",
             ))
         return worker_id
@@ -801,7 +846,13 @@ class Repository:
             cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
             return [{
                 "id": row.id, "task_queue": row.task_queue,
-                "source_revision": row.source_revision, "state": row.state,
+                "source_revision": row.source_revision,
+                "build_digest": row.build_digest,
+                "schema_revision": row.schema_revision,
+                "model_provider": row.model_provider,
+                "model_id": row.model_id,
+                "runtime_identity_sha256": row.runtime_identity_sha256,
+                "state": row.state,
                 "started_at": iso(row.started_at),
                 "heartbeat_at": iso(row.heartbeat_at),
                 "heartbeat_fresh": aware(row.heartbeat_at) >= cutoff,

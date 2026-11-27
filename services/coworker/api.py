@@ -20,6 +20,13 @@ from starlette.concurrency import run_in_threadpool
 from .auth import Principal, require_principal
 from .config import enabled as coworker_enabled
 from .container import Container
+from .runtime_identity import (
+    RuntimeIdentityError,
+    build_runtime_identity,
+    canonical_json,
+    canonical_sha256,
+    runtime_manifest_payload,
+)
 from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
 from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete, GitHubRepositoryBind
 from .fly_code_schemas import FlyWorkspaceSync
@@ -1314,90 +1321,74 @@ def runtime_manifest(
             403,
         )
     response.headers["Cache-Control"] = "no-store"
-    capabilities = {
-        "coworker": coworker_enabled(),
-        "work_services": settings.work_services_enabled,
-        "artifact_services": settings.artifact_services_enabled,
-        "agent_runtime": settings.agent_runtime_enabled,
-        "conversations": settings.conversations_enabled,
-        "projects": settings.projects_enabled and settings.conversations_enabled,
-        "fly_github": settings.fly_github_enabled,
-        "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
-        "grounded_conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
-        "runtime_v3": settings.agent_runtime_v3_enabled,
-        "context_retrieval": settings.context_retrieval_enabled,
-        "personal_goals": settings.personal_goals_enabled,
-        "automations": settings.automations_enabled,
-        "intelligent_planner": settings.intelligent_planner_enabled,
-        "memory": settings.agent_memory_enabled,
-        "handoffs": settings.agent_handoffs_enabled,
-        "multi_handoffs": settings.agent_multi_handoffs_enabled,
-        "dependency_graph": settings.agent_dependency_graph_enabled,
-        "parallel_execution": settings.agent_parallel_execution_enabled,
-        "outcome_replan": settings.agent_outcome_replan_enabled,
-        "research": settings.research_services_enabled,
-        "actions": settings.actions_enabled,
-        "connector_trust_boundary": settings.connector_trust_boundary_enabled,
-        "connector_reads": settings.connector_reads_enabled,
-        "browser": settings.browser_enabled,
-        "agent_browser_read": settings.agent_browser_read_enabled,
-        "code_execution": settings.code_execution_enabled,
-        "agent_sandbox_tool": settings.agent_sandbox_tool_enabled,
-        "action_attachments": settings.action_attachments_enabled,
-        "action_reminders": settings.action_reminders_enabled,
-        "action_recipients": settings.action_recipients_enabled,
-        "action_document_sharing": settings.action_document_sharing_enabled,
-        "action_email_threading": settings.action_email_threading_enabled,
-        "action_social_publishing": settings.action_social_publishing_enabled,
-        "personal_transactions": settings.personal_transactions_enabled,
-        "restaurant_reservations": settings.restaurant_reservations_enabled,
-        "shopping_checkout": settings.shopping_checkout_enabled,
-        "travel_booking": settings.travel_booking_enabled,
-        "action_selection": settings.agent_action_selection_enabled,
-        "action_proposals": settings.agent_action_proposals_enabled,
-        "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
-        "agent_linkedin_proposals": settings.agent_linkedin_proposals_enabled,
-        "browser_push": settings.browser_push_enabled,
-        "reviewed_research": (
-            settings.agent_reviewed_research_skill_enabled
-            and services.repository.reviewed_skill_runtime_manifest()["research"]["state"] == "selected"
-        ),
-    }
-    providers = []
-    if settings.actions_enabled:
-        providers.append("google")
-        if settings.microsoft_actions_enabled:
-            providers.append("microsoft")
-        if settings.action_social_publishing_enabled:
-            providers.append("linkedin")
-        if settings.restaurant_reservations_enabled:
-            providers.append("opentable")
-        if settings.shopping_checkout_enabled or settings.travel_booking_enabled:
-            for operation in sorted(settings.transaction_operations):
-                provider, separator, kind = operation.partition(":")
-                if (
-                    separator
-                    and kind in {"shopping_checkout_create", "travel_booking_create"}
-                    and provider not in providers
-                ):
-                    providers.append(provider)
+    return {"schema_version": 2, **runtime_manifest_payload(settings, services.repository)}
+
+
+@router.get("/runtime-manifest/v3")
+def runtime_manifest_v3(
+    response: Response,
+    principal: Annotated[Principal, Depends(require_principal)],
+    services: Services,
+):
+    settings = services.settings
+    if settings.environment != "staging" or not settings.cohort_enforced:
+        raise CoworkerError(
+            "runtime_identity_unavailable",
+            "The immutable runtime identity is available only for the enforced staging cohort.",
+            404,
+        )
+    if principal.account_id not in settings.cohort_account_ids:
+        raise CoworkerError(
+            "cohort_not_enabled",
+            "Coworker access is not enabled for this account yet.",
+            403,
+        )
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        identity = build_runtime_identity(settings, services.repository)
+        rows = services.repository.worker_inventory(task_queue=settings.task_queue)
+    except (RuntimeIdentityError, ValueError):
+        raise CoworkerError(
+            "runtime_identity_unavailable",
+            "Staging API and worker identity could not be established.",
+            503,
+        ) from None
+
+    terminal_states = {"drained", "lost"}
+    active = [row for row in rows if row.get("state") not in terminal_states]
+    worker_inventory = []
+    blocked_worker_count = 0
+    identity_fields = (
+        "source_revision", "build_digest", "schema_revision",
+        "model_provider", "model_id", "runtime_identity_sha256",
+    )
+    for row in active:
+        worker = {
+            "task_queue": row.get("task_queue"),
+            "source_revision": row.get("source_revision"),
+            "build_digest": row.get("build_digest"),
+            "schema_revision": row.get("schema_revision"),
+            "model_provider": row.get("model_provider"),
+            "model_id": row.get("model_id"),
+            "runtime_identity_sha256": row.get("runtime_identity_sha256"),
+            "state": row.get("state"),
+            "heartbeat_fresh": row.get("heartbeat_fresh") is True,
+        }
+        matches_api = (
+            worker["task_queue"] == identity["task_queue"]
+            and all(worker[field] == identity[field] for field in identity_fields)
+        )
+        if worker["state"] != "running" or not worker["heartbeat_fresh"] or not matches_api:
+            blocked_worker_count += 1
+        worker_inventory.append(worker)
+
+    worker_inventory.sort(key=canonical_json)
     return {
-        "schema_version": 2,
-        "source_revision": settings.source_revision,
-        "environment": settings.environment,
-        "capabilities": capabilities,
-        # Separate configured authority outside the fixed 43 runtime-v2 flags.
-        # Report the actual setting, even if another dependency blocks its use.
-        "canonical_only_capabilities": {
-            "suggestion_model_relevance": settings.suggestion_model_relevance_enabled,
-        },
-        "reviewed_skills": services.repository.reviewed_skill_runtime_manifest(),
-        "action_providers": providers,
-        "cohort": {
-            "enforced": settings.cohort_enforced,
-            "configured_members": len(settings.cohort_account_ids),
-            "max_users": settings.cohort_max_users,
-        },
+        **identity,
+        "worker_fleet_ready": bool(active) and blocked_worker_count == 0,
+        "blocked_worker_count": blocked_worker_count,
+        "worker_inventory": worker_inventory,
+        "worker_inventory_sha256": canonical_sha256(worker_inventory),
     }
 
 

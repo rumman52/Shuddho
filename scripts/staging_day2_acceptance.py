@@ -18,6 +18,7 @@ from scripts.staging_day2_authorization import (
     reconcile_authorization,
 )
 from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+from scripts.staging_release_freeze import state_from_freeze_evidence
 
 
 class Day2AcceptanceFailure(RuntimeError):
@@ -28,6 +29,8 @@ _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _REVISION = re.compile(r"[a-f0-9]{40}\Z")
 _BASE_FIELDS = (
     "status", "release_id", "source_revision", "runtime_manifest_sha256",
+    "worker_inventory_sha256", "build_digest", "schema_revision",
+    "model_provider", "model_id", "task_queue", "runtime_identity_sha256",
     "document_id", "document_version_id", "document_sha256",
     "task_id", "workflow_id", "artifact_id", "artifact_sha256",
     "artifact_bytes", "model_attempts", "accounted_tokens",
@@ -173,13 +176,24 @@ def validate_evidence(
     if not isinstance(expected_revision, str) or not _REVISION.fullmatch(expected_revision):
         raise Day2AcceptanceFailure("An exact reviewed 40-character source SHA is required.")
     frozen = _object(freeze, "freeze")
+    try:
+        state_from_freeze_evidence(frozen)
+    except Exception:
+        raise Day2AcceptanceFailure("The expected source SHA must have a schema-v2 frozen release with a valid build identity.") from None
     release = _object(frozen.get("release"), "freeze.release")
     if (frozen.get("status") != "frozen" or release.get("environment") != "staging"
             or release.get("source_revision") != expected_revision):
         raise Day2AcceptanceFailure("The expected source SHA must have a frozen staging release.")
     release_id = _nonempty(release.get("release_id"), "freeze.release.release_id")
     runtime_digest = _digest(frozen.get("runtime_manifest_sha256"), "freeze.runtime_manifest_sha256")
+    worker_inventory_digest = _digest(frozen.get("worker_inventory_sha256"), "freeze.worker_inventory_sha256")
     rollout_digest = _digest(release.get("rollout_manifest_sha256"), "freeze.release.rollout_manifest_sha256")
+    build_digest = _digest(release.get("build_digest"), "freeze.release.build_digest")
+    schema_revision = _nonempty(release.get("schema_revision"), "freeze.release.schema_revision")
+    model_provider = _nonempty(release.get("model_provider"), "freeze.release.model_provider")
+    model_id = _nonempty(release.get("model_id"), "freeze.release.model_id")
+    task_queue = _nonempty(release.get("task_queue"), "freeze.release.task_queue")
+    runtime_identity_digest = _digest(release.get("runtime_identity_sha256"), "freeze.release.runtime_identity_sha256")
 
     run = _object(execution, "execution")
     rec = _object(recovery, "recovery")
@@ -188,6 +202,17 @@ def validate_evidence(
         raise Day2AcceptanceFailure("Document execution is not passed for the frozen release.")
     if run.get("runtime_manifest_sha256") != runtime_digest:
         raise Day2AcceptanceFailure("Document execution does not match the frozen runtime manifest.")
+    for field, expected in (
+        ("worker_inventory_sha256", worker_inventory_digest),
+        ("build_digest", build_digest),
+        ("schema_revision", schema_revision),
+        ("model_provider", model_provider),
+        ("model_id", model_id),
+        ("task_queue", task_queue),
+        ("runtime_identity_sha256", runtime_identity_digest),
+    ):
+        if run.get(field) != expected:
+            raise Day2AcceptanceFailure(f"Document execution does not match frozen runtime identity: {field}.")
     for key in ("document_id", "document_version_id", "task_id", "artifact_id"):
         _nonempty(run.get(key), "execution." + key)
     for key in ("document_sha256", "artifact_sha256"):
@@ -200,12 +225,14 @@ def validate_evidence(
     model = _object(run.get("model_evidence"), "execution.model_evidence")
     if (model.get("status") != "verified"
             or model.get("task_id") != run["task_id"]
-            or model.get("provider") != "deepseek"
+            or model.get("provider") != model_provider
             or model.get("generation_validator") != "passed"):
         raise Day2AcceptanceFailure(
             "Private report has no verified persisted DeepSeek model provenance."
         )
     model_name = _nonempty(model.get("model"), "model_evidence.model")
+    if model_name != model_id:
+        raise Day2AcceptanceFailure("Persisted model identity does not match the frozen release.")
     if len(model_name) > 120:
         raise Day2AcceptanceFailure("Model identity exceeds the persisted model ledger bound.")
     _digest(model.get("prompt_sha256"), "model_evidence.prompt_sha256")
@@ -250,8 +277,16 @@ def validate_evidence(
     worker = _object(run.get("worker"), "execution.worker")
     _nonempty(worker.get("id"), "execution.worker.id")
     _nonempty(worker.get("task_queue"), "execution.worker.task_queue")
-    if worker.get("source_revision") != expected_revision:
-        raise Day2AcceptanceFailure("Worker source revision does not match the frozen candidate.")
+    if (
+        worker.get("source_revision") != expected_revision
+        or worker.get("task_queue") != task_queue
+        or worker.get("build_digest") != build_digest
+        or worker.get("schema_revision") != schema_revision
+        or worker.get("model_provider") != model_provider
+        or worker.get("model_id") != model_id
+        or worker.get("runtime_identity_sha256") != runtime_identity_digest
+    ):
+        raise Day2AcceptanceFailure("Worker source, build, schema, model, queue or runtime identity does not match the frozen candidate.")
     if _time(worker.get("heartbeat_after"), "worker.heartbeat_after") <= _time(
             worker.get("heartbeat_before"), "worker.heartbeat_before"):
         raise Day2AcceptanceFailure("Real worker heartbeat did not advance.")
@@ -355,8 +390,15 @@ def validate_evidence(
         integrity.get("restored_api_access"),
         "archive_integrity.restored_api_access",
     )
-    if (restored_api.get("status") != "verified"
-            or restored_api.get("runtime_source_revision") != expected_revision):
+    if (
+        restored_api.get("status") != "verified"
+        or restored_api.get("runtime_source_revision") != expected_revision
+        or restored_api.get("runtime_build_digest") != build_digest
+        or restored_api.get("runtime_schema_revision") != schema_revision
+        or restored_api.get("runtime_model_provider") != model_provider
+        or restored_api.get("runtime_model_id") != model_id
+        or restored_api.get("runtime_identity_sha256") != runtime_identity_digest
+    ):
         raise Day2AcceptanceFailure(
             "archive_integrity.restored_api_access is missing verified release identity."
         )
@@ -444,6 +486,13 @@ def validate_evidence(
         "release_id": release_id,
         "source_revision": expected_revision,
         "runtime_manifest_sha256": runtime_digest,
+        "worker_inventory_sha256": worker_inventory_digest,
+        "build_digest": build_digest,
+        "schema_revision": schema_revision,
+        "model_provider": model_provider,
+        "model_id": model_id,
+        "task_queue": task_queue,
+        "runtime_identity_sha256": runtime_identity_digest,
         "rollout_manifest_sha256": rollout_digest,
         "document_id": run["document_id"],
         "document_version_id": run["document_version_id"],

@@ -63,7 +63,7 @@ def prepared(tmp_path: Path):
         expected_model_provider="deepseek",
         expected_model_id="deepseek-flash",
         expected_task_queue="shuddho-documents-v1",
-        build_reference="registry.example/shuddho@sha256:abc",
+        build_reference="registry.example/shuddho@sha256:" + "b" * 64,
         deployment_reference="render:staging-deploy-123",
         synthetic_account_reference="synthetic-cohort-1",
     )
@@ -106,6 +106,8 @@ def runtime(state):
         "model_provider": identity["model_provider"],
         "model_id": identity["model_id"],
         "runtime_identity_sha256": identity["runtime_identity_sha256"],
+        "state": "running",
+        "heartbeat_fresh": True,
     }]
     return {
         **identity,
