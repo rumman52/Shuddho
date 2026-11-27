@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from scripts import staging_day2_acceptance as gate
+from scripts import staging_release_freeze as freeze
 
 SHA = 'a' * 40
 SHA_OTHER = 'b' * 40
@@ -12,13 +13,27 @@ DIGEST = 'c' * 64
 
 
 def proofs():
-    freeze = {
-        'status': 'frozen', 'runtime_manifest_sha256': DIGEST,
+    declared_capabilities = {key: False for key in freeze.RUNTIME_CAPABILITY_KEYS}
+    for name in freeze.PA10_REQUIRED_TRUE:
+        declared_capabilities[name] = True
+    freeze_receipt = {
+        'schema_version': freeze.SCHEMA_VERSION,
+        'evidence_kind': freeze.EVIDENCE_KIND,
+        'status': 'frozen',
+        'runtime_manifest_sha256': DIGEST,
+        'worker_inventory_sha256': '7' * 64,
+        'worker_count': 1,
+        'reviewed_skills_sha256': '8' * 64,
+        'synthetic_account_reference': 'synthetic-cohort',
+        'capabilities': declared_capabilities,
+        'action_providers': ['google', 'microsoft'],
+        'cohort': {'reference': 'synthetic-cohort', 'enforced': True, 'max_users': 5},
         'prepared_at': '2026-11-12T10:45:00+00:00',
+        'verified_at': '2026-11-12T10:46:00+00:00',
         'release': {'release_id': 'day2-001', 'source_revision': SHA,
                     'environment': 'staging', 'rollout_manifest_sha256': '3' * 64,
                     'provider_policy_sha256': 'e' * 64,
-                    'build_reference': 'sha256:immutable-staging-api-worker-build',
+                    'build_reference': 'shuddho-build@sha256:' + '4' * 64,
                     'deployment_reference': 'render-staging-change-ticket-123',
                     'build_digest': '4' * 64, 'schema_revision': '0073_worker_runtime_identity',
                     'model_provider': 'deepseek', 'model_id': 'deepseek-flash',
@@ -127,6 +142,16 @@ def proofs():
         'worker_before_heartbeat_at': '2026-11-12T11:02:55+00:00',
         'worker_after_heartbeat_at': '2026-11-12T11:03:06+00:00',
         'worker_after_started_at': '2026-11-12T11:03:05+00:00',
+        'worker_before_build_digest': '4' * 64,
+        'worker_after_build_digest': '4' * 64,
+        'worker_before_schema_revision': '0073_worker_runtime_identity',
+        'worker_after_schema_revision': '0073_worker_runtime_identity',
+        'worker_before_model_provider': 'deepseek',
+        'worker_after_model_provider': 'deepseek',
+        'worker_before_model_id': 'deepseek-flash',
+        'worker_after_model_id': 'deepseek-flash',
+        'worker_before_runtime_identity_sha256': '5' * 64,
+        'worker_after_runtime_identity_sha256': '5' * 64,
         'run_started_at': '2026-11-12T11:02:00+00:00',
         'run_finished_at': '2026-11-12T11:04:00+00:00',
         'restart_at': '2026-11-12T11:03:00+00:00',
