@@ -1,0 +1,3 @@
+# Prompt 04 continuation — 28 November 2026
+
+Day 7 exact receipt revision and pause transition source patch. See [contract and local verification](DAY7_EXACT_RECEIPT_REVISION_2026-11-28.md). Base `8821f1151b95ded7c7ccb67a145ce8e49ab5e764`, source `886ff5e980bea33775080eadbf4a28daf14c212a`. 77 isolated predicate cases pass. Exact-head CI and independent approval pending; no operational acceptance. Historical #933/#946/#951/#957/#959 merged but last observed technical-success workflows failed independent review and no review was returned. Preserve governance blocker, no release credit. Reconcile this PR-specific progress into canonical progress after independent review.
