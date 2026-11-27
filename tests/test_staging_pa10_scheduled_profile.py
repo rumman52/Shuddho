@@ -144,7 +144,7 @@ class _ScopeResponse:
 
 
 @pytest.mark.parametrize("change", [
-    "connector", "memory", "stale_revision", "empty_documents", "wrong_goal",
+    "connector", "memory", "stale_revision", "float_revision", "empty_documents", "wrong_goal",
     "missing_project", "unlinked_project_document",
 ])
 def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
@@ -163,6 +163,8 @@ def test_daily_scope_fails_closed_on_unapproved_read_authority(change):
         goal["authorized_resources"].append({"kind": "memory_namespace", "reference": "private"})
     elif change == "stale_revision":
         goal["revision"] = 3
+    elif change == "float_revision":
+        goal["revision"] = 2.0
     elif change == "empty_documents":
         goal["authorized_resources"] = []
     elif change == "wrong_goal":
