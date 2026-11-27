@@ -242,6 +242,7 @@ jobs:
             tests/test_staging_restored_api_access.py \
             tests/test_staging_preseed_baseline.py \
             tests/test_staging_day2_archive_attestation.py \
+            tests/test_staging_release_build_identity.py \
             tests/test_staging_object_backup.py \
             tests/test_staging_release_evidence.py \
             tests/test_staging_evidence_unicode.py \
@@ -255,6 +256,7 @@ jobs:
             tests.test_staging_restored_api_access \
             tests.test_staging_preseed_baseline \
             tests.test_staging_day2_archive_attestation \
+            tests.test_staging_release_build_identity \
             tests.test_staging_object_backup \
             tests.test_staging_release_evidence \
             tests.test_staging_evidence_unicode; do
@@ -795,6 +797,19 @@ jobs:
         with: { python-version: "3.11" }
       - name: Install coworker dependencies
         run: uv sync --frozen --group dev --extra coworker
+      - name: Measure disposable Day 8 FK plans and validate redaction
+        run: |
+          uv run --extra coworker pytest tests/test_day8_fk_plan_evidence.py tests/test_day8_fk_plans_postgres.py -q -rs -o junit_family=xunit1 --junitxml=/tmp/day8-fk-plans.xml
+          for module in tests.test_day8_fk_plan_evidence tests.test_day8_fk_plans_postgres; do
+            uv run python -m scripts.mandatory_test_gate /tmp/day8-fk-plans.xml --required-module "$module"
+          done
+      - name: Preserve disposable Day 8 FK plan smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day8-disposable-fk-plans
+          path: /tmp/day8-fk-plans.xml
+          if-no-files-found: warn
       - name: Rehearse both Day 2 0071 migration paths and replay without skips
         run: |
           uv run --extra coworker pytest tests/test_day2_dual_0071_postgres.py -q -rs --junitxml=/tmp/day2-dual-0071-postgres.xml

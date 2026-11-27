@@ -821,8 +821,7 @@ class SandboxRepository:
         if (
             not isinstance(body_b64, str)
             or not isinstance(declared_sha, str)
-            or not isinstance(declared_bytes, int)
-            or isinstance(declared_bytes, bool)
+            or type(declared_bytes) is not int
         ):
             raise CoworkerError("sandbox_artifact_invalid", "Interactive artifact metadata is invalid.", 409)
         try:
@@ -955,9 +954,9 @@ class SandboxRepository:
             exit_code = observation.get("exit_code")
             elapsed_ms = observation.get("elapsed_ms")
             if (
-                not isinstance(exit_code, int)
+                type(exit_code) is not int
                 or not -255 <= exit_code <= 255
-                or not isinstance(elapsed_ms, int)
+                or type(elapsed_ms) is not int
                 or not 0 <= elapsed_ms <= self.settings.sandbox_wall_seconds * 1000
             ):
                 raise CoworkerError("sandbox_result_invalid", "Sandbox result metadata is invalid.", 409)
