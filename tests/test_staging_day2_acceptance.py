@@ -16,7 +16,7 @@ def proofs():
     declared_capabilities = {key: False for key in freeze.RUNTIME_CAPABILITY_KEYS}
     for name in freeze.PA10_REQUIRED_TRUE:
         declared_capabilities[name] = True
-    freeze_receipt = {
+    freeze_evidence = {
         'schema_version': freeze.SCHEMA_VERSION,
         'evidence_kind': freeze.EVIDENCE_KIND,
         'status': 'frozen',
@@ -207,7 +207,7 @@ def proofs():
                                  'exercise_started_at': '2026-11-12T11:06:00+00:00',
                                  'verified_at': '2026-11-12T11:10:00+00:00',
                                  'evidence': 'isolated-backup-and-restore-event-refs'}
-    return freeze, run, recovery, restore
+    return freeze_evidence, run, recovery, restore
 
 
 def check(*proof_set):
