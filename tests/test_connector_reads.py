@@ -1925,7 +1925,8 @@ def test_gmail_incremental_sync_preserves_inbox_membership(container):
     }
 
     result = asyncio.run(container.connector_reads.sync(owner, grant["id"]))
-    assert result["cursor"] if "cursor" in result else result["cursor_recovered"] is False
+    assert result["cursor_recovered"] is False
+    assert result["cursor_generation"] == 1
     with container.repository.sessions() as db:
         rows = db.scalars(
             select(ConnectorSnapshot).where(ConnectorSnapshot.grant_id == grant["id"])
