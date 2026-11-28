@@ -777,10 +777,17 @@ class ConnectorReadRepository:
                 ConnectorEvent.state.in_(["pending", "retry", "processing"]),
                 ConnectorEvent.available_at <= now,
                 ((ConnectorEvent.claim_until.is_(None)) | (ConnectorEvent.claim_until < now)),
-                ConnectorEvent.attempts < 8,
+                ((ConnectorEvent.attempts < 8) | (ConnectorEvent.state == "processing")),
             ).order_by(ConnectorEvent.received_at).limit(limit).with_for_update()).all()
             result = []
             for row in rows:
+                # Expired final claims cannot be retried, but must leave
+                # processing rather than remain permanently stranded.
+                if row.attempts >= 8:
+                    row.state = "failed"
+                    row.claim_until = None
+                    row.last_error_code = "connector_event_claim_exhausted"
+                    continue
                 row.state = "processing"
                 row.claim_until = now + timedelta(minutes=2)
                 row.attempts += 1
