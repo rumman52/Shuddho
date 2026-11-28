@@ -802,7 +802,9 @@ class ConnectorReadRepository:
         owner: str,
         grant_id: str,
         snapshot_ids: list[str],
-    ) -> None:
+        *,
+        expected_attempt: int,
+    ) -> bool:
         bounded = list(dict.fromkeys(snapshot_ids))[:30]
         with self.sessions.begin() as db:
             row = db.scalar(select(ConnectorEvent).where(
@@ -812,6 +814,10 @@ class ConnectorReadRepository:
             ).with_for_update())
             if row is None:
                 raise not_found()
+            # A reclaimed lease has a higher persisted attempt number. Only
+            # the current processing attempt may bind evidence or finish.
+            if row.state != "processing" or row.attempts != expected_attempt:
+                return False
             if bounded:
                 found = set(db.scalars(select(ConnectorSnapshot.id).where(
                     ConnectorSnapshot.owner_id == owner,
@@ -826,6 +832,7 @@ class ConnectorReadRepository:
                     )
             if bounded or not list(row.synced_snapshot_ids or []):
                 row.synced_snapshot_ids = bounded
+            return True
 
     def event_is_stale(self, event: dict) -> bool:
         with self.sessions() as db:
@@ -846,12 +853,12 @@ class ConnectorReadRepository:
                     return int(hint) <= int(cursor.cursor)
             return False
 
-    def finish_event(self, event_id: str, *, ignored: bool = False) -> None:
+    def finish_event(self, event_id: str, *, expected_attempt: int, ignored: bool = False) -> None:
         with self.sessions.begin() as db:
             row = db.scalar(select(ConnectorEvent).where(
                 ConnectorEvent.id == event_id,
             ).with_for_update())
-            if row is None:
+            if row is None or row.state != "processing" or row.attempts != expected_attempt:
                 return
             row.state = "ignored" if ignored else "processed"
             row.processed_at = utcnow()
@@ -867,12 +874,12 @@ class ConnectorReadRepository:
                 sub.last_event_sequence = row.provider_sequence
                 sub.updated_at = utcnow()
 
-    def fail_event(self, event_id: str, code: str) -> None:
+    def fail_event(self, event_id: str, code: str, *, expected_attempt: int) -> None:
         with self.sessions.begin() as db:
             row = db.scalar(select(ConnectorEvent).where(
                 ConnectorEvent.id == event_id,
             ).with_for_update())
-            if row is None:
+            if row is None or row.state != "processing" or row.attempts != expected_attempt:
                 return
             row.last_error_code = code[:60]
             row.claim_until = None
@@ -1173,32 +1180,36 @@ class ConnectorReadService:
         # stale/out-of-order. Later attempts are recovery after a worker or
         # downstream-consumer failure; the connector cursor may already have
         # advanced, but the same event still needs durable automation admission.
-        if int(event.get("attempts", 1)) <= 1 and await asyncio.to_thread(
+        attempt = event["attempts"]
+        if attempt <= 1 and await asyncio.to_thread(
             self.repo.event_is_stale, event
         ):
-            await asyncio.to_thread(self.repo.finish_event, event["id"], ignored=True)
+            await asyncio.to_thread(self.repo.finish_event, event["id"], expected_attempt=attempt, ignored=True)
             return
         try:
             sync_summary = await self.sync(event["owner_id"], event["grant_id"])
-            await asyncio.to_thread(
+            bound = await asyncio.to_thread(
                 self.repo.bind_event_snapshots,
                 event["id"],
                 event["owner_id"],
                 event["grant_id"],
                 list(sync_summary.get("snapshot_ids") or []),
+                expected_attempt=attempt,
             )
+            if not bound:
+                return
         except CoworkerError as error:
             if error.code in {
                 "connector_read_revoked", "connector_read_expired",
                 "connection_removed", "not_found",
             }:
-                await asyncio.to_thread(self.repo.finish_event, event["id"], ignored=True)
+                await asyncio.to_thread(self.repo.finish_event, event["id"], expected_attempt=attempt, ignored=True)
                 return
-            await asyncio.to_thread(self.repo.fail_event, event["id"], error.code)
+            await asyncio.to_thread(self.repo.fail_event, event["id"], error.code, expected_attempt=attempt)
             return
         except Exception:
             await asyncio.to_thread(
-                self.repo.fail_event, event["id"], "connector_event_sync_failed"
+                self.repo.fail_event, event["id"], "connector_event_sync_failed", expected_attempt=attempt
             )
             return
         if self.automation_consumer is not None:
@@ -1212,6 +1223,7 @@ class ConnectorReadService:
                     self.repo.fail_event,
                     event["id"],
                     "connector_event_automation_failed",
+                    expected_attempt=attempt,
                 )
                 return
         if self.event_consumer is not None:
@@ -1222,7 +1234,7 @@ class ConnectorReadService:
                 # PA-06 connector sync. A notice fault must not replay an
                 # otherwise successful automation admission.
                 pass
-        await asyncio.to_thread(self.repo.finish_event, event["id"])
+        await asyncio.to_thread(self.repo.finish_event, event["id"], expected_attempt=attempt)
 
     async def renew_subscription(self, value: dict) -> None:
         try:
