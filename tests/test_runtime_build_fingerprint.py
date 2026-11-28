@@ -1,4 +1,3 @@
-from pathlib import Path
 import os
 
 import pytest
@@ -59,3 +58,55 @@ def test_ambiguous_distribution_metadata_rejected(build, inventory):
 def test_invalid_source_revision(build):
     with pytest.raises(ValueError, match='source revision'):
         compute_build_digest(**{**build, 'source_revision': 'main'})
+
+
+def test_runtime_identity_changes_when_schema_model_queue_or_reviewed_skill_changes(build):
+    from services.coworker.runtime_identity import build_runtime_identity, canonical_sha256
+
+    # Synthetic settings implement only the runtime identity interface.
+    class Settings:
+        def __getattr__(self, name):
+            if name.endswith('_enabled') or name == 'chat_provider_configured':
+                return False
+            raise AttributeError(name)
+        source_revision = 'a'*40
+        environment = 'staging'
+        chat_provider = 'deepseek'
+        deepseek_model = 'deepseek-flash'
+        gemma_model = 'gemma-test'
+        task_queue = 'shuddho-documents-v1'
+        cohort_enforced = True
+        cohort_account_ids = {'synthetic-owner-a'}
+        cohort_max_users = 5
+
+    class Repository:
+        schema = '0073_worker_runtime_identity'
+        skill = {'research': {'state': 'unselected'}}
+        reads = 0
+        def current_schema_revision(self):
+            return self.schema
+        def reviewed_skill_runtime_manifest(self):
+            self.reads += 1
+            return self.skill.copy()
+
+    settings = Settings()
+    repo = Repository()
+    args = {k: v for k, v in build.items() if k != 'source_revision'}
+    first = build_runtime_identity(settings, repo, **args)
+    assert repo.reads == 1
+    assert first['runtime_identity_sha256'] == canonical_sha256({k: v for k, v in first.items() if k != 'runtime_identity_sha256'})
+    assert len(first['capabilities']) == 44
+    assert 'synthetic-owner-a' not in repr(first)
+    assert first['schema_version'] == 3
+    for name, value in [('deepseek_model', 'other-model'), ('task_queue', 'other-queue'), ('suggestion_model_relevance_enabled', True), ('work_services_enabled', True)]:
+        setattr(settings, name, value)
+        assert first['runtime_identity_sha256'] != build_runtime_identity(settings, repo, **args)['runtime_identity_sha256']
+        delattr(settings, name)
+    repo.schema = 'other-revision'
+    assert first['runtime_identity_sha256'] != build_runtime_identity(settings, repo, **args)['runtime_identity_sha256']
+    repo.schema = '0073_worker_runtime_identity'
+    repo.skill = {'research': {'state': 'selected'}}
+    assert first['runtime_identity_sha256'] != build_runtime_identity(settings, repo, **args)['runtime_identity_sha256']
+    settings.chat_provider = 'auto'
+    with pytest.raises(ValueError, match='provider'):
+        build_runtime_identity(settings, repo, **args)
