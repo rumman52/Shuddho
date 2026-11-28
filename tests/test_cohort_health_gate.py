@@ -221,7 +221,8 @@ def test_collect_snapshot_scopes_metrics_to_configured_cohort(tmp_path):
         container.repository.sessions.kw["bind"].dispose()
 
 
-def test_reviewed_research_version_is_measured_by_cohort_stop_gate(tmp_path):
+@pytest.mark.parametrize("reviewed_version", ["work_research_reviewed_v1", "work_research_reviewed_v2"])
+def test_reviewed_research_version_is_measured_by_cohort_stop_gate(tmp_path, reviewed_version):
     """A failed reviewed task must not disappear from the research denominator."""
     from services.coworker.schemas import ResearchOptions
 
@@ -257,7 +258,7 @@ def test_reviewed_research_version_is_measured_by_cohort_stop_gate(tmp_path):
             older.state = "completed"
             older.updated_at = now
             newer = db.get(Task, reviewed["id"])
-            newer.workflow_version = "work_research_reviewed_v1"
+            newer.workflow_version = reviewed_version
             newer.state = "failed"
             newer.updated_at = now
 
@@ -465,3 +466,51 @@ def test_cohort_health_rejects_same_path_for_snapshot_and_decision(tmp_path, mon
     with pytest.raises(SystemExit, match="distinct"):
         health.main()
     assert not path.exists()
+
+
+def test_terminal_agent_states_are_not_active_or_success_denominator(tmp_path):
+    from sqlalchemy import select
+    from services.coworker.models import AgentRun, Workspace
+
+    issuer = "https://identity.example.test/auth/v1"
+    member = Principal(issuer, "cohort-agent-terminal-member", 0)
+    outsider = Principal(issuer, "cohort-agent-terminal-outsider", 0)
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'agent-outcomes.sqlite3'}",
+        auth_issuer=issuer, environment="development",
+        storage_backend="local", local_storage_path=tmp_path / "objects",
+        cohort_enforced=True, cohort_account_ids=frozenset({member.account_id}),
+        cohort_max_users=25,
+    )
+    upgrade(settings.database_url)
+    container = Container.create(settings)
+    try:
+        container.repository.ensure_account(member)
+        container.repository.ensure_account(outsider)
+        now = utcnow()
+        with container.repository.sessions.begin() as db:
+            for principal, states in (
+                (member, ("completed", "failed", "cancelled", "needs_input", "blocked")),
+                (outsider, ("running", "failed")),
+            ):
+                workspace = db.scalar(select(Workspace).where(Workspace.owner_id == principal.account_id))
+                for state in states:
+                    ident = f"{principal.account_id[:8]}-{state}"
+                    db.add(AgentRun(
+                        id=ident, owner_id=principal.account_id, workspace_id=workspace.id,
+                        idempotency_key=ident, fingerprint="a" * 64, goal="Synthetic measurement.",
+                        output_language="en", state=state, created_at=now - timedelta(minutes=10),
+                        updated_at=now, deadline_at=now + timedelta(minutes=5),
+                    ))
+        value = collect_snapshot(settings, window_minutes=15, now=now + timedelta(seconds=1))
+        assert value["active"]["agent_runs"] == 0
+        assert value["active"]["oldest_work_age_seconds"] == 0
+        assert value["agents"] == {
+            "samples": 2, "failed": 1, "failure_rate": 0.5,
+            "completed": 1, "cancelled": 1, "needs_input": 1, "blocked": 1,
+        }
+        decision = evaluate(value, rollout(), {**thresholds(), "min_agent_samples": 2})
+        assert decision["decision"] == "STOP_ROLLOUT"
+        assert {item["metric"] for item in decision["breaches"]} == {"agents.failure_rate"}
+    finally:
+        container.repository.sessions.kw["bind"].dispose()

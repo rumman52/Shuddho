@@ -151,3 +151,16 @@ def test_dispatch_heartbeat_metrics_preserve_measured_zero_and_privacy():
     assert "shuddho_coworker_queue_worker_stale 1\n" in text
     assert "shuddho_coworker_provider_active_leases 0\n" in text
     assert "secret-task" not in text and "secret-worker" not in text and "{" not in text
+
+
+def test_terminal_agent_outcome_metrics_distinguish_unknown_and_zero():
+    value = result()
+    legacy = render_openmetrics(value)
+    assert "shuddho_coworker_cohort_agents_blocked NaN\n" in legacy
+    value["snapshot"]["agents"].update(completed=4, cancelled=0, needs_input=2, blocked=1)
+    metrics = render_openmetrics(value)
+    assert "shuddho_coworker_cohort_agents_completed 4\n" in metrics
+    assert "shuddho_coworker_cohort_agents_cancelled 0\n" in metrics
+    assert "shuddho_coworker_cohort_agents_needs_input 2\n" in metrics
+    assert "shuddho_coworker_cohort_agents_blocked 1\n" in metrics
+    assert "{" not in metrics
