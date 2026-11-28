@@ -2139,3 +2139,87 @@ def test_expired_final_event_attempt_becomes_terminal_failure(container):
         row = db.get(ConnectorEvent, final["id"])
         assert row.state == "failed"
         assert row.last_error_code == "connector_event_claim_exhausted"
+
+
+def test_event_snapshot_evidence_survives_process_loss_after_cursor_commit(container, monkeypatch):
+    fake = enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    container.context.settings = settings
+    service = container.connector_reads
+    service.push_verifier = AllowPush()
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(service.sync(owner, grant["id"], force_full=True))
+    asyncio.run(service.subscribe(owner, grant["id"]))
+    _, automation = _create_email_coworker(container, owner, grant)
+    snapshot = service.repo.snapshots(owner, grant["id"])[0]
+    with container.repository.sessions.begin() as db:
+        db.get(ConnectorSnapshot, snapshot["id"]).provider_version = "100"
+    fake.message_subject = "Project update — action required"
+    first = _one_gmail_event(container, "event-sync-commit-process-loss")
+
+    class SimulatedProcessLoss(BaseException):
+        pass
+
+    def crash_after_sync(*args, **kwargs):
+        raise SimulatedProcessLoss()
+
+    original = service.repo.bind_event_snapshots
+    monkeypatch.setattr(service.repo, "bind_event_snapshots", crash_after_sync)
+    with pytest.raises(SimulatedProcessLoss):
+        asyncio.run(service.process_event(first))
+
+    # The provider cursor, changed snapshot and event evidence are one commit.
+    assert service.repo.cursor(owner, grant["id"])["cursor"] == "102"
+    with container.repository.sessions() as db:
+        assert db.get(ConnectorEvent, first["id"]).synced_snapshot_ids == [snapshot["id"]]
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all() == []
+
+    second = _reclaim_event_attempt(container, first)
+    monkeypatch.setattr(service.repo, "bind_event_snapshots", original)
+    asyncio.run(service.process_event(second))
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        assert row.state == "processed"
+        assert row.synced_snapshot_ids == [snapshot["id"]]
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(runs) == len(occurrences) == 1
+        assert runs[0].connector_snapshot_ids == [snapshot["id"]]
+        assert runs[0].action_ids == []
+        assert occurrences[0].run_id == runs[0].id
+        assert db.scalars(select(ExternalAction).where(ExternalAction.owner_id == owner)).all() == []
+
+
+def test_reclaimed_event_cannot_commit_provider_sync(container, monkeypatch):
+    enable_reads(container)
+    service = container.connector_reads
+    service.push_verifier = AllowPush()
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(service.subscribe(owner, grant["id"]))
+    first = _one_gmail_event(container, "event-claim-lost-before-sync-commit")
+    adapter = container.credentials.provider_for("google")
+    before = service.repo.cursor(owner, grant["id"])
+
+    async def read(*args, **kwargs):
+        _reclaim_event_attempt(container, first)
+        return _cursor_race_result("102", "stale-event-snapshot")
+
+    monkeypatch.setattr(adapter, "read_connected", read)
+    asyncio.run(service.process_event(first))
+    assert service.repo.cursor(owner, grant["id"]) == before
+    assert service.repo.snapshots(owner, grant["id"]) == []
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        assert row.state == "processing"
+        assert row.attempts == 2
+        assert row.synced_snapshot_ids == []
