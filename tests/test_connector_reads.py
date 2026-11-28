@@ -2231,3 +2231,43 @@ def test_reclaimed_event_cannot_commit_provider_sync(container, monkeypatch, inv
         assert row.state == "processing"
         assert row.attempts == 2
         assert row.synced_snapshot_ids == []
+
+
+def test_gmail_full_sync_reconciles_removed_inbox_members_without_leaking_metadata(container):
+    fake = enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(container.connector_reads.sync(owner, grant["id"]))
+    fake.message_list_response = {"messages": [{"id": "m-sent"}]}
+    fake.message_labels["m-sent"] = ["SENT"]
+    result = asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    assert result["deleted"] == 1
+    assert container.connector_reads.repo.snapshots(owner, grant["id"]) == []
+    with container.repository.sessions() as db:
+        rows = db.scalars(select(ConnectorSnapshot).where(
+            ConnectorSnapshot.grant_id == grant["id"],
+        )).all()
+        assert len(rows) == 1
+        assert rows[0].provider_resource_id == "m1"
+        assert rows[0].state == "deleted"
+        assert rows[0].payload == {"kind": "email", "message_id": "m1"}
+
+
+@pytest.mark.parametrize("history", [
+    {"historyId": "102", "history": [{"id": "102", "labelsAdded": [
+        {"message": {"id": "m1"}, "labelIds": None},
+    ]}]},
+    {"historyId": "102", "history": [{"id": "102", "messagesDeleted": [
+        {"message": {"id": "m1/escape"}},
+    ]}]},
+    {"historyId": "102", "history": [{"id": "103", "messagesAdded": [
+        {"message": {"id": "m1"}},
+    ]}]},
+])
+def test_gmail_history_rejects_invalid_delta_before_cursor_advance(container, history):
+    fake = enable_reads(container)
+    adapter = container.credentials.provider_for("google")
+    fake.history_response = history
+    with pytest.raises(GoogleFailure) as rejected:
+        asyncio.run(adapter.read_email("read-access-token", "101", 30))
+    assert rejected.value.code == "provider_response_invalid"
