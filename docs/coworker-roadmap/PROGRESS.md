@@ -3033,3 +3033,8 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - Isolated from main `8970492aa11b39fdcb4072713323791e5e4bf75d`; test-first `34c5e35118f4d37a74af66cb6fef889d23051646`; implementation `5d98eb145ed8198f0bd58795015d677be525d36c`.
 - Two defects: catch-up bounds permitted values other than exactly 3600; due-time comparison ignored fractional microseconds. Regression coverage added. Isolated predicate RED 6 failed/4 passed; GREEN 10 passed. Full repository CI and independent review pending; no operated receipts.
 - [Task contract and continuation](DAY7_EXACT_BRIEFING_EVIDENCE_2026-11-26.md). No deployment, billing, telemetry activation or merge.
+
+
+## 2026-11-28 — Day 2 runtime identity candidate
+
+- See [runtime build identity handoff](DAY2_RUNTIME_BUILD_IDENTITY_2026-11-28.md). Integrates #974 disposable PG17/18 rehearsal; new 0073 head, shared runtime manifest, worker identity and freeze/recovery evidence checks. Focused local tests 18 passed; isolated SQLite migration upgrade/downgrade/replay passed. Full exact candidate CI and hosted acceptance pending; no merge or deployment.
