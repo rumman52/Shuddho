@@ -16,4 +16,10 @@ A worker that loses its two-minute event lease can resume after another worker h
 
 ## Release boundary
 
-No hosted mutation, spend, deployment or provider event was performed. Recheck existing downstream idempotency and exhausted-lease behavior separately. Prompt 03 remains unqualified until all ten authentic staging exit criteria and independent review are evidenced.
+No hosted mutation, spend, deployment or provider event was performed. Recheck existing downstream idempotency separately. Prompt 03 remains unqualified until all ten authentic staging exit criteria and independent review are evidenced.
+
+## Final-attempt recovery follow-up
+
+The eighth claimed attempt could crash and remain processing forever because the claim query excluded all attempts >= 8. The bounded claim scan now terminalizes expired processing rows at the existing retry ceiling as failed, clears their lease and records `connector_event_claim_exhausted`. Unexpired final claims remain active. No ninth attempt and no subscription-sequence advancement. The attempt fence prevents late success from resurrecting the terminal failure.
+
+Test-first: `4de7f769c6dea62db6b978dac1c1c0054ca03658`; source: `0dd8dbd1ea771dab1dec906c487be2a1692cb18e`. Local isolated follow-up RED 1 failed/6 passed, GREEN 7 passed; compileall succeeded. Same synthetic dependencies and full-repo limitations as above. The actual repository fixture test is in the mandatory connected-read suite.
