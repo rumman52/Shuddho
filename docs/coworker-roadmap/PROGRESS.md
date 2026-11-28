@@ -3027,3 +3027,9 @@ Frontend test/build CI passed on the implementation head (web-editor: 238 passed
 - Isolated from main `8970492aa11b39fdcb4072713323791e5e4bf75d`; test-first `34c5e35118f4d37a74af66cb6fef889d23051646`; implementation `5d98eb145ed8198f0bd58795015d677be525d36c`.
 - Two defects: catch-up bounds permitted values other than exactly 3600; due-time comparison ignored fractional microseconds. Regression coverage added. Isolated predicate RED 6 failed/4 passed; GREEN 10 passed. Full repository CI and independent review pending; no operated receipts.
 - [Task contract and continuation](DAY7_EXACT_BRIEFING_EVIDENCE_2026-11-26.md). No deployment, billing, telemetry activation or merge.
+
+## 2026-11-28 — Prompt 03 connector event lease fencing
+
+- Base: `52a0feb0bb0a674d0c0840a679a3941d78ef6314`; branch `fix/p03-connector-event-claim-fence-20261128`. Test-first commit `2bb60599213c1f8fec2374e764de16f3e07d5cae`; source `3ee3ff20a603c58c3f23d7913b5b1c818c5a9851`; mandatory connector test consolidation `dc0c84a8e796948c57e59858026cc80c2d63cb93`.
+- Existing persisted attempt number now fences evidence binding and terminal/retry writes after a lease is reclaimed. No schema or authority changes. Isolated SQLite RED 4 failed/2 passed; GREEN 6 passed; compilation passed. Full exact-head CI and independent review pending. See [detailed evidence](P03_CONNECTOR_EVENT_CLAIM_FENCE_2026-11-28.md).
+- Status: SOURCE_IN_PROGRESS, not staging-operated or activated; no hosted mutation, provider spend or external action. Remaining: exact-head CI, independent review, synthetic staging recovery and authentic Prompt 03 gates; existing release authority unchanged.
