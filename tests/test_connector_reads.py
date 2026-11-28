@@ -130,9 +130,11 @@ class ReadGoogle:
             if self.history_invalid_once:
                 self.history_invalid_once = False
                 return httpx.Response(404, json={"error": {"code": 404}})
+            start = int(request.url.params["startHistoryId"])
             return httpx.Response(200, json={
-                "historyId": "102",
-                "history": [{"id": "102", "messagesAdded": [{"message": {"id": "m1"}}]}],
+                "historyId": str(max(102, start)),
+                "history": [{"id": "102", "messagesAdded": [{"message": {"id": "m1"}}]}]
+                if start < 102 else [],
             })
         if request.method == "GET" and url == EVENTS_URL:
             return httpx.Response(200, json={
