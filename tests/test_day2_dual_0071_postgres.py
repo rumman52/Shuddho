@@ -30,7 +30,7 @@ pytestmark = [
     pytest.mark.coworker_integration,
     pytest.mark.skipif(
         not os.getenv("SHUDDHO_TEST_POSTGRES_URL"),
-        reason="Requires the disposable PostgreSQL 18 CI service",
+        reason="Requires a disposable PostgreSQL 17 or 18 CI service",
     ),
 ]
 
@@ -60,14 +60,22 @@ def _disposable_database():
         or root_url.host not in {"localhost", "127.0.0.1", "::1"}
         or not root_url.database
         or not root_url.database.endswith("_test")
+        or root_url.query
+        or any(os.getenv(name) for name in ("PGHOSTADDR", "PGSERVICE"))
     ):
         raise RuntimeError(
             "Day 2 migration rehearsal requires a disposable loopback PostgreSQL _test "
             "database; remote, maintenance and managed staging URLs are forbidden."
         )
+    expected_major = os.getenv("SHUDDHO_TEST_POSTGRES_MAJOR")
+    if expected_major is not None and expected_major not in {"17", "18"}:
+        raise RuntimeError("Day 2 rehearsal expected server major must be 17 or 18.")
     db_name = "day2_dual_0071_" + uuid.uuid4().hex[:20]
     admin_dsn = _psycopg_url(root_url.render_as_string(hide_password=False))
     with psycopg.connect(admin_dsn, autocommit=True) as admin:
+        # Confirm the server actually reached, not just the container tag or URL.
+        if expected_major is not None and admin.info.server_version // 10000 != int(expected_major):
+            raise RuntimeError("Day 2 rehearsal connected to the wrong server major.")
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
     try:
         yield root_url.set(database=db_name).render_as_string(hide_password=False)
