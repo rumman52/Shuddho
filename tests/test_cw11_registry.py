@@ -920,7 +920,7 @@ def test_uncertain_legacy_worker_never_proves_drain(container, state, operation)
 
 def test_uncertain_worker_in_other_queue_does_not_block_selection(container):
     worker(container, REV_A)
-    other = container.repository.register_worker(task_queue="other-queue", source_revision=REV_B)
+    other = container.repository.register_worker(task_queue="other-queue", source_revision=REV_A)
     with container.repository.sessions.begin() as db:
         db.get(WorkerInstance, other).state = "lost"
     publish(container, "isolated-queue")
