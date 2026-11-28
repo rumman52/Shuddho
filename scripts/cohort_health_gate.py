@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from scripts.cohort_dispatch_observability import collect_dispatch_observability
 from scripts.cohort_release_gate import load_rollout
 from scripts.ruke_pilot_eval import immutable_write, read_json as read_bounded_json
+from services.coworker.agent_repository import AGENT_TERMINAL_STATES
 from services.coworker.config import Settings
 from services.coworker.database import session_factory
 from services.coworker.models import (
@@ -23,9 +24,19 @@ from services.coworker.models import (
     utcnow,
 )
 from services.coworker.provider_capacity import provider_capacity_snapshot
+from services.coworker.task_workflow_versions import (
+    LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    REVIEWED_RESEARCH_WORKFLOW_VERSION,
+)
 
 TASK_TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
-AGENT_TERMINAL = {"completed", "failed", "cancelled"}
+AGENT_TERMINAL = AGENT_TERMINAL_STATES
+RESEARCH_WORKFLOW_VERSIONS = frozenset({
+    PRE_FENCE_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    LEGACY_REVIEWED_RESEARCH_WORKFLOW_VERSION,
+    REVIEWED_RESEARCH_WORKFLOW_VERSION,
+})
 ACTION_MEASURED = {"succeeded", "failed", "outcome_unknown"}
 ACTION_ACTIVE = {"queued", "executing"}
 MODEL_MEASURED = {"completed", "failed", "unknown"}
@@ -142,7 +153,7 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
 
             research_tasks = [
                 item for item in measured_tasks
-                if item.workflow_version in {"work_research_v1", "work_research_reviewed_v1"}
+                if item.workflow_version in RESEARCH_WORKFLOW_VERSIONS
             ]
             research_failed = sum(item.state == "failed" for item in research_tasks)
 
@@ -164,7 +175,9 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
                 AgentRun.updated_at >= cutoff,
                 AgentRun.state.in_(AGENT_TERMINAL),
             )).all())
-            measured_agents = [item for item in agent_runs if item.state != "cancelled"]
+            # Keep the existing failed/completed denominator; terminal
+            # needs-input, blocked and cancelled outcomes are not successes.
+            measured_agents = [item for item in agent_runs if item.state in {"completed", "failed"}]
             agent_failed = sum(item.state == "failed" for item in measured_agents)
 
             actions = list(db.scalars(select(ExternalAction).where(
@@ -226,6 +239,10 @@ def collect_snapshot(settings: Settings, *, window_minutes: int, now: datetime |
                 "samples": len(measured_agents),
                 "failed": agent_failed,
                 "failure_rate": rate(agent_failed, len(measured_agents)),
+                "completed": sum(item.state == "completed" for item in agent_runs),
+                "cancelled": sum(item.state == "cancelled" for item in agent_runs),
+                "needs_input": sum(item.state == "needs_input" for item in agent_runs),
+                "blocked": sum(item.state == "blocked" for item in agent_runs),
             },
             "research": {
                 "samples": len(research_tasks),
