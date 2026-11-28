@@ -647,17 +647,15 @@ class Repository:
         with self.sessions.begin() as db:
             self._lock_worker_queue_membership(db, task_queue=task_queue)
             runtime_revision = self.settings.source_revision or "unknown"
+            if worker_revision != runtime_revision:
+                raise CoworkerError(
+                    "worker_fleet_incompatible",
+                    "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
+                    409,
+                )
+            if task_queue != self.settings.task_queue and self.settings.environment != "development":
+                raise CoworkerError("worker_fleet_incompatible", "Worker queue differs from configured runtime queue.", 409)
             if task_queue == self.settings.task_queue:
-                # The row's revision must describe this running deployment, not
-                # an operator-supplied or stale value. Candidate code may join
-                # while an older publication remains selected; selection itself
-                # still blocks until the active fleet matches the candidate.
-                if worker_revision != runtime_revision:
-                    raise CoworkerError(
-                        "worker_fleet_incompatible",
-                        "Worker registration is blocked because its source revision differs from this deployment-attested runtime revision.",
-                        409,
-                    )
                 selection = db.scalar(select(ReviewedSkillSelection).where(
                     ReviewedSkillSelection.skill_name == REVIEWED_RESEARCH_SKILL,
                 ))
@@ -673,22 +671,34 @@ class Repository:
                             "Worker registration is blocked because the reviewed-skill selection is not authoritative.",
                             409,
                         )
-            if db.get_bind().dialect.name == "postgresql":
-                # The database trigger also rejects inserts from legacy
-                # binaries that do not set this transaction-local attestation.
-                attested_revision = (
-                    runtime_revision if task_queue == self.settings.task_queue
-                    else worker_revision
-                )
-                db.execute(select(func.set_config(
-                    "shuddho.worker_source_revision",
-                    attested_revision,
-                    True,
-                )))
+            postgres = db.get_bind().dialect.name == "postgresql"
+            identity = {}
+            if worker_revision == "unknown":
+                # An unversioned local SQLite developer may run ordinary work,
+                # but cannot acquire a release-qualified runtime identity.
+                if postgres or self.settings.environment != "development":
+                    raise CoworkerError("worker_fleet_incompatible", "Worker source revision is required.", 409)
+            else:
+                from dataclasses import replace
+                from .runtime_identity import build_runtime_identity
+
+                try:
+                    observed = build_runtime_identity(
+                        replace(self.settings, task_queue=task_queue), self,
+                    )
+                except ValueError as exc:
+                    raise CoworkerError("worker_fleet_incompatible", "Worker runtime identity is unavailable.", 409) from exc
+                identity = {key: observed[key] for key in (
+                    "build_digest", "schema_revision", "model_provider", "model_id", "runtime_identity_sha256",
+                )}
+            if postgres:
+                attestation = {"source_revision": worker_revision, "task_queue": task_queue, **identity}
+                for key, value in attestation.items():
+                    db.execute(select(func.set_config("shuddho.worker_" + key, value, True)))
             db.add(WorkerInstance(
                 id=worker_id, task_queue=task_queue,
                 source_revision=worker_revision,
-                state="starting",
+                state="starting", **identity,
             ))
         return worker_id
 
@@ -808,13 +818,17 @@ class Repository:
                 .where(WorkerClaim.state == "active")
                 .group_by(WorkerClaim.worker_id)
             ).all())
-            cutoff = utcnow() - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
+            now = utcnow()
+            cutoff = now - timedelta(seconds=WORKER_HEARTBEAT_TTL_SECONDS)
             return [{
                 "id": row.id, "task_queue": row.task_queue,
                 "source_revision": row.source_revision, "state": row.state,
+                "build_digest": row.build_digest, "schema_revision": row.schema_revision,
+                "model_provider": row.model_provider, "model_id": row.model_id,
+                "runtime_identity_sha256": row.runtime_identity_sha256,
                 "started_at": iso(row.started_at),
                 "heartbeat_at": iso(row.heartbeat_at),
-                "heartbeat_fresh": aware(row.heartbeat_at) >= cutoff,
+                "heartbeat_fresh": cutoff <= aware(row.heartbeat_at) <= now,
                 "drain_requested_at": iso(row.drain_requested_at) if row.drain_requested_at else None,
                 "drain_requested_by": row.drain_requested_by,
                 "drain_reason": row.drain_reason,
