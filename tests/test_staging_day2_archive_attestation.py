@@ -54,7 +54,7 @@ def _fixtures(tmp_path: Path) -> tuple[dict, dict, tuple[Path, Path, Path, Path]
         "source": source,
         "schema_alignment": {
             "status": "migration_required", "source_revision": "0070",
-            "code_head": "0072_merge_0071_heads", "source_is_current": False,
+            "code_head": "0073_worker_runtime_identity", "source_is_current": False,
             "release_qualified": False,
         },
     }
