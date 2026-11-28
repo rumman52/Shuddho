@@ -167,22 +167,33 @@ def release_provider_lease(db, *, kind: str, resource_id: str, sequence: int) ->
 
 
 def provider_capacity_snapshot(db) -> dict:
+    """Observe capacity in a single read-only statement, without reaping leases."""
     now = utcnow()
-    _serialize(db)
-    expired = _cleanup_expired(db, now)
-    active = int(db.scalar(select(func.count()).select_from(ProviderLease)) or 0)
-    reserved = int(db.scalar(select(func.coalesce(func.sum(ProviderLease.reserved_tokens), 0))) or 0)
-    daily = db.get(ProviderDailyUsage, now.date().isoformat())
-    oldest = db.scalar(select(func.min(ProviderLease.created_at)))
+    active = ProviderLease.expires_at > now
+    daily = select(ProviderDailyUsage.allocated_tokens).where(
+        ProviderDailyUsage.day == now.date().isoformat(),
+    ).scalar_subquery()
+    statement = select(
+        func.count(ProviderLease.id).filter(active),
+        func.coalesce(func.sum(ProviderLease.reserved_tokens).filter(active), 0),
+        func.min(ProviderLease.created_at).filter(active),
+        func.count(ProviderLease.id).filter(ProviderLease.expires_at <= now),
+        func.coalesce(daily, 0),
+    ).select_from(ProviderLease)
+    # Monitoring must not flush pending changes, acquire admission locks or
+    # discard expired receipts that may still receive a provider settlement.
+    with db.no_autoflush:
+        active_calls, reserved, oldest, expired, allocated = db.execute(statement).one()
     oldest_age_seconds = 0
     if oldest is not None:
         if oldest.tzinfo is None:
             oldest = oldest.replace(tzinfo=now.tzinfo)
         oldest_age_seconds = max(0, int((now - oldest).total_seconds()))
     return {
-        "active_calls": active,
-        "reserved_tokens": reserved,
+        "active_calls": int(active_calls),
+        "reserved_tokens": int(reserved),
         "oldest_lease_age_seconds": oldest_age_seconds,
-        "expired_leases_reaped": expired,
-        "daily_allocated_tokens": int(daily.allocated_tokens) if daily is not None else 0,
+        "expired_leases_reaped": 0,
+        "expired_leases_observed": int(expired),
+        "daily_allocated_tokens": int(allocated),
     }

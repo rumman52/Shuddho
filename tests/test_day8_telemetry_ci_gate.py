@@ -32,3 +32,10 @@ def test_day8_dispatch_observability_is_mandatory() -> None:
     for module in ("cohort_dispatch_observability", "cohort_observability_export"):
         assert f"tests/test_{module}.py" in step
         assert f"--required-module tests.test_{module}" in step
+
+
+def test_day8_provider_capacity_observation_is_mandatory() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Keep Day 8 economics evidence\n", 1)[0].rsplit("      - name: ", 1)[1]
+    assert "tests/test_provider_capacity_observation.py" in step
+    assert "--required-module tests.test_provider_capacity_observation" in step
