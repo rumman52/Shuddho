@@ -204,8 +204,8 @@ def attest_archives(
             or alignment.get("source_is_current") is not (alignment.get("status") == "current")
             or alignment.get("release_qualified") is not False):
         raise ArchiveAttestationFailure("PostgreSQL migration-graph evidence is inconsistent.")
-    if alignment.get("code_head") != "0072_merge_0071_heads":
-        raise ArchiveAttestationFailure("PostgreSQL backup was not reconciled with both 0071 parents and the 0072 code head.")
+    if alignment.get("code_head") != "0073_worker_runtime_identity":
+        raise ArchiveAttestationFailure("PostgreSQL backup was not reconciled with both 0071 parents, 0072 merge and the 0073 code head.")
 
     try:
         object_manifest, verified_archive, object_manifest_sha = _manifest(object_archive)
