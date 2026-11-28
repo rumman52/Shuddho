@@ -213,3 +213,55 @@ def test_rehearsal_rejects_nonlocal_or_non_test_urls_before_opening_database(mon
     with pytest.raises(RuntimeError, match="disposable loopback"):
         with _disposable_database():
             pytest.fail("Unsafe database URL was accepted")
+
+
+@pytest.mark.parametrize("option", ["host", "hostaddr", "dbname", "service", "options"])
+def test_rehearsal_rejects_query_overrides_before_connecting(monkeypatch, option):
+    monkeypatch.setenv(
+        "SHUDDHO_TEST_POSTGRES_URL",
+        f"postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test?{option}=unsafe",
+    )
+    monkeypatch.setattr(psycopg, "connect", lambda *_a, **_k: pytest.fail("Unexpected database connection"))
+    with pytest.raises(RuntimeError, match="disposable loopback"):
+        with _disposable_database():
+            pytest.fail("Unsafe query override accepted")
+
+
+@pytest.mark.parametrize("name", ["PGHOSTADDR", "PGSERVICE"])
+def test_rehearsal_rejects_libpq_destination_overrides(monkeypatch, name):
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_URL", "postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test")
+    monkeypatch.setenv(name, "unsafe")
+    monkeypatch.setattr(psycopg, "connect", lambda *_a, **_k: pytest.fail("Unexpected database connection"))
+    with pytest.raises(RuntimeError, match="disposable loopback"):
+        with _disposable_database():
+            pytest.fail("Unsafe libpq override accepted")
+
+
+@pytest.mark.parametrize("expected,actual", [("17", 180001), ("18", 170011)])
+def test_rehearsal_rejects_wrong_server_major_before_ddl(monkeypatch, expected, actual):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_URL", "postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test")
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_MAJOR", expected)
+
+    @contextmanager
+    def fake_connect(*_args, **_kwargs):
+        yield SimpleNamespace(
+            info=SimpleNamespace(server_version=actual),
+            execute=lambda *_a, **_k: pytest.fail("DDL attempted on the wrong server major"),
+        )
+
+    monkeypatch.setattr(psycopg, "connect", fake_connect)
+    with pytest.raises(RuntimeError, match="server major"):
+        with _disposable_database():
+            pytest.fail("Wrong server version accepted")
+
+
+@pytest.mark.parametrize("expected", ["", "017", "16", "19", "17.11"])
+def test_rehearsal_rejects_invalid_expected_server_major_before_connecting(monkeypatch, expected):
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_URL", "postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test")
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_MAJOR", expected)
+    monkeypatch.setattr(psycopg, "connect", lambda *_a, **_k: pytest.fail("Unexpected database connection"))
+    with pytest.raises(RuntimeError, match="server major"):
+        with _disposable_database():
+            pytest.fail("Invalid server major accepted")
