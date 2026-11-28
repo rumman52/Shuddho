@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .auth import Principal, require_principal
-from .runtime_identity import runtime_manifest_payload
+from .runtime_identity import build_runtime_identity, qualify_worker_inventory, runtime_manifest_payload
 from .container import Container
 from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
 from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete, GitHubRepositoryBind
@@ -1315,6 +1315,26 @@ def runtime_manifest(
         )
     response.headers["Cache-Control"] = "no-store"
     return runtime_manifest_payload(settings, services.repository.reviewed_skill_runtime_manifest())
+
+
+@router.get("/runtime-manifest/v3")
+def runtime_manifest_v3(
+    response: Response,
+    principal: Annotated[Principal, Depends(require_principal)],
+    services: Services,
+):
+    settings = services.settings
+    if (settings.environment != "staging" or not settings.cohort_enforced
+            or principal.account_id not in settings.cohort_account_ids):
+        raise CoworkerError("cohort_not_enabled", "Staging runtime identity is not available for this account.", 403)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        identity = build_runtime_identity(settings, services.repository)
+        workers = services.repository.worker_inventory(task_queue=settings.task_queue)
+        fleet = qualify_worker_inventory(identity, workers)
+    except ValueError:
+        raise CoworkerError("runtime_identity_unavailable", "Staging runtime identity is unavailable.", 503) from None
+    return {**identity, **fleet}
 
 
 @router.get("/transaction-authority-manifest")
