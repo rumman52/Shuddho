@@ -53,9 +53,9 @@ def test_verification_receipt_requires_identical_row_inventory(tmp_path):
     alignment = receipt["schema_alignment"]
     assert alignment["status"] == "migration_required"
     assert alignment["source_revision"] == "0070"
-    assert alignment["code_head"] == "0072_merge_0071_heads"
+    assert alignment["code_head"] == "0073_worker_runtime_identity"
     assert alignment["pending_migrations"] == [
-        "0071", "0071_project_scoped_goals", "0072_merge_0071_heads",
+        "0071", "0071_project_scoped_goals", "0072_merge_0071_heads", "0073_worker_runtime_identity",
     ]
     assert alignment["source_is_current"] is False
     assert alignment["release_qualified"] is False
