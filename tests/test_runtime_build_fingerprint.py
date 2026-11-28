@@ -110,3 +110,23 @@ def test_runtime_identity_changes_when_schema_model_queue_or_reviewed_skill_chan
     settings.chat_provider = 'auto'
     with pytest.raises(ValueError, match='provider'):
         build_runtime_identity(settings, repo, **args)
+
+
+def test_fleet_readiness_rejects_uncertain_stale_or_mismatched_workers():
+    from services.coworker.runtime_identity import qualify_worker_inventory
+    identity = dict(task_queue='queue', source_revision='a'*40, build_digest='b'*64,
+                    schema_revision='0073_worker_runtime_identity', model_provider='deepseek',
+                    model_id='deepseek-flash', runtime_identity_sha256='c'*64)
+    worker = {**identity, 'state': 'running', 'heartbeat_fresh': True,
+              'active_claim_count': 0, 'id': 'secret-worker-id', 'drained_at': None}
+    result = qualify_worker_inventory(identity, [worker])
+    assert result['worker_fleet_ready'] is True
+    assert result['worker_inventory'] == [identity]
+    assert 'secret-worker-id' not in repr(result)
+    for delta in ({'build_digest': 'f'*64}, {'heartbeat_fresh': False}, {'state': 'lost'},
+                  {'state': 'draining'}, {'state': 'starting'}, {'build_digest': None},
+                  {'state': 'drained', 'drained_at': None}):
+        assert not qualify_worker_inventory(identity, [worker, {**worker, **delta}])['worker_fleet_ready']
+    assert not qualify_worker_inventory(identity, [])['worker_fleet_ready']
+    assert qualify_worker_inventory(identity, [worker, {**worker, 'state': 'drained', 'drained_at': 'observed'}])['worker_fleet_ready']
+    assert not qualify_worker_inventory(identity, [worker, {**worker, 'state': 'drained', 'drained_at': 'observed', 'active_claim_count': 1}])['worker_fleet_ready']
