@@ -22,8 +22,10 @@ from services.coworker.migrate import upgrade
 from services.coworker.models import (
     Connection,
     ConnectorCursor,
+    ConnectorEvent,
     ConnectorReadGrant,
     ConnectorSnapshot,
+    ConnectorSubscription,
     utcnow,
 )
 from services.coworker.permission_gateway import PermissionGateway
@@ -1642,3 +1644,125 @@ def test_postgres_memory_mutation_locks_owner_before_fact(repository, operation)
     assert len(statements) >= 2
     assert "CW_ACCOUNTS" in statements[0] and "FOR NO KEY UPDATE" in statements[0]
     assert "CW_MEMORY_FACTS" in statements[1] and "FOR UPDATE" in statements[1]
+
+
+def test_connector_event_sync_commit_serializes_with_reclaimed_claim(repository, monkeypatch):
+    owner_id = owner(repository)
+    settings = replace(repository.settings, connector_reads_enabled=True)
+    reads = ConnectorReadRepository(
+        repository.sessions, settings, PermissionGateway(repository.sessions, settings),
+    )
+    spec = connector_read_capability("google", "email_read")
+    connection_id, grant_id, subscription_id, event_id = (str(uuid4()) for _ in range(4))
+    now = utcnow()
+    with repository.sessions.begin() as db:
+        db.add(Connection(
+            id=connection_id, owner_id=owner_id, provider="google", capability="email_read",
+            subject="postgres-event-subject", email="postgres-event@example.test",
+            scopes=list(spec.required_scopes), token_ciphertext="sealed-test-credential",
+            active=True,
+        ))
+        db.flush()
+        db.add(ConnectorReadGrant(
+            id=grant_id, owner_id=owner_id, connection_id=connection_id,
+            idempotency_key="postgres-event-" + grant_id, fingerprint="a" * 64,
+            provider="google", capability="email_read", operation=spec.operation,
+            contract_version=spec.version, audience=spec.audience,
+            required_scopes=list(spec.required_scopes), purpose="agent_context",
+            destination="planner_context", state="active", expires_at=now + timedelta(hours=1),
+        ))
+        db.flush()
+        db.add(ConnectorCursor(
+            grant_id=grant_id, owner_id=owner_id, connection_id=connection_id,
+            provider="google", capability="email_read", cursor="101",
+            generation=1, state="active",
+        ))
+        db.add(ConnectorSubscription(
+            id=subscription_id, owner_id=owner_id, grant_id=grant_id,
+            connection_id=connection_id, provider="google", capability="email_read",
+            kind="gmail_pubsub", state="active", expires_at=now + timedelta(hours=1),
+        ))
+        db.flush()
+        db.add(ConnectorEvent(
+            id=event_id, owner_id=owner_id, grant_id=grant_id,
+            subscription_id=subscription_id, provider="google", capability="email_read",
+            provider_event_id="postgres-event-" + event_id, payload_sha256="b" * 64,
+            state="processing", attempts=1, claim_until=now - timedelta(seconds=1),
+            received_at=now - timedelta(days=1), available_at=now - timedelta(seconds=1),
+        ))
+
+    held = Event()
+    release = Event()
+    reclaim_lock_attempted = Event()
+    reclaim_thread = []
+    original = reads._lock_event_claim
+    engine = repository.sessions.kw["bind"]
+
+    def pause_after_lock(db, current_owner, current_grant, event_claim):
+        row = original(db, current_owner, current_grant, event_claim)
+        held.set()
+        if not release.wait(timeout=10):
+            raise AssertionError("test did not release the event commit")
+        return row
+
+    def reclaim():
+        reclaim_thread.append(get_ident())
+        return reads.claim_events(limit=1)
+
+    def observe(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if (
+            reclaim_thread and get_ident() == reclaim_thread[0]
+            and "cw_connector_events" in statement and "FOR UPDATE" in statement.upper()
+        ):
+            reclaim_lock_attempted.set()
+
+    change = {
+        "cursor": "102",
+        "changes": [{
+            "resource_id": "message-1", "provider_version": "102",
+            "state": "active", "payload": {"subject": "synthetic event"},
+        }],
+    }
+    monkeypatch.setattr(reads, "_lock_event_claim", pause_after_lock)
+    event.listen(engine, "before_cursor_execute", observe)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            committing = pool.submit(
+                reads.apply_sync, owner_id, grant_id, "101", change,
+                expected_generation=1, event_claim=(event_id, 1),
+            )
+            try:
+                assert held.wait(timeout=5)
+                reclaiming = pool.submit(reclaim)
+                assert reclaim_lock_attempted.wait(timeout=5)
+                with pytest.raises(TimeoutError):
+                    reclaiming.result(timeout=0.2)
+            finally:
+                release.set()
+            result = committing.result(timeout=5)
+            claimed = reclaiming.result(timeout=5)
+    finally:
+        release.set()
+        event.remove(engine, "before_cursor_execute", observe)
+    assert len(claimed) == 1 and claimed[0]["id"] == event_id
+    assert claimed[0]["attempts"] == 2
+    assert len(result["snapshot_ids"]) == 1
+    assert reads.cursor(owner_id, grant_id)["cursor"] == "102"
+    with repository.sessions() as db:
+        row = db.get(ConnectorEvent, event_id)
+        assert row.state == "processing"
+        assert row.synced_snapshot_ids == result["snapshot_ids"]
+    # A superseded attempt may neither advance nor reset the cursor now.
+    with pytest.raises(CoworkerError) as stale:
+        reads.apply_sync(
+            owner_id, grant_id, "102", {"cursor": "103", "changes": []},
+            expected_generation=1, event_claim=(event_id, 1),
+        )
+    assert stale.value.code == "connector_event_claim_lost"
+    with pytest.raises(CoworkerError) as stale:
+        reads.reset_cursor(
+            owner_id, grant_id, expected_cursor="102", expected_generation=1,
+            event_claim=(event_id, 1),
+        )
+    assert stale.value.code == "connector_event_claim_lost"
+    assert reads.cursor(owner_id, grant_id)["cursor"] == "102"
