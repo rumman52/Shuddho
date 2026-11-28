@@ -1,3 +1,9 @@
+## 28 November 2026 — Prompt 01 / version-verified PostgreSQL 17 and 18 migration qualification
+
+**SOURCE_IN_PROGRESS / staging NO-GO.** Base `52a0feb0bb0a674d0c0840a679a3941d78ef6314`; RED tests `0ada2b5a816a0db083e07038bda179013aeed877`, `08a527c0f7715dd881dbe27a13ad1ad354d4c56c`; guard `465f1a7312e6105bd56fa77a2bd3633f7bc2eed5`; CI `a419cf261c9797f9c23fb06c61330a083ea76c6e`. Reuse real dual-parent migration suite on separate disposable PG17/18 services; verify actual major before DDL, reject connection override inputs. Local RED 17 failed / 7 passed; combined GREEN 24 passed, 2 real migration tests deselected locally due to missing PostgreSQL/psycopg. Both remain mandatory in CI. [Contract](DAY2_POSTGRES17_MIGRATION_QUALIFICATION_2026-11-28.md). #971 tests-only merge caused a separate main CI failure; reconcile 0073 implementation before source qualification. No hosted operation or activation.
+
+---
+
 ## 26 November 2026 — Prompt 01 / PA-10 staging preflight runtime parity
 
 **SOURCE_IN_PROGRESS / staging NO-GO.** Base `43d99fd64467492a7da809cda0ae178191e53981`; tests-first `e33b561647f82d4b88b832368045eebf7b78b5ea`; implementation `5f7974adfaa4e24d569e419c960bd4d735f9e496`. Preflight rejects padded settings consumed raw by the runtime, malformed Temporal ports, ambiguous PostgreSQL URL parser inputs and decoded NUL. Complete two-file focused reproduction verified against Git blob hashes: baseline 46 passed, RED 25 failed/49 passed, GREEN 74 passed/zero skips; py_compile passed. [Task contract](PA10_PREFLIGHT_RUNTIME_PARITY_2026-11-26.md). Exact-head full CI and independent human review pending; no hosted operation, deployment, billing, governance mutation, credential change or activation.
