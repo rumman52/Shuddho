@@ -203,3 +203,34 @@ def build_runtime_identity(settings, repository, *, root: Path | None = None,
     )
     identity["runtime_identity_sha256"] = canonical_sha256(identity)
     return identity
+
+
+WORKER_IDENTITY_KEYS = (
+    "task_queue", "source_revision", "build_digest", "schema_revision",
+    "model_provider", "model_id", "runtime_identity_sha256",
+)
+
+
+def qualify_worker_inventory(identity: dict, workers: list[dict]) -> dict:
+    """Sanitize the observed queue and reject any uncertain worker evidence."""
+    expected = {key: identity[key] for key in WORKER_IDENTITY_KEYS}
+    inventory = []
+    blocked = 0
+    for row in workers:
+        if (row.get("state") == "drained" and row.get("drained_at")
+                and type(row.get("active_claim_count")) is int
+                and row["active_claim_count"] == 0):
+            continue
+        observed = {key: row.get(key) for key in WORKER_IDENTITY_KEYS}
+        if (row.get("state") != "running" or row.get("heartbeat_fresh") is not True
+                or row.get("drained_at") is not None or observed != expected):
+            blocked += 1
+        else:
+            inventory.append(observed)
+    inventory.sort(key=canonical_sha256)
+    return {
+        "worker_fleet_ready": bool(inventory) and blocked == 0,
+        "blocked_worker_count": blocked,
+        "worker_inventory": inventory,
+        "worker_inventory_sha256": canonical_sha256(inventory),
+    }
