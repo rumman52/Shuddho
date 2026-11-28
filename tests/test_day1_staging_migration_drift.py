@@ -184,5 +184,6 @@ def test_external_readback_rejects_growth_after_inode_size_check(monkeypatch):
 def test_real_migration_graph_has_both_parents_of_unified_head():
     graph = migration_graph()
     head, _ = ordered_migrations(graph)
-    assert head == "0072_merge_0071_heads"
-    assert set(graph[head]) == {"0071", "0071_project_scoped_goals"}
+    assert head == "0073_worker_runtime_identity"
+    assert set(graph[head]) == {"0072_merge_0071_heads"}
+    assert set(graph["0072_merge_0071_heads"]) == {"0071", "0071_project_scoped_goals"}
