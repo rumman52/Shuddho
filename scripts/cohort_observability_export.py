@@ -125,8 +125,10 @@ def render_openmetrics(result: dict) -> str:
         add(sample(f"shuddho_coworker_queue_worker_{field}", help_text, workers.get(field)))
 
     agents = snapshot["agents"]
-    add(sample("shuddho_coworker_cohort_agent_samples", "Measured terminal Agent runs in the current observation window.", agents["samples"]))
+    add(sample("shuddho_coworker_cohort_agent_samples", "Completed or failed Agent runs in the current observation window.", agents["samples"]))
     add(sample("shuddho_coworker_cohort_agents_failed", "Failed Agent runs in the current observation window.", agents["failed"]))
+    for state in ("completed", "cancelled", "needs_input", "blocked"):
+        add(sample(f"shuddho_coworker_cohort_agents_{state}", f"Agent runs with terminal outcome {state} in the current observation window.", agents.get(state)))
     add(sample("shuddho_coworker_cohort_agent_failure_ratio", "Agent failure ratio in the current observation window.", agents["failure_rate"]))
 
     research = snapshot["research"]
