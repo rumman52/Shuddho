@@ -613,6 +613,16 @@ class Repository:
             "updated_at": iso(selection.updated_at),
         }
 
+    def current_schema_revision(self) -> str:
+        """Read the actual database migration ledger; reject multiple heads."""
+        from sqlalchemy import text
+
+        with self.sessions() as db:
+            revisions = db.scalars(text("SELECT version_num FROM cw_alembic_version")).all()
+        if len(revisions) != 1 or not isinstance(revisions[0], str) or not revisions[0]:
+            raise ValueError("database must report exactly one migration revision")
+        return revisions[0]
+
     def reviewed_skill_runtime_manifest(self) -> dict:
         selected = self.selected_reviewed_skill(REVIEWED_RESEARCH_SKILL)
         if selected is None:
