@@ -35,6 +35,10 @@ pytestmark = [
 ]
 
 MERGE = "0072_merge_0071_heads"
+HEAD = "0073_worker_runtime_identity"
+IDENTITY_COLUMNS = {("cw_worker_instances", key) for key in (
+    "build_digest", "schema_revision", "model_provider", "model_id", "runtime_identity_sha256",
+)}
 PARENTS = ("0071", "0071_project_scoped_goals")
 NEW_COLUMNS = {
     ("cw_agent_runs", "planner_input_tokens"),
@@ -165,9 +169,15 @@ def test_dual_0071_first_parent_upgrade_merge_rollback_and_replay(first_parent):
             assert ("cw_agent_runs", "planner_input_tokens") not in columns
         _old_reader(url, sample)
 
+        command.upgrade(config, MERGE)
+        intermediate, columns, indexes, constraints = _readback(url)
+        assert intermediate["revision"] == MERGE
+        assert NEW_COLUMNS <= columns and not (IDENTITY_COLUMNS & columns)
+        assert _data_only(intermediate) == _data_only(baseline)
         command.upgrade(config, "head")
         merged, columns, indexes, constraints = _readback(url)
-        assert merged["revision"] == MERGE
+        assert merged["revision"] == HEAD
+        assert IDENTITY_COLUMNS <= columns
         assert NEW_COLUMNS <= columns
         assert INDEX in indexes and FK in constraints
         assert _data_only(merged) == _data_only(baseline)
@@ -182,7 +192,7 @@ def test_dual_0071_first_parent_upgrade_merge_rollback_and_replay(first_parent):
         rolled_back, columns, indexes, constraints = _readback(url)
         assert rolled_back["revision"] == "0070"
         assert _data_only(rolled_back) == _data_only(baseline)
-        assert not (NEW_COLUMNS & columns)
+        assert not ((NEW_COLUMNS | IDENTITY_COLUMNS) & columns)
         assert INDEX not in indexes and FK not in constraints
         with pytest.raises(DatabaseReadinessError, match="migration revision"):
             check_current_revision(url)
@@ -191,7 +201,7 @@ def test_dual_0071_first_parent_upgrade_merge_rollback_and_replay(first_parent):
         command.upgrade(config, "head")
         replayed, columns, indexes, constraints = _readback(url)
         assert replayed == merged
-        assert NEW_COLUMNS <= columns
+        assert (NEW_COLUMNS | IDENTITY_COLUMNS) <= columns
         assert INDEX in indexes and FK in constraints
         check_current_revision(url)
         _old_reader(url, sample)
