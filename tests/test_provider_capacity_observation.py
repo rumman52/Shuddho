@@ -2,6 +2,9 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("sqlalchemy", reason="Install the coworker extra for provider capacity observation tests")
+
 from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import Session
 
@@ -111,3 +114,10 @@ def test_admission_still_reaps_expired_leases(db):
     assert db.get(ProviderLease, "expired") is None
     assert db.get(ProviderLease, "boundary") is None
     assert db.get(ProviderDailyUsage, NOW.date().isoformat()).allocated_tokens == 405
+
+
+def test_snapshot_does_not_flush_pending_leases(db):
+    lease(db, "pending", age=1, remaining=20, tokens=10)
+    assert capacity.provider_capacity_snapshot(db)["active_calls"] == 0
+    assert len(db.new) == 1
+    db.rollback()
