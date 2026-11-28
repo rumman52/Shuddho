@@ -785,6 +785,17 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U shuddho_test -d shuddho_coworker_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
+      # Separate disposable service matching the managed staging major.
+      postgres17:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: shuddho_coworker_test
+          POSTGRES_USER: shuddho_test
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U shuddho_test -d shuddho_coworker_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       SHUDDHO_TEST_POSTGRES_URL: postgresql+psycopg://shuddho_test:ci-only-password@localhost:5432/shuddho_coworker_test
       SHUDDHO_TEMPORAL_TESTS: "true"
@@ -810,7 +821,28 @@ jobs:
           name: day8-disposable-fk-plans
           path: /tmp/day8-fk-plans.xml
           if-no-files-found: warn
-      - name: Rehearse both Day 2 0071 migration paths and replay without skips
+      - name: Verify Day 2 dual-major CI contract without skips
+        run: |
+          uv run pytest tests/test_day2_postgres_ci_contract.py -q -rs --junitxml=/tmp/day2-postgres-ci-contract.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/day2-postgres-ci-contract.xml --required-module tests.test_day2_postgres_ci_contract
+      - name: Rehearse both Day 2 0071 migration paths on PostgreSQL 17 without skips
+        env:
+          SHUDDHO_TEST_POSTGRES_MAJOR: "17"
+          SHUDDHO_TEST_POSTGRES_URL: postgresql+psycopg://shuddho_test:ci-only-password@localhost:5433/shuddho_coworker_test
+        run: |
+          uv run --extra coworker pytest tests/test_day2_dual_0071_postgres.py -q -rs --junitxml=/tmp/day2-dual-0071-postgres17.xml
+          uv run python -m scripts.mandatory_test_gate /tmp/day2-dual-0071-postgres17.xml --required-module tests.test_day2_dual_0071_postgres
+      - name: Preserve dual-parent PostgreSQL 17 migration rehearsal receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: day2-dual-0071-postgres17-migration-rehearsal
+          path: /tmp/day2-dual-0071-postgres17.xml
+          if-no-files-found: warn
+      - name: Rehearse both Day 2 0071 migration paths on PostgreSQL 18 without skips
+        env:
+          SHUDDHO_TEST_POSTGRES_MAJOR: "18"
+          SHUDDHO_TEST_POSTGRES_URL: postgresql+psycopg://shuddho_test:ci-only-password@localhost:5432/shuddho_coworker_test
         run: |
           uv run --extra coworker pytest tests/test_day2_dual_0071_postgres.py -q -rs --junitxml=/tmp/day2-dual-0071-postgres.xml
           uv run python -m scripts.mandatory_test_gate /tmp/day2-dual-0071-postgres.xml --required-module tests.test_day2_dual_0071_postgres
