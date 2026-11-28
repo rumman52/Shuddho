@@ -243,6 +243,7 @@ jobs:
             tests/test_staging_preseed_baseline.py \
             tests/test_staging_day2_archive_attestation.py \
             tests/test_staging_release_build_identity.py \
+            tests/test_runtime_build_fingerprint.py \
             tests/test_staging_object_backup.py \
             tests/test_staging_release_evidence.py \
             tests/test_staging_evidence_unicode.py \
@@ -257,6 +258,7 @@ jobs:
             tests.test_staging_preseed_baseline \
             tests.test_staging_day2_archive_attestation \
             tests.test_staging_release_build_identity \
+            tests.test_runtime_build_fingerprint \
             tests.test_staging_object_backup \
             tests.test_staging_release_evidence \
             tests.test_staging_evidence_unicode; do
