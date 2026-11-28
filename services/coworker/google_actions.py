@@ -299,7 +299,43 @@ class GoogleActions:
         text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
         return re.sub(r"\s+", " ", text).strip()[:limit]
 
+    @staticmethod
+    def _gmail_resource_id(value: object) -> str:
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", value):
+            raise GoogleFailure("provider_response_invalid", definitive=True)
+        return value
+
+    @staticmethod
+    def _gmail_history_id(value: object) -> str:
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,128}", value):
+            raise GoogleFailure("provider_response_invalid", definitive=True)
+        return value
+
+    @staticmethod
+    def _gmail_label_ids(value: object) -> list[str]:
+        if not isinstance(value, list) or any(
+            not isinstance(label, str) or not label for label in value
+        ):
+            raise GoogleFailure("provider_response_invalid", definitive=True)
+        return value
+
+    @staticmethod
+    def _gmail_array(value: object) -> list:
+        if not isinstance(value, list):
+            raise GoogleFailure("provider_response_invalid", definitive=True)
+        return value
+
+    @staticmethod
+    def _gmail_tombstone(message_id: str, version: str) -> dict:
+        return {
+            "resource_id": message_id,
+            "provider_version": version,
+            "state": "deleted",
+            "payload": {"kind": "email", "message_id": message_id},
+        }
+
     async def _gmail_message(self, access_token: str, message_id: str) -> dict:
+        self._gmail_resource_id(message_id)
         value = await self.request(
             "GET",
             GMAIL_MESSAGES_URL + "/" + message_id,
@@ -309,6 +345,13 @@ class GoogleActions:
                 "metadataHeaders": ["From", "To", "Cc", "Subject", "Date"],
             },
         )
+        resource_id = self._gmail_resource_id(value.get("id"))
+        if resource_id != message_id:
+            raise GoogleFailure("provider_response_invalid", definitive=True)
+        history_id = self._gmail_history_id(value.get("historyId"))
+        labels = self._gmail_label_ids(value.get("labelIds"))
+        if "INBOX" not in labels:
+            return self._gmail_tombstone(resource_id, history_id)
         headers = self._header_map(value.get("payload") or {})
         internal = value.get("internalDate")
         try:
@@ -318,15 +361,6 @@ class GoogleActions:
             ).isoformat()
         except (TypeError, ValueError, OverflowError):
             received_at = None
-        resource_id = value.get("id")
-        history_id = value.get("historyId") or "0"
-        if (
-            not isinstance(resource_id, str)
-            or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", resource_id)
-            or not isinstance(history_id, str)
-            or not history_id.isdecimal()
-        ):
-            raise GoogleFailure("provider_response_invalid", definitive=True)
         return {
             "resource_id": resource_id,
             "provider_version": history_id,
@@ -348,61 +382,64 @@ class GoogleActions:
 
     async def read_email(self, access_token: str, cursor: str | None, max_items: int) -> dict:
         max_items = max(1, min(int(max_items), 30))
-        changes: list[dict] = []
-        deleted: set[str] = set()
+        # None means fetch current metadata; a string means an explicit deletion
+        # at that history revision. Deduplicate across all relevant event kinds.
+        pending: dict[str, str | None] = {}
         if cursor is None:
             profile = await self.request("GET", GMAIL_PROFILE_URL, token=access_token)
-            next_cursor = profile.get("historyId")
-            if not isinstance(next_cursor, str) or not next_cursor.isdecimal():
-                raise GoogleFailure("provider_response_invalid", definitive=True)
+            next_cursor = self._gmail_history_id(profile.get("historyId"))
             listing = await self.request(
-                "GET",
-                GMAIL_MESSAGES_URL,
-                token=access_token,
+                "GET", GMAIL_MESSAGES_URL, token=access_token,
                 params={"maxResults": str(max_items), "labelIds": "INBOX"},
             )
-            ids = [
-                item["id"] for item in listing.get("messages", [])
-                if isinstance(item, dict)
-                and isinstance(item.get("id"), str)
-                and re.fullmatch(r"[A-Za-z0-9_-]{1,256}", item["id"])
-            ][:max_items]
+            if listing.get("nextPageToken"):
+                raise GoogleFailure("provider_snapshot_limit", definitive=True)
+            for item in self._gmail_array(listing.get("messages", [])):
+                if not isinstance(item, dict):
+                    raise GoogleFailure("provider_response_invalid", definitive=True)
+                pending[self._gmail_resource_id(item.get("id"))] = None
         else:
+            self._gmail_history_id(cursor)
             listing = await self.request(
-                "GET",
-                GMAIL_HISTORY_URL,
-                token=access_token,
+                "GET", GMAIL_HISTORY_URL, token=access_token,
                 params={"startHistoryId": cursor, "maxResults": "100"},
             )
-            next_cursor = listing.get("historyId") or cursor
-            if not isinstance(next_cursor, str) or not next_cursor.isdecimal():
+            next_cursor = self._gmail_history_id(listing.get("historyId"))
+            if int(next_cursor) < int(cursor):
                 raise GoogleFailure("provider_response_invalid", definitive=True)
-            ids = []
-            for history in listing.get("history", []):
-                if not isinstance(history, dict):
-                    continue
-                for entry in history.get("messagesAdded", []):
-                    message = entry.get("message") if isinstance(entry, dict) else None
-                    if isinstance(message, dict) and isinstance(message.get("id"), str):
-                        ids.append(message["id"])
-                for entry in history.get("messagesDeleted", []):
-                    message = entry.get("message") if isinstance(entry, dict) else None
-                    if isinstance(message, dict) and isinstance(message.get("id"), str):
-                        deleted.add(message["id"])
-            ids = list(dict.fromkeys(ids))
-            if listing.get("nextPageToken") or len(ids) + len(deleted) > max_items:
-                # Never advance a history cursor while omitting unread changes.
+            if listing.get("nextPageToken"):
                 raise GoogleFailure("provider_snapshot_limit", definitive=True)
-        for message_id in ids:
-            changes.append(await self._gmail_message(access_token, message_id))
-        for message_id in sorted(deleted):
-            changes.append({
-                "resource_id": message_id,
-                "provider_version": next_cursor,
-                "state": "deleted",
-                "payload": {"kind": "email", "message_id": message_id},
-            })
-        return {"cursor": next_cursor, "changes": changes}
+            previous = int(cursor)
+            for history in self._gmail_array(listing.get("history", [])):
+                if not isinstance(history, dict):
+                    raise GoogleFailure("provider_response_invalid", definitive=True)
+                version = self._gmail_history_id(history.get("id"))
+                if not previous < int(version) <= int(next_cursor):
+                    raise GoogleFailure("provider_response_invalid", definitive=True)
+                previous = int(version)
+                for kind in ("messagesAdded", "labelsAdded", "labelsRemoved", "messagesDeleted"):
+                    for entry in self._gmail_array(history.get(kind, [])):
+                        message = entry.get("message") if isinstance(entry, dict) else None
+                        if not isinstance(message, dict):
+                            raise GoogleFailure("provider_response_invalid", definitive=True)
+                        message_id = self._gmail_resource_id(message.get("id"))
+                        if kind in {"labelsAdded", "labelsRemoved"}:
+                            labels = self._gmail_label_ids(entry.get("labelIds"))
+                            if "INBOX" not in labels:
+                                continue
+                        pending[message_id] = version if kind == "messagesDeleted" else None
+        if len(pending) > max_items:
+            # Never advance a cursor after dropping any relevant unread change.
+            raise GoogleFailure("provider_snapshot_limit", definitive=True)
+        changes = [
+            self._gmail_tombstone(message_id, version)
+            if version is not None else await self._gmail_message(access_token, message_id)
+            for message_id, version in pending.items()
+        ]
+        result = {"cursor": next_cursor, "changes": changes}
+        if cursor is None:
+            result["complete_inbox"] = True
+        return result
 
     async def read_calendar(self, access_token: str, cursor: str | None, max_items: int) -> dict:
         max_items = max(1, min(int(max_items), 50))
@@ -412,11 +449,7 @@ class GoogleActions:
             "showDeleted": "true",
         }
         if cursor is not None:
-            params = {
-                "maxResults": str(max_items),
-                "showDeleted": "true",
-                "syncToken": cursor,
-            }
+            params["syncToken"] = cursor
         result = await self.request(
             "GET",
             EVENTS_URL,

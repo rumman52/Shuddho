@@ -130,9 +130,11 @@ class ReadGoogle:
             if self.history_invalid_once:
                 self.history_invalid_once = False
                 return httpx.Response(404, json={"error": {"code": 404}})
+            start = int(request.url.params["startHistoryId"])
             return httpx.Response(200, json={
-                "historyId": "102",
-                "history": [{"id": "102", "messagesAdded": [{"message": {"id": "m1"}}]}],
+                "historyId": str(max(102, start)),
+                "history": [{"id": "102", "messagesAdded": [{"message": {"id": "m1"}}]}]
+                if start < 102 else [],
             })
         if request.method == "GET" and url == EVENTS_URL:
             return httpx.Response(200, json={
@@ -2044,3 +2046,253 @@ def test_gmail_history_cursor_never_regresses(container):
     with pytest.raises(GoogleFailure) as rejected:
         asyncio.run(adapter.read_email("read-access-token", "101", 30))
     assert rejected.value.code == "provider_response_invalid"
+
+
+def _reclaim_event_attempt(container, event):
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, event["id"])
+        row.claim_until = utcnow() - timedelta(seconds=1)
+    claimed = container.connector_reads.repo.claim_events()
+    assert len(claimed) == 1
+    assert claimed[0]["id"] == event["id"]
+    assert claimed[0]["attempts"] == event["attempts"] + 1
+    return claimed[0]
+
+
+@pytest.mark.parametrize("boundary", ["sync_success", "sync_error", "consumer_success", "consumer_error"])
+def test_reclaimed_event_attempt_cannot_mutate_new_claim(container, monkeypatch, boundary):
+    enable_reads(container)
+    service = container.connector_reads
+    service.push_verifier = AllowPush()
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    snapshot_ids = asyncio.run(service.sync(owner, grant["id"]))["snapshot_ids"]
+    assert len(snapshot_ids) == 1
+    asyncio.run(service.subscribe(owner, grant["id"]))
+    first = _one_gmail_event(container, "event-claim-fence")
+    admitted = []
+
+    async def sync(*args, **kwargs):
+        if boundary.startswith("sync"):
+            _reclaim_event_attempt(container, first)
+            if boundary == "sync_error":
+                raise RuntimeError("synthetic stale worker failure")
+        return {"snapshot_ids": snapshot_ids}
+
+    def consume(event):
+        admitted.append(event["attempts"])
+        if boundary.startswith("consumer"):
+            _reclaim_event_attempt(container, first)
+            if boundary == "consumer_error":
+                raise RuntimeError("synthetic stale consumer failure")
+
+    monkeypatch.setattr(service, "sync", sync)
+    service.set_automation_consumer(consume)
+    service.set_event_consumer(None)
+    asyncio.run(service.process_event(first))
+
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        assert row.state == "processing"
+        assert row.attempts == 2
+        assert row.claim_until is not None
+        assert row.processed_at is None
+        assert row.last_error_code is None
+        assert row.synced_snapshot_ids == (snapshot_ids if boundary.startswith("consumer") else [])
+    assert admitted == ([1] if boundary.startswith("consumer") else [])
+
+
+def test_expired_final_event_attempt_becomes_terminal_failure(container):
+    enable_reads(container)
+    service = container.connector_reads
+    service.push_verifier = AllowPush()
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(service.subscribe(owner, grant["id"]))
+    first = _one_gmail_event(container, "event-final-lease-crash")
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        row.attempts = 7
+        row.claim_until = utcnow() - timedelta(seconds=1)
+    final = service.repo.claim_events()[0]
+    assert final["attempts"] == 8
+
+    # An active final attempt still owns its lease.
+    assert service.repo.claim_events() == []
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, final["id"])
+        assert row.state == "processing"
+        row.claim_until = utcnow() - timedelta(seconds=1)
+
+    # An abandoned final attempt must not remain processing forever.
+    assert service.repo.claim_events() == []
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, final["id"])
+        assert row.state == "failed"
+        assert row.attempts == 8
+        assert row.claim_until is None
+        assert row.last_error_code == "connector_event_claim_exhausted"
+        assert row.processed_at is None
+
+    # Even a late final worker cannot undo that terminal failure.
+    service.repo.finish_event(final["id"], expected_attempt=8)
+    assert service.repo.claim_events() == []
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, final["id"])
+        assert row.state == "failed"
+        assert row.last_error_code == "connector_event_claim_exhausted"
+
+
+def test_event_snapshot_evidence_survives_process_loss_after_cursor_commit(container, monkeypatch):
+    fake = enable_reads(container)
+    settings = replace(container.settings, work_services_enabled=True)
+    settings.validate()
+    container.settings = settings
+    container.repository.settings = settings
+    container.agent.settings = settings
+    container.automations.settings = settings
+    container.notifications.settings = settings
+    container.context.settings = settings
+    service = container.connector_reads
+    service.push_verifier = AllowPush()
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(service.sync(owner, grant["id"], force_full=True))
+    asyncio.run(service.subscribe(owner, grant["id"]))
+    _, automation = _create_email_coworker(container, owner, grant)
+    snapshot = service.repo.snapshots(owner, grant["id"])[0]
+    with container.repository.sessions.begin() as db:
+        db.get(ConnectorSnapshot, snapshot["id"]).provider_version = "100"
+    fake.message_subject = "Project update — action required"
+    first = _one_gmail_event(container, "event-sync-commit-process-loss")
+
+    class SimulatedProcessLoss(BaseException):
+        pass
+
+    def crash_after_sync(*args, **kwargs):
+        raise SimulatedProcessLoss()
+
+    original = service.repo.bind_event_snapshots
+    monkeypatch.setattr(service.repo, "bind_event_snapshots", crash_after_sync)
+    with pytest.raises(SimulatedProcessLoss):
+        asyncio.run(service.process_event(first))
+
+    # The provider cursor, changed snapshot and event evidence are one commit.
+    assert service.repo.cursor(owner, grant["id"])["cursor"] == "102"
+    with container.repository.sessions() as db:
+        assert db.get(ConnectorEvent, first["id"]).synced_snapshot_ids == [snapshot["id"]]
+        assert db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all() == []
+
+    second = _reclaim_event_attempt(container, first)
+    monkeypatch.setattr(service.repo, "bind_event_snapshots", original)
+    asyncio.run(service.process_event(second))
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        assert row.state == "processed"
+        assert row.synced_snapshot_ids == [snapshot["id"]]
+        runs = db.scalars(select(AgentRun).where(AgentRun.owner_id == owner)).all()
+        occurrences = db.scalars(select(AutomationOccurrence).where(
+            AutomationOccurrence.automation_id == automation["id"],
+        )).all()
+        assert len(runs) == len(occurrences) == 1
+        assert runs[0].connector_snapshot_ids == [snapshot["id"]]
+        assert runs[0].action_ids == []
+        assert occurrences[0].run_id == runs[0].id
+        assert db.scalars(select(ExternalAction).where(ExternalAction.owner_id == owner)).all() == []
+
+
+@pytest.mark.parametrize("invalid_cursor", [False, True])
+def test_reclaimed_event_cannot_commit_provider_sync(container, monkeypatch, invalid_cursor):
+    enable_reads(container)
+    service = container.connector_reads
+    service.push_verifier = AllowPush()
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    if invalid_cursor:
+        asyncio.run(service.sync(owner, grant["id"]))
+    asyncio.run(service.subscribe(owner, grant["id"]))
+    first = _one_gmail_event(container, "event-claim-lost-before-sync-commit")
+    adapter = container.credentials.provider_for("google")
+    before = service.repo.cursor(owner, grant["id"])
+
+    prior_snapshots = service.repo.snapshots(owner, grant["id"])
+
+    async def read(capability, token, cursor, max_items):
+        if not invalid_cursor or cursor is not None:
+            _reclaim_event_attempt(container, first)
+            if invalid_cursor:
+                raise GoogleFailure("provider_cursor_invalid")
+        return _cursor_race_result("102", "stale-event-snapshot")
+
+    monkeypatch.setattr(adapter, "read_connected", read)
+    asyncio.run(service.process_event(first))
+    assert service.repo.cursor(owner, grant["id"]) == before
+    assert service.repo.snapshots(owner, grant["id"]) == prior_snapshots
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        assert row.state == "processing"
+        assert row.attempts == 2
+        assert row.synced_snapshot_ids == []
+
+
+def test_gmail_full_sync_reconciles_removed_inbox_members_without_leaking_metadata(container):
+    fake = enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(container.connector_reads.sync(owner, grant["id"]))
+    fake.message_list_response = {"messages": [{"id": "m-sent"}]}
+    fake.message_labels["m-sent"] = ["SENT"]
+    result = asyncio.run(container.connector_reads.sync(owner, grant["id"], force_full=True))
+    assert result["deleted"] == 1
+    assert container.connector_reads.repo.snapshots(owner, grant["id"]) == []
+    with container.repository.sessions() as db:
+        rows = db.scalars(select(ConnectorSnapshot).where(
+            ConnectorSnapshot.grant_id == grant["id"],
+        )).all()
+        assert len(rows) == 1
+        assert rows[0].provider_resource_id == "m1"
+        assert rows[0].state == "deleted"
+        assert rows[0].payload == {"kind": "email", "message_id": "m1"}
+
+
+@pytest.mark.parametrize("history", [
+    {"historyId": "102", "history": [{"id": "102", "labelsAdded": [
+        {"message": {"id": "m1"}, "labelIds": None},
+    ]}]},
+    {"historyId": "102", "history": [{"id": "102", "messagesDeleted": [
+        {"message": {"id": "m1/escape"}},
+    ]}]},
+    {"historyId": "102", "history": [{"id": "103", "messagesAdded": [
+        {"message": {"id": "m1"}},
+    ]}]},
+])
+def test_gmail_history_rejects_invalid_delta_before_cursor_advance(container, history):
+    fake = enable_reads(container)
+    adapter = container.credentials.provider_for("google")
+    fake.history_response = history
+    with pytest.raises(GoogleFailure) as rejected:
+        asyncio.run(adapter.read_email("read-access-token", "101", 30))
+    assert rejected.value.code == "provider_response_invalid"
+
+
+def test_gmail_bootstrap_scope_reconciliation_does_not_override_newer_snapshot(container):
+    enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    service = container.connector_reads
+    asyncio.run(service.sync(owner, grant["id"]))
+    snapshot = service.repo.snapshots(owner, grant["id"])[0]
+    with container.repository.sessions.begin() as db:
+        db.get(ConnectorSnapshot, snapshot["id"]).provider_version = "105"
+    state = service.repo.cursor(owner, grant["id"])
+    # An incremental result is never a complete Inbox enumeration.
+    service.repo.apply_sync(owner, grant["id"], state["cursor"],
+        {"cursor": "102", "changes": [], "complete_inbox": True},
+        expected_generation=state["generation"])
+    assert service.repo.snapshots(owner, grant["id"])[0]["provider_version"] == "105"
+    state = service.repo.reset_cursor(owner, grant["id"],
+        expected_cursor="102", expected_generation=state["generation"])
+    service.repo.apply_sync(owner, grant["id"], None,
+        {"cursor": "104", "changes": [], "complete_inbox": True},
+        expected_generation=state["generation"])
+    assert service.repo.snapshots(owner, grant["id"])[0]["provider_version"] == "105"
