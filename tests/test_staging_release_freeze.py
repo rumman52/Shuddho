@@ -520,12 +520,23 @@ def test_runtime_v2_rejects_missing_reviewed_skills(tmp_path):
 
 
 def test_api_manifest_source_exact_43_plus_one_derived_ui_field():
-    # Parse the actual backend handler, not a separate handwritten mock.
+    # The real v2 handler must use the same capability projection as v3.
     api_path = Path(__file__).resolve().parents[1] / "services/coworker/api.py"
-    module = ast.parse(api_path.read_text(encoding="utf-8"))
+    api_module = ast.parse(api_path.read_text(encoding="utf-8"))
+    api_handler = next(
+        node for node in api_module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "runtime_manifest"
+    )
+    assert any(
+        isinstance(node, ast.Return) and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "runtime_manifest_payload"
+        for node in ast.walk(api_handler)
+    )
+    module = ast.parse(api_path.with_name("runtime_identity.py").read_text(encoding="utf-8"))
     handler = next(
         node for node in module.body
-        if isinstance(node, ast.FunctionDef) and node.name == "runtime_manifest"
+        if isinstance(node, ast.FunctionDef) and node.name == "runtime_manifest_payload"
     )
     assignment = next(
         node for node in handler.body
