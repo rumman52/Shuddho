@@ -2098,3 +2098,44 @@ def test_reclaimed_event_attempt_cannot_mutate_new_claim(container, monkeypatch,
         assert row.last_error_code is None
         assert row.synced_snapshot_ids == (snapshot_ids if boundary.startswith("consumer") else [])
     assert admitted == ([1] if boundary.startswith("consumer") else [])
+
+
+def test_expired_final_event_attempt_becomes_terminal_failure(container):
+    enable_reads(container)
+    service = container.connector_reads
+    service.push_verifier = AllowPush()
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    asyncio.run(service.subscribe(owner, grant["id"]))
+    first = _one_gmail_event(container, "event-final-lease-crash")
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, first["id"])
+        row.attempts = 7
+        row.claim_until = utcnow() - timedelta(seconds=1)
+    final = service.repo.claim_events()[0]
+    assert final["attempts"] == 8
+
+    # An active final attempt still owns its lease.
+    assert service.repo.claim_events() == []
+    with container.repository.sessions.begin() as db:
+        row = db.get(ConnectorEvent, final["id"])
+        assert row.state == "processing"
+        row.claim_until = utcnow() - timedelta(seconds=1)
+
+    # An abandoned final attempt must not remain processing forever.
+    assert service.repo.claim_events() == []
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, final["id"])
+        assert row.state == "failed"
+        assert row.attempts == 8
+        assert row.claim_until is None
+        assert row.last_error_code == "connector_event_claim_exhausted"
+        assert row.processed_at is None
+
+    # Even a late final worker cannot undo that terminal failure.
+    service.repo.finish_event(final["id"], expected_attempt=8)
+    assert service.repo.claim_events() == []
+    with container.repository.sessions() as db:
+        row = db.get(ConnectorEvent, final["id"])
+        assert row.state == "failed"
+        assert row.last_error_code == "connector_event_claim_exhausted"
