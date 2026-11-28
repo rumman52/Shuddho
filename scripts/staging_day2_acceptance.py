@@ -264,7 +264,7 @@ def validate_evidence(
     _nonempty(worker.get("id"), "execution.worker.id")
     _nonempty(worker.get("task_queue"), "execution.worker.task_queue")
     if any(worker.get(key) != release[key] for key in WORKER_IDENTITY_KEYS):
-        raise Day2AcceptanceFailure("Worker build identity does not match the frozen candidate.")
+        raise Day2AcceptanceFailure("Worker source revision or build identity does not match the frozen candidate.")
     if _time(worker.get("heartbeat_after"), "worker.heartbeat_after") <= _time(
             worker.get("heartbeat_before"), "worker.heartbeat_before"):
         raise Day2AcceptanceFailure("Real worker heartbeat did not advance.")
@@ -357,10 +357,8 @@ def validate_evidence(
     if (integrity["source_database_fingerprint"] == integrity["target_database_fingerprint"]
             or integrity["source_storage_fingerprint"] == integrity["target_storage_fingerprint"]):
         raise Day2AcceptanceFailure("Source and restored database/object targets are not independent.")
-    if not isinstance(integrity.get("source_schema_revision"), str) or not re.fullmatch(
-        r"[A-Za-z0-9_]{1,128}", integrity["source_schema_revision"]
-    ):
-        raise Day2AcceptanceFailure("Restored archive schema revision is missing.")
+    if integrity.get("source_schema_revision") != release["schema_revision"]:
+        raise Day2AcceptanceFailure("Restored archive schema revision does not match frozen candidate.")
     # Privileged SQL/S3 restore reads are not user-facing authorization.
     # Fail closed unless the restored API itself authenticated A and B,
     # returned the same archived probe bytes, and denied B document/task reads.
