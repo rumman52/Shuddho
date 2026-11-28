@@ -2199,25 +2199,33 @@ def test_event_snapshot_evidence_survives_process_loss_after_cursor_commit(conta
         assert db.scalars(select(ExternalAction).where(ExternalAction.owner_id == owner)).all() == []
 
 
-def test_reclaimed_event_cannot_commit_provider_sync(container, monkeypatch):
+@pytest.mark.parametrize("invalid_cursor", [False, True])
+def test_reclaimed_event_cannot_commit_provider_sync(container, monkeypatch, invalid_cursor):
     enable_reads(container)
     service = container.connector_reads
     service.push_verifier = AllowPush()
     owner = account(container)
     grant = create_grant(container, owner, connect_read(container, owner))
+    if invalid_cursor:
+        asyncio.run(service.sync(owner, grant["id"]))
     asyncio.run(service.subscribe(owner, grant["id"]))
     first = _one_gmail_event(container, "event-claim-lost-before-sync-commit")
     adapter = container.credentials.provider_for("google")
     before = service.repo.cursor(owner, grant["id"])
 
-    async def read(*args, **kwargs):
-        _reclaim_event_attempt(container, first)
+    prior_snapshots = service.repo.snapshots(owner, grant["id"])
+
+    async def read(capability, token, cursor, max_items):
+        if not invalid_cursor or cursor is not None:
+            _reclaim_event_attempt(container, first)
+            if invalid_cursor:
+                raise GoogleFailure("provider_cursor_invalid")
         return _cursor_race_result("102", "stale-event-snapshot")
 
     monkeypatch.setattr(adapter, "read_connected", read)
     asyncio.run(service.process_event(first))
     assert service.repo.cursor(owner, grant["id"]) == before
-    assert service.repo.snapshots(owner, grant["id"]) == []
+    assert service.repo.snapshots(owner, grant["id"]) == prior_snapshots
     with container.repository.sessions() as db:
         row = db.get(ConnectorEvent, first["id"])
         assert row.state == "processing"
