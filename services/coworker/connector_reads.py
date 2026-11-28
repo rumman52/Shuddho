@@ -268,9 +268,30 @@ class ConnectorReadRepository:
                 "state": row.state,
             }
 
+    @staticmethod
+    def _lock_event_claim(
+        db, owner: str, grant_id: str, event_claim: tuple[str, int] | None,
+    ) -> ConnectorEvent | None:
+        if event_claim is None:
+            return None
+        event_id, expected_attempt = event_claim
+        row = db.scalar(select(ConnectorEvent).where(
+            ConnectorEvent.id == event_id,
+            ConnectorEvent.owner_id == owner,
+            ConnectorEvent.grant_id == grant_id,
+        ).with_for_update())
+        if row is None or row.state != "processing" or row.attempts != expected_attempt:
+            raise CoworkerError(
+                "connector_event_claim_lost",
+                "The connector event is no longer owned by this processing attempt.",
+                409,
+            )
+        return row
+
     def reset_cursor(
         self, owner: str, grant_id: str, *,
         expected_cursor: str | None, expected_generation: int,
+        event_claim: tuple[str, int] | None = None,
     ) -> dict:
         with self.sessions.begin() as db:
             self.permission_gateway.validate_read_grant_in_session(
@@ -288,6 +309,7 @@ class ConnectorReadRepository:
                     "A newer connector sync already advanced this cursor.",
                     409,
                 )
+            self._lock_event_claim(db, owner, grant_id, event_claim)
             row.cursor = None
             row.generation += 1
             row.state = "recovering"
@@ -308,6 +330,7 @@ class ConnectorReadRepository:
         result: dict,
         *,
         expected_generation: int,
+        event_claim: tuple[str, int] | None = None,
     ) -> dict:
         next_cursor = result.get("cursor")
         changes = result.get("changes")
@@ -341,6 +364,7 @@ class ConnectorReadRepository:
                     "A newer connector sync already advanced this cursor.",
                     409,
                 )
+            event_row = self._lock_event_claim(db, owner, grant_id, event_claim)
             inserted = updated = deleted = ignored = 0
             changed_snapshot_ids: list[str] = []
             for change in changes:
@@ -409,6 +433,12 @@ class ConnectorReadRepository:
                 updated += 1
                 if state == "deleted":
                     deleted += 1
+            # Evidence must commit with the cursor and snapshots; otherwise
+            # a crash before the later consumer admission loses the change.
+            if event_row is not None:
+                bounded = list(dict.fromkeys(changed_snapshot_ids[:30]))
+                if bounded or not list(event_row.synced_snapshot_ids or []):
+                    event_row.synced_snapshot_ids = bounded
             cursor.cursor = next_cursor
             cursor.state = "active"
             cursor.last_sync_at = utcnow()
@@ -1194,7 +1224,9 @@ class ConnectorReadService:
             await asyncio.to_thread(self.repo.finish_event, event["id"], expected_attempt=attempt, ignored=True)
             return
         try:
-            sync_summary = await self.sync(event["owner_id"], event["grant_id"])
+            sync_summary = await self.sync(
+                event["owner_id"], event["grant_id"], event_claim=(event["id"], attempt),
+            )
             bound = await asyncio.to_thread(
                 self.repo.bind_event_snapshots,
                 event["id"],
@@ -1206,6 +1238,8 @@ class ConnectorReadService:
             if not bound:
                 return
         except CoworkerError as error:
+            if error.code == "connector_event_claim_lost":
+                return
             if error.code in {
                 "connector_read_revoked", "connector_read_expired",
                 "connection_removed", "not_found",
@@ -1271,6 +1305,7 @@ class ConnectorReadService:
         *,
         force_full: bool = False,
         max_items: int = 30,
+        event_claim: tuple[str, int] | None = None,
     ) -> dict:
         grant, adapter, token = await self.credential_broker.issue_read_access(
             owner,
@@ -1289,6 +1324,7 @@ class ConnectorReadService:
                 self.repo.reset_cursor, owner, grant_id,
                 expected_cursor=cursor_state["cursor"],
                 expected_generation=cursor_state["generation"],
+                event_claim=event_claim,
             )
         cursor = cursor_state["cursor"]
         recovered = False
@@ -1310,6 +1346,7 @@ class ConnectorReadService:
                 self.repo.reset_cursor, owner, grant_id,
                 expected_cursor=cursor,
                 expected_generation=cursor_state["generation"],
+                event_claim=event_claim,
             )
             recovered = True
             cursor = cursor_state["cursor"]
@@ -1326,6 +1363,7 @@ class ConnectorReadService:
             cursor,
             result,
             expected_generation=cursor_state["generation"],
+            event_claim=event_claim,
         )
         return summary | {
             "provider": grant["provider"],
