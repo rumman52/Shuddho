@@ -56,28 +56,54 @@ TOKEN_A = make_test_token("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 TOKEN_B = make_test_token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 
-def runtime():
+def bind_runtime_identity(identity):
+    from services.coworker.runtime_identity import WORKER_IDENTITY_KEYS
+
+    base = {key: value for key, value in identity.items() if key not in {
+        "runtime_identity_sha256", "worker_fleet_ready", "blocked_worker_count",
+        "worker_inventory", "worker_inventory_sha256",
+    }}
+    base["runtime_identity_sha256"] = freeze.canonical_sha256(base)
+    workers = [{key: base[key] for key in WORKER_IDENTITY_KEYS}]
     return {
-        "schema_version": 2,
+        **base, "worker_fleet_ready": True, "blocked_worker_count": 0,
+        "worker_inventory": workers, "worker_inventory_sha256": freeze.canonical_sha256(workers),
+    }
+
+
+def runtime():
+    return bind_runtime_identity({
+        "schema_version": 3,
         "source_revision": SHA,
         "environment": "staging",
+        "build_digest": "b" * 64,
+        "schema_revision": "0073_worker_runtime_identity",
+        "model_provider": "deepseek", "model_id": "deepseek-flash",
+        "task_queue": "shuddho-documents-v1",
         "capabilities": {
             **{key: False for key in freeze.RUNTIME_CAPABILITY_KEYS},
             **{key: False for key in day2.NEW_RUNTIME_CAPABILITIES},
             "coworker": True,
             "grounded_conversation_replies": False,
         },
+        "canonical_only_capabilities": {"suggestion_model_relevance": False},
         "reviewed_skills": {"research": {"state": "unselected"}},
         "action_providers": [],
-        "cohort": {"enforced": False, "configured_members": 0, "max_users": 5},
-    }
+        "cohort": {"enforced": True, "configured_members": 2, "max_users": 5},
+    })
 
 
 def frozen(manifest=None):
+    from services.coworker.runtime_identity import WORKER_IDENTITY_KEYS
+
+    observed = manifest if manifest is not None else runtime()
     return {
         "status": "frozen",
-        "release": {"release_id": "stage-day2-001", "environment": "staging", "source_revision": SHA},
-        "runtime_manifest_sha256": freeze.canonical_sha256(manifest or runtime()),
+        "release": {
+            "release_id": "stage-day2-001", "environment": "staging",
+            **{key: observed[key] for key in WORKER_IDENTITY_KEYS},
+        },
+        "runtime_manifest_sha256": freeze.canonical_sha256(observed),
     }
 
 
@@ -102,7 +128,7 @@ class Day2API:
         self.calls.append((method, path, user))
         def res(code, value=None, content=None):
             return httpx.Response(code, json=value, request=request) if content is None else httpx.Response(code, content=content, request=request)
-        if method == "GET" and path == "/api/v1/runtime-manifest":
+        if method == "GET" and path == "/api/v1/runtime-manifest/v3":
             return res(200, self.manifest)
         if method == "GET" and path == "/api/v1/me":
             claims = decode_test_token_claims(user)
@@ -408,7 +434,7 @@ def test_day2_rejects_identical_synthetic_accounts(monkeypatch):
     assert not any(method == "POST" for method, _, _ in api.calls)
 
 
-def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
+def test_runtime_manifest_v3_is_frozen_without_broadening_authority():
     manifest = runtime()
     caps = {**manifest["capabilities"]}
     for name in freeze.PA10_REQUIRED_TRUE:
@@ -417,6 +443,7 @@ def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
         "schema_version": 1, "evidence_kind": freeze.EVIDENCE_KIND,
         "status": "prepared", "release_id": "stage-day2-001",
         "expected_environment": "staging", "expected_source_revision": SHA,
+        **{"expected_" + key: manifest[key] for key in ("build_digest", "schema_revision", "model_provider", "model_id", "task_queue")},
         # The reviewed rollout/worker declares 43 controls. The API response
         # adds one separately checked UI-derived field.
         "declared_capabilities": {key: caps[key] for key in freeze.RUNTIME_CAPABILITY_KEYS},
@@ -431,6 +458,7 @@ def test_runtime_manifest_v2_is_frozen_without_broadening_authority():
     manifest["capabilities"] = caps
     manifest["action_providers"] = ["google", "microsoft"]
     manifest["cohort"] = {"enforced": True, "max_users": 5, "configured_members": 2}
+    manifest = bind_runtime_identity(manifest)
     result = freeze.verify_runtime(state, manifest)
     assert result["status"] == "frozen"
     assert result["runtime_manifest_sha256"] == freeze.canonical_sha256(manifest)
