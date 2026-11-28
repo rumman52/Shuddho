@@ -50,5 +50,6 @@ def test_coworker_migrations_have_one_head_and_preserve_both_0071_parents():
     graph = _revisions()
     all_parents = {parent for parents in graph.values() for parent in parents}
     assert all_parents <= set(graph), "Missing down_revision in migration history"
-    assert set(graph) - all_parents == {"0072_merge_0071_heads"}
+    assert set(graph) - all_parents == {"0073_worker_runtime_identity"}
+    assert set(graph["0073_worker_runtime_identity"]) == {"0072_merge_0071_heads"}
     assert set(graph["0072_merge_0071_heads"]) == {"0071", "0071_project_scoped_goals"}
