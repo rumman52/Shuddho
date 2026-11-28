@@ -51,7 +51,7 @@ def fixture(tmp_path: Path):
         "schema_alignment": {
             "status": "migration_required",
             "source_revision": "0070",
-            "code_head": "0072_merge_0071_heads",
+            "code_head": "0073_worker_runtime_identity",
             "source_is_current": False,
             "release_qualified": False,
         },

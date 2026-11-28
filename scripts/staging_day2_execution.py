@@ -24,7 +24,8 @@ import httpx
 
 from scripts.staging_release_evidence import write_private_json
 from scripts.staging_prerequisite_preflight import EXPECTED_AUTH_ISSUER, EXPECTED_S3_ENDPOINT
-from scripts.staging_release_freeze import canonical_sha256, clean_origin, valid_sha
+from scripts.staging_release_freeze import EXPECTED_SCHEMA_REVISION, canonical_sha256, clean_origin, valid_sha
+from services.coworker.runtime_identity import WORKER_IDENTITY_KEYS
 from services.coworker.config import Settings
 from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
 
@@ -82,6 +83,14 @@ def check_release(freeze: object) -> dict:
         or not valid_sha(release.get("source_revision"))
     ):
         raise Day2Failure("Frozen release must have staging identity and a full source SHA.")
+    for key in ("build_digest", "runtime_identity_sha256"):
+        if not isinstance(release.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", release[key]):
+            raise Day2Failure("Frozen release is missing immutable build/runtime identity.")
+    if (release.get("schema_revision") != EXPECTED_SCHEMA_REVISION
+            or release.get("model_provider") != "deepseek"
+            or any(not isinstance(release.get(key), str) or not release[key].strip()
+                   for key in ("model_id", "task_queue"))):
+        raise Day2Failure("Frozen release has invalid schema, model or queue identity.")
     digest = freeze.get("runtime_manifest_sha256")
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise Day2Failure("Frozen release is missing an exact runtime-manifest digest.")
@@ -110,12 +119,15 @@ def bearer(token: str) -> dict[str, str]:
 
 def attest_runtime(client: httpx.Client, token: str, freeze: dict) -> dict:
     release = check_release(freeze)
-    runtime = obj(checked(client.get("/api/v1/runtime-manifest", headers=bearer(token)),
+    runtime = obj(checked(client.get("/api/v1/runtime-manifest/v3", headers=bearer(token)),
                           200, "staging runtime-manifest"), "staging runtime-manifest")
     if (
-        runtime.get("schema_version") != 2
+        runtime.get("schema_version") != 3
         or runtime.get("environment") != "staging"
-        or runtime.get("source_revision") != release["source_revision"]
+        or any(runtime.get(key) != release[key] for key in WORKER_IDENTITY_KEYS)
+        or runtime.get("worker_fleet_ready") is not True
+        or type(runtime.get("blocked_worker_count")) is not int
+        or runtime["blocked_worker_count"] != 0
         or canonical_sha256(runtime) != freeze["runtime_manifest_sha256"]
         or not isinstance(runtime.get("capabilities"), dict)
         or runtime["capabilities"].get("coworker") is not True
@@ -694,6 +706,7 @@ def run_probe(
         "release_id": release["release_id"],
         "source_revision": release["source_revision"],
         "runtime_manifest_sha256": freeze["runtime_manifest_sha256"],
+        **{key: release[key] for key in WORKER_IDENTITY_KEYS if key != "source_revision"},
         "document_id": document_id, "document_version_id": source_version_id,
         "document_sha256": source_sha,
         "task_id": task_id, "workflow_id": "shuddho-task-" + task_id,
@@ -1018,6 +1031,8 @@ def main() -> None:
             raise Day2Failure("Live Day 2 requires a reviewed HTTPS private S3 endpoint.")
         container = Container.create(settings)
         before = active_worker(container, release["source_revision"])
+        if any(before.get(key) != release[key] for key in WORKER_IDENTITY_KEYS):
+            raise Day2Failure("Registered worker does not match frozen runtime identity.")
         with httpx.Client(base_url=origin, timeout=20, follow_redirects=False) as client:
             result = run_probe(
                 client, token_a, token_b, freeze, source,
@@ -1037,9 +1052,11 @@ def main() -> None:
         )
         result["document_outbox"] = persisted_document_outbox(container, result["task_id"])
         after = heartbeat_advanced(container, before, release["source_revision"])
+        if any(after.get(key) != release[key] for key in WORKER_IDENTITY_KEYS):
+            raise Day2Failure("Registered worker identity changed during the execution.")
         result["worker"] = {
             "id": before["id"], "task_queue": settings.task_queue,
-            "source_revision": release["source_revision"],
+            **{key: after[key] for key in WORKER_IDENTITY_KEYS},
             "heartbeat_before": before["heartbeat_at"],
             "heartbeat_after": after["heartbeat_at"],
         }

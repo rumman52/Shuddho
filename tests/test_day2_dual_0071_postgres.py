@@ -30,11 +30,15 @@ pytestmark = [
     pytest.mark.coworker_integration,
     pytest.mark.skipif(
         not os.getenv("SHUDDHO_TEST_POSTGRES_URL"),
-        reason="Requires the disposable PostgreSQL 18 CI service",
+        reason="Requires a disposable PostgreSQL 17 or 18 CI service",
     ),
 ]
 
 MERGE = "0072_merge_0071_heads"
+HEAD = "0073_worker_runtime_identity"
+IDENTITY_COLUMNS = {("cw_worker_instances", key) for key in (
+    "build_digest", "schema_revision", "model_provider", "model_id", "runtime_identity_sha256",
+)}
 PARENTS = ("0071", "0071_project_scoped_goals")
 NEW_COLUMNS = {
     ("cw_agent_runs", "planner_input_tokens"),
@@ -60,14 +64,22 @@ def _disposable_database():
         or root_url.host not in {"localhost", "127.0.0.1", "::1"}
         or not root_url.database
         or not root_url.database.endswith("_test")
+        or root_url.query
+        or any(os.getenv(name) for name in ("PGHOSTADDR", "PGSERVICE"))
     ):
         raise RuntimeError(
             "Day 2 migration rehearsal requires a disposable loopback PostgreSQL _test "
             "database; remote, maintenance and managed staging URLs are forbidden."
         )
+    expected_major = os.getenv("SHUDDHO_TEST_POSTGRES_MAJOR")
+    if expected_major is not None and expected_major not in {"17", "18"}:
+        raise RuntimeError("Day 2 rehearsal expected server major must be 17 or 18.")
     db_name = "day2_dual_0071_" + uuid.uuid4().hex[:20]
     admin_dsn = _psycopg_url(root_url.render_as_string(hide_password=False))
     with psycopg.connect(admin_dsn, autocommit=True) as admin:
+        # Confirm the server actually reached, not just the container tag or URL.
+        if expected_major is not None and admin.info.server_version // 10000 != int(expected_major):
+            raise RuntimeError("Day 2 rehearsal connected to the wrong server major.")
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
     try:
         yield root_url.set(database=db_name).render_as_string(hide_password=False)
@@ -165,9 +177,15 @@ def test_dual_0071_first_parent_upgrade_merge_rollback_and_replay(first_parent):
             assert ("cw_agent_runs", "planner_input_tokens") not in columns
         _old_reader(url, sample)
 
+        command.upgrade(config, MERGE)
+        intermediate, columns, indexes, constraints = _readback(url)
+        assert intermediate["revision"] == MERGE
+        assert NEW_COLUMNS <= columns and not (IDENTITY_COLUMNS & columns)
+        assert _data_only(intermediate) == _data_only(baseline)
         command.upgrade(config, "head")
         merged, columns, indexes, constraints = _readback(url)
-        assert merged["revision"] == MERGE
+        assert merged["revision"] == HEAD
+        assert IDENTITY_COLUMNS <= columns
         assert NEW_COLUMNS <= columns
         assert INDEX in indexes and FK in constraints
         assert _data_only(merged) == _data_only(baseline)
@@ -182,7 +200,7 @@ def test_dual_0071_first_parent_upgrade_merge_rollback_and_replay(first_parent):
         rolled_back, columns, indexes, constraints = _readback(url)
         assert rolled_back["revision"] == "0070"
         assert _data_only(rolled_back) == _data_only(baseline)
-        assert not (NEW_COLUMNS & columns)
+        assert not ((NEW_COLUMNS | IDENTITY_COLUMNS) & columns)
         assert INDEX not in indexes and FK not in constraints
         with pytest.raises(DatabaseReadinessError, match="migration revision"):
             check_current_revision(url)
@@ -191,7 +209,7 @@ def test_dual_0071_first_parent_upgrade_merge_rollback_and_replay(first_parent):
         command.upgrade(config, "head")
         replayed, columns, indexes, constraints = _readback(url)
         assert replayed == merged
-        assert NEW_COLUMNS <= columns
+        assert (NEW_COLUMNS | IDENTITY_COLUMNS) <= columns
         assert INDEX in indexes and FK in constraints
         check_current_revision(url)
         _old_reader(url, sample)
@@ -213,3 +231,55 @@ def test_rehearsal_rejects_nonlocal_or_non_test_urls_before_opening_database(mon
     with pytest.raises(RuntimeError, match="disposable loopback"):
         with _disposable_database():
             pytest.fail("Unsafe database URL was accepted")
+
+
+@pytest.mark.parametrize("option", ["host", "hostaddr", "dbname", "service", "options"])
+def test_rehearsal_rejects_query_overrides_before_connecting(monkeypatch, option):
+    monkeypatch.setenv(
+        "SHUDDHO_TEST_POSTGRES_URL",
+        f"postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test?{option}=unsafe",
+    )
+    monkeypatch.setattr(psycopg, "connect", lambda *_a, **_k: pytest.fail("Unexpected database connection"))
+    with pytest.raises(RuntimeError, match="disposable loopback"):
+        with _disposable_database():
+            pytest.fail("Unsafe query override accepted")
+
+
+@pytest.mark.parametrize("name", ["PGHOSTADDR", "PGSERVICE"])
+def test_rehearsal_rejects_libpq_destination_overrides(monkeypatch, name):
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_URL", "postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test")
+    monkeypatch.setenv(name, "unsafe")
+    monkeypatch.setattr(psycopg, "connect", lambda *_a, **_k: pytest.fail("Unexpected database connection"))
+    with pytest.raises(RuntimeError, match="disposable loopback"):
+        with _disposable_database():
+            pytest.fail("Unsafe libpq override accepted")
+
+
+@pytest.mark.parametrize("expected,actual", [("17", 180001), ("18", 170011)])
+def test_rehearsal_rejects_wrong_server_major_before_ddl(monkeypatch, expected, actual):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_URL", "postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test")
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_MAJOR", expected)
+
+    @contextmanager
+    def fake_connect(*_args, **_kwargs):
+        yield SimpleNamespace(
+            info=SimpleNamespace(server_version=actual),
+            execute=lambda *_a, **_k: pytest.fail("DDL attempted on the wrong server major"),
+        )
+
+    monkeypatch.setattr(psycopg, "connect", fake_connect)
+    with pytest.raises(RuntimeError, match="server major"):
+        with _disposable_database():
+            pytest.fail("Wrong server version accepted")
+
+
+@pytest.mark.parametrize("expected", ["", "017", "16", "19", "17.11"])
+def test_rehearsal_rejects_invalid_expected_server_major_before_connecting(monkeypatch, expected):
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_URL", "postgresql+psycopg://test:pw@localhost:5432/shuddho_coworker_test")
+    monkeypatch.setenv("SHUDDHO_TEST_POSTGRES_MAJOR", expected)
+    monkeypatch.setattr(psycopg, "connect", lambda *_a, **_k: pytest.fail("Unexpected database connection"))
+    with pytest.raises(RuntimeError, match="server major"):
+        with _disposable_database():
+            pytest.fail("Invalid server major accepted")

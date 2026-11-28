@@ -534,7 +534,12 @@ def test_postgres_rejects_worker_runtime_identity_mutation(repository):
     if engine.dialect.name != "postgresql":
         pytest.skip("The immutable worker identity trigger is a PostgreSQL production guard")
 
-    worker_id = repository.register_worker(task_queue=repository.settings.task_queue, source_revision=REVISION)
+    original = repository.settings
+    repository.settings = replace(original, source_revision=REVISION)
+    try:
+        worker_id = repository.register_worker(task_queue=repository.settings.task_queue, source_revision=REVISION)
+    finally:
+        repository.settings = original
     with pytest.raises(IntegrityError, match="runtime identity is immutable"):
         with repository.sessions.begin() as db:
             row = db.scalar(select(WorkerInstance).where(WorkerInstance.id == worker_id).with_for_update())

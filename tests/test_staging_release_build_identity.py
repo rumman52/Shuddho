@@ -141,10 +141,10 @@ def test_worker_registry_persists_immutable_release_identity_columns():
 
 
 def test_worker_runtime_identity_migration_is_the_single_alembic_head():
-    from alembic.config import Config
     from alembic.script import ScriptDirectory
+    from services.coworker.migrate import migration_config
 
-    script = ScriptDirectory.from_config(Config("alembic.ini"))
+    script = ScriptDirectory.from_config(migration_config("sqlite:///:memory:"))
     assert script.get_heads() == ["0073_worker_runtime_identity"]
     migration = script.get_revision("0073_worker_runtime_identity")
     assert migration.down_revision == "0072_merge_0071_heads"

@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .auth import Principal, require_principal
-from .config import enabled as coworker_enabled
+from .runtime_identity import build_runtime_identity, qualify_worker_inventory, runtime_manifest_payload
 from .container import Container
 from .project_schemas import ProjectCreate, ProjectEdit, ProjectRevision, ProjectLink
 from .github_repository_schemas import GitHubOAuthFinish, GitHubInstallComplete, GitHubRepositoryBind
@@ -1314,91 +1314,27 @@ def runtime_manifest(
             403,
         )
     response.headers["Cache-Control"] = "no-store"
-    capabilities = {
-        "coworker": coworker_enabled(),
-        "work_services": settings.work_services_enabled,
-        "artifact_services": settings.artifact_services_enabled,
-        "agent_runtime": settings.agent_runtime_enabled,
-        "conversations": settings.conversations_enabled,
-        "projects": settings.projects_enabled and settings.conversations_enabled,
-        "fly_github": settings.fly_github_enabled,
-        "conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
-        "grounded_conversation_replies": settings.conversations_enabled and settings.conversation_replies_enabled and settings.chat_provider_configured,
-        "runtime_v3": settings.agent_runtime_v3_enabled,
-        "context_retrieval": settings.context_retrieval_enabled,
-        "personal_goals": settings.personal_goals_enabled,
-        "automations": settings.automations_enabled,
-        "intelligent_planner": settings.intelligent_planner_enabled,
-        "memory": settings.agent_memory_enabled,
-        "handoffs": settings.agent_handoffs_enabled,
-        "multi_handoffs": settings.agent_multi_handoffs_enabled,
-        "dependency_graph": settings.agent_dependency_graph_enabled,
-        "parallel_execution": settings.agent_parallel_execution_enabled,
-        "outcome_replan": settings.agent_outcome_replan_enabled,
-        "research": settings.research_services_enabled,
-        "actions": settings.actions_enabled,
-        "connector_trust_boundary": settings.connector_trust_boundary_enabled,
-        "connector_reads": settings.connector_reads_enabled,
-        "browser": settings.browser_enabled,
-        "agent_browser_read": settings.agent_browser_read_enabled,
-        "code_execution": settings.code_execution_enabled,
-        "agent_sandbox_tool": settings.agent_sandbox_tool_enabled,
-        "action_attachments": settings.action_attachments_enabled,
-        "action_reminders": settings.action_reminders_enabled,
-        "action_recipients": settings.action_recipients_enabled,
-        "action_document_sharing": settings.action_document_sharing_enabled,
-        "action_email_threading": settings.action_email_threading_enabled,
-        "action_social_publishing": settings.action_social_publishing_enabled,
-        "personal_transactions": settings.personal_transactions_enabled,
-        "restaurant_reservations": settings.restaurant_reservations_enabled,
-        "shopping_checkout": settings.shopping_checkout_enabled,
-        "travel_booking": settings.travel_booking_enabled,
-        "action_selection": settings.agent_action_selection_enabled,
-        "action_proposals": settings.agent_action_proposals_enabled,
-        "negotiation_proposal_promotion": settings.negotiation_proposal_promotion_enabled,
-        "agent_linkedin_proposals": settings.agent_linkedin_proposals_enabled,
-        "browser_push": settings.browser_push_enabled,
-        "reviewed_research": (
-            settings.agent_reviewed_research_skill_enabled
-            and services.repository.reviewed_skill_runtime_manifest()["research"]["state"] == "selected"
-        ),
-    }
-    providers = []
-    if settings.actions_enabled:
-        providers.append("google")
-        if settings.microsoft_actions_enabled:
-            providers.append("microsoft")
-        if settings.action_social_publishing_enabled:
-            providers.append("linkedin")
-        if settings.restaurant_reservations_enabled:
-            providers.append("opentable")
-        if settings.shopping_checkout_enabled or settings.travel_booking_enabled:
-            for operation in sorted(settings.transaction_operations):
-                provider, separator, kind = operation.partition(":")
-                if (
-                    separator
-                    and kind in {"shopping_checkout_create", "travel_booking_create"}
-                    and provider not in providers
-                ):
-                    providers.append(provider)
-    return {
-        "schema_version": 2,
-        "source_revision": settings.source_revision,
-        "environment": settings.environment,
-        "capabilities": capabilities,
-        # Separate configured authority outside the fixed 43 runtime-v2 flags.
-        # Report the actual setting, even if another dependency blocks its use.
-        "canonical_only_capabilities": {
-            "suggestion_model_relevance": settings.suggestion_model_relevance_enabled,
-        },
-        "reviewed_skills": services.repository.reviewed_skill_runtime_manifest(),
-        "action_providers": providers,
-        "cohort": {
-            "enforced": settings.cohort_enforced,
-            "configured_members": len(settings.cohort_account_ids),
-            "max_users": settings.cohort_max_users,
-        },
-    }
+    return runtime_manifest_payload(settings, services.repository.reviewed_skill_runtime_manifest())
+
+
+@router.get("/runtime-manifest/v3")
+def runtime_manifest_v3(
+    response: Response,
+    principal: Annotated[Principal, Depends(require_principal)],
+    services: Services,
+):
+    settings = services.settings
+    if (settings.environment != "staging" or not settings.cohort_enforced
+            or principal.account_id not in settings.cohort_account_ids):
+        raise CoworkerError("cohort_not_enabled", "Staging runtime identity is not available for this account.", 403)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        identity = build_runtime_identity(settings, services.repository)
+        workers = services.repository.worker_inventory(task_queue=settings.task_queue)
+        fleet = qualify_worker_inventory(identity, workers)
+    except ValueError:
+        raise CoworkerError("runtime_identity_unavailable", "Staging runtime identity is unavailable.", 503) from None
+    return {**identity, **fleet}
 
 
 @router.get("/transaction-authority-manifest")

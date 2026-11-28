@@ -21,7 +21,7 @@ from scripts.staging_object_backup import ObjectArchiveError, _manifest
 
 
 EXPECTED_SOURCE_REVISION = "0070"
-EXPECTED_CODE_HEAD = "0072_merge_0071_heads"
+EXPECTED_CODE_HEAD = "0073_worker_runtime_identity"
 
 
 class PreseedBaselineFailure(RuntimeError):

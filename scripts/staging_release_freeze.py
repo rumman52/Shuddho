@@ -23,7 +23,9 @@ from scripts.staging_release_evidence import (
 
 
 SCHEMA_VERSION = 1  # PA-10 rollout / freeze evidence version
-RUNTIME_SCHEMA_VERSION = 2  # /api/v1/runtime-manifest
+RUNTIME_SCHEMA_VERSION = 3  # /api/v1/runtime-manifest/v3
+EXPECTED_SCHEMA_REVISION = "0073_worker_runtime_identity"
+from services.coworker.runtime_identity import WORKER_IDENTITY_KEYS
 EVIDENCE_KIND = "pa10_staging_release_freeze"
 PRODUCTION_ENVIRONMENTS = {"prod", "production"}
 ALLOWED_ACTION_PROVIDERS = {"google", "microsoft", "linkedin", "opentable"}
@@ -443,6 +445,10 @@ def prepare_state(
     rollout_path: Path,
     provider_policy_path: Path,
     expected_source_revision: str,
+    expected_build_digest: str,
+    expected_model_provider: str,
+    expected_model_id: str,
+    expected_task_queue: str,
     build_reference: str,
     deployment_reference: str,
     synthetic_account_reference: str,
@@ -463,12 +469,17 @@ def prepare_state(
         if not text_ref(value):
             raise StagingReleaseFreezeError(f"{label.capitalize()} is required.")
 
-    return {
+    state = {
         "schema_version": SCHEMA_VERSION,
         "evidence_kind": EVIDENCE_KIND,
         "status": "prepared",
         "release_id": rollout["release_id"],
         "expected_source_revision": expected_source_revision,
+        "expected_build_digest": expected_build_digest,
+        "expected_schema_revision": EXPECTED_SCHEMA_REVISION,
+        "expected_model_provider": expected_model_provider,
+        "expected_model_id": expected_model_id,
+        "expected_task_queue": expected_task_queue,
         "expected_environment": rollout["environment"],
         "build_reference": build_reference.strip(),
         "deployment_reference": deployment_reference.strip(),
@@ -480,6 +491,8 @@ def prepare_state(
         "declared_cohort": rollout["cohort"],
         "prepared_at": utcnow_iso(),
     }
+    validate_prepared_state(state)
+    return state
 
 
 PREPARED_STATE_KEYS = frozenset({
@@ -487,10 +500,15 @@ PREPARED_STATE_KEYS = frozenset({
     "expected_environment", "build_reference", "deployment_reference", "synthetic_account_reference",
     "rollout_manifest_sha256", "provider_policy_sha256", "declared_capabilities",
     "declared_action_providers", "declared_cohort", "prepared_at",
+    "expected_build_digest", "expected_schema_revision", "expected_model_provider",
+    "expected_model_id", "expected_task_queue",
 })
 RUNTIME_MANIFEST_KEYS = frozenset({
     "schema_version", "source_revision", "environment", "capabilities", "reviewed_skills",
-    "action_providers", "cohort",
+    "action_providers", "cohort", "canonical_only_capabilities",
+    "build_digest", "schema_revision", "model_provider", "model_id", "task_queue",
+    "runtime_identity_sha256", "worker_fleet_ready", "blocked_worker_count",
+    "worker_inventory", "worker_inventory_sha256",
 })
 
 
@@ -511,7 +529,16 @@ def validate_prepared_state(state: object) -> None:
     for name in ("build_reference", "deployment_reference", "synthetic_account_reference"):
         if not text_ref(state[name]):
             raise StagingReleaseFreezeError(f"Release-freeze state {name} is invalid.")
-    for name in ("rollout_manifest_sha256", "provider_policy_sha256"):
+    if (
+        state["expected_schema_revision"] != EXPECTED_SCHEMA_REVISION
+        or state["expected_model_provider"] != "deepseek"
+        or not text_ref(state["expected_model_id"], maximum=120)
+        or state["expected_model_id"] != state["expected_model_id"].strip()
+        or not text_ref(state["expected_task_queue"], maximum=160)
+        or state["expected_task_queue"] != state["expected_task_queue"].strip()
+    ):
+        raise StagingReleaseFreezeError("Release-freeze model, queue or schema identity is invalid.")
+    for name in ("rollout_manifest_sha256", "provider_policy_sha256", "expected_build_digest"):
         digest = state[name]
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise StagingReleaseFreezeError(f"Release-freeze state {name} is invalid.")
@@ -529,7 +556,7 @@ def validate_prepared_state(state: object) -> None:
 def verify_runtime(state: dict, runtime: dict) -> dict:
     validate_prepared_state(state)
     if not isinstance(runtime, dict) or set(runtime) != RUNTIME_MANIFEST_KEYS:
-        raise StagingReleaseFreezeError("Runtime manifest must contain exactly the v2 fields including reviewed_skills.")
+        raise StagingReleaseFreezeError("Runtime manifest must contain exactly the v3 fields including reviewed_skills.")
     if type(runtime.get("schema_version")) is not int or runtime["schema_version"] != RUNTIME_SCHEMA_VERSION:
         raise StagingReleaseFreezeError(
             "Runtime manifest schema_version is unsupported."
@@ -560,7 +587,7 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
         )
     if not isinstance(runtime.get("reviewed_skills"), dict):
         raise StagingReleaseFreezeError(
-            "Runtime v2 reviewed_skills manifest must be an object."
+            "Runtime v3 reviewed_skills manifest must be an object."
         )
     providers = runtime.get("action_providers")
     if providers != state.get("declared_action_providers"):
@@ -592,6 +619,28 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
             "Cohort-enforced staging must contain at least one configured synthetic member."
         )
 
+    # Scope checks above keep the existing precise failure diagnostics.
+    # Only then validate the complete API and worker identity commitment.
+    for key in ("build_digest", "schema_revision", "model_provider", "model_id", "task_queue"):
+        if runtime.get(key) != state["expected_" + key]:
+            raise StagingReleaseFreezeError(f"Deployed {key} does not match the frozen identity.")
+    canonical_only = runtime.get("canonical_only_capabilities")
+    if not isinstance(canonical_only, dict) or set(canonical_only) != {"suggestion_model_relevance"} or canonical_only["suggestion_model_relevance"] is not False:
+        raise StagingReleaseFreezeError("Unreviewed canonical-only runtime authority.")
+    fleet_keys = {"runtime_identity_sha256", "worker_fleet_ready", "blocked_worker_count", "worker_inventory", "worker_inventory_sha256"}
+    identity = {key: value for key, value in runtime.items() if key not in fleet_keys}
+    if canonical_sha256(identity) != runtime.get("runtime_identity_sha256"):
+        raise StagingReleaseFreezeError("Runtime identity digest does not match the observed fields.")
+    workers = runtime.get("worker_inventory")
+    expected_worker = {key: runtime[key] for key in WORKER_IDENTITY_KEYS}
+    if (runtime.get("worker_fleet_ready") is not True
+            or type(runtime.get("blocked_worker_count")) is not int
+            or runtime["blocked_worker_count"] != 0
+            or not isinstance(workers, list) or not workers
+            or any(not isinstance(worker, dict) or worker != expected_worker for worker in workers)
+            or canonical_sha256(workers) != runtime.get("worker_inventory_sha256")):
+        raise StagingReleaseFreezeError("Worker fleet does not prove matching healthy runtime identity.")
+
     verified_at = utcnow_iso()
     return {
         "schema_version": SCHEMA_VERSION,
@@ -605,12 +654,14 @@ def verify_runtime(state: dict, runtime: dict) -> dict:
             "deployment_reference": state["deployment_reference"],
             "rollout_manifest_sha256": state["rollout_manifest_sha256"],
             "provider_policy_sha256": state["provider_policy_sha256"],
+            **{key: runtime[key] for key in ("build_digest", "schema_revision", "model_provider", "model_id", "task_queue", "runtime_identity_sha256")},
         },
         "synthetic_account_reference": state["synthetic_account_reference"],
         "capabilities": capabilities,
         "action_providers": providers,
         "cohort": cohort,
         "runtime_manifest_sha256": canonical_sha256(runtime),
+        "worker_inventory_sha256": runtime["worker_inventory_sha256"],
         "reviewed_skills_sha256": canonical_sha256(runtime["reviewed_skills"]),
         "prepared_at": state["prepared_at"],
         "verified_at": verified_at,
@@ -652,6 +703,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--rollout", type=Path, required=True)
     prepare.add_argument("--provider-policy-plan", type=Path, required=True)
     prepare.add_argument("--expected-source-revision", required=True)
+    prepare.add_argument("--expected-build-digest", required=True)
+    prepare.add_argument("--expected-model-provider", required=True)
+    prepare.add_argument("--expected-model-id", required=True)
+    prepare.add_argument("--expected-task-queue", required=True)
     prepare.add_argument("--build-reference", required=True)
     prepare.add_argument("--deployment-reference", required=True)
     prepare.add_argument("--synthetic-account-reference", required=True)
@@ -672,6 +727,10 @@ def main() -> None:
                 rollout_path=args.rollout,
                 provider_policy_path=args.provider_policy_plan,
                 expected_source_revision=args.expected_source_revision,
+                expected_build_digest=args.expected_build_digest,
+                expected_model_provider=args.expected_model_provider,
+                expected_model_id=args.expected_model_id,
+                expected_task_queue=args.expected_task_queue,
                 build_reference=args.build_reference,
                 deployment_reference=args.deployment_reference,
                 synthetic_account_reference=args.synthetic_account_reference,
@@ -701,7 +760,7 @@ def main() -> None:
             trust_env=False,
             headers={"Authorization": "Bearer " + token, "Accept-Encoding": "identity"},
         ) as client:
-            with client.stream("GET", "/api/v1/runtime-manifest") as response:
+            with client.stream("GET", "/api/v1/runtime-manifest/v3") as response:
                 runtime = json_object(response, "runtime manifest")
         evidence = verify_runtime(state, runtime)
         write_private_json(args.output, evidence)

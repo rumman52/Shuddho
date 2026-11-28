@@ -30,8 +30,9 @@ def seeded_versions(directory: Path) -> Path:
 
 def test_actual_migration_graph_flags_the_observed_staging_0070_as_older():
     graph, head = migration_graph()
-    assert head == "0072_merge_0071_heads"
-    assert set(graph[head]) == {"0071", "0071_project_scoped_goals"}
+    assert head == "0073_worker_runtime_identity"
+    assert set(graph[head]) == {"0072_merge_0071_heads"}
+    assert set(graph["0072_merge_0071_heads"]) == {"0071", "0071_project_scoped_goals"}
     outcome = source_schema_alignment("0070")
     assert outcome == {
         "status": "migration_required",
@@ -39,7 +40,7 @@ def test_actual_migration_graph_flags_the_observed_staging_0070_as_older():
         "code_head": head,
         "source_is_current": False,
         "pending_migrations": [
-            "0071", "0071_project_scoped_goals", "0072_merge_0071_heads"
+            "0071", "0071_project_scoped_goals", "0072_merge_0071_heads", "0073_worker_runtime_identity"
         ],
         "release_qualified": False,
     }
@@ -118,13 +119,13 @@ def test_read_only_cli_reports_stale_migration_as_failure_without_claiming_acces
     assert main(["--observed-revision", "0070"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "migration_required"
-    assert report["code_head"] == "0072_merge_0071_heads"
+    assert report["code_head"] == "0073_worker_runtime_identity"
     assert report["observation_authenticity_verified"] is False
     assert report["release_qualified"] is False
 
 
 def test_read_only_cli_current_revision_does_not_imply_release_approval(capsys):
-    assert main(["--observed-revision", "0072_merge_0071_heads"]) == 0
+    assert main(["--observed-revision", "0073_worker_runtime_identity"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["source_is_current"] is True
     assert report["observation_authenticity_verified"] is False

@@ -18,6 +18,8 @@ from scripts.staging_day2_authorization import (
     reconcile_authorization,
 )
 from services.coworker.reviewed_skill_registry import WORKER_HEARTBEAT_TTL_SECONDS
+from services.coworker.runtime_identity import WORKER_IDENTITY_KEYS
+from scripts.staging_release_freeze import EXPECTED_SCHEMA_REVISION
 
 
 class Day2AcceptanceFailure(RuntimeError):
@@ -28,6 +30,7 @@ _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _REVISION = re.compile(r"[a-f0-9]{40}\Z")
 _BASE_FIELDS = (
     "status", "release_id", "source_revision", "runtime_manifest_sha256",
+    "build_digest", "schema_revision", "model_provider", "model_id", "task_queue", "runtime_identity_sha256",
     "document_id", "document_version_id", "document_sha256",
     "task_id", "workflow_id", "artifact_id", "artifact_sha256",
     "artifact_bytes", "model_attempts", "accounted_tokens",
@@ -180,6 +183,12 @@ def validate_evidence(
     release_id = _nonempty(release.get("release_id"), "freeze.release.release_id")
     runtime_digest = _digest(frozen.get("runtime_manifest_sha256"), "freeze.runtime_manifest_sha256")
     rollout_digest = _digest(release.get("rollout_manifest_sha256"), "freeze.release.rollout_manifest_sha256")
+    for key in ("build_digest", "runtime_identity_sha256"):
+        _digest(release.get(key), "freeze.release." + key)
+    if release.get("schema_revision") != EXPECTED_SCHEMA_REVISION or release.get("model_provider") != "deepseek":
+        raise Day2AcceptanceFailure("Frozen runtime identity has an unreviewed schema or provider.")
+    for key in ("model_id", "task_queue"):
+        _nonempty(release.get(key), "freeze.release." + key)
 
     run = _object(execution, "execution")
     rec = _object(recovery, "recovery")
@@ -188,6 +197,8 @@ def validate_evidence(
         raise Day2AcceptanceFailure("Document execution is not passed for the frozen release.")
     if run.get("runtime_manifest_sha256") != runtime_digest:
         raise Day2AcceptanceFailure("Document execution does not match the frozen runtime manifest.")
+    if any(run.get(key) != release[key] for key in WORKER_IDENTITY_KEYS):
+        raise Day2AcceptanceFailure("Document execution build identity differs from the frozen candidate.")
     for key in ("document_id", "document_version_id", "task_id", "artifact_id"):
         _nonempty(run.get(key), "execution." + key)
     for key in ("document_sha256", "artifact_sha256"):
@@ -206,6 +217,8 @@ def validate_evidence(
             "Private report has no verified persisted DeepSeek model provenance."
         )
     model_name = _nonempty(model.get("model"), "model_evidence.model")
+    if model_name != release["model_id"] or model["provider"] != release["model_provider"]:
+        raise Day2AcceptanceFailure("Persisted model identity differs from the frozen candidate.")
     if len(model_name) > 120:
         raise Day2AcceptanceFailure("Model identity exceeds the persisted model ledger bound.")
     _digest(model.get("prompt_sha256"), "model_evidence.prompt_sha256")
@@ -250,8 +263,8 @@ def validate_evidence(
     worker = _object(run.get("worker"), "execution.worker")
     _nonempty(worker.get("id"), "execution.worker.id")
     _nonempty(worker.get("task_queue"), "execution.worker.task_queue")
-    if worker.get("source_revision") != expected_revision:
-        raise Day2AcceptanceFailure("Worker source revision does not match the frozen candidate.")
+    if any(worker.get(key) != release[key] for key in WORKER_IDENTITY_KEYS):
+        raise Day2AcceptanceFailure("Worker source revision or build identity does not match the frozen candidate.")
     if _time(worker.get("heartbeat_after"), "worker.heartbeat_after") <= _time(
             worker.get("heartbeat_before"), "worker.heartbeat_before"):
         raise Day2AcceptanceFailure("Real worker heartbeat did not advance.")
@@ -344,10 +357,8 @@ def validate_evidence(
     if (integrity["source_database_fingerprint"] == integrity["target_database_fingerprint"]
             or integrity["source_storage_fingerprint"] == integrity["target_storage_fingerprint"]):
         raise Day2AcceptanceFailure("Source and restored database/object targets are not independent.")
-    if not isinstance(integrity.get("source_schema_revision"), str) or not re.fullmatch(
-        r"[A-Za-z0-9_]{1,128}", integrity["source_schema_revision"]
-    ):
-        raise Day2AcceptanceFailure("Restored archive schema revision is missing.")
+    if integrity.get("source_schema_revision") != release["schema_revision"]:
+        raise Day2AcceptanceFailure("Restored archive schema revision does not match frozen candidate.")
     # Privileged SQL/S3 restore reads are not user-facing authorization.
     # Fail closed unless the restored API itself authenticated A and B,
     # returned the same archived probe bytes, and denied B document/task reads.
@@ -444,6 +455,7 @@ def validate_evidence(
         "release_id": release_id,
         "source_revision": expected_revision,
         "runtime_manifest_sha256": runtime_digest,
+        **{key: release[key] for key in WORKER_IDENTITY_KEYS if key != "source_revision"},
         "rollout_manifest_sha256": rollout_digest,
         "document_id": run["document_id"],
         "document_version_id": run["document_version_id"],
