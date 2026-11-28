@@ -367,6 +367,28 @@ class ConnectorReadRepository:
             event_row = self._lock_event_claim(db, owner, grant_id, event_claim)
             inserted = updated = deleted = ignored = 0
             changed_snapshot_ids: list[str] = []
+            gmail_inbox = grant.provider == "google" and grant.capability == "email_read"
+            complete_inbox = gmail_inbox and expected_cursor is None and result.get("complete_inbox") is True
+            if complete_inbox:
+                # A complete, bounded bootstrap can reconcile stale cached Inbox
+                # membership after history expiry. Never reconcile a partial read.
+                listed = {change["resource_id"] for change in changes}
+                cached = db.scalars(select(ConnectorSnapshot).where(
+                    ConnectorSnapshot.owner_id == owner,
+                    ConnectorSnapshot.grant_id == grant_id,
+                    ConnectorSnapshot.state == "active",
+                ).with_for_update()).all()
+                changes = list(changes)
+                for row in cached:
+                    if row.provider_resource_id not in listed and not _version_newer(
+                        grant.capability, row.provider_version, next_cursor,
+                    ):
+                        changes.append({
+                            "resource_id": row.provider_resource_id,
+                            "provider_version": next_cursor,
+                            "state": "deleted",
+                            "payload": {"kind": "email", "message_id": row.provider_resource_id},
+                        })
             for change in changes:
                 if not isinstance(change, dict):
                     ignored += 1
@@ -394,6 +416,11 @@ class ConnectorReadRepository:
                 ).with_for_update())
                 payload_hash = _digest(payload)
                 if current is None:
+                    if gmail_inbox and state == "deleted":
+                        # Do not create records for messages never admitted to
+                        # this Inbox grant (e.g. Sent-only messages).
+                        ignored += 1
+                        continue
                     current = ConnectorSnapshot(
                         id=str(uuid4()),
                         owner_id=owner,
@@ -413,7 +440,13 @@ class ConnectorReadRepository:
                     if state == "deleted":
                         deleted += 1
                     continue
-                if not _version_newer(grant.capability, version, current.provider_version):
+                membership_redaction = (
+                    gmail_inbox and state == "deleted" and current.state == "active"
+                    and version == current.provider_version
+                )
+                if not membership_redaction and not _version_newer(
+                    grant.capability, version, current.provider_version,
+                ):
                     if (
                         version == current.provider_version
                         and payload_hash == current.content_sha256
