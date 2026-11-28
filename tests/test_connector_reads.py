@@ -2273,3 +2273,26 @@ def test_gmail_history_rejects_invalid_delta_before_cursor_advance(container, hi
     with pytest.raises(GoogleFailure) as rejected:
         asyncio.run(adapter.read_email("read-access-token", "101", 30))
     assert rejected.value.code == "provider_response_invalid"
+
+
+def test_gmail_bootstrap_scope_reconciliation_does_not_override_newer_snapshot(container):
+    enable_reads(container)
+    owner = account(container)
+    grant = create_grant(container, owner, connect_read(container, owner))
+    service = container.connector_reads
+    asyncio.run(service.sync(owner, grant["id"]))
+    snapshot = service.repo.snapshots(owner, grant["id"])[0]
+    with container.repository.sessions.begin() as db:
+        db.get(ConnectorSnapshot, snapshot["id"]).provider_version = "105"
+    state = service.repo.cursor(owner, grant["id"])
+    # An incremental result is never a complete Inbox enumeration.
+    service.repo.apply_sync(owner, grant["id"], state["cursor"],
+        {"cursor": "102", "changes": [], "complete_inbox": True},
+        expected_generation=state["generation"])
+    assert service.repo.snapshots(owner, grant["id"])[0]["provider_version"] == "105"
+    state = service.repo.reset_cursor(owner, grant["id"],
+        expected_cursor="102", expected_generation=state["generation"])
+    service.repo.apply_sync(owner, grant["id"], None,
+        {"cursor": "104", "changes": [], "complete_inbox": True},
+        expected_generation=state["generation"])
+    assert service.repo.snapshots(owner, grant["id"])[0]["provider_version"] == "105"
