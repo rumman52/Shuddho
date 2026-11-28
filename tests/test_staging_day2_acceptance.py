@@ -134,7 +134,7 @@ def proofs():
     }
     restore['recovery_outbox'] = copy.deepcopy(recovery['recovery_outbox'])
     restore['archive_integrity'] = {
-        'status': 'verified', 'source_schema_revision': '0070',
+        'status': 'verified', 'source_schema_revision': '0073_worker_runtime_identity',
         'postgres_archive_sha256': '6' * 64, 'postgres_schema_sha256': 'd' * 64,
         'postgres_table_count': 84,
         'postgres_row_count': 1,
@@ -510,6 +510,7 @@ def test_recovery_rejects_restart_while_no_child_was_active():
     ("source_database_fingerprint", "8" * 64),
     ("target_storage_fingerprint", "a" * 64),
     ("source_schema_revision", ""),
+    ("source_schema_revision", "0072_merge_0071_heads"),
 ])
 def test_backup_gate_rejects_missing_or_inconsistent_full_archive_evidence(field, bad_value):
     proof_set = list(proofs())
